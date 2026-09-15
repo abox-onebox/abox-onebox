@@ -125,7 +125,7 @@
 
 **刷新与登出**：`POST /auth/refresh`（传 refreshToken）、`POST /auth/logout`（吊销 refreshToken + Redis 黑名单）
 
-> ⚠️ **团长身份判定纪律**：任何 `/api/v1/leader/*` 接口，`auth.guard` 解析 JWT 后**必须再查一次 `ab_team_leader`**，确认 `status='active'` 且 `building_id` 匹配，禁止仅凭 JWT 内的 `isLeader` 放行。
+> ⚠️ **团长身份判定纪律**：任何 `/api/v1/leader/*` 接口，`auth.guard` 解析 JWT 后**必须再查一次 `ab_team_leader`**，确认 `status = 1（在职）` 且 `building_id` 匹配，禁止仅凭 JWT 内的 `isLeader` 放行。
 
 ### 1.6 金额、时间与手机号
 
@@ -227,7 +227,7 @@
 
 1. `canOrder`（截单窗口）→ 否则 `30001`
 2. 份数 1–N（`ab_config.order.max_quantity`，默认 20）→ 否则 `30002`
-3. 团长存在且 `status='active'` → 否则 `30007`
+3. 团长存在且 `status = 1（在职）` → 否则 `30007`
 4. 余额抵扣 ≤ 可用余额 → 否则 `40002`
 5. 写 `ab_order`（`status='pending_pay'`）+ 冻结余额（如有）+ 返回 `orderNo`
 
@@ -346,11 +346,27 @@
 
 ```
 前端：勾选协议复选框（不勾不可提交）
-  → POST /leader/apply { buildingId, phone, floor, agreementVersion }
-  → 校验协议已勾选 → 建 ab_team_leader（level='trainee', status='active'）
+  → POST /leader/apply { buildingId, phone, floor, realName, agreementVersion }
+  → 校验协议已勾选 → 建 ab_team_leader（level='trainee', status = 1（在职））
   → 立即写入 ab_leader_invite（inviter 为空，self_apply）
   → 返回 isLeader=true，前端 setIsLeader(true) 重渲染 tabBar（5 项）
 ```
+
+**L17 出参**
+
+```json
+{
+  "isLeader": true,
+  "leader": {
+    "id": 6, "level": "trainee", "levelLabel": "见习", "commissionRate": "0.0800",
+    "floor": "12F", "buildingId": 1, "buildingName": "国贸三期 A 座",
+    "status": 1, "agreedAt": "2026-09-15T10:00:00+08:00", "agreeVersion": "v1.0"
+  }
+}
+```
+
+> ⚠️ **入参含 `realName`**（2026-09-15 补）：`ab_team_leader.real_name` 为 `NOT NULL`，原型申请表单也要求填「公司 + 姓名」，此前契约漏写该字段 —— 缺失即 10001。
+> ⚠️ **在职判据为 `status = 1`**（tinyint，2026-09-15 裁定以实体为准）；全表状态位统一 tinyint，不再使用字符串 `'active'`。
 
 > **见习团长 30 天未促单自动取消资格**：由每日任务 `leader-expire.task` 扫描 `last_order_at` 判定（C2）。
 > 第三方 CA 电子签列入二期，本期以"勾选 + 服务端留痕"为准。

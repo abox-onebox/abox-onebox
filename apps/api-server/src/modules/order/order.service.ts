@@ -11,6 +11,7 @@ import type {
 } from '@abox/shared-types';
 import { OrderStatus } from '@abox/shared-types';
 import { PAGE_DEFAULT } from '@abox/shared-types';
+import { LeaderStatus } from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
@@ -558,7 +559,7 @@ export class OrderService {
       const id = m ? Number(m[1]) : Number(leaderCode);
       const byCode =
         Number.isInteger(id) && id > 0 ? await this.leaderRepo.findOne({ where: { id } }) : null;
-      if (!byCode || byCode.status !== 1) {
+      if (!byCode || byCode.status !== LeaderStatus.ACTIVE) {
         throw new BizException(ErrorCode.LEADER_NOT_FOUND, `团长邀请码 ${leaderCode} 无效`);
       }
       return byCode;
@@ -567,7 +568,7 @@ export class OrderService {
     const own = user.teamLeaderId
       ? await this.leaderRepo.findOne({ where: { id: user.teamLeaderId } })
       : null;
-    if (own && own.status === 1) return own;
+    if (own && own.status === LeaderStatus.ACTIVE) return own;
 
     if (user.buildingId) {
       const fallback = await this.leaderRepo.findOne({

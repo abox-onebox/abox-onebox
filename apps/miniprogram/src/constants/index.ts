@@ -69,7 +69,7 @@ export function calcSettlement(
 /** C2 · 4 级佣金费率 */
 export const COMMISSION_RATE = {
   trainee: 0.08,
-  regular: 0.09,
+  formal: 0.09,
   gold: 0.1,
   chief: 0.12,
 } as const;
@@ -85,7 +85,7 @@ export const LEVEL_UP_RULE = [
     note: '提交申请即生效；30 天未促单自动取消资格',
   },
   {
-    level: 'regular',
+    level: 'formal',
     label: '正式',
     rate: 0.09,
     monthlyOrders: 30,

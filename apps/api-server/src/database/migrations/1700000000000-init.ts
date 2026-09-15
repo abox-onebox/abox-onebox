@@ -47,6 +47,7 @@ const TABLES: string[] = [
     \`building_id\` BIGINT UNSIGNED NOT NULL,
     \`phone\` VARCHAR(20) NOT NULL,
     \`real_name\` VARCHAR(32) NOT NULL,
+    \`floor\` VARCHAR(32) DEFAULT NULL COMMENT '楼层，如 12F（2026-09-15 裁定补回）',
     \`level\` VARCHAR(16) NOT NULL DEFAULT 'trainee' COMMENT 'trainee/formal/gold/chief（C2）',
     \`level_updated_at\` DATETIME(3) DEFAULT NULL COMMENT '最近升级时间',
     \`commission_rate\` DECIMAL(5,4) NOT NULL DEFAULT 0.0800 COMMENT '随 level 联动 8/9/10/12%',

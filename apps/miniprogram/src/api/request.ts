@@ -185,6 +185,12 @@ export const http = {
     data?: Record<string, unknown>,
     options: Omit<RequestOptions, 'url' | 'method' | 'data'> = {},
   ) => request<T>({ url, method: 'POST', data, ...options }),
+  /** PUT —— 用于 M2 团长资料修改（L15）；**非幂等语义**，无需 `Idempotency-Key` */
+  put: <T>(
+    url: string,
+    data?: Record<string, unknown>,
+    options: Omit<RequestOptions, 'url' | 'method' | 'data'> = {},
+  ) => request<T>({ url, method: 'PUT', data, ...options }),
 };
 
 /** 查询串拼装（含 undefined 跳过与编码） */

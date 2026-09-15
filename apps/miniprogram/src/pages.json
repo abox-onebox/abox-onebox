@@ -35,6 +35,10 @@
       "style": { "navigationBarTitleText": "P8 · 个人中心（身份专区 / 申请团长）" }
     },
     {
+      "path": "pages/leader-apply/leader-apply",
+      "style": { "navigationBarTitleText": "申请成为团长（提交即生效）" }
+    },
+    {
       "path": "pages/balance-detail/balance-detail",
       "style": { "navigationBarTitleText": "P9 · 余额明细" }
     },

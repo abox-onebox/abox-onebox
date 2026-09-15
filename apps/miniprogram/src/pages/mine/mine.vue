@@ -43,6 +43,22 @@
       </view>
     </view>
 
+    <!-- 非团长：申请入口（M2 · L17 —— 勾选协议后提交即生效，无审核） -->
+    <view v-else class="section">
+      <view class="card">
+        <view class="card__row card__row--link" hover-class="card__row--hover" @tap="goApply">
+          <view class="apply">
+            <text class="apply__title">申请成为团长</text>
+            <text class="apply__sub">勾选协议后提交即生效，见习 8% 起步</text>
+          </view>
+          <text class="card__arrow">›</text>
+        </view>
+      </view>
+      <view class="tip">
+        <text class="tip__text"> 申请前需先绑定办公楼（通过团长邀请链接进入即可绑定）。 </text>
+      </view>
+    </view>
+
     <!-- 常用 -->
     <view class="section">
       <view class="section__hd">
@@ -106,7 +122,7 @@ import { toastApiError, useRequest } from '@/composables/use-request';
 import { useLeaderStore } from '@/stores/leader';
 import { useUserStore } from '@/stores/user';
 import { clearAuthStorage } from '@/utils/storage';
-import { switchTab } from '@/utils/router';
+import { navigateTo, switchTab } from '@/utils/router';
 
 const { run } = useRequest();
 const userStore = useUserStore();
@@ -163,6 +179,11 @@ async function refresh(): Promise<void> {
 
 function goOrders(): void {
   switchTab('/pages/order-list/order-list');
+}
+
+/** 进入团长申请页（M2 · L17）；提交成功后本页底栏会按 isLeader 重渲染为 5 项 */
+function goApply(): void {
+  navigateTo('/pages/leader-apply/leader-apply');
 }
 
 function clearLocal(): void {
@@ -304,6 +325,25 @@ onShow(() => {
 
   &__arrow {
     font-size: $fs-h2;
+    color: $c-text-weak;
+  }
+}
+
+/* 申请成为团长入口（非团长态） */
+.apply {
+  flex: 1;
+
+  &__title {
+    display: block;
+    font-size: $fs-body;
+    font-weight: 600;
+    color: $c-text;
+  }
+
+  &__sub {
+    display: block;
+    margin-top: $space-1;
+    font-size: $fs-caption;
     color: $c-text-weak;
   }
 }

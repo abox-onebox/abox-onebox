@@ -3,7 +3,7 @@ export const UNIT_PRICE = 25.8;
 
 export const COMMISSION_RATE = {
   trainee: 0.08,
-  regular: 0.09,
+  formal: 0.09,
   gold: 0.1,
   chief: 0.12,
 } as const;

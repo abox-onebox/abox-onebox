@@ -34,6 +34,16 @@ export class TeamLeader {
   @Column({ name: 'real_name', type: 'varchar', length: 32 })
   realName!: string;
 
+  /**
+   * 楼层（如 `12F`）
+   *
+   * 2026-09-15 裁定补回：楼层是**核心组织维度**（同一办公楼内按楼层分群，
+   * 取餐/提醒/分发都按楼层聚合）。ER v2.1 曾随 `ab_user.floor` 一并删除属回退，
+   * 现按《接口规范》U1 / U3 / L17 契约在 `ab_team_leader` 恢复该列。
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true, comment: '楼层，如 12F' })
+  floor?: string | null;
+
   /** 等级：trainee 见习 / formal 正式 / gold 金牌 / chief 首席（C2） */
   @Index('idx_team_leader_level_status')
   @Column({ type: 'varchar', length: 16, default: 'trainee' })

@@ -4,6 +4,7 @@ import { In, Not, Repository } from 'typeorm';
 
 import type { HomeDailyResult, HomeHistoryItem, MealDishView } from '@abox/shared-types';
 import { OrderStatus } from '@abox/shared-types';
+import { LeaderStatus } from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
@@ -148,7 +149,7 @@ export class MealService {
   /** U3 · 团长邀请落地（免登录） */
   async inviteLanding(leaderCode: string) {
     const leader = await this.findLeaderByCode(leaderCode);
-    if (!leader || leader.status !== 1) {
+    if (!leader || leader.status !== LeaderStatus.ACTIVE) {
       return {
         leaderCode,
         leaderName: '',

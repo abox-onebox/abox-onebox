@@ -328,6 +328,7 @@ CREATE TABLE `ab_team_leader` (
   `building_id`       BIGINT UNSIGNED NOT NULL,
   `phone`             VARCHAR(20)  NOT NULL COMMENT '必填',
   `real_name`         VARCHAR(32)  NOT NULL,
+  `floor`             VARCHAR(32)  DEFAULT NULL COMMENT '楼层，如 12F；2026-09-15 裁定补回',
   `commission_rate`   DECIMAL(5,4) NOT NULL DEFAULT 0.1000,
   `total_orders`      INT UNSIGNED NOT NULL DEFAULT 0,
   `total_amount`      DECIMAL(12,2) NOT NULL DEFAULT 0.00,
@@ -347,6 +348,8 @@ CREATE TABLE `ab_team_leader` (
   KEY `idx_team_leader_building` (`building_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='团长表';
 ```
+
+> ⭐ **2026-09-15 裁定（恢复 `floor`）**：v2.1 将 `ab_user.floor` 与 `floor` 必填一并删除时，误把团长表的楼层维度也带走了 —— 但《接口规范》U1 / U3 / L17 一直以 `floor` 为契约字段，且楼层是**核心组织维度**（同楼内按楼层分群分发、取餐提醒按楼层聚合）。故**恢复 `floor` 到 `ab_team_leader`**；`ab_user.floor` 仍保持删除（用户楼层由所属团长推定，不重复存储）。
 
 ### 4.3 `ab_supplier` 供应商表
 

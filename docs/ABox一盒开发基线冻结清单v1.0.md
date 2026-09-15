@@ -15,10 +15,10 @@
 | 原型版本 | v4.10.0（37 页，已部署；结算成本项可配置版） |
 | 现行资产 | 26 份 |
 | 已废弃资产 | 5 份（存档，勿参考） |
-| 工程骨架 | `abox-onebox/` · **393 个文件**（阶段四产出） |
+| 工程骨架 | `abox-onebox/` · **407 个文件**（阶段四产出） |
 | 数据库表 | **24 张**（ER v2.1 的 23 张 + 评审新增 `ab_leader_invite`） |
 | 技术栈 | uni-app(Vue3+TS) + NestJS + MySQL 8 + Redis 7 + 微信支付 V3；**佣金出款走灵活用工平台代发**（C11，见目录结构 v2.0） |
-| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `656bc3e`（本清单与该提交一并入仓） |
+| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `f9b970b`（本清单与该提交一并入仓） |
 | 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**，已开工 M1 |
 
 ---
@@ -70,7 +70,7 @@
 
 ## 四、工程骨架 `abox-onebox/`（阶段四产出）
 
-**总计 393 个文件**，按区域分布：
+**总计 407 个文件**，按区域分布：
 
 | 区域 | 文件数 |
 | --- | --- |
@@ -87,8 +87,8 @@
 | `CONTRIBUTING.md` | 1 |
 | `README.md` | 1 |
 | `apps/admin-web` | 74 |
-| `apps/api-server` | 163 |
-| `apps/miniprogram` | 74 |
+| `apps/api-server` | 171 |
+| `apps/miniprogram` | 75 |
 | `commitlint.config.cjs` | 1 |
 | `data` | 1 |
 | `docker-compose.yml` | 1 |
@@ -96,7 +96,7 @@
 | `lint-staged.config.cjs` | 1 |
 | `package.json` | 1 |
 | `packages/eslint-config` | 2 |
-| `packages/shared-types` | 11 |
+| `packages/shared-types` | 14 |
 | `packages/shared-utils` | 7 |
 | `packages/tsconfig` | 4 |
 | `pnpm-lock.yaml` | 1 |
@@ -104,6 +104,8 @@
 | `scripts/db-migrate.sh` | 1 |
 | `scripts/db-seed.sh` | 1 |
 | `scripts/deploy.sh` | 1 |
+| `scripts/e2e-m1.mjs` | 1 |
+| `scripts/gate.mjs` | 1 |
 | `scripts/init.sql` | 1 |
 | `scripts/setup-husky.mjs` | 1 |
 | `scripts/setup.ps1` | 1 |
@@ -120,7 +122,7 @@
 | 3 | `tsconfig.base.json` |  | 940 | `74c44d9207f5` |
 | 4 | `docker-compose.yml` |  | 2,543 | `382129302077` |
 | 5 | `.env.example` |  | 3,890 | `e79a34a834d4` |
-| 6 | `.eslintrc.cjs` |  | 639 | `445fde0646db` |
+| 6 | `.eslintrc.cjs` |  | 1,231 | `fe5853774dd4` |
 | 7 | `commitlint.config.cjs` |  | 406 | `db5b70bd3b85` |
 | 8 | `README.md` |  | 5,442 | `65f1497c9d6d` |
 | 9 | `CONTRIBUTING.md` |  | 722 | `4163e2093f29` |
@@ -134,13 +136,13 @@
 | 17 | `packages/shared-types/src/enums/payout-channel.ts` |  | 1,972 | `2b2fd157fa37` |
 | 18 | `apps/api-server/src/modules/finance/payout.service.ts` |  | 635 | `e61750f399d3` |
 | 19 | `packages/shared-utils/src/biz.ts` |  | 4,942 | `b6e60cbf2a79` |
-| 20 | `apps/miniprogram/src/constants/index.ts` |  | 3,594 | `b2a363939d21` |
+| 20 | `apps/miniprogram/src/constants/index.ts` |  | 4,096 | `70708b58f269` |
 | 21 | `apps/miniprogram/src/uni.scss` |  | 622 | `016600e38e91` |
 | 22 | `apps/miniprogram/src/pages.json` |  | 3,181 | `6dc310769780` |
 | 23 | `apps/admin-web/src/constants/index.ts` |  | 3,923 | `479649412a9f` |
 | 24 | `apps/admin-web/src/styles/element-override.scss` |  | 830 | `6dab60cc998b` |
-| 25 | `apps/api-server/src/app.module.ts` |  | 2,225 | `90da2ddf4de1` |
-| 26 | `apps/api-server/src/modules/order/order-state-machine.ts` |  | 1,464 | `46a09a2f08cd` |
+| 25 | `apps/api-server/src/app.module.ts` |  | 2,338 | `378e08442352` |
+| 26 | `apps/api-server/src/modules/order/order-state-machine.ts` |  | 6,246 | `c71905a46aca` |
 | 27 | `apps/api-server/src/tasks/leader-expire.task.ts` |  | 599 | `643dfb5dccf5` |
 | 28 | `apps/api-server/test/unit/order-state-machine.spec.ts` |  | 1,546 | `fb77b77fb8a4` |
 

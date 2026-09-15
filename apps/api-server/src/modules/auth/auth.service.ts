@@ -3,6 +3,8 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { LeaderStatus } from '@abox/shared-types';
+
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { TeamLeader } from '../../database/entities/leader.entity';
@@ -52,7 +54,7 @@ export class AuthService {
     }
 
     const leader = await this.leaderRepo.findOne({ where: { userId: user.id } });
-    const isLeader = !!leader && leader.status === 1;
+    const isLeader = !!leader && leader.status === LeaderStatus.ACTIVE;
 
     const token = await this.jwt.signAsync({
       sub: user.id,
@@ -98,7 +100,7 @@ export class AuthService {
       phone: user.phone ?? null,
       buildingId: user.buildingId ?? null,
       teamLeaderId: user.teamLeaderId ?? null,
-      isLeader: !!leader && leader.status === 1,
+      isLeader: !!leader && leader.status === LeaderStatus.ACTIVE,
       leader: leader
         ? {
             id: leader.id,

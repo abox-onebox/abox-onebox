@@ -17,7 +17,7 @@ export const BIZ = {
   /** C1 · 套餐统一价（锁定；存 ab_config：set_meal.default_price） */
   unitPrice: 25.8,
   /** C2 · 4 级佣金费率（锁定） */
-  commissionRate: { trainee: 0.08, regular: 0.09, gold: 0.1, chief: 0.12 },
+  commissionRate: { trainee: 0.08, formal: 0.09, gold: 0.1, chief: 0.12 },
   /** L3 · 截单时刻（24 点即次日 00:00） */
   cutoffHour: 24,
   /** 未支付订单有效期（分钟） */
