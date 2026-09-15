@@ -1,0 +1,42 @@
+# 依赖
+node_modules/
+.pnpm-store/
+
+# 构建产物
+dist/
+build/
+unpackage/
+*.tsbuildinfo
+
+# unplugin 自动生成的类型声明（构建期产物；当前未被 tsconfig include 消费）
+apps/*/auto-imports.d.ts
+apps/*/components.d.ts
+
+# 环境变量（严禁入库）
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# 本地数据卷
+data/
+
+# 运行时产物
+public/qrcodes/
+coverage/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# 临时/验证产物（本地排障用，严禁入库）
+_tmp_*
+_verify*.log
+_*_report.log
+_commitmsg.txt
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABox 一盒 · 设计 token 规范 v1.0</title>
+<style>
+  :root {
+    --bg-cream: #F6F0E5;
+    --bg-cream-light: #FBF7EF;
+    --bg-cream-dark: #EDE3D0;
+    --text-brown: #6E5435;
+    --text-brown-light: #A08A6A;
+    --accent-gold: #C9A876;
+    --accent-gold-dark: #9A7B4F;
+    --border-brown: #E6D9C0;
+    --ok: #5B7C3A;
+    --severe: #C44536;
+    --info: #4A6FA5;
+    --font-kai: "KaiTi", "STKaiti", "楷体", "Kaiti SC", serif;
+    --mono: "Consolas", "Menlo", "Courier New", monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font-kai);
+    background: var(--bg-cream);
+    color: var(--text-brown);
+    line-height: 1.78;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 0 60px;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 0 20px; }
+  code { font-family: var(--mono); font-size: 12.5px; background: rgba(201,168,118,.16); padding: 1px 5px; border-radius: 4px; }
+
+  .hero {
+    background: linear-gradient(135deg, #6E5435 0%, #9A7B4F 100%);
+    color: var(--bg-cream);
+    padding: 46px 20px 38px;
+    text-align: center;
+    margin-bottom: 26px;
+  }
+  .hero h1 { font-size: 27px; letter-spacing: 3px; font-weight: bold; }
+  .hero .sub { font-size: 14px; opacity: .88; margin-top: 11px; letter-spacing: 1px; }
+  .hero .tag {
+    display: inline-block; margin-top: 16px; padding: 4px 18px;
+    border: 1px solid rgba(246,240,229,.5); border-radius: 20px;
+    font-size: 12px; letter-spacing: 2px; opacity: .92;
+  }
+
+  .card {
+    background: var(--bg-cream-light);
+    border: 1px solid var(--border-brown);
+    border-radius: 14px;
+    padding: 22px 26px;
+    margin: 16px 0;
+    box-shadow: 0 2px 8px rgba(110,84,53,.06), 0 8px 24px rgba(110,84,53,.05);
+  }
+  .card h2 {
+    font-size: 17.5px; letter-spacing: 1.5px; margin-bottom: 13px;
+    padding-left: 12px; border-left: 4px solid var(--accent-gold);
+  }
+  .card h3 { font-size: 15px; margin: 16px 0 8px; letter-spacing: .5px; }
+  .card p { font-size: 14px; margin: 7px 0; }
+  .card p.lead { font-size: 14.5px; }
+  .card strong { color: var(--accent-gold-dark); }
+
+  .notice {
+    background: #F3EEDF; border: 1px solid #E0D3B4; border-radius: 10px;
+    padding: 12px 16px; font-size: 13.5px; margin: 14px 0; color: #7A5F35;
+  }
+
+  /* 色板 */
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 10px; margin: 12px 0; }
+  .sw {
+    border: 1px solid var(--border-brown); border-radius: 10px; overflow: hidden;
+    background: #fff;
+  }
+  .sw .chip { height: 52px; display: flex; align-items: flex-end; justify-content: flex-end; padding: 4px 8px; }
+  .sw .chip span { font-size: 10.5px; font-family: var(--mono); background: rgba(255,255,255,.82); color: #4A3A22; padding: 0 4px; border-radius: 3px; }
+  .sw .meta { padding: 7px 9px; }
+  .sw .meta b { display: block; font-size: 12.5px; font-family: var(--mono); color: var(--accent-gold-dark); }
+  .sw .meta i { display: block; font-style: normal; font-size: 11.5px; color: var(--text-brown-light); margin-top: 1px; line-height: 1.5; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.2px; margin: 10px 0; }
+  th, td { border: 1px solid var(--border-brown); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-cream-dark); letter-spacing: 1px; white-space: nowrap; }
+  tbody tr:nth-child(even) { background: rgba(237,227,208,.32); }
+  td code { font-size: 12px; }
+  .no-wrap { white-space: nowrap; }
+
+  ol.plain { padding-left: 22px; font-size: 14px; }
+  ol.plain li { margin: 7px 0; }
+  ol.plain li b { color: var(--accent-gold-dark); }
+
+  .scale-demo { border: 1px solid var(--border-brown); border-radius: 10px; padding: 14px 16px; background: #fff; }
+  .scale-demo .row { display: flex; align-items: baseline; gap: 14px; padding: 5px 0; border-bottom: 1px dashed var(--border-brown); }
+  .scale-demo .row:last-child { border-bottom: none; }
+  .scale-demo .row .k { flex: none; width: 150px; font-family: var(--mono); font-size: 11.5px; color: var(--accent-gold-dark); }
+  .scale-demo .row .v { flex: 1; }
+
+  .radius-demo { display: flex; gap: 12px; flex-wrap: wrap; margin: 10px 0; }
+  .radius-demo div { background: var(--accent-gold); color: #fff; font-size: 11.5px; display: flex; align-items: center; justify-content: center; height: 56px; width: 90px; }
+
+  .shadow-demo { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 0; }
+  .shadow-demo div { background: #fff; border-radius: 14px; padding: 16px 18px; font-size: 12.5px; flex: 1; min-width: 190px; }
+
+  .footer { text-align: center; color: var(--text-brown-light); font-size: 12px; margin-top: 34px; letter-spacing: 1px; }
+
+  @media (max-width: 680px) {
+    .hero h1 { font-size: 20px; }
+    .card { padding: 16px; }
+    table { font-size: 12.2px; }
+    th, td { padding: 6px 6px; }
+    .scale-demo .row .k { width: 108px; }
+  }
+  @media print {
+    body { background: #fff; }
+    .card, .shadow-demo div { box-shadow: none; }
+    .hero, .sw .chip, th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .card { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>ABox 一盒 · 设计 token 规范</h1>
+  <div class="sub">小程序（用户 + 团长）· 供应商 Web · 运营后台 Web —— 一套 token 三端复用</div>
+  <div class="tag">v1.0 · 2026-09-14 · 源自原型 v4.9.1 实际 <span style="font-family:Consolas,monospace;">:root</span></div>
+</div>
+
+<div class="wrap">
+
+  <div class="card">
+    <h2>一、总则</h2>
+    <p class="lead">本规范是 <strong>ABox 一盒视觉的唯一事实来源</strong>。开发期所有颜色、字号、间距、圆角、阴影、动效，一律引用本规范的 token，<strong>不得在页面里写裸值</strong>。</p>
+    <table>
+      <tbody>
+        <tr><th>适用范围</th><td>小程序（用户端 + 团长端）、供应商 Web、运营后台 Web</td></tr>
+        <tr><th>风格定位</th><td>高端极简 · 少文字 · 多留白</td></tr>
+        <tr><th>取值来源</th><td>原型 <code>prototype/index.html</code> 的 <code>:root</code>（v4.9.1「视觉规范精修版」）</td></tr>
+        <tr><th>派生产物</th><td><code>apps/miniprogram/src/styles/tokens.scss</code> · <code>apps/admin-web/src/styles/element-override.scss</code> · <code>packages/shared-utils/tokens.json</code>（图表 / Canvas 用 RGB）</td></tr>
+      </tbody>
+    </table>
+    <div class="notice">⚠️ <strong>两套色值不要混用</strong>：本规范（产品 UI）取原型 <code>:root</code> 的实际值；而《审查报告》《交接包》等<strong>文档型 HTML</strong> 使用自己的一套排版变量（如 <code>#FBF7EF / #EDE3D0 / #A08A6A</code>），仅用于纸张打印观感，<strong>不进入产品代码</strong>。</div>
+  </div>
+
+  <div class="card">
+    <h2>二、色彩 token</h2>
+
+    <h3>2.1 基础色板</h3>
+    <div class="swatches">
+      <div class="sw"><div class="chip" style="background:#F6F0E5;"><span>#F6F0E5</span></div><div class="meta"><b>--bg-cream</b><i>页面底色</i></div></div>
+      <div class="sw"><div class="chip" style="background:#FBF7EE;"><span>#FBF7EE</span></div><div class="meta"><b>--bg-cream-light</b><i>卡片 / 面板底</i></div></div>
+      <div class="sw"><div class="chip" style="background:#EFE5D0;"><span>#EFE5D0</span></div><div class="meta"><b>--bg-cream-dark</b><i>表头 / 次级底</i></div></div>
+      <div class="sw"><div class="chip" style="background:#6E5435;"><span style="color:#F6F0E5;background:rgba(0,0,0,.28)">#6E5435</span></div><div class="meta"><b>--text-brown</b><i>主文字 / 主按钮底</i></div></div>
+      <div class="sw"><div class="chip" style="background:#8B7355;"><span style="color:#F6F0E5;background:rgba(0,0,0,.28)">#8B7355</span></div><div class="meta"><b>--text-brown-light</b><i>次要文字 / 说明</i></div></div>
+      <div class="sw"><div class="chip" style="background:#C9A876;"><span>#C9A876</span></div><div class="meta"><b>--accent-gold</b><i>强调 / 金额 / 高亮</i></div></div>
+      <div class="sw"><div class="chip" style="background:#B8915C;"><span>#B8915C</span></div><div class="meta"><b>--accent-gold-dark</b><i>强调悬停 / 选中态</i></div></div>
+      <div class="sw"><div class="chip" style="background:#D4C4A8;"><span>#D4C4A8</span></div><div class="meta"><b>--border-brown</b><i>常规描边</i></div></div>
+      <div class="sw"><div class="chip" style="background:#E6D9C0;"><span>#E6D9C0</span></div><div class="meta"><b>--border-soft</b><i>浅描边 / 卡片边</i></div></div>
+    </div>
+
+    <h3>2.2 状态色</h3>
+    <div class="swatches">
+      <div class="sw"><div class="chip" style="background:#5B7C3A;"><span style="color:#fff;background:rgba(0,0,0,.22)">#5B7C3A</span></div><div class="meta"><b>--success</b><i>成功 / 已完成 / 已入账</i></div></div>
+      <div class="sw"><div class="chip" style="background:#C44536;"><span style="color:#fff;background:rgba(0,0,0,.22)">#C44536</span></div><div class="meta"><b>--warning</b><i>警告 / 异常 / 退款 / 截单临界</i></div></div>
+      <div class="sw"><div class="chip" style="background:#4A6FA5;"><span style="color:#fff;background:rgba(0,0,0,.22)">#4A6FA5</span></div><div class="meta"><b>--info</b><i>信息 / 提示 / 链接</i></div></div>
+    </div>
+    <div class="notice">📌 本项目的「警告」用<strong>暖红 #C44536</strong>，而非 Element Plus 默认橙 <code>#E6A23C</code> —— 后台接入时必须覆盖 <code>--el-color-warning</code>，否则两端观感分裂。</div>
+  </div>
+
+  <div class="card">
+    <h2>三、字体 token</h2>
+    <table>
+      <thead><tr><th>Token</th><th>值</th><th>用途</th></tr></thead>
+      <tbody>
+        <tr><td class="no-wrap"><code>--font-kai</code></td><td><code>"KaiTi", "STKaiti", "楷体", "Kaiti SC", serif</code></td><td>全端统一字体（含后台，覆盖 Element 默认字体）</td></tr>
+      </tbody>
+    </table>
+    <h3>字阶（精简层级，正文 / 标题两级为主）</h3>
+    <div class="scale-demo">
+      <div class="row"><span class="k">--fs-h1 · 20px</span><span class="v" style="font-size:20px;">页面主标题 一盒</span></div>
+      <div class="row"><span class="k">--fs-h2 · 17px</span><span class="v" style="font-size:17px;">区块标题 今日战报</span></div>
+      <div class="row"><span class="k">--fs-title · 15.5px</span><span class="v" style="font-size:15.5px;">卡片标题 明日套餐</span></div>
+      <div class="row"><span class="k">--fs-md · 14px</span><span class="v" style="font-size:14px;">强调正文 订单金额</span></div>
+      <div class="row"><span class="k">--fs-body · 13.5px</span><span class="v" style="font-size:13.5px;">标准正文（默认）</span></div>
+      <div class="row"><span class="k">--fs-sm · 12px</span><span class="v" style="font-size:12px;">辅助说明 / 次要信息</span></div>
+      <div class="row"><span class="k">--fs-xs · 11px</span><span class="v" style="font-size:11px;">角标 / 极次要</span></div>
+      <div class="row"><span class="k">--fs-price · 22px</span><span class="v" style="font-size:22px;color:#B8915C;font-weight:bold;">¥25.80</span></div>
+    </div>
+    <div class="notice">📌 <code>--fs-price</code> 仅用于价格 / 金额，是全站最大字号，其余场景不得使用；金额同时配合 <code>--accent-gold-dark</code>。</div>
+  </div>
+
+  <div class="card">
+    <h2>四、间距 token</h2>
+    <table>
+      <thead><tr><th>Token</th><th>值</th><th>典型场景</th></tr></thead>
+      <tbody>
+        <tr><td><code>--sp-1</code></td><td>6px</td><td>图标与文字微间距</td></tr>
+        <tr><td><code>--sp-2</code></td><td>10px</td><td>卡片内元素间距 / 标签间隙</td></tr>
+        <tr><td><code>--sp-3</code></td><td>14px</td><td>卡片内边距 / 列表项间距</td></tr>
+        <tr><td><code>--sp-4</code></td><td>20px</td><td>区块间距 / 页面左右留白</td></tr>
+        <tr><td><code>--sp-5</code></td><td>28px</td><td>大区块之间 / 首屏留白</td></tr>
+      </tbody>
+    </table>
+    <p>间距只保留 5 档，<strong>不得自造数值</strong>，以维持「多留白」的整体节奏。</p>
+  </div>
+
+  <div class="card">
+    <h2>五、圆角 · 阴影 · 动效 token</h2>
+
+    <h3>5.1 圆角</h3>
+    <div class="radius-demo">
+      <div style="border-radius:10px;">10px</div>
+      <div style="border-radius:14px;">14px</div>
+      <div style="border-radius:18px;">18px</div>
+      <div style="border-radius:24px;">24px</div>
+    </div>
+    <table>
+      <tbody>
+        <tr><td><code>--radius-sm</code></td><td>10px</td><td>小元件 / 标签 / 输入框</td></tr>
+        <tr><td><code>--radius-md</code></td><td>14px</td><td><strong>卡片默认</strong>（与 Element <code>--el-border-radius-base</code> 对齐）</td></tr>
+        <tr><td><code>--radius-lg</code></td><td>18px</td><td>大卡片 / 弹窗</td></tr>
+        <tr><td><code>--radius-pill</code></td><td>24px</td><td>胶囊按钮 / 徽章</td></tr>
+      </tbody>
+    </table>
+
+    <h3>5.2 阴影（「卡浮于底」双层柔影）</h3>
+    <div class="shadow-demo">
+      <div style="box-shadow:0 1px 2px rgba(110,84,53,.06),0 4px 12px rgba(110,84,53,.07);"><b>--shadow</b><br><span style="font-size:11.5px;color:#A08A6A;">常规卡片</span></div>
+      <div style="box-shadow:0 2px 6px rgba(110,84,53,.08),0 12px 32px rgba(110,84,53,.14);"><b>--shadow-lg</b><br><span style="font-size:11.5px;color:#A08A6A;">浮层 / 弹窗 / hover 上浮</span></div>
+    </div>
+
+    <h3>5.3 交互与动效</h3>
+    <table>
+      <tbody>
+        <tr><td><code>--hover-tint</code></td><td><code>rgba(201,168,118,.14)</code></td><td>列表 / 表格行悬浮底色</td></tr>
+        <tr><td><code>--focus-ring</code></td><td><code>0 0 0 3px rgba(201,168,118,.35)</code></td><td><code>:focus-visible</code> 焦点环（可访问性）</td></tr>
+        <tr><td><code>--ease</code></td><td><code>cubic-bezier(.33,1,.68,1)</code></td><td>统一缓动曲线</td></tr>
+        <tr><td><code>::selection</code></td><td><code>rgba(201,168,118,.35)</code></td><td>品牌色选区</td></tr>
+        <tr><td>滚动条</td><td><code>rgba(201,168,118,.45)</code> / hover <code>--accent-gold-dark</code></td><td>8px 细滚动条</td></tr>
+        <tr><td>降级</td><td><code>prefers-reduced-motion: reduce</code></td><td>动画 / 过渡时长降到 0.01ms</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>六、Element Plus 变量映射（后台）</h2>
+    <p>后台直接覆盖 Element Plus 的 CSS 变量即可全局换肤，<strong>不要逐个组件改样式</strong>。</p>
+    <table>
+      <thead><tr><th>Element Plus 变量</th><th>取值来源</th><th>值</th></tr></thead>
+      <tbody>
+        <tr><td><code>--el-bg-color-page</code></td><td>--bg-cream</td><td><code>#F6F0E5</code></td></tr>
+        <tr><td><code>--el-bg-color</code></td><td>--bg-cream-light</td><td><code>#FBF7EE</code></td></tr>
+        <tr><td><code>--el-text-color-primary</code></td><td>--text-brown</td><td><code>#6E5435</code></td></tr>
+        <tr><td><code>--el-text-color-regular</code></td><td>--text-brown-light</td><td><code>#8B7355</code></td></tr>
+        <tr><td><code>--el-color-primary</code></td><td>--text-brown</td><td><code>#6E5435</code></td></tr>
+        <tr><td><code>--el-color-primary-light-3</code></td><td>--accent-gold</td><td><code>#C9A876</code></td></tr>
+        <tr><td><code>--el-color-success</code></td><td>--success</td><td><code>#5B7C3A</code></td></tr>
+        <tr><td><code>--el-color-danger</code></td><td>--warning</td><td><code>#C44536</code></td></tr>
+        <tr><td><code>--el-color-warning</code></td><td>--warning ⚠️ 需覆盖</td><td><code>#C44536</code>（非默认橙）</td></tr>
+        <tr><td><code>--el-color-info</code></td><td>--info</td><td><code>#4A6FA5</code></td></tr>
+        <tr><td><code>--el-border-color</code></td><td>--border-brown</td><td><code>#D4C4A8</code></td></tr>
+        <tr><td><code>--el-border-color-light</code></td><td>--border-soft</td><td><code>#E6D9C0</code></td></tr>
+        <tr><td><code>--el-border-radius-base</code></td><td>--radius-md</td><td><code>14px</code></td></tr>
+        <tr><td><code>--el-font-family</code></td><td>--font-kai</td><td>楷体族</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>七、组件级应用规范（源自 v4.9.0 视觉精修）</h2>
+    <table>
+      <thead><tr><th>组件</th><th>规范</th></tr></thead>
+      <tbody>
+        <tr><td>卡片</td><td>底色 <code>--bg-cream-light</code> + 1px <code>--border-soft</code> + <code>--radius-md</code> + <code>--shadow</code>（双层柔影，营造「卡浮于底」）</td></tr>
+        <tr><td>主按钮</td><td>底 <code>--text-brown</code> / 字米色 / <strong>字距 2px</strong> / 带投影 / hover 提亮</td></tr>
+        <tr><td>状态徽章</td><td><strong>过程态</strong>（待支付 / 已支付 / 制作中 / 已取消）→ 淡底深字（tint）；<strong>终态与异常</strong>（已完成 / 配送中 / 警告）→ 强填充。信息层次一眼可辨</td></tr>
+        <tr><td>tabBar</td><td>选中项 <code>--accent-gold-dark</code> + 图标 <code>scale(1.12)</code> + 过渡动效</td></tr>
+        <tr><td>页签（page-tab）</td><td>选中态<strong>金底白字</strong> + 投影（对比度修复）</td></tr>
+        <tr><td>表格</td><td>斑马纹 <code>rgba(237,227,208,.35)</code> + 行悬浮 <code>--hover-tint</code> + 表头字距</td></tr>
+        <tr><td>KPI 卡</td><td><code>--shadow</code> + hover 上浮 2px + 数字 26px</td></tr>
+        <tr><td>弹窗</td><td>1px 金边 + 光晕投影（比 2px 更轻盈）+ <code>--radius-lg</code></td></tr>
+        <tr><td>Toast</td><td>滑入动效 + <code>--ease</code></td></tr>
+        <tr><td>输入框</td><td>focus 时 <code>--focus-ring</code></td></tr>
+        <tr><td>手机壳</td><td>375×720；后台内容区 1100 自适应</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>八、楷体真机降级方案</h2>
+    <p>小程序<strong>不支持自定义字体文件</strong>（无法通过 CSS <code>@font-face</code> 稳定加载），需按以下优先级降级：</p>
+    <ol class="plain">
+      <li><b>首选</b>：<code>wx.loadFontFace()</code> 动态加载网络版楷体 —— woff2 托管在腾讯云 COS（<strong>≤2MB</strong>），首次加载后本地缓存。</li>
+      <li><b>失败降级</b>：走系统字体链 —— iOS 自带「Kaiti SC」可用；<strong>安卓多数机型无楷体</strong> → 降级到 <code>serif</code>（宋体系），此时<strong>标题字重加大</strong>以弥补气质差。</li>
+      <li><b>关键数字兜底</b>：价格 / 金额等对观感最敏感的字符，建议用<strong>图片或 SVG 徽标</strong>兜底，避免双端观感分裂。</li>
+      <li><b>后台无限制</b>：Element Plus 端直接 <code>font-family: var(--font-kai)</code> 生效，无需降级。</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>九、落地清单</h2>
+    <table>
+      <thead><tr><th>产物</th><th>落点</th><th>用途</th></tr></thead>
+      <tbody>
+        <tr><td><code>tokens.scss</code></td><td><code>apps/miniprogram/src/styles/</code></td><td>小程序全局 CSS 变量</td></tr>
+        <tr><td><code>element-override.scss</code></td><td><code>apps/admin-web/src/styles/</code></td><td>后台 Element Plus 换肤（见第六章）</td></tr>
+        <tr><td><code>tokens.json</code></td><td><code>packages/shared-utils/</code></td><td>图表 / Canvas 需要具体 RGB 值的场景</td></tr>
+      </tbody>
+    </table>
+    <div class="notice">📌 本规范为<strong>值定义</strong>；上述三个文件在<strong>阶段四（工程基建）</strong>落地时由本规范派生。开发期如发现本规范与原型 <code>:root</code> 不一致，<strong>以原型实测值为准并回写本规范</strong>。</div>
+  </div>
+
+  <div class="footer">
+    ABox 一盒 · 设计 token 规范 v1.0 · 2026-09-14<br>
+    依据：原型 v4.9.1 <code>:root</code> · 交接包 v1.1（C 方向视觉锁定约束）· PRD v2.1
+  </div>
+
+</div>
+
+</body>
+</html>

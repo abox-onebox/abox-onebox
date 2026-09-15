@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABox 一盒 · MVP 优化交接包 v1.3（定稿版）</title>
+<style>
+  :root{
+    --bg-cream:#F6F0E5;
+    --bg-cream-light:#FBF8F1;
+    --bg-cream-dark:#EFE6D6;
+    --text-brown:#6E5435;
+    --text-brown-light:#9A8668;
+    --accent-gold:#C9A876;
+    --border-brown:#E2D6C0;
+    --success:#5B7C3A;
+    --warning:#C44536;
+    --info:#4A6FA5;
+    --font-kai:"KaiTi","楷体","STKaiti","Kaiti SC",serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg-cream);
+    color:var(--text-brown);
+    font-family:var(--font-kai);
+    font-size:15px;
+    line-height:1.85;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:900px;margin:0 auto;padding:0 24px 80px;}
+
+  /* ---------- 页眉 ---------- */
+  header.cover{
+    padding:56px 0 28px;
+    border-bottom:2px solid var(--accent-gold);
+    margin-bottom:8px;
+  }
+  .cover-tag{
+    display:inline-block;
+    font-size:12px;
+    letter-spacing:.18em;
+    color:var(--text-brown-light);
+    border:1px solid var(--border-brown);
+    border-radius:999px;
+    padding:3px 14px;
+    margin-bottom:18px;
+    background:var(--bg-cream-light);
+  }
+  h1{
+    font-size:30px;
+    font-weight:700;
+    letter-spacing:.04em;
+    margin:0 0 14px;
+    line-height:1.4;
+  }
+  h1 .ver{
+    font-size:14px;
+    font-weight:400;
+    color:#fff;
+    background:var(--text-brown);
+    border-radius:6px;
+    padding:2px 10px;
+    vertical-align:middle;
+    margin-left:10px;
+    letter-spacing:.05em;
+  }
+  .cover-meta{
+    font-size:13px;
+    color:var(--text-brown-light);
+    line-height:2;
+  }
+  .cover-meta b{color:var(--text-brown);font-weight:700;}
+
+  /* ---------- 章节 ---------- */
+  section{margin-top:44px;}
+  h2{
+    font-size:20px;
+    font-weight:700;
+    margin:0 0 16px;
+    padding-left:14px;
+    border-left:4px solid var(--accent-gold);
+    letter-spacing:.03em;
+  }
+  h3{
+    font-size:16px;
+    font-weight:700;
+    margin:26px 0 10px;
+    color:var(--text-brown);
+  }
+  h3::before{
+    content:"◆";
+    color:var(--accent-gold);
+    font-size:11px;
+    margin-right:8px;
+    vertical-align:2px;
+  }
+  p{margin:10px 0;}
+  ul,ol{margin:10px 0;padding-left:24px;}
+  li{margin:5px 0;}
+  hr{border:none;border-top:1px dashed var(--border-brown);margin:36px 0;}
+
+  /* ---------- 表格 ---------- */
+  .tbl-wrap{overflow-x:auto;margin:16px 0;-webkit-overflow-scrolling:touch;}
+  table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:14px;
+    background:var(--bg-cream-light);
+    min-width:520px;
+  }
+  th{
+    background:var(--bg-cream-dark);
+    color:var(--text-brown);
+    font-weight:700;
+    text-align:left;
+    padding:10px 12px;
+    border:1px solid var(--border-brown);
+    white-space:nowrap;
+    letter-spacing:.02em;
+  }
+  td{
+    padding:10px 12px;
+    border:1px solid var(--border-brown);
+    vertical-align:top;
+    line-height:1.75;
+  }
+  tbody tr:nth-child(even) td{background:rgba(201,168,118,.06);}
+  td code,code{
+    font-family:Consolas,Menlo,monospace;
+    font-size:12.5px;
+    background:rgba(201,168,118,.16);
+    border-radius:4px;
+    padding:1px 5px;
+    color:var(--text-brown);
+  }
+  .num{color:var(--accent-gold);font-weight:700;}
+
+  /* ---------- 提示块 ---------- */
+  .note{
+    background:var(--bg-cream-light);
+    border-left:3px solid var(--accent-gold);
+    border-radius:6px;
+    padding:12px 16px;
+    font-size:13.5px;
+    color:var(--text-brown);
+    margin:16px 0;
+    line-height:1.9;
+  }
+  .note.warn{border-left-color:var(--warning);}
+  .note b{font-weight:700;}
+  .pill{
+    display:inline-block;
+    font-size:12px;
+    padding:1px 8px;
+    border-radius:5px;
+    color:#fff;
+    background:var(--accent-gold);
+    margin-right:6px;
+    vertical-align:1px;
+  }
+  .pill.red{background:var(--warning);}
+  .pill.green{background:var(--success);}
+  .pill.blue{background:var(--info);}
+  .lock{color:var(--warning);font-weight:700;}
+  .ok{color:var(--success);font-weight:700;}
+
+  /* ---------- 卡片（任务书） ---------- */
+  .card{
+    background:var(--bg-cream-light);
+    border:1px solid var(--border-brown);
+    border-radius:10px;
+    padding:18px 22px;
+    margin:16px 0;
+  }
+  .card h3{margin-top:0;}
+  .card .label{font-weight:700;color:var(--text-brown);}
+
+  /* ---------- 页脚 ---------- */
+  footer{
+    margin-top:56px;
+    padding-top:20px;
+    border-top:2px solid var(--accent-gold);
+    font-size:12.5px;
+    color:var(--text-brown-light);
+    text-align:center;
+    letter-spacing:.06em;
+  }
+
+  @media (max-width:640px){
+    body{font-size:14px;}
+    .wrap{padding:0 16px 56px;}
+    h1{font-size:22px;}
+    h1 .ver{font-size:12px;padding:2px 8px;margin-left:6px;}
+    h2{font-size:17px;}
+    header.cover{padding:32px 0 20px;}
+    .cover-meta{font-size:12px;}
+    table{font-size:13px;}
+    th,td{padding:8px 9px;}
+    .card{padding:14px 15px;}
+  }
+  @media print{
+    body{background:#fff;font-size:11.5pt;}
+    .wrap{max-width:none;padding:0;}
+    section{page-break-inside:auto;}
+    h2{page-break-after:avoid;}
+    table,.card{page-break-inside:avoid;}
+    header.cover{padding-top:0;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="cover">
+    <div class="cover-tag">MVP 优化 · 交接材料</div>
+    <h1>ABox 一盒 · MVP 优化交接包<span class="ver">v1.3 定稿</span></h1>
+    <div class="cover-meta">
+      <div>生成日期：<b>2026-09-14</b> ｜ 运营主体：<b>北京巡礼之年科技有限公司</b></div>
+      <div>版本说明：v1.3 在 v1.2（C1–C10）基础上并入 <b>C11「佣金个税与出款通道 + 供应商结算周期」</b>（2026-09-14）——<b>团长佣金走「灵活用工平台」代发并代扣个税</b>、<b>供应商 / 集散中心结算周期＝日结</b>；v1.0 / v1.1 / v1.2 作废，多份并存时<b>以本文件为准</b>。</div>
+      <div>使用方式：在新会话第一条消息中<b>全文粘贴</b>本文件，并说明优先优化方向（第五章）。</div>
+    </div>
+  </header>
+
+  <!-- ================= 一 ================= -->
+  <section>
+    <h2>一、30 秒读懂项目</h2>
+    <p><b>一句话</b>：办公楼白领的「团体订餐」小程序——每天一栋楼共享一个「一饭四菜」套餐，4 家供应商各出一菜，在集散中心打包装箱，货拉拉送到楼下，楼里的团长取餐分发；平台赚差价，团长赚佣金。</p>
+
+    <h3>业务时序（关键锚点）</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>节点</th><th>时间</th></tr></thead>
+        <tbody>
+          <tr><td>开团 / 下单窗口开始</td><td>T-1 14:00</td></tr>
+          <tr><td><b>截单（关键锚点 1）</b></td><td><b>T-1 24:00</b></td></tr>
+          <tr><td>供应商出餐 → 送集散中心</td><td>T 日 06:00–09:30</td></tr>
+          <tr><td>货拉拉叫车（线下）</td><td>T 日 10:00</td></tr>
+          <tr><td>兼职打包完成</td><td>T 日 11:00</td></tr>
+          <tr><td>送达办公楼 → 推送取餐通知</td><td>T 日 11:30</td></tr>
+          <tr><td>团长取餐窗口</td><td>T 日 11:30–12:30</td></tr>
+          <tr><td><b>自动确认收货 + 佣金结算（关键锚点 2）</b></td><td><b>T 日 14:00</b></td></tr>
+          <tr><td>财务跑批（分账 / 打款）</td><td>T+1 02:00</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>4 个角色（无楼长）</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>角色</th><th>载体</th><th>核心动作</th></tr></thead>
+        <tbody>
+          <tr><td>用户（白领）</td><td>微信小程序</td><td>微信授权即注册、1 步下单、看状态</td></tr>
+          <tr><td>团长（按办公楼）</td><td>同一小程序（叠加身份）</td><td>分享拉单、取餐分发、确认收货、赚佣金</td></tr>
+          <tr><td>商家（供应商）</td><td>Web 后台</td><td>看明日备料量、确认出餐、查分账</td></tr>
+          <tr><td>平台运营</td><td>Web 后台</td><td>套餐编排、订单管理、财务结算、数据看板</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ================= 二 ================= -->
+  <section>
+    <h2>二、先读这些资产（不要从零开始）</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>文件</th><th>内容</th><th>状态</th></tr></thead>
+        <tbody>
+          <tr><td><code>ABox一盒业务运作理解v2.0.md</code></td><td>业务时序、5 项调整、关键事实</td><td class="ok">✅ 已最终确认</td></tr>
+          <tr><td><code>ABox一盒PRDv2.1.md</code></td><td>4 端功能清单（M01–M37）、<b>结算方案（§6.4 定案）</b>、订单状态机、关键交互</td><td class="ok">✅ 现行（v2.1 已回写 C1–C10 / 详见 C11）</td></tr>
+          <tr><td><code>ABox一盒数据库ER设计v2.1.md</code></td><td>23 张表 + 4 张补齐 DDL（合计 24 张）、ER 总览、设计原则</td><td class="ok">✅ 现行（详见《表结构评审意见 v1.0》）</td></tr>
+          <tr><td><code>ABox一盒项目目录结构v2.0.md</code></td><td>Monorepo / pnpm workspaces 布局 + <b>§十 端-页-模块映射表</b></td><td class="ok">✅ 现行有效</td></tr>
+                    <tr><td><code>ABox一盒M0启动评审纪要v1.0.md</code></td><td><b>M0 启动评审结论（通过）</b> + 检查清单 7✅/4⏳ + 关键口径 12 条</td><td class="ok">✅ 现行</td></tr>
+          <tr><td><code>ABox一盒开发基线冻结清单v1.0.md</code></td><td>开发阶段<b>唯一输入版本</b>清单（现行 / 废弃 / SHA-256）</td><td class="ok">✅ 现行</td></tr>
+          <tr><td><code>ABox一盒接口规范v1.0.md</code></td><td>60+ 端点契约 + 错误码 + 幂等</td><td class="ok">✅ 现行</td></tr>
+          <tr><td><code>ABox一盒订单状态机与全链路流转v1.0.md</code></td><td>11 态 + 迁移表 + 8 定时任务 + C6 退款三段式 / C11 出款通道</td><td class="ok">✅ 现行</td></tr>
+          <tr><td><code>ABox一盒开发里程碑计划v1.0.md</code></td><td>M1–M5 + W1–W10 甘特 + 验收标准 + 风险登记册</td><td class="ok">✅ 现行</td></tr>
+          <tr><td><code>prototype/index.html</code></td><td>可点击原型 <b>v4.9.2</b>（单文件 HTML SPA，37 页 · 结算口径对齐版）</td><td class="ok">✅ 现行 · 已部署线上</td></tr>
+          <tr><td><code>prototype/README.md</code></td><td>原型说明、页面清单、视觉规范</td><td class="ok">✅</td></tr>
+          <tr><td>业务运作理解 v1.0 / PRD v1.0 / ER v1.0 / 产品方案 v1.0</td><td>旧版</td><td class="lock">⛔ 已废弃，勿参考</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>原型页面地图（37 页）</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>端</th><th>页数</th><th>编号</th></tr></thead>
+        <tbody>
+          <tr><td>用户端</td><td class="num">10</td><td>P1、P3–P10、P38</td></tr>
+          <tr><td>团长端</td><td class="num">10</td><td>P11–P20</td></tr>
+          <tr><td>商家端</td><td class="num">6</td><td>P21–P26</td></tr>
+          <tr><td>平台后台</td><td class="num">11</td><td>P27–P37</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      P2 已删除；P38 为后续新增的「供应商 / 商家溯源」页。<br>
+      团长端 P11–P20 与用户端共用同一小程序身份（<code>isLeader</code> 叠加），<b>不拆两个小程序</b>。
+    </div>
+  </section>
+
+  <!-- ================= 三 ================= -->
+  <section>
+    <h2>三、锁定项（红线 · 不得推翻）</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>#</th><th>锁定内容</th><th>备注</th></tr></thead>
+        <tbody>
+          <tr><td class="num">L1</td><td>品牌名 = <b>ABox 一盒</b>；运营主体 = <b>北京巡礼之年科技有限公司</b></td><td>主体名只出现在协议 / 结算 / 发票</td></tr>
+          <tr><td class="num">L2</td><td>4 角色、<b>无楼长</b></td><td>团长兼任取餐分发</td></tr>
+          <tr><td class="num">L3</td><td>截单 = <b>T-1 24:00</b>；下单窗口 T-1 14:00–24:00</td><td>关键锚点 1</td></tr>
+          <tr><td class="num">L4</td><td>自动确认收货 = <b>T 日 14:00</b></td><td>兜底，不依赖团长配合</td></tr>
+          <tr><td class="num">L5</td><td>套餐规格 = 1 主食 + 4 道菜，<b>不支持单点 / 加菜</b></td><td>每天每栋楼 1 个套餐</td></tr>
+          <tr><td class="num">L6</td><td>套餐分配 = <b>运营手动分配</b>，无循环位</td><td>「日期 × 楼群」二维矩阵</td></tr>
+          <tr><td class="num">L7</td><td>供应商-菜品 = <b>动态</b>（前期一人多菜 / 后期一人一菜）</td><td>同一供应商每天做同一道菜，送多个集散中心</td></tr>
+          <tr><td class="num">L8</td><td>集散中心 = 某供应商，<b>可同时出餐</b></td><td>多个集散中心并行</td></tr>
+          <tr><td class="num">L9</td><td>用户注册 = <b>仅微信授权</b>，不要手机号 / 地址</td><td>跟随团长</td></tr>
+          <tr><td class="num">L10</td><td>团长与用户 = <b>同一小程序、同一身份</b></td><td>团长为叠加身份，切换不切 App</td></tr>
+          <tr><td class="num">L11</td><td>配送 = 货拉拉 + 兼职打包，<b>平台不调度</b></td><td>系统只记录时间点</td></tr>
+          <tr><td class="num">L12</td><td>技术栈见第六章，<b>不得更换</b></td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ================= 四 ================= -->
+  <section>
+    <h2>四、口径裁决结果（已定稿 · 不再讨论）</h2>
+    <div class="note">
+      以下 10 项曾存在「PRD / ER 文档」与「原型 v4.9.2」两套口径，<b>现已全部裁决</b>。<br>
+      请直接按「最终口径」执行，<b>不要另立标准、不要重新设计</b>。
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>#</th><th>事项</th><th>最终口径（以此为准）</th><th>依据</th><th>回填动作</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="num">C1</td><td>套餐定价</td>
+            <td><b>¥25.80 统一价</b>（一盒 4 菜 + 1 主食打包价）</td>
+            <td>原型分账模型已按 25.80 完整闭合；且位于办公午市 25–30 元主流带下沿，转化更友好</td>
+            <td>PRD 全文替换「28 元」表述</td>
+          </tr>
+          <tr>
+            <td class="num">C2</td><td>团长佣金</td>
+            <td><b>保留 4 级阶梯 8% / 9% / 10% / 12%</b>（见习 / 正式 / 金牌 / 首席）</td>
+            <td>阶梯是团长拉新与留存的唯一杠杆，单一 10% 无法对头部形成激励差；原型分账已按首席 12% 建模</td>
+            <td>PRD 佣金规则章节改写；升级门槛回写（见 4.1）</td>
+          </tr>
+          <tr>
+            <td class="num">C3</td><td>团长资格生效</td>
+            <td><b>提交即生效</b>（微信号 + 手机号必填），无人工审核；电子签改为「注册时勾选同意《团长合作协议》」，第三方 CA 电子签列入二期</td>
+            <td>MVP 冷启动优先，团长是供给侧关键，审核会直接卡住增长；勾选条款已保留法律最低限度</td>
+            <td>PRD M15 条款改写；协议简版文本待补（见 4.2）</td>
+          </tr>
+          <tr>
+            <td class="num">C4</td><td>集散中心数量</td>
+            <td><b>MVP 运营按 4 个跑，但系统不得硬编码</b>：集散中心独立成配置表，数量可增删</td>
+            <td>原型需演示并行配送；表驱动避免二期改代码</td>
+            <td>ER 明确 <code>ab_distribution_center</code> 表；PRD 写「默认 4 个，可配置」</td>
+          </tr>
+          <tr>
+            <td class="num">C5</td><td>供应商命名</td>
+            <td><b>三层术语严格分离</b>：① 主体 = 北京巡礼之年科技有限公司（品牌 ABox 一盒，仅协议 / 结算）② 供应商 = 餐饮档口 ③ 原型中「三味屋 / 京味小馆 / 老李家」= <b>演示占位名</b>；<b>「巡礼之年」与主体同名，不得继续作供应商名</b>，需替换</td>
+            <td>主体名与供应商名同形，会造成协议主体与分账对手方混淆，是真实的运营与法律风险</td>
+            <td>原型替换所有「巡礼之年」供应商名；PRD 增加术语表</td>
+          </tr>
+          <tr>
+            <td class="num">C6</td><td>截单后退款</td>
+            <td><b>三段式闭环</b>（原两套口径其实是同一流程的不同界面）：① 用户端截单后<b>不可自助退款</b>，只显示「联系团长 / 客服」② 团长端<b>可发起代退申请</b> ③ 平台后台运营<b>审批通过后</b>才实际退款</td>
+            <td>三方串起来才闭环；用户不能一键退，可避免截单后已备料的浪费</td>
+            <td>PRD 补「代退申请 → 后台审批」链路；原型补团长端代退入口与状态回显</td>
+          </tr>
+          <tr>
+            <td class="num">C7</td><td>端数表述</td>
+            <td>统一表述为「<b>4 角色 · 3 载体</b>」：载体 = 小程序（用户 + 团长同端）/ 供应商 Web / 运营后台 Web</td>
+            <td>消除「5 端 / 4 端」的歧义；与 L10 一致</td>
+            <td>PRD 标题与全文表述修正</td>
+          </tr>
+          <tr>
+            <td class="num">C8</td><td>供应商列表页 P38</td>
+            <td><b>保留页面，但改定位</b>为「<b>今日这盒 · 商家溯源</b>」：只展示本餐涉及的 4–5 家 + 资质 / 评分 / 今日菜品；<b>移除「合作中 / 备选」等内部招商状态</b></td>
+            <td>对用户建立食品安全信任有价值；但「备选商家清单」属内部招商信息，不宜对用户展示</td>
+            <td>原型 P38 改版；PRD 正式收录该页</td>
+          </tr>
+          <tr>
+            <td class="num">C9</td><td>集散中心分账金额</td>
+            <td><b>¥5/份固定 = 米饭 ¥2 + 打包 ¥3</b>；原型 P31 订单详情写 ¥3.50 系笔误，应改为 <b>¥5.00</b>，4 家供应商合计相应由 ¥15.50 调整为 <b>¥14.00</b>（差额从主菜项扣减 ¥1.50）；<b>统一价 ¥25.80、团长佣金 ¥3.10、平台毛利 ¥3.70 全部不变</b></td>
+            <td>「米饭 ¥2 + 打包 ¥3」在供应商管理页与分账规则说明中两处自洽，订单详情单点数值与之矛盾</td>
+            <td>原型 P31 分账明细修正；ER / PRD 明确集散中心固定 ¥5/份</td>
+          </tr>
+          <tr>
+            <td class="num">C10</td><td>结算方式（资金流）</td>
+            <td><b>供应商 + 集散中心 = 人工对公转账</b>（平台对公账户 → 供应商公司账户，凭增值税发票；系统只生成<b>应付结算单</b> + 登记付款 / 回单号，<b>不接支付通道分账</b>）；<b>仅团长佣金 = 系统自动结算</b>（计入佣金余额 → 提现；<b>出款通道见 C11</b>）。平台按<b>自营模式</b>（采购 + 销售）定性，<b>不涉二清</b></td>
+            <td>供应商面向企业、金额大、需发票链条，人工对公更贴合财务；佣金面向个人、高频小额，必须系统化。「分账单笔 30% 上限」与「二清」两项风险随之消解</td>
+            <td>PRD §6.4 / 合规清单 §6 / 账号资源清单 §3.2 / 接口规范（D37 付款登记）/ 状态机 §5 全部改毕</td>
+          </tr>
+          <tr>
+            <td class="num">C11</td><td>佣金个税与出款通道 / 供应商结算周期</td>
+            <td><b>① 团长佣金个税 ＝ 走「灵活用工平台」</b>：平台对公账户 → 灵活用工平台 → 团长本人；个税由灵活用工平台<b>代扣代缴并完税</b>，灵活用工平台向平台开具服务发票。<b>产品形态不变</b>（佣金计算 → 计入佣金余额 → 团长提现），仅<b>出款通道</b>抽象为 <code>PayoutChannel</code>：一期「生成打款批次 + 清单导出 + 回执登记」，二期接灵活用工平台 API。<br><b>② 供应商 / 集散中心结算周期 ＝ 日结</b>：系统 T+1 02:00 生成<b>应付结算单</b>，财务按日付款并登记回单；<b>对公账户信息可后置收集，不阻塞开发</b>（<code>ab_supplier</code> 银行字段允许为空，付款登记支持「收款方式」备注）</td>
+            <td>① 团长为<b>自然人 + 高频小额</b>，灵活用工平台一次解决「<b>代发 + 个税代扣 + 完税凭证</b>」三件事，且<b>不再依赖微信支付「商家转账到零钱」产品权限</b>（少一项申请/审核依赖，上线更快）。<br>② 供应商侧<b>现网已是日结</b>，系统按日生成应付单即可，不改造既有财务习惯；对公账户只影响付款执行环节，不影响系统建模与开发排期</td>
+            <td>PRD §6.2 / §6.4 / §七·风险 / 合规清单 §4·§5·§6·§8 / 账号资源 §3.2·§3.3 / 接口规范 §4.4 + W3 / 状态机 §3·§5 / 里程碑 R1·R2 / 原型 P16·P18 / 脚手架 <code>PayoutChannel</code> 全部改毕</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>4.1 升级门槛（原型已定义，直接回写 PRD）</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>等级</th><th>佣金</th><th>条件</th></tr></thead>
+        <tbody>
+          <tr><td>见习</td><td class="num">8%</td><td>申请即生效；30 天未促单自动取消资格</td></tr>
+          <tr><td>正式</td><td class="num">9%</td><td>月单 &gt; 30 且介绍 1 名转正团长</td></tr>
+          <tr><td>金牌</td><td class="num">10%</td><td>月单 &gt; 60 且介绍 2 名转正团长</td></tr>
+          <tr><td>首席</td><td class="num">12%</td><td>月单 &gt; 100 且介绍 3 名转正团长</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>4.2 待补材料（仅 2 项，补齐后即可开发）</h3>
+    <ol>
+      <li><b>《团长合作协议》简版文本</b> —— 用于注册时勾选（C3）。法务出稿，1 页以内。</li>
+      <li><b>P38 改版字段清单</b> —— 按 C8 新定位确定「展示什么 / 不展示什么」（可由 A 方向协作方产出）。</li>
+    </ol>
+  </section>
+
+  <!-- ================= 五 ================= -->
+  <section>
+    <h2>五、本次优化任务书</h2>
+    <div class="note">
+      已勾选 A / B / C / D。建议按 <b>B → A → D → C</b> 推进（B 是已定型的主链路、最急；C 相对独立）。<br>
+      第四章的裁决结果即为<b>输入前提</b>，无需再讨论口径。
+    </div>
+
+    <div class="card">
+      <h3>B. 交互与主链路（优先）</h3>
+      <p><span class="label">目标：</span>让「用户下单 → 截单 → 出餐 → 送达 → 取餐确认 → 分账」这条链在原型上无断点、无歧义。</p>
+      <p><span class="label">要回答的问题</span></p>
+      <ol>
+        <li>截单瞬间（T-1 24:00）系统具体做什么？（待支付订单处理、订单锁定、备料量推送）</li>
+        <li>团长「手动确认收货」与 T 日 14:00「自动确认」冲突时以谁为准？</li>
+        <li>截单后退款的完整链路（按 C6 三段式）落到哪些页面、谁审批</li>
+        <li>用户端 5 个状态 → 团长端 6 个状态 → 后台 8 个状态，三者映射是否自洽</li>
+      </ol>
+      <p><span class="label">期望产出：</span>一张「全链路状态流转图」+ 每个节点的责任人与系统动作</p>
+      <p><span class="label">验收标准：</span>任意一条用户路径，都能在原型里走完全程不卡壳</p>
+    </div>
+
+    <div class="card">
+      <h3>A. 产品定义与范围</h3>
+      <p><span class="label">目标：</span>把 MVP 收敛到「一个办公楼能跑通」的最小集合。</p>
+      <p><span class="label">要回答的问题</span></p>
+      <ol>
+        <li>约 88 人天里，哪些是 MVP 必须、哪些可二期？（重点：商家端 Web 能否先用人工 + Excel 替代）</li>
+        <li>余额账户（属平台负债）是否必须进 MVP？</li>
+        <li>供应商分账：走方案 A（微信分账）还是方案 B（人工月结）？<br><b>✅ 已裁决（2026-09-14）</b>：供应商 / 集散中心改为<b>人工对公转账</b>（系统只生成应付结算单 + 登记付款）；只有<b>团长佣金</b>由系统自动结算（计入佣金余额 → 提现；<b>出款通道见 C11</b>）。平台按自营模式定性，不涉二清。</li>
+      </ol>
+      <p><span class="label">期望产出：</span>MVP 功能清单（必做 / 可砍 / 二期）+ 每项取舍理由</p>
+    </div>
+
+    <div class="card">
+      <h3>D. 技术可行性</h3>
+      <p><span class="label">目标：</span>验证现有设计能否落地。</p>
+      <p><span class="label">要回答的问题</span></p>
+      <ol>
+        <li>25 张表是否覆盖全部链路？有无缺表 / 冗余表？（含 C4 的集散中心配置表）</li>
+        <li>T-1 24:00 截单、T 日 14:00 自动确认这类定时任务的补偿与重试机制</li>
+        <li>多个集散中心并行的数据一致性</li>
+        <li>「反向分账」（已分账后发生退款）如何实现</li>
+        <li>RabbitMQ 是否必要（按 88 人天体量评估）</li>
+      </ol>
+      <p><span class="label">期望产出：</span>表结构评审意见 + 关键技术风险清单</p>
+    </div>
+
+    <div class="card">
+      <h3>C. 视觉与品牌</h3>
+      <p><span class="label">目标：</span>统一视觉规范并落地到小程序 + Web 两端。</p>
+      <p><span class="label">锁定约束：</span>主色 米色 <code>#F6F0E5</code> / 暖棕 <code>#6E5435</code> / 金棕 <code>#C9A876</code>；字体 楷体（simkai）；风格 高端极简。<br>
+      <span class="label">状态色：</span>成功 <code>#5B7C3A</code> / 警告 <code>#C44536</code> / 信息 <code>#4A6FA5</code></p>
+      <p><span class="label">要回答的问题</span></p>
+      <ol>
+        <li>小程序不支持自定义字体文件，楷体在真机上的降级方案是什么？</li>
+        <li>一套 design token 如何同时适配小程序与 Element Plus 后台？</li>
+      </ol>
+      <p><span class="label">期望产出：</span>设计 token 表（色彩 / 字体 / 间距 / 圆角）+ 关键页面视觉稿</p>
+    </div>
+  </section>
+
+  <!-- ================= 六 ================= -->
+  <section>
+    <h2>六、技术基线（不得更换）</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>层</th><th>选型</th></tr></thead>
+        <tbody>
+          <tr><td>小程序</td><td>uni-app（Vue3 + Vite + TS）</td></tr>
+          <tr><td>后端</td><td>NestJS（Node.js + TS）</td></tr>
+          <tr><td>主库</td><td>MySQL 8.0（订单表按月分区）</td></tr>
+          <tr><td>缓存</td><td>Redis 7</td></tr>
+          <tr><td>消息队列</td><td>RabbitMQ ⚠️（D 方向可评估必要性）</td></tr>
+          <tr><td>对象存储</td><td>腾讯云 COS</td></tr>
+          <tr><td>支付</td><td>微信支付 V3（JSAPI + 退款）；佣金出款走<b>灵活用工平台代发</b>（C11）</td></tr>
+          <tr><td>消息推送</td><td>微信订阅消息</td></tr>
+          <tr><td>后台前端</td><td>Vue3 + Vite + Element Plus</td></tr>
+          <tr><td>部署</td><td>Docker + Kubernetes</td></tr>
+          <tr><td>工程结构</td><td>Monorepo · pnpm workspaces</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <b>数据约定：</b>金额 <code>DECIMAL(10,2)</code>；时间 <code>DATETIME(3)</code> · UTC+8；表名 <code>ab_&lt;module&gt;_&lt;entity&gt;</code>；每表必备 <code>id / created_at / updated_at / version</code>；软删除用 <code>deleted_at</code>。<br>
+      <b>工作量基线：</b>约 88 人天（PRD v2.0 评估）。分期与砍项是本次 A 方向的核心议题。
+    </div>
+  </section>
+
+  <!-- ================= 七 ================= -->
+  <section>
+    <h2>七、范围边界</h2>
+    <p><span class="pill green">本期做</span>一个办公楼的完整闭环 —— 下单 → 截单 → 出餐 → 配送 → 取餐 → 分账 → 看板</p>
+    <p><span class="pill red">本期不做</span>多城市扩张、自建配送团队、楼长角色、套餐单点 / 加菜、供应商自助开票、第三方 CA 电子签</p>
+  </section>
+
+  <!-- ================= 八 ================= -->
+  <section>
+    <h2>八、给协作方的约束（重要）</h2>
+    <ol>
+      <li><b>增量，不重写</b>：在 PRD v2.1 / ER v2.1 / 原型 v4.9.2 之上迭代，不要另起一版</li>
+      <li><b>不碰锁定项</b>：第三章任何一条有异议，<b>先提问，不要自行修改</b></li>
+      <li><b>第四章已裁决，直接执行</b>：C1–C11 不再是开放议题；若确有硬伤，先说明理由再提议变更</li>
+      <li><b>不换技术栈</b></li>
+      <li><b>产出可回填</b>：所有结论都要能落到具体位置（PRD 章节号 / 表名 / 原型页码）</li>
+    </ol>
+  </section>
+
+  <!-- ================= 九 ================= -->
+  <section>
+    <h2>九、变更记录</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>版本</th><th>日期</th><th>变更</th></tr></thead>
+        <tbody>
+          <tr><td>v1.0</td><td>2026-09-14</td><td>首版：资产索引 + 12 条锁定项 + C1–C8 冲突清单 + A/B/C/D 任务书</td></tr>
+          <tr><td><b>v1.1</b></td><td>2026-09-14</td><td><b>C1–C9 全部裁决定稿</b>（新增 C9 集散中心分账矛盾）；第四章由「待裁决」改为「已定稿」；新增 4.1 升级门槛、4.2 待补材料（仅 2 项）；资产状态标注回写项；范围边界补「不做电子签」</td></tr>
+          <tr><td><b>v1.2</b></td><td>2026-09-14</td><td><b>新增 C10「结算方式裁决」</b>：供应商 / 集散中心改 <b>人工对公转账</b>、仅团长佣金走 <b>系统自动结算</b>（平台自营模式，不涉二清；分账单笔 30% 上限问题消解）；资产索引表刷新为 PRD v2.1 / ER v2.1 / 目录结构 v2.0 / 原型 v4.9.1</td></tr>
+          <tr><td><b>v1.3</b></td><td>2026-09-14</td><td><b>新增 C11「佣金个税与出款通道 + 供应商结算周期」</b>：① 团长佣金个税定案走 <b>灵活用工平台</b>（代发 + 代扣代缴 + 完税凭证；不再依赖微信「商家转账到零钱」），出款通道抽象 <code>PayoutChannel</code>；② 供应商 / 集散中心结算周期定案 <b>日结</b>，对公账户信息后置收集不阻塞开发；C10 行内「商家转账到零钱」改为交叉引用；全文裁决范围升为 <b>C1–C11</b></td></tr>
+          <tr><td><b>v1.3.1</b></td><td>2026-09-14</td><td>资产索引刷新：原型升 <b>v4.9.2</b>（结算口径对齐版 · 已部署）；补入 M0 启动评审纪要 / 开发基线冻结清单 / 接口规范 / 订单状态机 / 开发里程碑计划 <b>5 项开发期资产</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>文档结束 · ABox 一盒 · MVP 优化交接包 v1.3 · 2026-09-14</footer>
+</div>
+</body>
+</html>

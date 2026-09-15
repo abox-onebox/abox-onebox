@@ -1,0 +1,26 @@
+@import './tokens.scss';
+
+.page {
+  min-height: 100vh;
+  background: $c-bg;
+}
+
+.card {
+  padding: $space-4;
+  background: $c-surface;
+  border: 1px solid $c-border;
+  border-radius: $radius-md;
+  box-shadow: $shadow-card;
+}
+
+.text-weak {
+  color: $c-text-weak;
+}
+
+.text-gold {
+  color: $c-gold;
+}
+
+.text-warning {
+  color: $c-warning;
+}

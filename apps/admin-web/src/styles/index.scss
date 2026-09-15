@@ -1,0 +1,27 @@
+// tokens 由 vite.config.ts 的 css.preprocessorOptions 统一注入（见该文件注释），
+// 此处不再重复 @use，避免同一模块重复绑定到 `*` 命名空间。
+@use './element-override.scss';
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: $c-bg;
+  color: $c-text;
+  font-family: $font-family-base;
+  font-size: $fs-body;
+}
+
+.page-container {
+  padding: $space-4;
+}
+
+.page-container__title {
+  margin: 0 0 $space-3;
+  font-size: $fs-h1;
+  font-weight: 600;
+}

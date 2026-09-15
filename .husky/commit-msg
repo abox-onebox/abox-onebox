@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# 提交信息规范（Conventional Commits，见 commitlint.config.cjs）
+npx --no-install commitlint --edit "$1"

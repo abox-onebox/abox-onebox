@@ -1,0 +1,84 @@
+# ABox 一盒 · 本地依赖
+#   默认启动：MySQL 8 + Redis 7
+#   可选启动：MinIO（本地替代腾讯云 COS）—— 加 profile：docker compose --profile oss up -d
+#
+# 说明：MVP 体量不引入消息中间件，队列使用 Redis + BullMQ（见《目录结构 v2.0》§六）
+#
+# ⚠️ 本机若无 Docker Desktop，可走「零依赖本地模式」：
+#    .env 里设 DB_DRIVER=sqlite / QUEUE_DRIVER=memory / STORAGE_DRIVER=local
+#    详见 docs/ABox一盒本地开发手册v1.0.md
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: abox-mysql
+    restart: always
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: abox_onebox
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-proot123']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    container_name: abox-redis
+    restart: always
+    ports:
+      - '6379:6379'
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ---- 可选：本地对象存储（替代腾讯云 COS）----
+  # 不启动也不影响开发：默认走 STORAGE_DRIVER=local（文件落 ./data/uploads）
+  minio:
+    image: minio/minio:latest
+    container_name: abox-minio
+    profiles: ['oss']
+    restart: always
+    ports:
+      - '9000:9000' # S3 API
+      - '9001:9001' # 控制台 http://localhost:9001
+    environment:
+      MINIO_ROOT_USER: abox
+      MINIO_ROOT_PASSWORD: abox123456
+    command: server /data --console-address ':9001'
+    volumes:
+      - ./data/minio:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -sf http://localhost:9000/minio/health/live || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: abox-minio-init
+    profiles: ['oss']
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 abox abox123456 &&
+        mc mb --ignore-existing local/abox-uploads &&
+        mc anonymous set download local/abox-uploads &&
+        echo 'MinIO bucket abox-uploads 就绪'

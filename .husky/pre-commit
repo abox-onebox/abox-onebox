@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# 提交前：仅对暂存文件跑 eslint --fix + prettier --write（见 lint-staged.config.cjs）
+# 用 npx --no-install 解析本地 node_modules/.bin，避免依赖各包管理器的 shim
+npx --no-install lint-staged

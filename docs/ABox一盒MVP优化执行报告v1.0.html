@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABox 一盒 · MVP 优化执行报告 v1.0（C1–C9 裁决落地）</title>
+<style>
+  :root{
+    --bg:#F6F0E5; --bg-light:#FBF7EF; --brown:#6E5435; --brown-light:#9A8265;
+    --gold:#C9A876; --success:#5B7C3A; --warning:#C44536; --info:#4A6FA5;
+    --border:#E3D5BD; --font:"KaiTi","Kaiti SC","STKaiti","楷体",serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:var(--font);background:var(--bg);color:var(--brown);line-height:1.75;padding:0 0 60px;}
+  .hero{background:linear-gradient(135deg,#6E5435,#8A6B45);color:#F6F0E5;padding:48px 8% 40px;}
+  .hero h1{font-size:30px;letter-spacing:2px;font-weight:normal;}
+  .hero p{margin-top:8px;opacity:.85;font-size:14px;}
+  .hero .tag{display:inline-block;margin-top:16px;padding:4px 14px;border:1px solid rgba(246,240,229,.4);border-radius:20px;font-size:12px;letter-spacing:1px;}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 5%;}
+  h2{font-size:21px;margin:52px 0 6px;color:var(--brown);letter-spacing:1px;}
+  h2 .no{display:inline-block;background:var(--gold);color:#fff;font-size:13px;width:26px;height:26px;line-height:26px;text-align:center;border-radius:8px;margin-right:10px;vertical-align:2px;}
+  .sub{color:var(--brown-light);font-size:13px;margin-bottom:16px;}
+  .card{background:var(--bg-light);border:1px solid var(--border);border-radius:14px;padding:22px 24px;margin-top:16px;}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:10px;}
+  th{background:rgba(201,168,118,.15);color:var(--brown);padding:9px 10px;text-align:left;border-bottom:2px solid var(--gold);font-weight:bold;white-space:nowrap;}
+  td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top;}
+  tr:last-child td{border-bottom:none;}
+  .pill{display:inline-block;padding:1px 10px;border-radius:10px;font-size:12px;white-space:nowrap;}
+  .p-ok{background:rgba(91,124,58,.12);color:var(--success);}
+  .p-must{background:rgba(201,168,118,.18);color:var(--brown);}
+  .p-cut{background:rgba(196,69,54,.1);color:var(--warning);}
+  .p-p2{background:rgba(74,111,165,.1);color:var(--info);}
+  .note{margin-top:14px;padding:12px 16px;background:rgba(201,168,118,.1);border-left:3px solid var(--gold);border-radius:0 10px 10px 0;font-size:13px;color:var(--brown-light);}
+  .svgbox{background:var(--bg-light);border:1px solid var(--border);border-radius:14px;padding:18px;margin-top:16px;overflow-x:auto;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr;}}
+  .toc{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;}
+  .toc span{font-size:12.5px;padding:5px 14px;background:rgba(246,240,229,.12);border-radius:16px;}
+  .small{font-size:12.5px;color:var(--brown-light);}
+  code{font-family:Consolas,monospace;font-size:12.5px;background:rgba(201,168,118,.12);padding:1px 6px;border-radius:5px;}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>ABox 一盒 · MVP 优化执行报告</h1>
+  <p>依据《MVP 优化交接包 v1.1》 · 第四章 C1–C9 已全部裁决并直接执行 · 未触碰锁定项 L1–L12 · 未更换技术栈</p>
+  <div class="tag">2026-09-14 · 北京巡礼之年科技有限公司 · 周一周盒测试团</div>
+  <div class="toc">
+    <span>① 执行摘要</span><span>② B 全链路状态流转</span><span>③ A MVP 取舍清单</span><span>④ D 表结构评审与风险</span><span>⑤ C 设计 token</span><span>⑥ C1–C9 回填台账</span>
+  </div>
+</div>
+
+<div class="wrap">
+
+<h2><span class="no">一</span>执行摘要</h2>
+<div class="card">
+  <p>按任务书建议顺序 <strong>B → A → D → C</strong> 推进，全部产出可回填（文件 / 章节 / 表名 / 原型页码）：</p>
+  <table>
+    <tr><th>产出</th><th>落点</th><th>状态</th></tr>
+    <tr><td>B · 原型修正（C5 供应商名 / C9 分账笔误 / C6 三段式改造）</td><td><code>prototype/index.html</code> → v4.8.0</td><td><span class="pill p-ok">已完成</span></td></tr>
+    <tr><td>B · 全链路状态流转图 + 节点责任矩阵</td><td>本报告 ② 章</td><td><span class="pill p-ok">已完成</span></td></tr>
+    <tr><td>A · PRD 回写（C1–C9 全量落档）</td><td><code>ABox一盒PRDv2.0.md</code> → <strong>v2.1</strong></td><td><span class="pill p-ok">已完成</span></td></tr>
+    <tr><td>D · ER 回写（C4 配置表 / C9 分账 / C2C3C6 字段）+ 评审意见</td><td><code>ABox一盒数据库ER设计v2.0.md</code> → <strong>v2.1</strong>（25→26 表）+ 本报告 ④ 章</td><td><span class="pill p-ok">已完成</span></td></tr>
+    <tr><td>C · 设计 token 表 + 字体降级方案</td><td>本报告 ⑤ 章</td><td><span class="pill p-ok">已完成</span></td></tr>
+    <tr><td>质量校验</td><td><code>tests/nav-stack.test.js</code> 61/61 通过 · 脚本语法 <code>node --check</code> 通过</td><td><span class="pill p-ok">通过</span></td></tr>
+  </table>
+  <div class="note">待补材料仅 2 项（交接包 4.2）：《团长合作协议》法务简版文本；P38 改版字段清单已在 C8 执行中给出（本报告 ⑥ 台账附注），法务文本到位即可开发。</div>
+</div>
+
+<h2><span class="no">二</span>B · 全链路状态流转（主链路无断点）</h2>
+<p class="sub">用户 5 态 / 团长 6 态 / 后台 8 态三者映射自洽；截单瞬间动作与退款冲突均已裁决。</p>
+
+<div class="svgbox">
+<svg viewBox="0 0 980 430" width="100%" style="min-width:820px;" xmlns="http://www.w3.org/2000/svg" font-family="KaiTi,STKaiti,楷体,serif">
+  <defs>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#9A8265"/></marker>
+    <marker id="arw" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#C44536"/></marker>
+  </defs>
+  <!-- 主链路 -->
+  <g font-size="13" fill="#6E5435" text-anchor="middle">
+    <!-- nodes -->
+    <rect x="20"  y="60" width="112" height="46" rx="10" fill="#FBF7EF" stroke="#C9A876" stroke-width="1.5"/><text x="76"  y="80" >待支付</text><text x="76"  y="97" font-size="10" fill="#9A8265">pending_pay</text>
+    <rect x="172" y="60" width="112" height="46" rx="10" fill="#FBF7EF" stroke="#C9A876" stroke-width="1.5"/><text x="228" y="80" >已支付</text><text x="228" y="97" font-size="10" fill="#9A8265">paid</text>
+    <rect x="324" y="60" width="112" height="46" rx="10" fill="#F0E4CB" stroke="#6E5435" stroke-width="2"/><text x="380" y="80" >已截单</text><text x="380" y="97" font-size="10" fill="#9A8265">cut_off ⚓1</text>
+    <rect x="476" y="60" width="112" height="46" rx="10" fill="#FBF7EF" stroke="#C9A876" stroke-width="1.5"/><text x="532" y="80" >已出餐</text><text x="532" y="97" font-size="10" fill="#9A8265">cooked</text>
+    <rect x="628" y="60" width="112" height="46" rx="10" fill="#FBF7EF" stroke="#C9A876" stroke-width="1.5"/><text x="684" y="80" >配送中</text><text x="684" y="97" font-size="10" fill="#9A8265">delivering</text>
+    <rect x="780" y="60" width="112" height="46" rx="10" fill="#FBF7EF" stroke="#C9A876" stroke-width="1.5"/><text x="836" y="80" >待取餐</text><text x="836" y="97" font-size="10" fill="#9A8265">delivered</text>
+    <rect x="700" y="180" width="112" height="46" rx="10" fill="#5B7C3A"/><text x="756" y="200" fill="#fff">已完成 ⚓2</text><text x="756" y="217" font-size="10" fill="#E8EFE0">completed</text>
+    <!-- refund branch -->
+    <rect x="20"  y="180" width="112" height="46" rx="10" fill="#FBF7EF" stroke="#C44536" stroke-width="1.5"/><text x="76" y="200" fill="#C44536">已取消</text><text x="76" y="217" font-size="10" fill="#9A8265">cancelled</text>
+    <rect x="290" y="180" width="126" height="46" rx="10" fill="#C44536"/><text x="353" y="200" fill="#fff">代退申请中</text><text x="353" y="217" font-size="10" fill="#F5D9D4">refund_applying</text>
+    <rect x="470" y="180" width="126" height="46" rx="10" fill="#FBF7EF" stroke="#C44536" stroke-width="1.5"/><text x="533" y="200" fill="#C44536">退款中</text><text x="533" y="217" font-size="10" fill="#9A8265">refunding</text>
+    <rect x="470" y="280" width="126" height="46" rx="10" fill="#FBF7EF" stroke="#C44536" stroke-width="1.5"/><text x="533" y="300" fill="#C44536">已退款</text><text x="533" y="317" font-size="10" fill="#9A8265">refunded</text>
+  </g>
+  <!-- main arrows -->
+  <g stroke="#9A8265" stroke-width="1.5" fill="none">
+    <line x1="132" y1="83" x2="168" y2="83" marker-end="url(#ar)"/>
+    <line x1="284" y1="83" x2="320" y2="83" marker-end="url(#ar)"/>
+    <line x1="436" y1="83" x2="472" y2="83" marker-end="url(#ar)"/>
+    <line x1="588" y1="83" x2="624" y2="83" marker-end="url(#ar)"/>
+    <line x1="740" y1="83" x2="776" y2="83" marker-end="url(#ar)"/>
+    <path d="M 836 106 L 836 203 L 816 203" marker-end="url(#ar)"/>
+    <!-- refund arrows -->
+    <line x1="76" y1="106" x2="76" y2="176" marker-end="url(#arw)" stroke-dasharray="4 3"/>
+    <path d="M 380 106 L 380 176" marker-end="url(#arw)" stroke-dasharray="4 3"/>
+    <line x1="416" y1="203" x2="466" y2="203" marker-end="url(#arw)"/>
+    <line x1="533" y1="226" x2="533" y2="276" marker-end="url(#arw)"/>
+    <path d="M 470 280 L 400 280 L 400 230" marker-end="url(#arw)" stroke-dasharray="4 3"/>
+  </g>
+  <!-- labels -->
+  <g font-size="11" fill="#9A8265" text-anchor="middle">
+    <text x="150" y="52">支付/30min超时</text>
+    <text x="352" y="52">T-1 24:00 截单</text>
+    <text x="504" y="52">供应商确认出餐</text>
+    <text x="656" y="52">货拉拉发出</text>
+    <text x="808" y="52">11:30 送达</text>
+    <text x="880" y="165">团长确认 或</text>
+    <text x="880" y="179">14:00 自动确认</text>
+    <text x="76" y="145">截单前自助取消</text>
+    <text x="380" y="145" fill="#C44536">截单后 · 团长代退申请</text>
+    <text x="447" y="192">后台审批通过</text>
+    <text x="560" y="252">原路退款</text>
+    <text x="408" y="272">驳回 → 回原状态</text>
+  </g>
+  <!-- cutoff actions box -->
+  <g font-size="11.5">
+    <rect x="20" y="330" width="440" height="86" rx="10" fill="#F0E4CB"/>
+    <text x="36" y="352" fill="#6E5435" font-weight="bold" font-size="13">⏰ 截单瞬间（T-1 24:00）系统动作 · cutoﬀ-task</text>
+    <text x="36" y="372" fill="#6E5435">① 待支付订单 → cancelled（自动退款）② paid → cut_off 锁定</text>
+    <text x="36" y="390" fill="#6E5435">③ 按菜品汇总份数 → 推 4 家供应商备料量 ④ 关闭下单接口</text>
+    <text x="36" y="408" fill="#9A8265">前端倒计时仅展示，以下单接口 can_order=false 为准</text>
+  </g>
+  <g font-size="11.5">
+    <rect x="480" y="330" width="480" height="86" rx="10" fill="#FBF7EF" stroke="#C9A876"/>
+    <text x="496" y="352" fill="#6E5435" font-weight="bold" font-size="13">⚖️ 冲突裁决：团长手动确认 vs T 日 14:00 自动确认</text>
+    <text x="496" y="372" fill="#6E5435">以「先到者」为准：手动确认即时完成；未确认者 14:00 兜底</text>
+    <text x="496" y="390" fill="#6E5435">两路均为 completed 终态，佣金只结算一次（commission 写入幂等）</text>
+    <text x="496" y="408" fill="#9A8265">系统不依赖团长配合（L4 兜底不变）</text>
+  </g>
+</svg>
+</div>
+
+<div class="card">
+  <p style="font-weight:bold;">三端状态映射（用户 5 态 / 团长 6 态 / 后台 8 态 → 同一状态机，仅视图聚合不同）</p>
+  <table>
+    <tr><th>状态机（ER · ab_order.status）</th><th>用户端视图（5 态）</th><th>团长端视图（6 态）</th><th>后台视图（8 态）</th><th>触发者 / 时点</th></tr>
+    <tr><td><code>pending_pay</code></td><td>待支付</td><td>待支付（催促）</td><td>待支付</td><td>系统 · 30min 超时取消</td></tr>
+    <tr><td><code>paid</code></td><td>已支付·待出餐</td><td>已订（汇总份数）</td><td>已支付</td><td>微信支付回调</td></tr>
+    <tr><td><code>cut_off → cooked → delivering</code></td><td>配送中（合并展示）</td><td>明日预订 / 配送中</td><td>已截单 / 已出餐 / 配送中（3 态）</td><td>cutoff-task / 商家确认 / 发车记录</td></tr>
+    <tr><td><code>delivered</code></td><td>待取餐</td><td>今日取餐（11:30 推送）</td><td>已送达</td><td>货拉拉送达 · 运营记录</td></tr>
+    <tr><td><code>completed</code></td><td>已完成</td><td>已取餐分发（佣金预估→实结）</td><td>已完成</td><td>团长手动 或 14:00 自动（先到为准）</td></tr>
+    <tr><td><code>cancelled</code></td><td>已取消</td><td>异常（系统自动退）</td><td>已取消</td><td>用户自助 / 待支付超时</td></tr>
+    <tr><td><code>refund_applying</code></td><td>—（仅显示联系团长）</td><td>代退申请中（M12-04）</td><td>待审批（M32-05）</td><td>团长发起 · C6 第②段</td></tr>
+    <tr><td><code>refunding → refunded</code></td><td>退款中 / 已退款</td><td>已处理（状态回显）</td><td>退款中 / 已退款（含分账回退）</td><td>后台审批通过 · C6 第③段</td></tr>
+  </table>
+  <div class="note">验收口径：用户「下单 → 截单 → 出餐 → 送达 → 取餐确认 → 分账」任意路径在原型 v4.8.0 中可走完全程；截单后退款的 C6 三段式已在用户端（P7 提示不可自助退）、团长端（P13 发起代退申请 + P14 状态回显）、后台（P31 审批通过退款）三处闭环演示。</div>
+</div>
+
+<h2><span class="no">三</span>A · MVP 功能取舍清单（88 人天收敛）</h2>
+<p class="sub">原则：一个办公楼先跑通闭环；供给侧（团长/供应商）体验 > 平台自动化；负债类与合规重的功能后置。</p>
+<div class="card">
+  <table>
+    <tr><th>范围</th><th>功能</th><th>裁决</th><th>理由 / 替代方案</th></tr>
+    <tr><td rowspan="4"><span class="pill p-must">MVP 必做</span></td><td>用户端下单 + 微信支付（M01–M03）</td><td>保留</td><td>主链路核心，10 人天</td></tr>
+    <tr><td>团长端（M11–M15，M15-03 改勾选协议）</td><td>保留</td><td>供给侧关键，5 人天；C3 提交即生效已降低复杂度</td></tr>
+    <tr><td>后台：套餐编排 / 订单中心（含退款审批）/ 团长与供应商管理 / 资金总览</td><td>保留</td><td>无后台则无法截单与对账；12 人天</td></tr>
+    <tr><td>供应商出餐确认</td><td>极简保留</td><td>仅「明日备料量通知 + 一键确认出餐」两个页面</td></tr>
+    <tr><td rowspan="3"><span class="pill p-cut">MVP 可砍</span></td><td>商家端 Web 完整后台（M21–M24 全量）</td><td>砍 5/8 人天</td><td>备料量改为企业微信群机器人推送 + Excel 附件；确认出餐用轻量 H5；正式 Web 后台移二期</td></tr>
+    <tr><td>余额账户（M04-02/03、M14-02/03/04、M35-04）</td><td>砍，二期</td><td>余额是平台负债（合规 + 对账成本高，PRD 风险表已列）；佣金 T+1 直接企业付款到零钱，不留存</td></tr>
+    <tr><td>发票管理（M23-03、M35-07）/ 提现审批（M35-08）</td><td>砍，二期</td><td>月结时代人工处理；佣金直接打款无需审批</td></tr>
+    <tr><td rowspan="2"><span class="pill p-p2">二期</span></td><td>微信支付分账 API（方案 A）</td><td>二期</td><td>MVP 用<strong>方案 B 人工月结</strong>（T+1 出分账报表，月底企业付款）——供应商免进分账白名单，启动最快；<code>ab_supplier_share</code> 表结构两种方案通用，切换无痛</td></tr>
+    <tr><td>CA 电子签 / 余额消费抵扣 / 数据留存分析（M36-04）</td><td>二期</td><td>对应 C3 裁决与合规节奏</td></tr>
+  </table>
+  <div class="note">砍项回收 ≈ 13–15 人天 → 实际 MVP ≈ 73–75 人天，5 人团队 AI 主导可压至 2.5 周。砍项均为「独立模块」，不伤主链路状态机。</div>
+</div>
+
+<h2><span class="no">四</span>D · 表结构评审意见 + 技术风险清单</h2>
+<div class="grid2">
+  <div class="card">
+    <p style="font-weight:bold;">表结构评审（ER v2.1 · 26 表）</p>
+    <table>
+      <tr><th>结论</th><th>说明</th></tr>
+      <tr><td><span class="pill p-ok">覆盖完整</span></td><td>下单→截单→出餐→配送→确认→分账→退款全链路均有承载表；C4 的 <code>ab_distribution_center</code> 已补（默认 4 个、字段化 rice_fee/pack_fee）</td></tr>
+      <tr><td><span class="pill p-must">缺 1 表</span></td><td>C2 升级门槛需「介绍 N 名转正团长」→ 建议补 <code>ab_leader_invite</code>（邀请人/被邀请人/状态/绑定时间），否则晋升条件无法审计</td></tr>
+      <tr><td><span class="pill p-ok">无冗余</span></td><td>25→26 表均单一职责；<code>meal_assignment.cutoff_at</code> 冗余合理（避免跨表截单锁）</td></tr>
+      <tr><td><span class="pill p-p2">已补字段</span></td><td><code>ab_refund</code> 补 C6 三段式（apply_source/approve_status）；<code>ab_team_leader</code> 补 level/agreed_at</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <p style="font-weight:bold;">关键技术风险与对策</p>
+    <table>
+      <tr><th>#</th><th>风险</th><th>对策</th></tr>
+      <tr><td>1</td><td>cutoff-task / auto-confirm 定时跑批漏跑、重复跑</td><td>幂等设计（状态机条件 UPDATE 影响行数为 0 即跳过）+ 每分钟补偿扫描（找回滞留在 paid>24h / delivered>14:00 的订单）+ 操作日志留痕</td></tr>
+      <tr><td>2</td><td>多集散中心并行数据一致性</td><td>每个「日期 × 楼群」分配唯一（uk 约束），份数快照在截单时冻结到 <code>ab_supplier_dish_daily.plan_quantity</code>；集散中心只读自己的行，无跨中心写冲突</td></tr>
+      <tr><td>3</td><td>反向分账（已分账后退款）</td><td>方案 B 人工月结下：T+1 报表标记「待回退」，从下次应分账金额中抵扣（原型 P32 已演示该口径）；方案 A 上线后走微信分账 return</td></tr>
+      <tr><td>4</td><td>RabbitMQ 必要性</td><td><strong>结论：MVP 不引入</strong>。日单量 ≤500，用 Redis 7（BullMQ 延迟队列）承载截单/确认/结算 3 个定时场景足够，省运维与 3–4 人天；消息量上来后二期再评估</td></tr>
+    </table>
+  </div>
+</div>
+
+<h2><span class="no">五</span>C · 设计 token 表（小程序 + Element Plus 双端适配）</h2>
+<div class="card">
+  <table>
+    <tr><th>类别</th><th>Token</th><th>值</th><th>用途 / Element Plus 映射</th></tr>
+    <tr><td rowspan="4">色彩</td><td><code>--color-bg</code></td><td><code>#F6F0E5</code></td><td>页面底色 / <code>--el-bg-color-page</code></td></tr>
+    <tr><td><code>--color-primary</code></td><td><code>#6E5435</code></td><td>主按钮 / <code>--el-color-primary</code></td></tr>
+    <tr><td><code>--color-accent</code></td><td><code>#C9A876</code></td><td>强调、金额 / <code>--el-color-primary-light-3</code></td></tr>
+    <tr><td>状态色</td><td>成功 <code>#5B7C3A</code> / 警告 <code>#C44536</code> / 信息 <code>#4A6FA5</code></td><td><code>--el-color-success / danger / info</code>（⚠️ 警告色用暖红而非默认橙，需覆盖）</td></tr>
+    <tr><td>字体</td><td><code>--font-kai</code></td><td><code>KaiTi, "Kaiti SC", "STKaiti", 楷体, serif</code></td><td>全端统一；降级链见下方</td></tr>
+    <tr><td rowspan="2">字号</td><td><code>--fs-body / --fs-title</code></td><td><code>14px / 18px</code></td><td>精简层级：正文 / 标题两级为主，辅注 12px</td></tr>
+    <tr><td><code>--fs-price</code></td><td><code>22px</code></td><td>仅价格使用</td></tr>
+    <tr><td rowspan="2">形状</td><td><code>--radius-card</code></td><td><code>14px</code></td><td>卡片 / <code>--el-border-radius-base: 14px</code> 全局覆盖</td></tr>
+    <tr><td><code>--spacing-unit</code></td><td><code>8px（×1/×2/×3 档）</code></td><td>间距只留三档，保持留白感</td></tr>
+  </table>
+  <div class="note"><strong>楷体真机降级方案（小程序不支持自定义字体文件的应对）</strong>：① 首选 <code>wx.loadFontFace()</code> 动态加载网络版楷体（COS 托管 woff2，≤2MB，首次缓存）；② 加载失败时走系统字体降级链：iOS 自带「Kaiti SC」、安卓多数无楷体 → 降级 serif（宋体系），标题字重加大弥补气质差；③ 价格/金额等关键数字建议用图片或 SVG 徽标兜底，避免双端观感分裂；④ 后台 Element Plus 无此限制，直接 font-family 生效。</div>
+</div>
+
+<h2><span class="no">六</span>C1–C9 回填台账</h2>
+<div class="card">
+  <table>
+    <tr><th>#</th><th>裁决</th><th>原型 v4.8.0</th><th>PRD v2.1</th><th>ER v2.1</th></tr>
+    <tr><td>C1</td><td>统一价 ¥25.80</td><td><span class="pill p-ok">原已一致</span></td><td>§2.4 + §4.1 线框图替换 28 元</td><td>seed <code>set_meal.default_price=25.80</code></td></tr>
+    <tr><td>C2</td><td>4 级佣金 8/9/10/12% + 升级门槛</td><td><span class="pill p-ok">原已一致</span></td><td>§2.4 + §2.5 + M15-02</td><td><code>ab_team_leader.level</code> + 4 条 rate 配置</td></tr>
+    <tr><td>C3</td><td>团长提交即生效，勾选协议，CA 二期</td><td><span class="pill p-ok">原已一致</span></td><td>M15-03 / M33-05 改写</td><td><code>signed_at→agreed_at</code> + <code>agree_version</code></td></tr>
+    <tr><td>C4</td><td>集散中心默认 4 个、表驱动可配置</td><td><span class="pill p-ok">P30 已自洽</span></td><td>M34-05 新增</td><td><span class="pill p-ok">新增 <code>ab_distribution_center</code>（26 表）</span></td></tr>
+    <tr><td>C5</td><td>三层术语分离，「巡礼之年」不作供应商名</td><td><span class="pill p-ok">11 处全部替换为「四季鲜蔬」</span></td><td>§0.1 术语表新增</td><td>—</td></tr>
+    <tr><td>C6</td><td>截单后退款三段式闭环</td><td><span class="pill p-ok">P13/P14 两段式改三段式 + 后台「审批通过退款」+ P32 反向分账口径一致</span></td><td>§2.4 / §5 状态机 / M12-04 / M32-05 / §6.5</td><td><code>ab_refund</code> 补 6 字段</td></tr>
+    <tr><td>C7</td><td>「4 角色 · 3 载体」</td><td><span class="pill p-ok">原已一致</span></td><td>§〇 + §三标题及全文</td><td>—</td></tr>
+    <tr><td>C8</td><td>P38 改「今日这盒 · 商家溯源」，去内部招商状态</td><td><span class="pill p-ok">原已改版</span></td><td>M01-04 正式收录</td><td>—</td></tr>
+    <tr><td>C9</td><td>集散中心 ¥5/份=米¥2+打包¥3，P31 笔误修正，供应商合计 ¥14.00</td><td><span class="pill p-ok">P31 修正（三味屋 ¥9→¥7.50，集散 ¥3.50→¥5.00）；P32 回退金额同步</span></td><td>§2.4 集散中心分账行</td><td>rice_fee/pack_fee 字段化 + seed</td></tr>
+  </table>
+  <div class="note small">附注：P38（C8）改版字段清单 = 展示：供应商名 / 资质照 / 评分 / 今日菜品 / 上架年份；不展示：合作状态、佣金、分账比例、备选清单、联系方式。法务《团长合作协议》简版文本到位后填入 <code>agree_version</code> 即可开发。</div>
+</div>
+
+</div>
+</body>
+</html>

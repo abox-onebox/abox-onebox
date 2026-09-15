@@ -1,0 +1,10 @@
+/**
+ * uni-app 会把本文件自动注入到每个组件的 <style lang="scss"> 中，
+ * 因此 token 变量在全项目可直接使用（无需逐个 @import）。
+ *
+ * ⚠️ 这里必须用 `@/` 别名，不能用相对路径 `./styles/tokens.scss`：
+ *    本文件内容会被**原样拼进每个组件**，相对路径届时会以「宿主文件」为基准解析，
+ *    结果就是 `Can't find stylesheet to import: ./styles/tokens.scss`（构建失败）。
+ *    别名由 @dcloudio/vite-plugin-uni 的 resolve.alias(`@` → src) 统一解析，与宿主位置无关。
+ */
+@import '@/styles/tokens.scss';

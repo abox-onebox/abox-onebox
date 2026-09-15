@@ -1,0 +1,19 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# 部分依赖需要执行 install/postinstall 脚本（下载或编译原生二进制 / 打补丁）。
+# pnpm 10+ 对「未获批准的构建脚本」策略不一致（10 默认拦截、12.4 实测放行），
+# 故这里显式列全本项目实际需要构建的包，避免换 pnpm 版本后原生依赖静默失效。
+# 关键：better-sqlite3 的原生二进制 = 本地 sqlite 模式的运行前提。
+onlyBuiltDependencies:
+  - better-sqlite3
+  - esbuild
+  - '@parcel/watcher'
+  - msgpackr-extract
+  - vue-demi
+  - vue-echarts
+  - core-js
+  - core-js-pure
+  - weapp-tailwindcss
+  - '@nestjs/core'

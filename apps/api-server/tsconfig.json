@@ -1,0 +1,20 @@
+{
+  "extends": "../../packages/tsconfig/nestjs.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    // ⚠️ rootDir/outDir 必须在本文件声明（相对本文件解析）。
+    // 若写在被 extends 的基座里，会被解析到 packages/tsconfig/ 下 → TS6059。
+    // 本 tsconfig 同时纳入 test/，故 rootDir 取 "."；构建用 tsconfig.build.json（rootDir: src）。
+    "rootDir": ".",
+    "outDir": "dist",
+    "paths": {
+      "@/*": ["src/*"]
+      // 注意：这里**不要**再给 @abox/* 配 paths 指到 packages 源码。
+      // 指向跨包源码会把它们拉进本项目的编译单元，触发 TS6059（不在 rootDir 下），
+      // 使 nest build / typecheck 失败。改为走 node_modules 包解析 → dist/*.d.ts。
+      // 前置步骤：先运行 `pnpm build:shared`。
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

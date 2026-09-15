@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABox 一盒 · 开发前准备计划 v1.0</title>
+<style>
+  :root {
+    --bg-cream: #F6F0E5;
+    --bg-cream-light: #FBF7EF;
+    --bg-cream-dark: #EDE3D0;
+    --text-brown: #6E5435;
+    --text-brown-light: #A08A6A;
+    --accent-gold: #C9A876;
+    --accent-gold-dark: #9A7B4F;
+    --border-brown: #E6D9C0;
+    --ok: #5B7C3A;
+    --severe: #C44536;
+    --info: #4A6FA5;
+    --font-kai: "KaiTi", "STKaiti", "楷体", "Kaiti SC", serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font-kai);
+    background: var(--bg-cream);
+    color: var(--text-brown);
+    line-height: 1.78;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 0 60px;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 0 20px; }
+
+  /* ── 头部 ── */
+  .hero {
+    background: linear-gradient(135deg, #6E5435 0%, #9A7B4F 100%);
+    color: var(--bg-cream);
+    padding: 46px 20px 38px;
+    text-align: center;
+    margin-bottom: 26px;
+  }
+  .hero h1 { font-size: 27px; letter-spacing: 3px; font-weight: bold; }
+  .hero .sub { font-size: 14px; opacity: .88; margin-top: 11px; letter-spacing: 1px; }
+  .hero .tag {
+    display: inline-block; margin-top: 16px; padding: 4px 18px;
+    border: 1px solid rgba(246,240,229,.5); border-radius: 20px;
+    font-size: 12px; letter-spacing: 2px; opacity: .92;
+  }
+
+  /* ── 卡片 ── */
+  .card {
+    background: var(--bg-cream-light);
+    border: 1px solid var(--border-brown);
+    border-radius: 14px;
+    padding: 22px 26px;
+    margin: 16px 0;
+    box-shadow: 0 2px 8px rgba(110,84,53,.06), 0 8px 24px rgba(110,84,53,.05);
+  }
+  .card h2 {
+    font-size: 17.5px; letter-spacing: 1.5px; margin-bottom: 13px;
+    padding-left: 12px; border-left: 4px solid var(--accent-gold);
+  }
+  .card h3 { font-size: 15px; margin: 16px 0 8px; letter-spacing: .5px; }
+  .card p { font-size: 14px; margin: 7px 0; }
+  .card p.lead { font-size: 14.5px; }
+  .card strong { color: var(--accent-gold-dark); }
+
+  .metrics { display: flex; gap: 12px; margin: 16px 0 4px; flex-wrap: wrap; }
+  .metric {
+    flex: 1; min-width: 118px; text-align: center;
+    background: var(--bg-cream); border: 1px solid var(--border-brown);
+    border-radius: 12px; padding: 14px 8px;
+  }
+  .metric .num { font-size: 25px; font-weight: bold; color: var(--accent-gold-dark); }
+  .metric .lbl { font-size: 12px; color: var(--text-brown-light); margin-top: 2px; }
+
+  .notice {
+    background: #F3EEDF; border: 1px solid #E0D3B4; border-radius: 10px;
+    padding: 12px 16px; font-size: 13.5px; margin: 14px 0; color: #7A5F35;
+  }
+  .ok-note {
+    background: #EAF0E2; border: 1px solid #C9D8B6; border-radius: 10px;
+    padding: 12px 16px; font-size: 13.5px; margin: 14px 0; color: #4C6B31;
+  }
+
+  /* ── 表格 ── */
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 10px 0; }
+  th, td { border: 1px solid var(--border-brown); padding: 9px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-cream-dark); color: var(--text-brown); letter-spacing: 1px; white-space: nowrap; }
+  tbody tr:nth-child(even) { background: rgba(237,227,208,.32); }
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 10px;
+    font-size: 12px; font-weight: bold; white-space: nowrap;
+  }
+  .b-ok { background: #E4EDD8; color: var(--ok); }
+  .b-warn { background: #F5EBD8; color: #B8863B; }
+  .b-no { background: #F7E0DC; color: var(--severe); }
+  .loc { color: var(--text-brown-light); font-size: 12.5px; }
+
+  /* ── 阶段卡 ── */
+  .stage { position: relative; }
+  .stage .head {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 10px; padding-left: 12px; border-left: 4px solid var(--accent-gold);
+  }
+  .stage .head h2 { border: none; padding: 0; margin: 0; }
+  .stage .head .meta { font-size: 12.5px; color: var(--text-brown-light); letter-spacing: 1px; }
+  .stage .goal {
+    background: var(--bg-cream); border: 1px dashed var(--accent-gold);
+    border-radius: 10px; padding: 10px 14px; font-size: 13.8px; margin: 10px 0 4px;
+  }
+  .stage .goal b { color: var(--accent-gold-dark); }
+
+  ol.tasks { padding-left: 0; list-style: none; counter-reset: t; font-size: 13.8px; margin-top: 6px; }
+  ol.tasks > li {
+    position: relative; padding-left: 30px; margin: 9px 0; counter-increment: t;
+  }
+  ol.tasks > li::before {
+    content: counter(t); position: absolute; left: 0; top: 2px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--accent-gold); color: #fff; font-size: 11.5px; font-weight: bold;
+    display: flex; align-items: center; justify-content: center;
+  }
+  ol.tasks > li b { color: var(--accent-gold-dark); }
+  ol.tasks ul { margin: 5px 0 0 2px; padding-left: 16px; }
+  ol.tasks ul li { margin: 3px 0; font-size: 13px; color: #7C6748; }
+
+  .deliv {
+    margin-top: 12px; font-size: 13.2px;
+    background: #F2F6EA; border-left: 3px solid var(--ok);
+    border-radius: 0 8px 8px 0; padding: 9px 14px;
+  }
+  .deliv b { color: var(--ok); }
+  .accept {
+    margin-top: 8px; font-size: 13.2px;
+    background: #EDF1F7; border-left: 3px solid var(--info);
+    border-radius: 0 8px 8px 0; padding: 9px 14px;
+  }
+  .accept b { color: var(--info); }
+
+  /* ── 甘特图 ── */
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12.5px; margin: 4px 0 12px; color: var(--text-brown-light); }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .legend i { width: 22px; height: 11px; border-radius: 3px; display: inline-block; }
+  .lg-prep { background: var(--accent-gold); }
+  .lg-dev { background: var(--accent-gold-dark); }
+  .lg-gate { background: var(--text-brown); }
+
+  table.gantt { table-layout: fixed; font-size: 12.5px; }
+  table.gantt th:first-child, table.gantt td:first-child { width: 236px; text-align: left; }
+  table.gantt thead th { text-align: center; padding: 7px 2px; letter-spacing: 0; font-size: 12px; }
+  table.gantt tbody td { padding: 0; height: 32px; border: 1px solid #EADFC9; }
+  table.gantt tbody td:first-child {
+    font-size: 12.5px; padding: 6px 9px; background: transparent; line-height: 1.45;
+  }
+  td.g-prep { background: var(--accent-gold); }
+  td.g-dev { background: var(--accent-gold-dark); }
+  td.g-gate { background: var(--text-brown); }
+  .gantt .gate-lbl { color: var(--text-brown); font-weight: bold; }
+
+  .footer {
+    text-align: center; color: var(--text-brown-light);
+    font-size: 12px; margin-top: 34px; letter-spacing: 1px;
+  }
+
+  @media (max-width: 680px) {
+    .hero h1 { font-size: 20px; }
+    .card { padding: 16px; }
+    table { font-size: 12.5px; }
+    th, td { padding: 7px 6px; }
+    table.gantt th:first-child, table.gantt td:first-child { width: 128px; font-size: 11.5px; }
+    table.gantt thead th { font-size: 10.5px; }
+  }
+  @media print {
+    body { background: #fff; }
+    .card { box-shadow: none; break-inside: avoid; }
+    .hero { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    td.g-prep, td.g-dev, td.g-gate, th, .badge { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>ABox 一盒 · 开发前准备计划</h1>
+  <div class="sub">从「可点击原型」到「可开工的工程基线」· 四阶段推进路线</div>
+  <div class="tag">v1.0 · 2026-09-14 · 准备期 2 周 ＋ 开发 5–6 周 ＋ 联调上线 1–2 周</div>
+</div>
+
+<div class="wrap">
+
+  <div class="card">
+    <h2>一、一页速览（结论先行）</h2>
+    <p class="lead">业务口径已经收敛、技术栈与数据模型已经定型、三项「长周期」合规资源已经就绪 —— <strong>项目已具备开工条件</strong>。准备期只需 <strong>2 周</strong>，集中结清三笔「文档账」：<strong>文档版本归一、接口契约定稿、工程骨架可运行</strong>。这三件事做完，开发专家团即可在无歧义的基线上直接开工。</p>
+    <div class="metrics">
+      <div class="metric"><div class="num">2 周</div><div class="lbl">准备期（10 个工作日）</div></div>
+      <div class="metric"><div class="num">4</div><div class="lbl">推进阶段</div></div>
+      <div class="metric"><div class="num">3 项</div><div class="lbl">合规资源已就绪</div></div>
+      <div class="metric"><div class="num">≈15</div><div class="lbl">关键交付物</div></div>
+    </div>
+    <div class="ok-note">✅ 长周期卡点已清：<strong>微信小程序认证、微信支付商户号、域名与 ICP 备案</strong>均已就绪 —— 准备期从「办证 4 周」压缩为「核对对接 1 周」。剩余待开通项仅云资源（服务器 / 数据库 / 对象存储）。</div>
+    <div class="notice">📌 本计划的使用方式：按 <strong>阶段一 → 二 → 三 / 四（并行）</strong> 推进，全部交付物齐备后召开一次「开发启动评审」，签署《开发启动评审纪要》并冻结基线 tag，即正式引入开发专家团进入编码阶段。</div>
+  </div>
+
+  <div class="card">
+    <h2>二、起点盘点：已具备什么，还缺什么</h2>
+    <table>
+      <thead>
+        <tr><th>资产 / 事项</th><th>当前现状</th><th>准备期动作</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>可点击原型 v4.9.1（37 页）</td><td><span class="badge b-ok">已就绪</span> 审查报告 29 项全整改、已部署</td><td>冻结为「v1.0 基线」快照</td></tr>
+        <tr><td>PRD（正文已回写 C1–C9）</td><td><span class="badge b-warn">待归一</span> 正文实为 v2.1，文件名仍写 v2.0.md</td><td>改名归档为 PRD v2.1</td></tr>
+        <tr><td>ER 设计（26 张表）</td><td><span class="badge b-warn">待归一</span> 同名 v2.0.md；建议补 1 张表</td><td>改名归档为 ER v2.1；补 <span class="loc">ab_leader_invite</span></td></tr>
+        <tr><td>MVP 优化交接包 v1.1</td><td><span class="badge b-ok">已就绪</span> 锁定项 + 裁决口径定稿</td><td>作为唯一口径来源，不再改动</td></tr>
+        <tr><td>项目目录结构 v1.0</td><td><span class="badge b-no">已过期</span> 仍含「楼长端」「T-1 20:00 截单」「5 端」</td><td>升级为 v2.0（对齐 4 角色·3 载体）</td></tr>
+        <tr><td>API 接口规范</td><td><span class="badge b-no">缺失</span> 目录中规划但实际未产出</td><td>阶段二产出 v1.0</td></tr>
+        <tr><td>设计 token 规范</td><td><span class="badge b-warn">散落</span> 仅存于《执行报告》HTML 内</td><td>阶段一独立成文 v1.0</td></tr>
+        <tr><td>《团长合作协议》简版</td><td><span class="badge b-no">待法务</span> 用于注册页勾选（C3）</td><td>阶段三补齐（1 页内）</td></tr>
+        <tr><td>账号与合规资源</td><td><span class="badge b-ok">3 项就绪</span> 云资源待开通</td><td>阶段三核对 + 开通云资源</td></tr>
+        <tr><td>工程脚手架与 CI</td><td><span class="badge b-no">未搭建</span> 仓库 / 环境 / 规范均无</td><td>阶段四产出可运行仓库</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>三、总体路线图（时间安排）</h2>
+    <div class="legend">
+      <span><i class="lg-prep"></i>准备期</span>
+      <span><i class="lg-dev"></i>开发期</span>
+      <span><i class="lg-gate"></i>关键评审 / 上线</span>
+    </div>
+    <table class="gantt">
+      <thead>
+        <tr>
+          <th>阶段 / 里程碑</th>
+          <th>W1</th><th>W2</th><th>W3</th><th>W4</th><th>W5</th>
+          <th>W6</th><th>W7</th><th>W8</th><th>W9</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>阶段一 · 口径与文档就位</td>
+          <td class="g-prep"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+        </tr>
+        <tr>
+          <td>阶段二 · 接口与技术设计定稿</td>
+          <td class="g-prep"></td><td class="g-prep"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+        </tr>
+        <tr>
+          <td>阶段三 · 账号 / 合规 / 外部对接（并行）</td>
+          <td class="g-prep"></td><td class="g-prep"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+        </tr>
+        <tr>
+          <td>阶段四 · 工程基建与协作机制</td>
+          <td></td><td class="g-prep"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+        </tr>
+        <tr>
+          <td class="gate-lbl">★ 开发启动评审 · 冻结基线</td>
+          <td></td><td class="g-gate"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+        </tr>
+        <tr>
+          <td>开发 M1 · 骨架与基建验证</td>
+          <td></td><td></td><td class="g-dev"></td><td></td><td></td><td></td><td></td><td></td><td></td>
+        </tr>
+        <tr>
+          <td>开发 M2 · 用户 ＋ 团长主链路</td>
+          <td></td><td></td><td></td><td class="g-dev"></td><td class="g-dev"></td><td></td><td></td><td></td><td></td>
+        </tr>
+        <tr>
+          <td>开发 M3 · 运营后台与财务结算</td>
+          <td></td><td></td><td></td><td></td><td class="g-dev"></td><td class="g-dev"></td><td></td><td></td><td></td>
+        </tr>
+        <tr>
+          <td>开发 M4 · 商家端 ＋ 分账跑批</td>
+          <td></td><td></td><td></td><td></td><td></td><td></td><td class="g-dev"></td><td></td><td></td>
+        </tr>
+        <tr>
+          <td>开发 M5 · 联调 / 灰度 / 缺陷收敛</td>
+          <td></td><td></td><td></td><td></td><td></td><td></td><td class="g-dev"></td><td class="g-dev"></td><td></td>
+        </tr>
+        <tr>
+          <td class="gate-lbl">★ 提审上线（用户本人操作）</td>
+          <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td class="g-gate"></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="loc">注：W1–W2 为准备期（本计划核心）；W3–W9 为开发与上线阶段，其里程碑拆分见文末附录，仅作衔接参考。</p>
+  </div>
+
+  <div class="card stage">
+    <div class="head">
+      <h2>四、阶段一 · 口径与文档就位</h2>
+      <span class="meta">第 1 周 · D1–D3 · 约 3 个工作日</span>
+    </div>
+    <div class="goal"><b>目标</b>：让全套设计文档与原型口径 100% 一致，形成开发阶段唯一的「事实来源」（Single Source of Truth），杜绝「文档说 A、原型做 B」的返工。</div>
+    <ol class="tasks">
+      <li><b>文档版本归一</b>：PRD / ER 文件由 <span class="loc">v2.0.md</span> 改名为 <span class="loc">v2.1.md</span>，并修正文档信息表中的版本号与变更记录。</li>
+      <li><b>目录结构升级 v1.0 → v2.0</b>：删除「楼长端」目录（L2 已定无楼长）、截单时间 <span class="loc">T-1 20:00</span> 改为 <span class="loc">T-1 24:00</span>、口径统一为「4 角色 · 3 载体」、增补 P38「今日这盒」与集散中心配置相关结构。</li>
+      <li><b>产出《设计 token 规范 v1.0》</b>：把《执行报告》中散落的 token 表独立成文
+        <ul>
+          <li>色彩（米色 / 暖棕 / 金棕 + 三状态色）、字阶、间距、圆角、阴影</li>
+          <li>与 Element Plus 后台的变量映射表（一套 token 两端复用）</li>
+          <li>楷体在真机上的降级方案（<span class="loc">wx.loadFontFace</span> → 系统楷体族 → serif）</li>
+        </ul>
+      </li>
+      <li><b>回填 P38 字段清单</b>至 PRD，正式收口 C8 定位（只展示本餐 4–5 家 + 资质 / 评分 / 今日菜品）。</li>
+      <li><b>冻结「v1.0 基线」</b>：全套文档 + 原型打快照（记录目录 hash 或 git tag），此后任何变更一律走变更流程。</li>
+    </ol>
+    <div class="deliv"><b>关键交付物</b>：PRD v2.1（归档）· ER v2.1（归档）· 项目目录结构 v2.0 · 设计 token 规范 v1.0 · 基线冻结清单</div>
+    <div class="accept"><b>验收标准</b>：以《审查报告 29 项清单》做一次回归比对，文档与原型 <strong>0 冲突</strong>。</div>
+  </div>
+
+  <div class="card stage">
+    <div class="head">
+      <h2>五、阶段二 · 接口与技术设计定稿</h2>
+      <span class="meta">第 1 周末 – 第 2 周初 · D3–D6 · 约 3–4 个工作日</span>
+    </div>
+    <div class="goal"><b>目标</b>：让前端有「契约」、后端有「表」—— 这是前后端能<strong>并行开工</strong>的前提。</div>
+    <ol class="tasks">
+      <li><b>产出《API 接口规范 v1.0》</b>：按 3 载体分域（小程序 / 供应商 Web / 运营后台），统一响应结构、鉴权（小程序 JWT + wx-signature、后台 JWT + RBAC）、分页、错误码、幂等键。</li>
+      <li><b>订单状态机定稿</b>：用户 5 态 ↔ 团长 6 态 ↔ 后台 8 态三端映射表 ＋ 全链路状态流转图；明确「截单瞬间系统做什么」与「手动确认 / 自动确认冲突时先到为准」。</li>
+      <li><b>表结构评审（26 → 27 张）</b>：逐张过一遍；补 <span class="loc">ab_leader_invite</span> 表支撑 C2 晋级审计；复核订单按月分区、<span class="loc">deleted_at</span> 软删除、<span class="loc">version</span> 乐观锁。</li>
+      <li><b>关键技术专项评审</b>（对应交接包 D 方向）
+        <ul>
+          <li>定时任务补偿与重试：T-1 24:00 截单、T 日 14:00 自动确认、T+1 02:00 分账</li>
+          <li>多集散中心并行配送的数据一致性</li>
+          <li>「反向分账」：已分账后发生退款如何回退</li>
+          <li>队列选型结论落地 —— MVP 用 Redis + BullMQ，<strong>不引入 RabbitMQ</strong></li>
+        </ul>
+      </li>
+      <li><b>数据字典 ＋ 种子数据清单</b>：4 供应商 / 6 备选 / 菜品与成本价 / 4 集散中心（米 ¥2 + 打包 ¥3）/ 12 栋楼 / 5 楼群 / 14 位团长 / 4 级佣金 / 统一价 ¥25.80。</li>
+    </ol>
+    <div class="deliv"><b>关键交付物</b>：API 接口规范 v1.0 · 订单状态机与全链路流转图 v1.0 · 表结构评审意见 v1.0 · 种子数据清单 v1.0</div>
+    <div class="accept"><b>验收标准</b>：接口覆盖 PRD §3.1–3.4 全部 M 编号功能；每一张表都能追溯到具体接口。</div>
+  </div>
+
+  <div class="card stage">
+    <div class="head">
+      <h2>六、阶段三 · 账号、合规与外部对接（并行）</h2>
+      <span class="meta">第 1 周启动 · 核对 1–2 天 · 与阶段一 / 二并行</span>
+    </div>
+    <div class="goal"><b>目标</b>：把「卡上线」的外部依赖全部打通。三项长周期资源已就绪，本阶段重点是<strong>核对、归档与联调准备</strong>。</div>
+    <ol class="tasks">
+      <li><b>小程序侧</b>：AppID / AppSecret 归档；类目确认（餐饮 → <strong>热食类制售</strong>，需《食品经营许可证》）；服务器域名白名单登记（request / uploadFile / downloadFile / socket）；订阅消息模板申请（下单成功 / 出餐 / 取餐 / 退款结果）。</li>
+      <li><b>微信支付侧</b>：商户号与小程序关联；JSAPI 支付开通；退款 API；<strong>灵活用工平台开户</strong>（团长佣金代发 + 个税代扣 · C11；供应商 / 集散中心走人工对公转账·日结，<strong>不需要分账、也不再需要「商家转账到零钱」</strong>）；APIv3 密钥与证书归档（<span class="loc">apiclient_key.pem</span> / 平台证书）。</li>
+      <li><b>云资源开通</b>：服务器（先 Docker 单机，预留 K8s）、MySQL 8 实例、Redis 7、COS 存储桶 + CDN、域名解析与 HTTPS 证书。</li>
+      <li><b>资质与法务</b>：《食品经营许可证》；<strong>《团长合作协议》简版</strong>（1 页内，注册页勾选用）；隐私政策 ＋ 用户协议。</li>
+      <li><b>密钥与账号交接清单</b>：所有密钥统一归档到保管位置，形成《账号资源与密钥清单》，避免散落在个人聊天记录里。</li>
+    </ol>
+    <div class="deliv"><b>关键交付物</b>：账号资源与密钥清单 · 域名白名单登记表 · 支付产品开通确认 · 资质文件包 · 协议文本（团长 / 隐私 / 用户）</div>
+    <div class="accept"><b>验收标准</b>：能跑通「小程序登录 → 支付下单 → 支付回调 → 分账 / 提现」的<strong>最小链路验证</strong>（沙箱或正式环境）。</div>
+  </div>
+
+  <div class="card stage">
+    <div class="head">
+      <h2>七、阶段四 · 工程基建与协作机制</h2>
+      <span class="meta">第 2 周 · D6–D10 · 约 4–5 个工作日</span>
+    </div>
+    <div class="goal"><b>目标</b>：让开发专家团「代码拉下来就能跑」—— 一条命令起环境，一份规范无争议。</div>
+    <ol class="tasks">
+      <li><b>Monorepo 脚手架</b>：pnpm workspaces 初始化；<span class="loc">apps/miniprogram</span>（uni-app Vue3 + Vite + TS）、<span class="loc">apps/admin-web</span>（Vue3 + Element Plus）、<span class="loc">apps/api-server</span>（NestJS）、<span class="loc">packages/</span>（shared-types / shared-utils / eslint-config / tsconfig）。</li>
+      <li><b>本地环境</b>：<span class="loc">docker-compose.yml</span>（MySQL 8 / Redis 7）、<span class="loc">.env.example</span>、<span class="loc">scripts/setup.sh</span> 一键初始化、数据库迁移与种子脚本。</li>
+      <li><b>工程规范</b>：ESLint / Prettier / commitlint / husky；分支策略 <span class="loc">main / develop / feature/*</span>；提交规范（Conventional Commits）；Code Review 流程。</li>
+      <li><b>CI/CD</b>：Actions 流水线（lint + test + build）；测试框架落地（Jest 单测 ＋ supertest e2e ＋ uni-automator）。</li>
+      <li><b>协作机制</b>：双周迭代节奏；需求变更流程（一律先回写文档 + 记变更）；验收 SOP；问题跟踪看板；文档库结构（<span class="loc">docs/</span>）。</li>
+      <li><b>开发里程碑计划</b>：把 5–6 周开发切分为 M1–M5（见文末附录）。</li>
+    </ol>
+    <div class="deliv"><b>关键交付物</b>：可运行仓库 <span class="loc">abox-onebox</span> · <span class="loc">setup.sh</span> 一键起环境 · CI 配置 · 协作规范 v1.0 · 开发里程碑计划</div>
+    <div class="accept"><b>验收标准</b>：新人在 30 分钟内跑起本地全栈；CI 首次全绿。</div>
+  </div>
+
+  <div class="card">
+    <h2>八、关键交付物总表</h2>
+    <table>
+      <thead>
+        <tr><th>#</th><th>交付物</th><th>所属阶段</th><th>完成时点</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>PRD v2.1（归档版）</td><td>阶段一</td><td>D3</td></tr>
+        <tr><td>2</td><td>ER v2.1（归档版，27 张表）</td><td>阶段一</td><td>D3</td></tr>
+        <tr><td>3</td><td>项目目录结构 v2.0</td><td>阶段一</td><td>D3</td></tr>
+        <tr><td>4</td><td>设计 token 规范 v1.0</td><td>阶段一</td><td>D3</td></tr>
+        <tr><td>5</td><td>API 接口规范 v1.0</td><td>阶段二</td><td>D6</td></tr>
+        <tr><td>6</td><td>订单状态机与全链路流转图 v1.0</td><td>阶段二</td><td>D6</td></tr>
+        <tr><td>7</td><td>表结构评审意见 v1.0</td><td>阶段二</td><td>D6</td></tr>
+        <tr><td>8</td><td>数据字典 ＋ 种子数据清单 v1.0</td><td>阶段二</td><td>D6</td></tr>
+        <tr><td>9</td><td>账号资源与密钥清单</td><td>阶段三</td><td>D8</td></tr>
+        <tr><td>10</td><td>域名白名单登记表</td><td>阶段三</td><td>D8</td></tr>
+        <tr><td>11</td><td>资质文件包 ＋ 协议文本（团长 / 隐私 / 用户）</td><td>阶段三（法务）</td><td>D8</td></tr>
+        <tr><td>12</td><td>可运行仓库 abox-onebox ＋ setup.sh</td><td>阶段四</td><td>D10</td></tr>
+        <tr><td>13</td><td>CI 配置 ＋ 协作规范 v1.0</td><td>阶段四</td><td>D10</td></tr>
+        <tr><td>14</td><td>开发里程碑计划 M1–M5</td><td>阶段四</td><td>D10</td></tr>
+        <tr><td>15</td><td>《开发启动评审纪要》</td><td>收尾</td><td>D10</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>九、风险与依赖</h2>
+    <table>
+      <thead>
+        <tr><th>风险 / 依赖</th><th>影响</th><th>应对</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>《团长合作协议》法务出稿延迟</td><td>C3 注册勾选无法上线</td><td>先用简版条款占位，最迟不晚于 M2 交付；CA 电子签列入二期</td></tr>
+        <tr><td>小程序类目 / 资质（热食类制售）审核</td><td>影响提审节奏</td><td>阶段三立即确认类目与所需证件，预留补件时间</td></tr>
+        <tr><td>人工对公转账依赖财务配合</td><td>供应商 / 集散中心结算需人工操作，可能积压</td><td>结算周期已定案 <b>日结</b>（C11）；系统自动生成应付结算单，减轻人工对账负担</td></tr>
+        <tr><td>云资源尚未开通</td><td>阻塞部署与联调</td><td>阶段三优先开通，与阶段一 / 二并行，不等</td></tr>
+        <tr><td>文档与原型再次分叉</td><td>开发阶段返工</td><td>基线冻结 ＋ 变更流程；改文档必须同步原型</td></tr>
+        <tr><td>多方 / 多会话同改同一文件</td><td>改动互相覆盖（历史上已发生）</td><td>统一走 git 分支 ＋ PR，禁止直接改线上文件</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>十、启动评审与交接（引入开发专家团）</h2>
+    <p class="lead">准备期的终点不是「文档写完」，而是<strong>一次正式的评审与冻结</strong>。建议在第 2 周末（D10）安排一次约 1 小时的启动评审：</p>
+    <ol class="tasks">
+      <li><b>逐项核对</b>四阶段的 15 项交付物，确认无遗漏、无「待办占位」。</li>
+      <li><b>冻结基线</b>：打上 <span class="loc">v1.0-baseline</span> tag，作为开发阶段唯一的输入版本。</li>
+      <li><b>签署纪要</b>：产出《开发启动评审纪要》，明确开发范围、里程碑、验收标准与变更流程。</li>
+      <li><b>引入开发专家团</b>：以基线文档为唯一输入启动编码，按 M1–M5 推进。</li>
+    </ol>
+    <div class="ok-note">✅ 完成以上四步，「准备期」正式收官，「开发期」正式开启。此时专家团拿到的是：<strong>冻结的 PRD ＋ 定稿的接口规范 ＋ 定型的表结构 ＋ 可运行仓库 ＋ 就绪的账号资源</strong> —— 无需再回头补设计，也不存在口径争议。</div>
+  </div>
+
+  <div class="card">
+    <h2>附 · 开发阶段里程碑（W3–W9，衔接参考）</h2>
+    <table>
+      <thead>
+        <tr><th>里程碑</th><th>周期</th><th>主要交付</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>M1 · 骨架与基建验证</strong></td><td>1 周（W3）</td><td>仓库就绪 · 小程序登录鉴权 · 后台 RBAC · 数据库建表与迁移 · 前后端基础框架打通</td></tr>
+        <tr><td><strong>M2 · 用户 ＋ 团长主链路</strong></td><td>2 周（W4–W5）</td><td>套餐浏览 → 下单支付 → 订单状态流转 → 团长工作台 / 取餐确认 / 佣金 → 定时任务（截单 / 自动确认）</td></tr>
+        <tr><td><strong>M3 · 运营后台与财务结算</strong></td><td>2 周（W5–W6）</td><td>套餐编排矩阵 · 订单中心 · 财务分账 ＋ 退款三段式审批 · 数据看板</td></tr>
+        <tr><td><strong>M4 · 商家端 ＋ 分账跑批</strong></td><td>1 周（W7）</td><td>供应商备料 / 出餐 / 分账查询（砍至 3 人天）＋ 分账结算跑批</td></tr>
+        <tr><td><strong>M5 · 联调 / 灰度 / 缺陷收敛</strong></td><td>1.5 周（W7–W8）</td><td>真机调试 · 支付联调 · 单楼灰度试跑 · 缺陷收敛</td></tr>
+        <tr><td><strong>提审上线</strong></td><td>W9</td><td>小程序提交审核 → 发布（<strong>须由用户本人操作</strong>）</td></tr>
+      </tbody>
+    </table>
+    <p class="loc">注：本表仅作衔接参考，具体排期以《开发启动评审纪要》确认的里程碑计划为准。</p>
+  </div>
+
+  <div class="footer">
+    ABox 一盒 · 开发前准备计划 v1.0 · 2026-09-14<br>
+    依据：《MVP 优化交接包 v1.1》《PRD v2.1》《ER v2.1》《原型审查报告 v1.0》
+  </div>
+
+</div>
+
+</body>
+</html>

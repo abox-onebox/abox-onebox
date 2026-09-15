@@ -1,0 +1,32 @@
+{
+  "name": "@abox/shared-utils",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ABox 一盒 · 跨端共享工具（金额/时间/业务常量）。构建产物供 NestJS(tsc/CJS) 消费，源码供 Vite(ESM) 直接消费。",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./src/index.ts",
+      "require": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./src/*.ts",
+      "require": "./dist/*.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"shared-utils: no tests\" && exit 0"
+  },
+  "devDependencies": {
+    "typescript": "~5.4.5"
+  }
+}

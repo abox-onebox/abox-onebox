@@ -1,0 +1,40 @@
+{
+  "name": "miniprogram",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ABox 一盒 · 小程序（用户端 + 团长端同端叠加身份）",
+  "scripts": {
+    "dev:mp-weixin": "uni -p mp-weixin",
+    "dev:h5": "uni",
+    "build:mp-weixin": "uni build -p mp-weixin",
+    "build:h5": "uni build",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@dcloudio/uni-app": "3.0.0-alpha-5020620260914001",
+    "@dcloudio/uni-app-plus": "3.0.0-alpha-5020620260914001",
+    "@dcloudio/uni-components": "3.0.0-alpha-5020620260914001",
+    "@dcloudio/uni-h5": "3.0.0-alpha-5020620260914001",
+    "@dcloudio/uni-mp-weixin": "3.0.0-alpha-5020620260914001",
+    "@abox/shared-types": "workspace:*",
+    "@abox/shared-utils": "workspace:*",
+    "axios": "^1.6.0",
+    "dayjs": "^1.11.10",
+    "pinia": "^2.1.0",
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "@dcloudio/types": "^3.4.0",
+    "@dcloudio/uni-automator": "3.0.0-alpha-5020620260914001",
+    "@dcloudio/vite-plugin-uni": "3.0.0-alpha-5020620260914001",
+    "@vue/tsconfig": "^0.5.1",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "sass": "^1.69.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "~5.4.5",
+    "vite": "^5.0.0",
+    "vue-tsc": "^1.8.0",
+    "weapp-tailwindcss": "^3.4.0"
+  }
+}

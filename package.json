@@ -1,0 +1,48 @@
+{
+  "name": "abox-onebox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ABox 一盒 · 办公楼白领团餐平台（Monorepo）",
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "build:shared": "pnpm --filter @abox/shared-types build && pnpm --filter @abox/shared-utils build",
+    "dev": "pnpm run build:shared && pnpm -r --parallel --filter \"./apps/**\" dev",
+    "dev:api": "pnpm run build:shared && pnpm --filter api-server dev",
+    "dev:mp": "pnpm run build:shared && pnpm --filter miniprogram dev:mp-weixin",
+    "dev:admin": "pnpm run build:shared && pnpm --filter admin-web dev",
+    "build": "pnpm run build:shared && pnpm -r build",
+    "build:api": "pnpm run build:shared && pnpm --filter api-server build",
+    "build:mp": "pnpm run build:shared && pnpm --filter miniprogram build:mp-weixin",
+    "build:admin": "pnpm run build:shared && pnpm --filter admin-web build",
+    "lint": "eslint . --ext .ts,.vue --max-warnings 0",
+    "lint:fix": "eslint . --ext .ts,.vue --fix",
+    "format": "prettier --write \"**/*.{ts,vue,json,md,scss}\"",
+    "format:check": "prettier --check \"**/*.{ts,vue,json,md,scss}\"",
+    "prepare": "node scripts/setup-husky.mjs",
+    "typecheck": "pnpm run build:shared && pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:migrate": "pnpm --filter api-server db:migrate",
+    "db:seed": "pnpm --filter api-server db:seed",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docs:sync": "node scripts/sync-docs.mjs"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^18.4.0",
+    "@commitlint/config-conventional": "^18.4.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-vue": "^9.19.0",
+    "husky": "^8.0.3",
+    "lint-staged": "^15.2.0",
+    "prettier": "^3.1.0",
+    "typescript": "~5.4.5",
+    "vue-eslint-parser": "^9.3.2"
+  }
+}
