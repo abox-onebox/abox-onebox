@@ -38,7 +38,7 @@
       </view>
       <view class="tip">
         <text class="tip__text">
-          工作台、本楼单量、佣金中心与提现将在 M2 上线；当前可先在「订单」查看自己的订单。
+          工作台、本楼单量、订单明细、佣金中心与提现已开放，从底部「团长」进入。
         </text>
       </view>
     </view>
@@ -73,10 +73,15 @@
           <text class="card__label">所属办公楼</text>
           <text class="card__value">{{ buildingText }}</text>
         </view>
+        <view class="card__row card__row--link" hover-class="card__row--hover" @tap="goSupport">
+          <text class="card__label">联系客服</text>
+          <text class="card__arrow">›</text>
+        </view>
       </view>
       <view class="tip">
         <text class="tip__text">
-          C3：办公楼通过团长邀请链接绑定；App 不读取定位，也不索取手机号与地址（L9）。
+          C3：办公楼通过团长邀请链接绑定；App 不读取定位，也不索取手机号与地址（L9）。 退款 / 提现 /
+          退出团长等需人工介入的事项，请添加客服微信处理。
         </text>
       </view>
     </view>
@@ -184,6 +189,11 @@ function goOrders(): void {
 /** 进入团长申请页（M2 · L17）；提交成功后本页底栏会按 isLeader 重渲染为 5 项 */
 function goApply(): void {
   navigateTo('/pages/leader-apply/leader-apply');
+}
+
+/** 联系客服（U17 · 客服微信号页面；人工处理，不要求团长身份） */
+function goSupport(): void {
+  navigateTo('/pages/support/contact');
 }
 
 function clearLocal(): void {

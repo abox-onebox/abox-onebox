@@ -128,6 +128,17 @@ async function main(): Promise<void> {
       ],
       ['order.max_quantity', '20', '单次下单上限'],
       ['supplier.settle_cycle', 'daily', '供应商结算周期（C11：日结，人工对公转账）'],
+      // —— U17 客服入口（2026-09-15 口径：一期不做在线客服，一律引导加客服微信人工处理）——
+      // ⚠️ 演示占位值，上线前由运营在后台系统配置页替换为真实客服号
+      ['service.wechat_id', 'abox_service', '客服微信号（演示占位；退出团长/资金争议等人工入口）'],
+      ['service.wechat_qrcode', '', '客服微信二维码图片 URL（可空，端上按空值隐藏）'],
+      ['service.phone', '', '客服电话（可空）'],
+      ['service.hours', '工作日 9:00 – 18:00', '客服服务时间'],
+      [
+        'service.tips',
+        '添加客服微信后，请备注「ABox + 你的姓名」，我们会尽快为你处理。',
+        '客服页提示文案（端上不自造，服务端下发）',
+      ],
     ].map(([configKey, configValue, description]) => ({ configKey, configValue, description })),
   );
 

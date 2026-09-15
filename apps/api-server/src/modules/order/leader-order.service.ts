@@ -13,6 +13,7 @@ import { DeliveryRecord, Order } from '../../database/entities/order.entity';
 import { OperationLog } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
 import { CommissionService } from '../finance/commission.service';
+import { LeaderPromotionService } from '../team-leader/promotion.service';
 import {
   LeaderAbnormalQueryDto,
   LeaderExportQueryDto,
@@ -44,6 +45,7 @@ export class LeaderOrderService {
     @InjectRepository(DeliveryRecord) private readonly deliveryRepo: Repository<DeliveryRecord>,
     @InjectRepository(OperationLog) private readonly opLogRepo: Repository<OperationLog>,
     private readonly commissionService: CommissionService,
+    private readonly promotionService: LeaderPromotionService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -277,6 +279,21 @@ export class LeaderOrderService {
         `计佣 ¥${(accrued.amountFen / 100).toFixed(2)}（费率 ${Number(leader.commissionRate) * 100}%）`,
     );
 
+    // C2 晋级审计（M2-2.9）：计佣即改变「月单」，故在事务**外**重算并落表。
+    // ⚠️ 放事务外是刻意的 —— 审计失败不该把「已确认分发 + 已计佣」整体回滚
+    //    （钱已经进账了），故此处只记日志、不抛错。
+    let level: string = leader.level;
+    let rate = Number(leader.commissionRate);
+    try {
+      const audit = await this.promotionService.audit(Number(leader.id));
+      if (audit) {
+        level = audit.after;
+        rate = audit.rate;
+      }
+    } catch (e) {
+      this.logger.warn(`晋级审计失败（不影响分发与计佣）：${(e as Error).message}`);
+    }
+
     return {
       mealDate,
       /** 本次真正完成状态推进的订单数（乐观锁 affected） */
@@ -285,8 +302,8 @@ export class LeaderOrderService {
       /** 本次入账佣金（分）—— 验收标准 3：实发份数 × 等级费率 */
       commissionFen: accrued.amountFen,
       commissionYuan: (accrued.amountFen / 100).toFixed(2),
-      rate: Number(leader.commissionRate),
-      level: leader.level,
+      rate,
+      level,
       orderNos: accrued.orderNos,
       repeated: false,
       confirmedAt: now,

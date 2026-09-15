@@ -1,10 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 
 import { LeaderLevel, LeaderStatus } from '@abox/shared-types';
 
+import { normalizePage, paginate } from '../../common/utils/response';
 import { LeaderInvite } from '../../database/entities/leader.entity';
+import { User } from '../../database/entities/user.entity';
+
+type PageInput = { page?: unknown; pageSize?: unknown };
 
 /**
  * 团长推荐关系服务（C2 晋级审计 · M2-2.9）
@@ -24,6 +28,7 @@ import { LeaderInvite } from '../../database/entities/leader.entity';
 export class LeaderInviteService {
   constructor(
     @InjectRepository(LeaderInvite) private readonly inviteRepo: Repository<LeaderInvite>,
+    @InjectRepository(User) private readonly userRepo: Repository<User>,
   ) {}
 
   /**
@@ -87,6 +92,64 @@ export class LeaderInviteService {
   /** 查询某用户的邀请绑定关系（申请流程用于取邀请人） */
   async findByInvitee(userId: number): Promise<LeaderInvite | null> {
     return this.inviteRepo.findOne({ where: { inviteeUserId: userId } });
+  }
+
+  /**
+   * L21 · 我的推荐列表（M2-2.9「推荐裂变」的可见面）
+   *
+   * 只回**昵称**，不回手机号（§1.6：手机号属敏感字段，仅 L5 导出且须留痕）。
+   * `summary` 按**全量**统计（不受分页影响），与 L10 / L19 同一约定。
+   *
+   * ⚠️ 只统计「我是邀请人」的记录（`inviter_leader_id = 我`）——
+   *    自荐记录（`inviter_leader_id` 为 NULL）不属于任何人的裂变成果。
+   */
+  async listMyInvites(inviterLeaderId: number, input: PageInput = {}) {
+    const { page, pageSize, skip } = normalizePage(input);
+
+    const [rows, total] = await this.inviteRepo.findAndCount({
+      where: { inviterLeaderId },
+      order: { id: 'DESC' },
+      skip,
+      take: pageSize,
+    });
+
+    const userIds = [...new Set(rows.map((r) => Number(r.inviteeUserId)))];
+    const users = userIds.length ? await this.userRepo.find({ where: { id: In(userIds) } }) : [];
+    const nameOf = new Map(users.map((u) => [Number(u.id), u.nickname]));
+
+    const formalCount = await this.countFormal(inviterLeaderId);
+
+    return {
+      summary: {
+        /** 累计邀请人数（含未转正） */
+        totalCount: Number(total),
+        /** 其中已转正（正式及以上）—— C2 第二条件的计数值 */
+        formalCount,
+        /** 尚在见习 */
+        traineeCount: Math.max(0, Number(total) - formalCount),
+      },
+      ...paginate(
+        rows.map((r) => ({
+          id: Number(r.id),
+          /** 被邀请人昵称（无手机号） */
+          nickname: nameOf.get(Number(r.inviteeUserId)) ?? '微信用户',
+          channel: r.channel,
+          /** 绑定时间 */
+          bindAt: r.bindAt,
+          /** 是否已转正（正式及以上） */
+          isFormal: Number(r.isFormal) === 1,
+          /** 转正时间（未转正为 null） */
+          formalAt: r.formalAt ?? null,
+          /** 被邀请人当前等级（未成为团长时为 null） */
+          inviteeLevel: r.inviteeLevel ?? null,
+          /** 是否已成为团长 */
+          isLeader: Boolean(r.inviteeLeaderId),
+        })),
+        total,
+        page,
+        pageSize,
+      ),
+    };
   }
 }
 

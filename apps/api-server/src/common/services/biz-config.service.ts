@@ -120,6 +120,43 @@ export class BizConfigService {
   }
 
   /**
+   * U17 · 客服入口配置（人工兜底通道）
+   *
+   * 2026-09-15 口径：一期**不做在线客服**，统一引导用户添加**客服微信**人工解决
+   * （退出团长、余额争议、提现异常等）。因此这里只需给出微信号与提示文案，
+   * 端上「联系客服」一律跳本配置渲染的页面，不内置任何硬编码联系方式。
+   *
+   * ⚠️ 微信号由运营在后台系统配置页维护（`ab_config`），代码**不得写死** ——
+   *    与「成本项不得写死」同一条纪律；`wechatId` 缺省值为演示占位。
+   */
+  async supportContact(): Promise<{
+    wechatId: string;
+    wechatQrcodeUrl: string | null;
+    phone: string | null;
+    hours: string;
+    tips: string;
+  }> {
+    const [wechatId, wechatQrcodeUrl, phone, hours, tips] = await Promise.all([
+      this.getString('service.wechat_id', 'abox_service'),
+      this.getString('service.wechat_qrcode', ''),
+      this.getString('service.phone', ''),
+      this.getString('service.hours', '工作日 9:00 – 18:00'),
+      this.getString(
+        'service.tips',
+        '添加客服微信后，请备注「ABox + 你的姓名」，我们会尽快为你处理。',
+      ),
+    ]);
+
+    return {
+      wechatId,
+      wechatQrcodeUrl: wechatQrcodeUrl || null,
+      phone: phone || null,
+      hours,
+      tips,
+    };
+  }
+
+  /**
    * C9 · 单份成本项（全部可变，按实际执行）
    * 供结算 / 对账计算 `calcSettlement()` 使用；缺省回落 `SETTLEMENT_DEFAULTS`（示例值）。
    * ⚠️ `settlement.supplier_purchase_price` 的值是策略标识 `negotiated`（非金额），

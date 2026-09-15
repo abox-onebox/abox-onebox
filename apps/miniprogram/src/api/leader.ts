@@ -1,10 +1,11 @@
 /**
- * api/leader —— 团长端「身份 / 资料 / 工作台 / 分享」（M2 · L1–L3、L14–L18）
- * 契约：《接口规范 v1.0》§4.5「团长管理」/ §4.1「工作台」/ §4.6「分享」
+ * api/leader —— 团长端「身份 / 资料 / 工作台 / 分享 / 推荐 / 退出」（M2 · L1–L3、L14–L18、L20–L22）
+ * 契约：《接口规范 v1.0》§4.5「团长管理」/ §4.1「工作台」/ §4.6「分享与晋级」
  *
  * 兄弟模块：
  *   · `api/leader-order.ts`   —— L4–L9（订单聚合 / 代退 / 取餐确认一键分发）
  *   · `api/leader-finance.ts` —— L10–L13（佣金 / 余额 / 提现）
+ *   · `api/support.ts`        —— U17 客服入口（一期 = 客服微信号，人工处理）
  *
  * ⚠️ 除 `applyLeader` 外，全部端点都需**在职团长**身份：
  *    服务端 `LeaderGuard` 会在 JWT 之后再查一次 `ab_team_leader`，
@@ -255,5 +256,130 @@ export function signAgreement(
 ): Promise<{ agreedAt: string | null; agreeVersion: string | null }> {
   return http.post<{ agreedAt: string | null; agreeVersion: string | null }>('/leader/agreement', {
     agreementVersion,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// L21 / L22 · 推荐裂变与晋级（M2-2.9）
+// ---------------------------------------------------------------------------
+
+/** 我的推荐 · 单条明细（**不含手机号**，§1.6） */
+export interface LeaderInviteItem {
+  id: number;
+  /** 被邀请人昵称（无手机号） */
+  nickname: string;
+  /** link 链接 / qrcode 小程序码 / poster 海报 / self 自荐 */
+  channel: string;
+  /** 绑定时间（UTC ISO，`....Z`） */
+  bindAt: string;
+  /** 是否已转正（正式及以上）—— C2 第二条件的计数值 */
+  isFormal: boolean;
+  /** 转正时间（未转正为 null） */
+  formalAt: string | null;
+  /** 被邀请人当前等级（未成为团长为 null） */
+  inviteeLevel: LeaderLevel | null;
+  /** 是否已成为团长 */
+  isLeader: boolean;
+}
+
+export interface LeaderInvitesResult {
+  summary: {
+    /** 累计邀请人数（含未转正） */
+    totalCount: number;
+    /** 其中已转正（正式及以上） */
+    formalCount: number;
+    /** 尚在见习 */
+    traineeCount: number;
+  };
+  list: LeaderInviteItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
+}
+
+/** L21 · 我的推荐列表（邀请明细 + 转正汇总） */
+export function fetchMyInvites(page = 1, pageSize = 20): Promise<LeaderInvitesResult> {
+  return http.get<LeaderInvitesResult>(
+    `/leader/invites?page=${encodeURIComponent(String(page))}&pageSize=${encodeURIComponent(String(pageSize))}`,
+  );
+}
+
+/** L22 · 晋级核算结果（服务端审计后**已落表**的指标） */
+export interface LevelAuditResult {
+  leaderId: number;
+  /** 审计前等级 */
+  before: LeaderLevel;
+  /** 审计后等级（未升级则与 before 相同） */
+  after: LeaderLevel;
+  /** 是否发生升级 */
+  promoted: boolean;
+  /** 实算当月完成份数（已落表） */
+  monthOrders: number;
+  /** 实算介绍转正数（已落表） */
+  invitedFormalCount: number;
+  /** 当前费率（小数，如 0.1） */
+  rate: number;
+  /** 是否因本次核算把「被邀请人已转正」标记为真并回写了邀请人 */
+  formalFlipped: boolean;
+  /** 链式晋级：邀请人的审计结果（无邀请人则缺省） */
+  inviterAudit?: LevelAuditResult;
+}
+
+/**
+ * L22 · 重新核算我的晋级进度（月单 + 介绍转正 → 落表并升级）
+ *
+ * ⚠️ 服务端**只升不降**：不满足条件时不回落（降级只由见习失效任务与后台人工触发）。
+ */
+export function auditMyLevel(): Promise<LevelAuditResult> {
+  return http.post<LevelAuditResult>('/leader/level/audit');
+}
+
+// ---------------------------------------------------------------------------
+// L20 · 退出团长身份（M2-2.8）
+// ---------------------------------------------------------------------------
+
+/** 退出阻碍项（端上逐条引导用户先走完资金链路） */
+export interface QuitBlocker {
+  /** BALANCE_NOT_CLEARED / FROZEN_NOT_CLEARED / WITHDRAW_IN_FLIGHT / COMMISSION_PENDING */
+  code: string;
+  text: string;
+  amountFen?: number;
+  count?: number;
+}
+
+export interface QuitLeaderResult {
+  /** 恒 false —— 端上据此把底部导航重渲染回 4 项 */
+  isLeader: boolean;
+  /** 恒 2（停职） */
+  status: number;
+  level: LeaderLevel;
+  levelLabel: string;
+  quitAt: string;
+  /** 保留的历史资产（仍可在「我的」查看） */
+  kept: {
+    totalOrders: number;
+    /** 元 · 字符串 */
+    totalCommission: string;
+    /** 元 · 字符串 */
+    balance: string;
+  };
+  tips: string;
+}
+
+/**
+ * L20 · 退出团长身份（停职保留档案）
+ *
+ * ⚠️ **必须传 `Idempotency-Key`**（服务端 `required: true`）：退出属状态变更，
+ *    缺失 → `10001`；重复提交 → `10006` + 首次结果（端上按成功处理）。
+ * ⚠️ 余额 / 冻结额未清零、有在途提现、有待结算佣金 → `20008`，
+ *    `error.data.blockers` 给出逐条原因。
+ */
+export function quitLeader(
+  payload: { reason?: string },
+  idempotentKey: string,
+): Promise<QuitLeaderResult> {
+  return http.post<QuitLeaderResult>('/leader/quit', { ...payload } as Record<string, unknown>, {
+    idempotentKey,
   });
 }

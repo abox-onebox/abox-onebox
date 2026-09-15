@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -117,4 +118,43 @@ export class UpdateLeaderProfileReqDto {
   @IsString()
   @MaxLength(32)
   payoutName?: string;
+}
+
+/**
+ * L20 · 退出团长身份（2026-09-15 补 · M2-2.8）
+ *
+ * 语义：**停职而非删除** —— `ab_team_leader.status` 置 2（离职/停职），
+ * 保留全部历史档案（订单/佣金/推荐关系），且**支持日后重新申请复职**
+ * （`apply` 已有「停职者复职并重置为见习」分支）。
+ *
+ * 前置拦截（服务层判，返回 `20008`）：可用余额 / 冻结额未清零、存在在途提现申请、
+ * 存在待结算佣金 —— 任一条不满足都要求用户先走完资金链路，避免资金悬空。
+ */
+export class QuitLeaderReqDto {
+  @ApiPropertyOptional({
+    description: '退出原因（选填，仅运营留痕用）',
+    example: '业务调整，不再担任团长',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200, { message: '退出原因过长' })
+  reason?: string;
+}
+
+/** L21 · 我的推荐列表（翻页） */
+export class InviteListQueryDto {
+  @ApiPropertyOptional({ description: '页码，默认 1' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({ description: '每页条数，默认 20，上限 100' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number;
 }

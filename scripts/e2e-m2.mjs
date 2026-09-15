@@ -15,6 +15,14 @@
  *   · **等级口径回归**：种子 `formal` 团长取 levelLabel 必须得「正式」
  *     —— shared-types 曾把正式写成 `regular`，导致 LEADER_LEVEL_META 查表 miss
  *
+ * 末段（§5）覆盖 M2 遗留的 2.8 / 2.9 与 U17：
+ *   · U17 `GET /me/support` —— 客服微信号由 `ab_config` 下发（一期不做在线客服）
+ *   · L21 我的推荐明细与转正汇总（不含手机号）
+ *   · L22 晋级审计 —— 月单**实算并落表**（覆盖种子演示值）+ **只升不降** +
+ *     双条件达标升级 + `is_formal` 翻转 + 邀请人计数回写 + 链式审计
+ *   · L20 退出团长 —— 资金闸门 20008（余额/冻结/在途提现）· 缺键 10001 ·
+ *     停职保留档案 · 退出后全量 `/leader/*` 20003 · 可复职（重置见习）
+ *
  * 用法：node scripts/e2e-m2.mjs
  * ⚠️ 前置：先跑一次 `node scripts/gate.mjs seed`（干净数据库）
  *
@@ -803,6 +811,284 @@ async function main() {
     crossRefund.body?.code === 10003,
     'L7 跨楼代退被拒 → 10003（越权防护先于状态判定）',
     `code=${crossRefund.body?.code}`,
+  );
+
+  // ==========================================================================
+  // 5. M2 遗留补遗：U17 客服入口 · L21 我的推荐 · L22 晋级审计 · L20 退出团长
+  //    （2026-09-15 裁定：一期不做在线客服 → 一律引导加客服微信人工处理）
+  // ==========================================================================
+
+  // ---- 5.1 U17 客服入口配置
+  const support = await call('GET', '/me/support', { token: lming.token });
+  const sup = support.body?.data;
+  assert(
+    support.body?.code === 0 && sup?.wechatId === 'abox_service',
+    'U17 客服微信号由 ab_config 下发（代码不写死联系方式）',
+    `wechatId=${sup?.wechatId}`,
+  );
+  assert(
+    typeof sup?.hours === 'string' &&
+      sup.hours.length > 0 &&
+      typeof sup?.tips === 'string' &&
+      sup.tips.length > 0,
+    'U17 服务时间与提示文案随配置下发（端上不得自造）',
+    `hours=${sup?.hours}`,
+  );
+  assert(
+    sup?.wechatQrcodeUrl === null,
+    'U17 未配置二维码 → 返回 null（端上隐藏图片位，不伪造图片）',
+    `qrcode=${JSON.stringify(sup?.wechatQrcodeUrl)}`,
+  );
+  const supportAnon = await call('GET', '/me/support');
+  assert(
+    supportAnon.body?.code === 10002 && supportAnon.status === 401,
+    'U17 未登录 → 10002 / HTTP 401（全局 JwtAuthGuard，未标 @Public）',
+    `code=${supportAnon.body?.code} http=${supportAnon.status}`,
+  );
+
+  // ---- 5.2 L21 我的推荐（「我的邀请」可见面）
+  const invites = await call('GET', '/leader/invites', { token: lming.token });
+  const inv = invites.body?.data;
+  assert(
+    invites.body?.code === 0 && inv?.summary?.totalCount === 3 && inv?.summary?.formalCount === 3,
+    'L21 汇总：种子 3 条邀请且全部已转正（自荐记录不计入任何人的裂变成果）',
+    `total=${inv?.summary?.totalCount} formal=${inv?.summary?.formalCount} trainee=${inv?.summary?.traineeCount}`,
+  );
+  assert(
+    (inv?.list ?? []).length === 3 &&
+      (inv?.list ?? []).every((x) => x.isFormal === true && x.isLeader === true && !!x.nickname),
+    'L21 明细含昵称 / 渠道 / 转正状态（均已为团长）',
+    `channels=${(inv?.list ?? []).map((x) => x.channel).join(',')}`,
+  );
+  const invPhones = JSON.stringify(inv ?? {}).match(/1[3-9]\d{9}/g) ?? [];
+  assert(invPhones.length === 0, 'L21 出参不含手机号（§1.6 敏感字段只在 L5 导出且留痕）', `found=${invPhones.join(',') || '无'}`);
+
+  // ---- 5.3 L22 晋级审计：指标**实算并落表**（种子值会被真实值覆盖）
+  // 李明（首席）：本月真实佣金只有 5 份（4.3 夹具），种子写的 186 是演示值。
+  const auditTop = await call('POST', '/leader/level/audit', { token: lming.token });
+  const at = auditTop.body?.data;
+  assert(
+    auditTop.body?.code === 0 && at?.monthOrders === 5 && at?.invitedFormalCount === 5,
+    'L22 月单按 ab_commission 实算（5 份，覆盖种子演示值 186）',
+    `monthOrders=${at?.monthOrders} invited=${at?.invitedFormalCount}`,
+  );
+  assert(
+    at?.before === 'chief' && at?.after === 'chief' && at?.promoted === false,
+    'L22 已是最高级 → 不升级也不降级',
+    `before=${at?.before} after=${at?.after}`,
+  );
+  const lmRow = readDb('SELECT month_orders, invited_formal_count FROM ab_team_leader WHERE user_id = 1001');
+  assert(
+    Number(lmRow?.month_orders) === 5 && Number(lmRow?.invited_formal_count) === 5,
+    'L22 实算指标已落表（P16 进度条不再读陈旧种子值）',
+    `month_orders=${lmRow?.month_orders} invited=${lmRow?.invited_formal_count}`,
+  );
+
+  // 张磊（正式）本月无佣金 → target 虽为见习，但**只升不降**，必须保持正式
+  const auditZ = await call('POST', '/leader/level/audit', { token: zhang.token });
+  const az = auditZ.body?.data;
+  assert(
+    auditZ.body?.code === 0 && az?.before === 'formal' && az?.after === 'formal' && az?.promoted === false,
+    'L22 只升不降：审计算出「见习」也不得把正式团长降级（降级只由失效任务/后台触发）',
+    `before=${az?.before} after=${az?.after} monthOrders=${az?.monthOrders}`,
+  );
+  assert(
+    readDb('SELECT level FROM ab_team_leader WHERE user_id = 1003')?.level === 'formal',
+    'L22 未升级时不改写 ab_team_leader.level',
+  );
+
+  // ---- 5.4 晋级 + 链式回写：新团长升正式 → 邀请人「介绍转正数」+1 并链式审计
+  // 夹具：把 e2e 新团长挂到李明名下（模拟经邀请码加入），并补一笔本月已结算佣金。
+  //      `invited_formal_count` 走「后台人工修正」通道写入 —— 晋级审计本就按
+  //      「统计值 与 表内值 取大」处理（L16 同口径），故这是合法输入而非绕过校验。
+  writeDb('UPDATE ab_leader_invite SET inviter_leader_id = 1 WHERE invitee_user_id = ?', [newUserId]);
+  writeDb('UPDATE ab_team_leader SET invited_formal_count = 1 WHERE user_id = ?', [newUserId]);
+  writeDb('UPDATE ab_user SET team_leader_id = 1 WHERE id = ?', [newUserId]);
+  writeDb(
+    `INSERT INTO ab_commission
+       (order_id, order_no, team_leader_id, leader_level, rate, base_amount, quantity, amount, type, status, meal_date)
+     VALUES (?, ?, ?, 'trainee', '0.0800', '799.80', 31, '63.98', 'normal', 'settled', ?)`,
+    [990001, 'E2E-AUDIT-TRAINEE', appLeaderId, TODAY],
+  );
+  assert(
+    Number(
+      readDb(
+        "SELECT SUM(quantity) q FROM ab_commission WHERE team_leader_id = ? AND status = 'settled'",
+        [appLeaderId],
+      )?.q,
+    ) === 31,
+    '夹具 · 新团长本月已结算 31 份（跨过 C2「月单 > 30」门槛）',
+  );
+
+  const auditApp = await call('POST', '/leader/level/audit', { token: applicant.token });
+  const aa = auditApp.body?.data;
+  assert(
+    auditApp.body?.code === 0 && aa?.promoted === true && aa?.before === 'trainee' && aa?.after === 'formal',
+    'M2-2.9 双条件达标 → 见习升正式（月单 31 > 30 且 介绍转正 1）',
+    `before=${aa?.before} after=${aa?.after} promoted=${aa?.promoted}`,
+  );
+  assert(
+    aa?.rate === 0.09 && aa?.monthOrders === 31 && aa?.invitedFormalCount === 1,
+    'L22 升级同刷费率（8% → 9%）并回写实算指标',
+    `rate=${aa?.rate} monthOrders=${aa?.monthOrders} invited=${aa?.invitedFormalCount}`,
+  );
+  const appRow = readDb(
+    'SELECT level, commission_rate, month_orders FROM ab_team_leader WHERE user_id = ?',
+    [newUserId],
+  );
+  assert(
+    appRow?.level === 'formal' &&
+      Number(appRow?.commission_rate) === 0.09 &&
+      Number(appRow?.month_orders) === 31,
+    'L22 升级落库：level=formal / commission_rate=0.0900 / month_orders=31',
+    `level=${appRow?.level} rate=${appRow?.commission_rate}`,
+  );
+  const flipRow = readDb(
+    'SELECT is_formal, formal_at, invitee_level FROM ab_leader_invite WHERE invitee_user_id = ?',
+    [newUserId],
+  );
+  assert(
+    Number(flipRow?.is_formal) === 1 && !!flipRow?.formal_at && flipRow?.invitee_level === 'formal',
+    'C2 被邀请人转正 → ab_leader_invite.is_formal 翻转并记 formal_at（冗余位免高频 JOIN）',
+    `is_formal=${flipRow?.is_formal} level=${flipRow?.invitee_level}`,
+  );
+  const inviterRow = readDb('SELECT invited_formal_count FROM ab_team_leader WHERE id = 1');
+  assert(
+    Number(inviterRow?.invited_formal_count) === 6,
+    'C2 邀请人「介绍转正数」+1（5 → 6，只增不减）',
+    `inviterCount=${inviterRow?.invited_formal_count}`,
+  );
+  assert(
+    aa?.formalFlipped === true && aa?.inviterAudit?.leaderId === 1,
+    'C2 链式审计：回写邀请人后立即复算其晋级（inviterAudit 随回执返回）',
+    `flipped=${aa?.formalFlipped} inviterAudit=${aa?.inviterAudit ? `#${aa.inviterAudit.leaderId}(${aa.inviterAudit.before}→${aa.inviterAudit.after})` : '无'}`,
+  );
+
+  const invites2 = await call('GET', '/leader/invites', { token: lming.token });
+  assert(
+    invites2.body?.data?.summary?.totalCount === 4 && invites2.body?.data?.summary?.formalCount === 4,
+    'L21 与晋级审计同源：新推荐立即出现在邀请人的「我的推荐」（3 → 4）',
+    `total=${invites2.body?.data?.summary?.totalCount} formal=${invites2.body?.data?.summary?.formalCount}`,
+  );
+
+  // ---- 5.5 L20 退出团长身份（资金闸门 → 停职 → 复职）
+  // (a) 资金未清必须拦截：李明账上可用 ¥5.48 / 冻结 ¥10.00 / 1 笔在途提现
+  const quitBlocked = await call('POST', '/leader/quit', {
+    token: lming.token,
+    idem: 'e2e-m2-quit-blocked',
+    body: { reason: 'e2e · 资金未清' },
+  });
+  const blockerCodes = (quitBlocked.body?.data?.blockers ?? []).map((b) => b.code);
+  assert(
+    quitBlocked.body?.code === 20008 &&
+      blockerCodes.includes('BALANCE_NOT_CLEARED') &&
+      blockerCodes.includes('FROZEN_NOT_CLEARED') &&
+      blockerCodes.includes('WITHDRAW_IN_FLIGHT'),
+    'L20 余额/冻结/在途提现任一未清 → 20008（data.blockers 逐条下发，端上照单引导）',
+    `code=${quitBlocked.body?.code} blockers=${blockerCodes.join(',') || '无'}`,
+  );
+  const quitBlockedRetry = await call('POST', '/leader/quit', {
+    token: lming.token,
+    idem: 'e2e-m2-quit-blocked',
+    body: { reason: 'e2e · 资金未清' },
+  });
+  assert(
+    quitBlockedRetry.body?.code === 20008,
+    'L20 拦截失败后幂等键已释放（同键重试仍 20008，而非 10006 卡死）',
+    `code=${quitBlockedRetry.body?.code}`,
+  );
+  assert(
+    Number(readDb('SELECT status FROM ab_team_leader WHERE id = 1')?.status) === 1,
+    'L20 拦截时未触碰团长状态（资金闸门先于状态变更，事务零副作用）',
+  );
+  const quitNoKey = await call('POST', '/leader/quit', { token: zhang.token, body: {} });
+  assert(
+    quitNoKey.body?.code === 10001,
+    'L20 缺幂等键 → 10001（状态变更类写操作强制带键）',
+    `code=${quitNoKey.body?.code}`,
+  );
+
+  // (b) 资金已清可退出：e2e 新团长（可用 0 / 无在途提现 / 无待结算佣金）
+  const preQuitUser = readDb('SELECT team_leader_id FROM ab_user WHERE id = ?', [newUserId]);
+  assert(
+    Number(preQuitUser?.team_leader_id) === 1,
+    '夹具 · 退出前该用户归属团长 1（用于验证退出会撤销归属关系）',
+    `teamLeaderId=${preQuitUser?.team_leader_id}`,
+  );
+  const quit = await call('POST', '/leader/quit', {
+    token: applicant.token,
+    idem: 'e2e-m2-quit-0001',
+    body: { reason: 'e2e · 业务调整' },
+  });
+  const qd = quit.body?.data;
+  assert(
+    quit.body?.code === 0 && qd?.isLeader === false && Number(qd?.status) === 2,
+    'M2-2.8 退出成功：isLeader=false / status=2（端上据此把底栏还原为 4 项）',
+    `isLeader=${qd?.isLeader} status=${qd?.status}`,
+  );
+  assert(
+    qd?.level === 'formal' && qd?.levelLabel === '正式',
+    'L20 停职非删除：保留历史等级（退出前刚晋级为正式）',
+    `level=${qd?.level} label=${qd?.levelLabel}`,
+  );
+  assert(typeof qd?.tips === 'string' && qd.tips.length > 0, 'L20 回执含「可重新申请」指引', qd?.tips);
+
+  const quitRow = readDb('SELECT status FROM ab_team_leader WHERE user_id = ?', [newUserId]);
+  const postQuitUser = readDb('SELECT team_leader_id, building_id FROM ab_user WHERE id = ?', [newUserId]);
+  assert(
+    Number(quitRow?.status) === 2,
+    'L20 落库：ab_team_leader.status = 2（停职）',
+    `status=${quitRow?.status}`,
+  );
+  assert(
+    postQuitUser?.team_leader_id === null && Number(postQuitUser?.building_id) === 1,
+    'L20 撤销「归属某团长」但**保留办公楼**（他仍是该楼用户，明天照样能订餐）',
+    `leader=${postQuitUser?.team_leader_id} building=${postQuitUser?.building_id}`,
+  );
+
+  // (c) 退出后身份立即失效（token 未过期也拦得住 —— 守卫二次查库的意义）
+  const afterQuitProfile = await call('GET', '/leader/profile', { token: applicant.token });
+  const afterQuitQr = await call('POST', '/leader/share/qrcode', { token: applicant.token });
+  assert(
+    afterQuitProfile.body?.code === 20003 && afterQuitQr.body?.code === 20003,
+    'L20 退出后全量 /leader/* → 20003（非单端点特例；只信 token 的 isLeader 会漏放）',
+    `profile=${afterQuitProfile.body?.code} qrcode=${afterQuitQr.body?.code}`,
+  );
+  const quitReplay = await call('POST', '/leader/quit', {
+    token: applicant.token,
+    idem: 'e2e-m2-quit-0001',
+    body: { reason: 'e2e · 业务调整' },
+  });
+  assert(
+    quitReplay.body?.code === 20003,
+    'L20 重复退出 → 20003（守卫先于幂等拦截器：状态已不可逆，无需回放首次结果）',
+    `code=${quitReplay.body?.code}`,
+  );
+
+  // (d) 退出不是终点：可再次申请，复职时重置为见习（C2 阶梯从头走）
+  const reapply = await call('POST', '/leader/apply', {
+    token: applicant.token,
+    body: {
+      buildingId: 1,
+      phone: '13700000101',
+      realName: 'e2e 公司 · 测试团长',
+      floor: '9F',
+      agreementVersion: 'v1.1',
+    },
+  });
+  assert(
+    reapply.body?.code === 0 &&
+      reapply.body?.data?.isLeader === true &&
+      reapply.body?.data?.leader?.level === 'trainee' &&
+      reapply.body?.data?.leader?.commissionRate === '0.0800',
+    'L20 退出后可重新申请：复职并**重置为见习 8%**（避免停职期间白拿高费率）',
+    `level=${reapply.body?.data?.leader?.level} rate=${reapply.body?.data?.leader?.commissionRate}`,
+  );
+  const reRow = readDb('SELECT status, level FROM ab_team_leader WHERE user_id = ?', [newUserId]);
+  assert(
+    Number(reRow?.status) === 1 && reRow?.level === 'trainee',
+    'L20 复职落库：status=1 / level=trainee',
+    `status=${reRow?.status} level=${reRow?.level}`,
   );
 
   // ==========================================================================

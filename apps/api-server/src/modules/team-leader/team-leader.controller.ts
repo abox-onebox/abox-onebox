@@ -1,16 +1,33 @@
-import { Body, Controller, Get, Post, Put, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Put,
+  Query,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
+
+import { HEADER } from '@abox/shared-types';
 
 import { CurrentUser, JwtPayload } from '../../common/decorators/auth.decorator';
 import { CurrentLeader } from '../../common/decorators/leader.decorator';
+import { Idempotent } from '../../common/decorators/idempotent.decorator';
 import { LeaderGuard } from '../../common/guards/leader.guard';
+import { IdempotentInterceptor } from '../../common/interceptors/idempotent.interceptor';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { ShareService } from './share.service';
 import {
   ApplyLeaderReqDto,
+  InviteListQueryDto,
   LeaderAgreementReqDto,
+  QuitLeaderReqDto,
   UpdateLeaderProfileReqDto,
 } from './dto/team-leader.dto';
+import { LeaderInviteService } from './invite.service';
+import { LeaderPromotionService } from './promotion.service';
 import { TeamLeaderService } from './team-leader.service';
 import { LeaderWorkbenchService } from './workbench.service';
 
@@ -33,6 +50,8 @@ export class TeamLeaderController {
     private readonly teamLeaderService: TeamLeaderService,
     private readonly workbenchService: LeaderWorkbenchService,
     private readonly shareService: ShareService,
+    private readonly inviteService: LeaderInviteService,
+    private readonly promotionService: LeaderPromotionService,
   ) {}
 
   // ---------------------------------------------------------------- 工作台 M11
@@ -93,5 +112,41 @@ export class TeamLeaderController {
   @ApiOperation({ summary: 'L18 勾选同意《团长合作协议》（记录签署时间与版本号）' })
   agreement(@CurrentLeader() leader: TeamLeader, @Body() dto: LeaderAgreementReqDto) {
     return this.teamLeaderService.signAgreement(leader.userId, dto);
+  }
+
+  // ------------------------------------------------- 推荐裂变与晋级（M2-2.9）
+
+  @Get('invites')
+  @UseGuards(LeaderGuard)
+  @ApiOperation({ summary: 'L21 我的推荐列表（邀请明细 + 转正汇总）' })
+  invites(@CurrentLeader() leader: TeamLeader, @Query() q: InviteListQueryDto) {
+    return this.inviteService.listMyInvites(Number(leader.id), q);
+  }
+
+  @Post('level/audit')
+  @UseGuards(LeaderGuard)
+  @ApiOperation({
+    summary: 'L22 重新核算我的晋级进度（月单 + 介绍转正 → 落表并升级）',
+  })
+  auditLevel(@CurrentLeader() leader: TeamLeader) {
+    return this.promotionService.audit(Number(leader.id));
+  }
+
+  // ------------------------------------------------------ 退出（M2-2.8）
+
+  @Post('quit')
+  @UseGuards(LeaderGuard)
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'leader-quit' })
+  @ApiHeader({
+    name: HEADER.IDEMPOTENCY_KEY,
+    required: true,
+    description: '幂等键（UUID）：退出属状态变更，重复提交返回 code:10006 + 首次结果',
+  })
+  @ApiOperation({
+    summary: 'L20 退出团长身份（停职保留档案；余额/在途提现/待结算佣金未清则 20008）',
+  })
+  quit(@CurrentLeader() leader: TeamLeader, @Body() dto: QuitLeaderReqDto) {
+    return this.teamLeaderService.quit(leader.userId, dto);
   }
 }

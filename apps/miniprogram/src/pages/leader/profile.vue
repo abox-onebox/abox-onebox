@@ -162,17 +162,53 @@
         <button class="btn btn--ghost" hover-class="btn--hover" @tap="resign">重新签署 v1.1</button>
       </view>
 
+      <!-- 联系客服（一期统一走客服微信，人工解决） -->
+      <view class="card">
+        <view class="card__hd">
+          <text class="card__title">联系客服</text>
+          <text class="card__sub">人工处理</text>
+        </view>
+        <text class="card__note">
+          退出团长、余额与提现争议、代退进度等，都请添加客服微信由运营人工处理。
+        </text>
+        <button class="btn btn--ghost" hover-class="btn--hover" @tap="goSupport">
+          查看客服微信号
+        </button>
+      </view>
+
       <!-- 退出 -->
       <view class="card card--danger">
         <view class="card__hd">
           <text class="card__title">退出团长身份</text>
         </view>
         <text class="card__note">
-          退出后不再展示团长入口，历史佣金与订单记录仍保留。
-          规则口径（在途提现、未提现余额的处置）以运营判定为准，请先联系运营确认后再操作。
+          退出后不再展示团长入口，历史佣金与订单记录仍保留，
+          日后仍可重新提交申请（重新从见习等级开始）。
         </text>
-        <button class="btn btn--ghost" hover-class="btn--hover" @tap="contactOps">
-          联系运营退出
+        <text class="card__note">
+          ⚠️ 退出前需先结清资金：可用余额与冻结额须为 ¥0.00，
+          且不能有处理中的提现或待结算佣金。不满足时服务端会逐条告知原因。
+        </text>
+
+        <!-- 阻碍明细（服务端 20008 的 data.blockers，逐条引导） -->
+        <view v-if="quitBlockers.length" class="blockers">
+          <text class="blockers__title">暂不能退出：</text>
+          <view v-for="b in quitBlockers" :key="b.code" class="blockers__item">
+            <text class="blockers__dot">·</text>
+            <text class="blockers__text">{{ b.text }}</text>
+          </view>
+          <text class="blockers__hint">
+            请先在「提现」页结清余额并等待到账，或联系客服协助处理。
+          </text>
+        </view>
+
+        <button
+          class="btn btn--ghost btn--danger"
+          hover-class="btn--hover"
+          :disabled="quitting"
+          @tap="confirmQuit"
+        >
+          {{ quitting ? '处理中…' : '退出团长身份' }}
         </button>
       </view>
     </template>
@@ -183,7 +219,7 @@
 /**
  * P20 · 团长资料（含退出团长身份）
  *
- * 数据来源：L14 资料 / L15 修改 / L16 等级规则 / L18 协议重签。
+ * 数据来源：L14 资料 / L15 修改 / L16 等级规则 / L18 协议重签 / **L20 退出**。
  *
  * ⚠️ 手机号展示用 `maskPhone` 兜一层（§1.6）：即便服务端返回明文（本人数据），
  *    端上也不在「非导出场景」展示完整号，避免截图泄露。
@@ -191,8 +227,15 @@
  *    只提交发生变化的字段，不要整表回传。
  * ⚠️ 收款方式 `payoutAccount` 服务端**落库前脱敏**，故回显值带 `****`，属预期；
  *    再次修改时需**完整重新录入**（脱敏值不能再作为账号提交）。
- * ⚠️ 退出团长身份：后端**尚未提供**该接口（口径待运营裁定：在途提现、未提现余额如何处置），
- *    故本页只给联系入口，不伪造一个提交动作。
+ *
+ * 【L20 退出（2026-09-15 补）】语义 = **停职保留档案**：`status` 置 2、清空
+ * `ab_user.team_leader_id`，但订单/佣金/推荐关系全留，日后可重新申请。
+ *   · 服务端有**资金闸门**：余额/冻结未清零、有在途提现、有待结算佣金 → `20008`，
+ *     明细在 `error.payload.blockers`，本页逐条展示（不吞掉后端解释）。
+ *   · 幂等键**必传**：同一个「退出意图」复用同一个 key；成功后本页清 `isLeader`
+ *     并回到底部 4 项的普通用户视图。
+ *   · 失败后**沿用旧 key** 重试（服务端失败即释放占位键，同键可立即重试）。
+ * ⚠️ 退出团长属人工可介入事项，本页同时提供「联系客服」入口（U17 · 客服微信号）。
  */
 import { reactive, ref } from 'vue';
 import { onShow } from '@dcloudio/uni-app';
@@ -202,12 +245,16 @@ import type { LeaderLevel } from '@abox/shared-types';
 import {
   fetchLeaderProfile,
   fetchLevelRules,
+  quitLeader,
   signAgreement,
   updateLeaderProfile,
 } from '@/api/leader';
-import type { LevelRulesResult, LeaderProfile, PayoutType } from '@/api/leader';
+import type { LevelRulesResult, LeaderProfile, PayoutType, QuitBlocker } from '@/api/leader';
+import { ApiError } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
-import { displayOr, formatDateTime, maskPhone } from '@/utils/format';
+import { useLeaderStore } from '@/stores/leader';
+import { displayOr, formatDateTime, maskPhone, uuid } from '@/utils/format';
+import { navigateTo, switchTab } from '@/utils/router';
 
 const payoutTypes: Array<{ label: string; value: PayoutType }> = [
   { label: '银行卡', value: 'bank' },
@@ -215,6 +262,7 @@ const payoutTypes: Array<{ label: string; value: PayoutType }> = [
 ];
 
 const { run, loading } = useRequest();
+const leaderStore = useLeaderStore();
 
 const profile = ref<LeaderProfile | null>(null);
 const rules = ref<LevelRulesResult | null>(null);
@@ -228,6 +276,13 @@ const form = reactive({
 });
 
 const nextLevelLabel = ref('');
+
+/** L20 退出：提交中标记 + 服务端返回的阻碍明细 */
+const quitting = ref(false);
+const quitBlockers = ref<QuitBlocker[]>([]);
+
+/** 当前「退出意图」的幂等键：失败重试沿用，成功后作废 */
+let quitKey = '';
 
 async function reload(): Promise<void> {
   try {
@@ -305,13 +360,54 @@ async function resign(): Promise<void> {
   }
 }
 
-function contactOps(): void {
+/** 去客服页（U17 · 客服微信号）—— 退出/资金争议的人工通道 */
+function goSupport(): void {
+  navigateTo('/pages/support/contact');
+}
+
+/**
+ * L20 · 退出团长身份（二次确认 → 提交 → 清本地身份回到 4 项视图）
+ *
+ * 错误分支全部按「服务端说了算」处理：
+ *   · `20008` → 取 `payload.blockers` 逐条展示（退出阻碍，本页就地引导）
+ *   · 其余    → 走统一 toast
+ */
+function confirmQuit(): void {
+  quitBlockers.value = [];
   uni.showModal({
-    title: '退出团长身份',
-    content: '退出需运营确认在途提现与未提现余额的处置方式。请联系运营，确认后由后台操作。',
-    showCancel: false,
-    confirmText: '知道了',
+    title: '确认退出团长身份？',
+    content:
+      '退出后底部将不再展示团长入口，你需要先在「提现」页结清全部余额。历史订单与佣金记录会保留。',
+    confirmText: '确认退出',
+    confirmColor: '#C44536',
+    success: (res) => {
+      if (res.confirm) void doQuit();
+    },
   });
+}
+
+async function doQuit(): Promise<void> {
+  if (quitting.value) return;
+  if (!quitKey) quitKey = uuid(); // 失败沿用同一 key；服务端失败会释放占位键，可立即重试
+
+  quitting.value = true;
+  try {
+    await run(() => quitLeader({ reason: '用户端主动退出' }, quitKey));
+    quitKey = ''; // 成功即作废，避免下一次操作被回放成同一结果
+    leaderStore.clear(); // isLeader=false → 底栏重渲染回 4 项
+    uni.showToast({ title: '已退出团长身份', icon: 'none', duration: 2000 });
+    setTimeout(() => switchTab('/pages/index/index'), 900);
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 20008) {
+      const payload = e.payload as { blockers?: QuitBlocker[] } | null;
+      quitBlockers.value = payload?.blockers ?? [];
+      uni.showToast({ title: '暂不能退出，请先看下方原因', icon: 'none', duration: 2400 });
+      return;
+    }
+    toastApiError(e, '退出失败，请稍后重试');
+  } finally {
+    quitting.value = false;
+  }
 }
 
 onShow(() => {
@@ -540,8 +636,56 @@ onShow(() => {
     border: 1px solid $c-border;
   }
 
+  /* 退出这类破坏性动作：描边用暖红，与「保存」等常规按钮区分 */
+  &--danger {
+    color: $c-warning;
+    border-color: rgba(196, 69, 54, 0.4);
+  }
+
   &--hover {
     opacity: 0.85;
+  }
+}
+
+.blockers {
+  margin-bottom: $space-3;
+  padding: $space-3;
+  background: rgba(196, 69, 54, 0.06);
+  border: 1px solid rgba(196, 69, 54, 0.2);
+  border-radius: $radius-sm;
+
+  &__title {
+    display: block;
+    font-size: $fs-caption;
+    font-weight: 600;
+    color: $c-warning;
+  }
+
+  &__item {
+    display: flex;
+    margin-top: $space-2;
+  }
+
+  &__dot {
+    flex: none;
+    margin-right: $space-2;
+    font-size: $fs-caption;
+    color: $c-warning;
+  }
+
+  &__text {
+    flex: 1;
+    font-size: $fs-caption;
+    line-height: 1.7;
+    color: $c-text;
+  }
+
+  &__hint {
+    display: block;
+    margin-top: $space-3;
+    font-size: $fs-caption;
+    line-height: 1.7;
+    color: $c-text-weak;
   }
 }
 </style>

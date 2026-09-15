@@ -45,6 +45,8 @@ export enum ErrorCode {
   USER_DISABLED = 20006,
   /** 扩展：你已是团长（重复申请，文档 §九 未列） */
   LEADER_EXISTS = 20007,
+  /** 扩展：暂不能退出团长（余额未结清 / 有在途提现 / 有待结算佣金） */
+  LEADER_QUIT_BLOCKED = 20008,
 
   /** ---- 3xxxx 套餐与下单 ---- */
   /** 截单窗口外下单（U6 校验第 1 步） */
@@ -114,6 +116,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.ADMIN_LOGIN_LOCKED]: '账号或密码错误，已锁定 15 分钟',
   [ErrorCode.USER_DISABLED]: '账号已被停用',
   [ErrorCode.LEADER_EXISTS]: '你已是团长',
+  [ErrorCode.LEADER_QUIT_BLOCKED]: '暂不能退出：请先结清余额并等待提现到账',
   [ErrorCode.ORDER_CUTOFF]: '今日 24:00 已截单，明日请早',
   [ErrorCode.QUANTITY_EXCEED]: '份数超出单次上限',
   [ErrorCode.ORDER_STATUS_ILLEGAL]: '当前订单状态不支持该操作',

@@ -93,3 +93,19 @@ export function toBjIso(at: Date | null | undefined): string | null {
 /** 未支付订单过期时刻 = 下单时刻 + payTimeoutMinutes（T3：30 分钟未支付自动取消） */
 export const payExpireAt = (createdAt: Date, payTimeoutMinutes: number): Date =>
   new Date(createdAt.getTime() + payTimeoutMinutes * 60 * 1000);
+
+/**
+ * 自然月区间（含首含尾）
+ *
+ * 用途：C2「月单」统计（当月完成份数）、L10 佣金明细的 `range=month`。
+ * `base = '2026-09-15'` → `{ from: '2026-09-01', to: '2026-09-30' }`
+ *
+ * ⚠️ 本函数是**月份边界的唯一实现** —— `commission.service.monthOrDayRange` 亦委托于此，
+ *    避免「佣金明细」与「晋级审计」两处各算一套月区间而口径漂移。
+ */
+export function monthRangeOf(base: string): { from: string; to: string } {
+  const [y, m] = base.split('-').map(Number);
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate(); // 下月 0 日 = 本月最后一天
+  const mm = String(m).padStart(2, '0');
+  return { from: `${y}-${mm}-01`, to: `${y}-${mm}-${String(lastDay).padStart(2, '0')}` };
+}

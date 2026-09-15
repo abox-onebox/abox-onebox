@@ -10,6 +10,7 @@ import { Dish, Supplier } from '../../database/entities/supplier.entity';
 import { OperationLog } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
 import { FinanceModule } from '../finance/finance.module';
+import { TeamLeaderModule } from '../team-leader/team-leader.module';
 import { LeaderOrderController } from './leader-order.controller';
 import { LeaderOrderService } from './leader-order.service';
 import { OrderController } from './order.controller';
@@ -23,8 +24,9 @@ import { OrderService } from './order.service';
  *           L7 团长代退申请（经 `RefundService`）· L8 今日取餐 · L9 一键分发（计佣）
  * M3 待实现：后台订单管控（D8–D12）
  *
- * ⚠️ 依赖方向：`OrderModule → FinanceModule`（取 `RefundService` 承接 L7 与计佣）。
- *    反向无依赖，不会形成循环。
+ * ⚠️ 依赖方向：`OrderModule → FinanceModule`（取 `RefundService` 承接 L7 与计佣）、
+ *    `OrderModule → TeamLeaderModule`（取 `LeaderPromotionService`：一键分发计佣后
+ *    触发 C2 晋级审计）。两者均为单向，无循环。
  */
 @Module({
   imports: [
@@ -45,6 +47,7 @@ import { OrderService } from './order.service';
       OperationLog,
     ]),
     FinanceModule,
+    TeamLeaderModule,
   ],
   controllers: [OrderController, LeaderOrderController],
   providers: [OrderService, LeaderOrderService],

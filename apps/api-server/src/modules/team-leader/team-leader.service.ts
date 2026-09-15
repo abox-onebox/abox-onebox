@@ -1,18 +1,26 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 
-import { LEADER_LEVEL_META, LeaderLevel, LeaderStatus } from '@abox/shared-types';
+import {
+  LEADER_LEVEL_META,
+  LeaderLevel,
+  LeaderStatus,
+  WITHDRAW_FROZEN_STATUS,
+} from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { maskAccount } from '../../common/utils/crypto';
 import { Building } from '../../database/entities/building.entity';
+import { Balance, Commission } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { User } from '../../database/entities/user.entity';
+import { Withdraw } from '../../database/entities/withdraw.entity';
 import {
   ApplyLeaderReqDto,
   LeaderAgreementReqDto,
+  QuitLeaderReqDto,
   UpdateLeaderProfileReqDto,
 } from './dto/team-leader.dto';
 import { LeaderInviteService } from './invite.service';
@@ -37,9 +45,14 @@ const BUILDING_OPEN = 1;
  */
 @Injectable()
 export class TeamLeaderService {
+  private readonly logger = new Logger('TeamLeaderService');
+
   constructor(
     @InjectRepository(TeamLeader) private readonly leaderRepo: Repository<TeamLeader>,
     @InjectRepository(Building) private readonly buildingRepo: Repository<Building>,
+    @InjectRepository(Balance) private readonly balanceRepo: Repository<Balance>,
+    @InjectRepository(Withdraw) private readonly withdrawRepo: Repository<Withdraw>,
+    @InjectRepository(Commission) private readonly commissionRepo: Repository<Commission>,
     private readonly inviteService: LeaderInviteService,
     private readonly levelService: LeaderLevelService,
     private readonly dataSource: DataSource,
@@ -163,6 +176,124 @@ export class TeamLeaderService {
       mine: { level, monthOrders: leader.monthOrders, invitedFormalCount, nextLevel, progress },
       expireRule: this.levelService.expireRule(),
     };
+  }
+
+  /**
+   * L20 · 退出团长身份（M2-2.8 · 2026-09-15 补）
+   *
+   * 【语义：停职而非删除】`status` 置 2，保留全部历史档案（订单 / 佣金 / 推荐关系 /
+   *   协议留痕），且**支持日后重新申请复职** —— `apply` 对停职者有「复职并重置为见习」
+   *   分支，故退出不是终点。同时清空 `ab_user.team_leader_id`（撤销「我归属于某位团长」
+   *   这一关系），但**保留 `building_id`** —— 他仍是该写字楼的用户，明天照样能订餐。
+   *
+   * 【资金闸门】退出前必须走完资金链路，任一条不满足即 `20008`（附 `data.blockers`
+   *   供端上逐条引导）：
+   *     ① 可用余额 / 冻结余额未清零 —— 钱在账上却失去提现入口会造成事实上的资金悬空
+   *     ② 存在在途提现申请（pending/approved/paying）—— 审批链仍指向一个已离职团长
+   *     ③ 存在待结算佣金（`ab_commission.status='pending'`）—— 将来入账无归属
+   *
+   * 【幂等】退出后 `status=2`，重复调用会被 `LeaderGuard` / `requireActiveLeader`
+   *   以 `20003` 拒绝；端上另配 `Idempotency-Key`，同键重放返回首次结果（不重复执行）。
+   */
+  async quit(userId: number, dto: QuitLeaderReqDto) {
+    const leader = await this.requireActiveLeader(userId);
+
+    const blockers = await this.collectQuitBlockers(leader);
+    if (blockers.length) {
+      throw new BizException(
+        ErrorCode.LEADER_QUIT_BLOCKED,
+        blockers.map((b) => b.text).join('；'),
+        undefined,
+        { blockers },
+      );
+    }
+
+    const now = new Date();
+    const result = await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(TeamLeader).update(Number(leader.id), {
+        status: LeaderStatus.SUSPENDED,
+      });
+      // 撤销「归属某团长的用户」这一关系；`building_id` 保留（他仍是该楼用户）
+      await manager.getRepository(User).update(userId, { teamLeaderId: null });
+      return { quitAt: now };
+    });
+
+    this.logger.log(
+      `团长退出：团长#${leader.id}（${leader.realName}）已停职` +
+        `${dto.reason ? `，原因：${dto.reason}` : ''}`,
+    );
+
+    return {
+      /** 端上据此把底部导航重渲染回 4 项（C3 反向） */
+      isLeader: false,
+      status: LeaderStatus.SUSPENDED,
+      level: leader.level,
+      levelLabel: LEADER_LEVEL_META[leader.level as LeaderLevel]?.label ?? leader.level,
+      quitAt: result.quitAt,
+      /** 历史资产仍保留，可在「我的」继续查看 */
+      kept: {
+        totalOrders: Number(leader.totalOrders),
+        totalCommission: leader.totalCommission,
+        balance: leader.balance,
+      },
+      tips: '已退出团长身份。历史佣金与订单记录仍保留；如需重新担任，可再次提交申请。',
+    };
+  }
+
+  /**
+   * 收集退出阻碍项（空数组 = 可以退出）
+   *
+   * 真源：可用/冻结余额取 `ab_balance`（用户维度，与提现同源，见 `CommissionService` 口径），
+   *      在途提现取 `ab_withdraw`，待结算佣金取 `ab_commission`。
+   */
+  private async collectQuitBlockers(
+    leader: TeamLeader,
+  ): Promise<Array<{ code: string; text: string; amountFen?: number; count?: number }>> {
+    const userId = Number(leader.userId);
+
+    const [account, inFlight, pendingCommission] = await Promise.all([
+      this.balanceRepo.findOne({ where: { userId } }),
+      this.withdrawRepo.count({
+        where: { leaderId: Number(leader.id), status: In(WITHDRAW_FROZEN_STATUS) },
+      }),
+      this.commissionRepo.count({ where: { teamLeaderId: Number(leader.id), status: 'pending' } }),
+    ]);
+
+    const balanceFen = Math.round(Number(account?.balance ?? 0) * 100);
+    const frozenFen = Math.round(Number(account?.frozen ?? 0) * 100);
+
+    const blockers: Array<{ code: string; text: string; amountFen?: number; count?: number }> = [];
+
+    if (balanceFen > 0) {
+      blockers.push({
+        code: 'BALANCE_NOT_CLEARED',
+        text: `可用余额 ¥${(balanceFen / 100).toFixed(2)} 未清零`,
+        amountFen: balanceFen,
+      });
+    }
+    if (frozenFen > 0) {
+      blockers.push({
+        code: 'FROZEN_NOT_CLEARED',
+        text: `冻结余额 ¥${(frozenFen / 100).toFixed(2)} 未清零`,
+        amountFen: frozenFen,
+      });
+    }
+    if (inFlight > 0) {
+      blockers.push({
+        code: 'WITHDRAW_IN_FLIGHT',
+        text: `有 ${inFlight} 笔提现正在处理中`,
+        count: inFlight,
+      });
+    }
+    if (pendingCommission > 0) {
+      blockers.push({
+        code: 'COMMISSION_PENDING',
+        text: `有 ${pendingCommission} 笔佣金待结算`,
+        count: pendingCommission,
+      });
+    }
+
+    return blockers;
   }
 
   // ------------------------------------------------------------------ 内部

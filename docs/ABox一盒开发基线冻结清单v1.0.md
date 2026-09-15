@@ -15,10 +15,10 @@
 | 原型版本 | v4.10.0（37 页，已部署；结算成本项可配置版） |
 | 现行资产 | 26 份 |
 | 已废弃资产 | 5 份（存档，勿参考） |
-| 工程骨架 | `abox-onebox/` · **426 个文件**（阶段四产出） |
-| 数据库表 | **24 张**（ER v2.1 的 23 张 + 评审新增 `ab_leader_invite`） |
+| 工程骨架 | `abox-onebox/` · **427 个文件**（阶段四产出） |
+| 数据库表 | **25 张**（ER v2.1：23 张 + 评审新增 `ab_leader_invite` + M2 新增 `ab_withdraw`） |
 | 技术栈 | uni-app(Vue3+TS) + NestJS + MySQL 8 + Redis 7 + 微信支付 V3；**佣金出款走灵活用工平台代发**（C11，见目录结构 v2.0） |
-| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `a2eb57d`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
+| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `e287f3b`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
 | 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**，已开工 M1 |
 
 ---
@@ -40,10 +40,10 @@
 | 11 | `ABox一盒合规资质与协议清单v1.0.md` | 资质与协议要点（阶段三）· 资金定性=自营 + 佣金个税走灵活用工 | 15,446 | `d3a9b3a0f902` |
 | 12 | `ABox一盒开发前准备计划v1.0.html` | 四阶段推进路线（准备期总纲） | 28,685 | `feb3c6c759a2` |
 | 13 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四） | 16,095 | `aa8c33fb2ec4` |
-| 14 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 | 36,207 | `0660f727b0a3` |
+| 14 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 | 41,346 | `50520e338d28` |
 | 15 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 25 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor） | 35,019 | `3ddcaa55e726` |
 | 16 | `ABox一盒本地开发手册v1.0.md` | 不依赖云资源的本地开发手册（四驱动开关 · 本地跑通登录→下单→支付→回调） | 15,697 | `0a1cccd8a63d` |
-| 17 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 | 17,892 | `76aba8337023` |
+| 17 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 | 19,393 | `69e1adde9292` |
 | 18 | `ABox一盒表结构评审意见v1.0.md` | ER 评审结论（阶段二）· P0×6 + 4 张补齐 DDL | 24,817 | `53e5f67f568c` |
 | 19 | `ABox一盒订单状态机与全链路流转v1.0.md` | 订单域行为契约（阶段二）· 11 态 / 8 定时任务 / C6 退款三段式 / C11 出款通道 | 18,629 | `ac3901dcc284` |
 | 20 | `ABox一盒设计token规范v1.0.html` | 设计与实现共用视觉变量 | 20,375 | `34faff40f86e` |
@@ -70,7 +70,7 @@
 
 ## 四、工程骨架 `abox-onebox/`（阶段四产出）
 
-**总计 426 个文件**，按区域分布：
+**总计 427 个文件**，按区域分布：
 
 | 区域 | 文件数 |
 | --- | --- |
@@ -87,8 +87,8 @@
 | `CONTRIBUTING.md` | 1 |
 | `README.md` | 1 |
 | `apps/admin-web` | 74 |
-| `apps/api-server` | 180 |
-| `apps/miniprogram` | 78 |
+| `apps/api-server` | 181 |
+| `apps/miniprogram` | 80 |
 | `commitlint.config.cjs` | 1 |
 | `data` | 1 |
 | `docker-compose.yml` | 1 |
@@ -101,8 +101,6 @@
 | `packages/tsconfig` | 4 |
 | `pnpm-lock.yaml` | 1 |
 | `pnpm-workspace.yaml` | 1 |
-| `scripts/_probe-orders.mjs` | 1 |
-| `scripts/_probe-skeleton.mjs` | 1 |
 | `scripts/db-migrate.sh` | 1 |
 | `scripts/db-seed.sh` | 1 |
 | `scripts/deploy.sh` | 1 |
@@ -137,7 +135,7 @@
 | 14 | `scripts/sync-docs.mjs` |  | 4,135 | `fc5b05301ea9` |
 | 15 | `scripts/gate.mjs` |  | 9,221 | `889be81c80e1` |
 | 16 | `scripts/e2e-m1.mjs` |  | 12,487 | `fd69e5f28323` |
-| 17 | `scripts/e2e-m2.mjs` |  | 34,135 | `46dfb74118fc` |
+| 17 | `scripts/e2e-m2.mjs` |  | 48,439 | `db82927bc941` |
 | 18 | `scripts/lib/e2e-server.mjs` |  | 8,161 | `62b1429c3cda` |
 | 19 | `packages/shared-types/src/enums/order-status.ts` |  | 3,498 | `b979834b3368` |
 | 20 | `packages/shared-types/src/enums/leader-level.ts` |  | 1,614 | `6a371c28de60` |
@@ -146,24 +144,24 @@
 | 23 | `packages/shared-utils/src/biz.ts` |  | 4,941 | `183d7ea2e070` |
 | 24 | `apps/miniprogram/src/constants/index.ts` |  | 4,094 | `e7efa02eebf2` |
 | 25 | `apps/miniprogram/src/uni.scss` |  | 622 | `016600e38e91` |
-| 26 | `apps/miniprogram/src/pages.json` |  | 3,330 | `6c6a1f1c7061` |
+| 26 | `apps/miniprogram/src/pages.json` |  | 3,470 | `3f08ea37d3ac` |
 | 27 | `apps/admin-web/src/constants/index.ts` |  | 3,922 | `671196172164` |
 | 28 | `apps/admin-web/src/styles/element-override.scss` |  | 830 | `6dab60cc998b` |
 | 29 | `apps/api-server/src/app.module.ts` |  | 2,338 | `378e08442352` |
 | 30 | `apps/api-server/src/modules/order/order-state-machine.ts` |  | 6,246 | `c71905a46aca` |
-| 31 | `apps/api-server/src/tasks/leader-expire.task.ts` |  | 599 | `643dfb5dccf5` |
+| 31 | `apps/api-server/src/tasks/leader-expire.task.ts` |  | 1,799 | `859099988d7d` |
 | 32 | `apps/api-server/test/unit/order-state-machine.spec.ts` |  | 1,546 | `fb77b77fb8a4` |
 | 33 | `apps/api-server/src/database/entities/withdraw.entity.ts` |  | 4,534 | `680e776f3c30` |
 | 34 | `packages/shared-types/src/enums/withdraw-status.ts` |  | 2,335 | `26f7cdd618d1` |
 | 35 | `packages/shared-types/src/enums/refund.ts` |  | 1,270 | `64248c8dd16d` |
 | 36 | `apps/api-server/src/common/interceptors/idempotent.interceptor.ts` |  | 4,998 | `c57dc09bcaeb` |
-| 37 | `apps/api-server/src/modules/finance/commission.service.ts` |  | 13,913 | `99ed4e31c238` |
+| 37 | `apps/api-server/src/modules/finance/commission.service.ts` |  | 13,854 | `83f05e90d5e1` |
 | 38 | `apps/api-server/src/modules/finance/withdraw.service.ts` |  | 8,952 | `3dfa71377d4c` |
 | 39 | `apps/api-server/src/modules/finance/refund.service.ts` |  | 6,769 | `a12a2b7b789d` |
 | 40 | `apps/api-server/src/modules/finance/leader-finance.controller.ts` |  | 3,256 | `9496efa3e87c` |
-| 41 | `apps/api-server/src/modules/order/leader-order.service.ts` |  | 13,760 | `26beae4573de` |
+| 41 | `apps/api-server/src/modules/order/leader-order.service.ts` |  | 14,523 | `54285d5da8e7` |
 | 42 | `apps/api-server/src/modules/team-leader/workbench.service.ts` |  | 6,171 | `9dc90864a47e` |
-| 43 | `apps/miniprogram/src/api/leader.ts` |  | 8,855 | `75f49222f43b` |
+| 43 | `apps/miniprogram/src/api/leader.ts` |  | 13,230 | `77fe3d5433c1` |
 | 44 | `apps/miniprogram/src/api/leader-order.ts` |  | 8,757 | `db5668aa60b9` |
 | 45 | `apps/miniprogram/src/api/leader-finance.ts` |  | 7,764 | `c25171af33ef` |
 | 46 | `apps/miniprogram/src/api/balance.ts` |  | 2,631 | `5ac8fb7da240` |
@@ -183,7 +181,7 @@
 | 3 | `tests/bracket_check.py` | 括号与反引号配平 | 2,297 | `665a00c07c76` |
 | 4 | `tests/js-syntax-check.js` | JS 语法校验 | 785 | `1e5cfda6093b` |
 | 5 | `tests/check_online.py` | 线上部署核验 | 1,475 | `3efc02e45877` |
-| 6 | `tests/baseline_manifest.py` | 本清单生成器（基线变更时重跑） | 17,142 | `cafbbcaa001c` |
+| 6 | `tests/baseline_manifest.py` | 本清单生成器（基线变更时重跑） | 17,166 | `529a2c18501a` |
 
 ---
 

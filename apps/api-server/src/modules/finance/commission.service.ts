@@ -5,7 +5,7 @@ import { Between, DataSource, EntityManager, FindOptionsWhere, Repository } from
 import { LEADER_LEVEL_META, LeaderLevel, WithdrawStatus } from '@abox/shared-types';
 
 import { BizConfigService } from '../../common/services/biz-config.service';
-import { todayBj } from '../../common/utils/time';
+import { monthRangeOf, todayBj } from '../../common/utils/time';
 import { round2 } from '../../common/utils/money';
 import { normalizePage, paginate } from '../../common/utils/response';
 import { Balance, BalanceLog, Commission } from '../../database/entities/finance.entity';
@@ -359,14 +359,13 @@ export function levelLabel(level: string): string {
 /**
  * 统计区间（含首含尾）
  * ⚠️ `ab_commission.meal_date` 为 DATE 字符串，`Between` 即 `>= from AND <= to`。
+ * 月份边界委托 `common/utils/time.monthRangeOf` —— 晋级审计（C2 月单）与
+ * 佣金明细必须用同一套月区间，故不在本文件重复实现。
  */
 export function monthOrDayRange(
   base: string,
   range: 'day' | 'month',
 ): { from: string; to: string } {
   if (range === 'day') return { from: base, to: base };
-  const [y, m] = base.split('-').map(Number);
-  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate(); // 下月 0 日 = 本月最后一天
-  const mm = String(m).padStart(2, '0');
-  return { from: `${y}-${mm}-01`, to: `${y}-${mm}-${String(lastDay).padStart(2, '0')}` };
+  return monthRangeOf(base);
 }

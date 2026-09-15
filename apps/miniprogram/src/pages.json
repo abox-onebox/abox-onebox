@@ -91,6 +91,10 @@
       "style": { "navigationBarTitleText": "P20 · 团长资料（含退出团长身份）" }
     },
     {
+      "path": "pages/support/contact",
+      "style": { "navigationBarTitleText": "联系客服（U17 · 客服微信号）" }
+    },
+    {
       "path": "pages/webview/webview",
       "style": { "navigationBarTitleText": "H5 容器（协议 / 隐私政策）" }
     }
