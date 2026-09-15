@@ -10,6 +10,7 @@ import { MealAssignment, SetMeal, SetMealItem } from '../entities/meal.entity';
 import { Dish, Supplier, SupplierDishDaily } from '../entities/supplier.entity';
 import { AdminUser, SysConfig } from '../entities/system.entity';
 import { User } from '../entities/user.entity';
+import { addDays, cutoffAtOf, publishAtOf, todayBj, tomorrowBj } from '../../common/utils/time';
 
 /**
  * 种子数据（依据《种子数据清单 v1.0》）
@@ -799,21 +800,28 @@ async function main(): Promise<void> {
     { setMealId: 7, dishId: 8, supplierId: 4, slot: 4, shareAmount: '2.00' },
   ]);
 
-  // ---------- 11. 次日（2026-09-15）分配与每日菜单 ----------
+  // ---------- 11. 分配与每日菜单（**日期相对**：随运行日自动前移，禁止写死） ----------
+  // ⚠️ 历史缺陷：旧实现把 mealDate 写死为某个具体日期，导致「次日套餐」在第二天即失效
+  //    （U1 取明日套餐 → 查无分配 → 30005「该办公楼今日未开团」）。
+  //    现改为按运行日推算：T+1 = 明日（可下单）· T-1 = 昨日（供 U2 历史归档）。
+  const TODAY = todayBj();
+  const TOMORROW = tomorrowBj();
+  const YESTERDAY = addDays(TODAY, -1);
+
   const maRepo = dataSource.getRepository(MealAssignment);
   await maRepo.save([
     {
-      mealDate: '2026-09-15',
+      mealDate: TOMORROW,
       buildingGroupId: 1,
       setMealId: 1,
       distributionCenterId: 1,
       status: 'active',
-      publishAt: new Date('2026-09-14T14:00:00Z'),
-      cutoffAt: new Date('2026-09-14T16:00:00Z'),
+      publishAt: publishAtOf(TOMORROW),
+      cutoffAt: cutoffAtOf(TOMORROW),
       soldCount: 45,
     },
     {
-      mealDate: '2026-09-15',
+      mealDate: TOMORROW,
       buildingGroupId: 2,
       setMealId: 1,
       distributionCenterId: 1,
@@ -821,7 +829,7 @@ async function main(): Promise<void> {
       soldCount: 0,
     },
     {
-      mealDate: '2026-09-15',
+      mealDate: TOMORROW,
       buildingGroupId: 3,
       setMealId: 2,
       distributionCenterId: 2,
@@ -829,7 +837,7 @@ async function main(): Promise<void> {
       soldCount: 0,
     },
     {
-      mealDate: '2026-09-15',
+      mealDate: TOMORROW,
       buildingGroupId: 4,
       setMealId: 3,
       distributionCenterId: 4,
@@ -837,12 +845,23 @@ async function main(): Promise<void> {
       soldCount: 0,
     },
     {
-      mealDate: '2026-09-15',
+      mealDate: TOMORROW,
       buildingGroupId: 5,
       setMealId: 4,
       distributionCenterId: 3,
       status: 'pending',
       soldCount: 0,
+    },
+    // —— 历史归档（T-1）：供 U2 `/home/history` 有数据可查 ——
+    {
+      mealDate: YESTERDAY,
+      buildingGroupId: 1,
+      setMealId: 2,
+      distributionCenterId: 1,
+      status: 'active',
+      publishAt: publishAtOf(YESTERDAY),
+      cutoffAt: cutoffAtOf(YESTERDAY),
+      soldCount: 52,
     },
   ]);
 
@@ -851,7 +870,7 @@ async function main(): Promise<void> {
     {
       supplierId: 1,
       dishId: 1,
-      produceDate: '2026-09-15',
+      produceDate: TOMORROW,
       planQuantity: 45,
       unitPrice: '7.50',
       status: 'pending',
@@ -859,7 +878,7 @@ async function main(): Promise<void> {
     {
       supplierId: 2,
       dishId: 4,
-      produceDate: '2026-09-15',
+      produceDate: TOMORROW,
       planQuantity: 45,
       unitPrice: '3.00',
       status: 'pending',
@@ -867,7 +886,7 @@ async function main(): Promise<void> {
     {
       supplierId: 3,
       dishId: 6,
-      produceDate: '2026-09-15',
+      produceDate: TOMORROW,
       planQuantity: 45,
       unitPrice: '1.50',
       status: 'pending',
@@ -875,7 +894,7 @@ async function main(): Promise<void> {
     {
       supplierId: 4,
       dishId: 7,
-      produceDate: '2026-09-15',
+      produceDate: TOMORROW,
       planQuantity: 45,
       unitPrice: '2.00',
       status: 'pending',
@@ -928,6 +947,9 @@ async function main(): Promise<void> {
   };
 
   console.log('✔ 种子导入完成：', JSON.stringify(check, null, 0));
+  console.log(
+    `  出餐日锚点（随运行日推算）：昨日 ${YESTERDAY}（历史归档）· 今日 ${TODAY} · 明日 ${TOMORROW}（可下单）`,
+  );
 
   // C9 口径修订（2026-09-15）：成本项**可配置**、平台毛利为**结果值**
   // 下面用「示例值」演示等式闭合，实际一律以配置项 / 协商价 / 实际发生额为准

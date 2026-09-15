@@ -18,7 +18,7 @@ import {
  * 无需商户号 / 证书即可跑通「下单 → 支付 → 回调 → 订单转 paid」全链路：
  *   1. createPrepay 返回假 prepay_id 与假 payParams（小程序端会调起失败，属预期）；
  *   2. MOCK_PAY_AUTO_SUCCESS=true 时，延迟 N 毫秒后自动发出「支付成功」事件；
- *   3. 也可调 POST /api/v1/payments/mock/paid 手动触发，便于分步调试。
+ *   3. 也可调 POST /api/v1/pay/mock/paid 手动触发，便于分步调试。
  */
 @Injectable()
 export class MockWxPayProvider extends WxPayProvider {

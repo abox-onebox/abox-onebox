@@ -1,2 +1,95 @@
-/** common/utils/time.ts —— 时间工具（UTC+8） · 占位骨架 */
-export {};
+/**
+ * 时间工具（服务端 · 统一 Asia/Shanghai = UTC+8）
+ *
+ * 关键锚点（《订单状态机 v1.0》§1.2）：
+ *   开团   T-1 14:00
+ *   截单   T-1 24:00（即 T 日 00:00，硬闸）
+ *   送达   T 日 11:30
+ *   自动确认 T 日 14:00
+ *   跑批   T+1 02:00
+ *
+ * 约定：`mealDate` 语义 = **出餐日（T 日）**，格式 `YYYY-MM-DD`。
+ *
+ * 实现说明：不引入 dayjs 插件（避免打包/运行时差异），直接用「显式带偏移量的
+ * 字符串解析」+「UTC 字段做日期加减」，全链路不依赖宿主时区。
+ */
+export const TZ_OFFSET_MINUTES = 8 * 60;
+const BJ_OFFSET_MS = TZ_OFFSET_MINUTES * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** `YYYY-MM-DD` 格式校验 */
+export const isDateStr = (v: unknown): v is string =>
+  typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+/** 北京时间「当天」的 yyyy-MM-dd */
+export function todayBj(at: Date = new Date()): string {
+  return new Date(at.getTime() + BJ_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** 北京时间「次日」的 yyyy-MM-dd —— U1「明日套餐」的 T 日 */
+export function tomorrowBj(at: Date = new Date()): string {
+  return addDays(todayBj(at), 1);
+}
+
+/** 日期加减（纯 UTC 运算，跨月/跨年/闰年安全） */
+export function addDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const base = Date.UTC(y, m - 1, d);
+  return new Date(base + days * DAY_MS).toISOString().slice(0, 10);
+}
+
+/** `YYYY-MM-DD` + 北京时间时刻 → 绝对时刻 */
+export function bjDateTime(dateStr: string, hour: number, minute = 0): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  // UTC+8 换算：UTC 时刻 = 北京时刻 − 8h
+  return new Date(Date.UTC(y, m - 1, d, hour, minute) - BJ_OFFSET_MS);
+}
+
+/** 该出餐日（T 日）的**开团时刻** T-1 14:00 */
+export const publishAtOf = (mealDate: string): Date => bjDateTime(addDays(mealDate, -1), 14);
+
+/** 该出餐日（T 日）的**截单时刻** T-1 24:00（= T 日 00:00 · 硬闸） */
+export const cutoffAtOf = (mealDate: string): Date => bjDateTime(mealDate, 0);
+
+/** 该出餐日的送达时刻 T 日 11:30 */
+export const arrivalAtOf = (mealDate: string): Date => bjDateTime(mealDate, 11, 30);
+
+/** 该出餐日的自动确认时刻 T 日 14:00 */
+export const autoConfirmAtOf = (mealDate: string): Date => bjDateTime(mealDate, 14);
+
+/**
+ * 当前是否处于「可下单窗口」
+ * 窗口 = [开团时刻, 截单时刻 − cutoffWindowMinutes)
+ * 口径依据：§3.1 U1 附注 —— 截单前 `cutoff_window_minutes` 分钟即 canOrder=false。
+ */
+export function isOrderable(
+  mealDate: string,
+  cutoffWindowMinutes: number,
+  at: Date = new Date(),
+): boolean {
+  const open = publishAtOf(mealDate).getTime();
+  const close = cutoffAtOf(mealDate).getTime() - cutoffWindowMinutes * 60 * 1000;
+  const now = at.getTime();
+  return now >= open && now < close;
+}
+
+/** 距截单剩余秒数（已截单返回 0；U1 countdownSec） */
+export function secondsToCutoff(mealDate: string, at: Date = new Date()): number {
+  const diff = cutoffAtOf(mealDate).getTime() - at.getTime();
+  return diff > 0 ? Math.floor(diff / 1000) : 0;
+}
+
+/** 是否已过截单时刻（硬闸判定） */
+export const isAfterCutoff = (mealDate: string, at: Date = new Date()): boolean =>
+  at.getTime() >= cutoffAtOf(mealDate).getTime();
+
+/** 输出 `2026-09-15T11:30:00+08:00`（《接口规范》§1.6 时间传输格式） */
+export function toBjIso(at: Date | null | undefined): string | null {
+  if (!at) return null;
+  const shifted = new Date(at.getTime() + BJ_OFFSET_MS);
+  return `${shifted.toISOString().slice(0, 19)}+08:00`;
+}
+
+/** 未支付订单过期时刻 = 下单时刻 + payTimeoutMinutes（T3：30 分钟未支付自动取消） */
+export const payExpireAt = (createdAt: Date, payTimeoutMinutes: number): Date =>
+  new Date(createdAt.getTime() + payTimeoutMinutes * 60 * 1000);

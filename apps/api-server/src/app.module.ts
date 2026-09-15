@@ -27,12 +27,13 @@ import { HealthController } from './health/health.controller';
 
 @Module({
   imports: [
-    // 基础设施（配置 / 公共能力 / 外部依赖抽象）
+    // 基础设施（配置 / 数据库 / 公共能力 / 外部依赖抽象）
+    // ⚠️ DatabaseModule 必须在 CommonModule 之前 —— BizConfigService 依赖 DataSource
     AppConfigModule,
     ScheduleModule.forRoot(),
+    DatabaseModule,
     CommonModule,
     ProvidersModule,
-    DatabaseModule,
 
     // 业务模块（12 域 + 后台/统计）
     AuthModule,

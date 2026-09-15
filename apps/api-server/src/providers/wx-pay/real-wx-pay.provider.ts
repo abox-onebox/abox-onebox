@@ -50,7 +50,7 @@ export class RealWxPayProvider extends WxPayProvider {
 
   private notReady(): never {
     throw new BizException(
-      ErrorCode.PAY_FAILED,
+      ErrorCode.PAY_CREATE_FAILED,
       '真实微信支付通道待启用：商户号与证书就位后补全（详见 real-wx-pay.provider.ts 注释）',
     );
   }

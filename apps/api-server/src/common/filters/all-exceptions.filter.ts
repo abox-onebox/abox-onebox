@@ -6,15 +6,15 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 
 import { ErrorCode } from '../constants/error-code';
 import { BizException } from '../exceptions/biz.exception';
 
 /**
  * 全局异常过滤器
- * 把各类异常统一翻译成 { code, message, data: null, ts }
- *   BizException      → 业务码（HTTP 200）
+ * 把各类异常统一翻译成 { code, message, data, requestId, timestamp }（§1.2）
+ *   BizException      → 业务码（默认 HTTP 200；10002/10003/10005 保留真实 HTTP 码）
  *   HttpException     → 依状态码映射（401/403 保留原状态码便于前端拦截登录）
  *   参数校验失败      → 10001，多条错误以「；」拼接
  *   其它未知异常      → 500 + 90001，并打错误日志
@@ -26,15 +26,19 @@ export class AllExceptionsFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const res = ctx.getResponse<Response>();
+    const req = ctx.getRequest<Request>();
+    const requestId = req?.requestId ?? '';
 
     let code: number = ErrorCode.INTERNAL_ERROR;
     let message = '系统繁忙，请稍后再试';
     let httpStatus = HttpStatus.OK;
+    let payload: Record<string, unknown> | undefined;
 
     if (exception instanceof BizException) {
       code = exception.code;
       message = exception.message;
       httpStatus = exception.httpStatus;
+      payload = exception.payload;
     } else if (exception instanceof HttpException) {
       const status = exception.getStatus();
       const body = exception.getResponse();
@@ -66,6 +70,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     }
 
-    res.status(httpStatus).json({ code, message, data: null, ts: Date.now() });
+    // 业务失败默认 HTTP 200；仅 4xx/5xx 语义码沿用真实状态码（见 error-code.ts 口径）
+    res
+      .status(httpStatus)
+      .json({ code, message, data: payload ?? null, requestId, timestamp: Date.now() });
   }
 }

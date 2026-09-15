@@ -10,10 +10,19 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { resolve } from 'path';
 
 import { AppModule } from './app.module';
+import { requestIdMiddleware } from './common/middleware/request-id.middleware';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { cors: true });
+  // rawBody: 微信支付 V3 回调需用**原始报文**验签（/pay/notify）
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    cors: true,
+    rawBody: true,
+  });
+
   const cfg = app.get(ConfigService);
+
+  // 请求链路 ID（《接口规范》§1.2）：优先沿用 X-Request-Id，缺省服务端生成
+  app.use(requestIdMiddleware);
 
   const prefix = cfg.get<string>('app.apiPrefix') ?? '/api/v1';
   app.setGlobalPrefix(prefix);

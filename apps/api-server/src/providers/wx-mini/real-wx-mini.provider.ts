@@ -43,7 +43,8 @@ export class RealWxMiniProvider extends WxMiniProvider {
 
     if (!data?.openid) {
       this.logger.error(`jscode2session 失败：errcode=${data?.errcode} errmsg=${data?.errmsg}`);
-      throw new BizException(ErrorCode.UNAUTHORIZED, '微信登录失败，请重试');
+      // §九 20001：code2session 失败 = 微信登录凭证失效（非「未登录」，不可映射 10002）
+      throw new BizException(ErrorCode.WX_CODE_INVALID);
     }
 
     return {
@@ -71,6 +72,7 @@ export class RealWxMiniProvider extends WxMiniProvider {
     const info = data?.phone_info;
     if (!info?.phoneNumber) {
       throw new BizException(ErrorCode.PARAM_INVALID, '获取手机号失败');
+      // 注：手机号获取失败属入参/凭证问题，非业务码，保持 10001 不占用号段
     }
     return {
       phoneNumber: info.phoneNumber,
