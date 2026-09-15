@@ -108,6 +108,23 @@ export enum RefundStatus {
   FAILED = 'failed',
 }
 
+/** 退款单状态中文文案（后台与小程序共用 · 端上不维护第二份映射） */
+export const REFUND_STATUS_LABEL: Record<string, string> = {
+  [RefundStatus.APPLYING]: '待审批',
+  [RefundStatus.APPROVED]: '已批准',
+  [RefundStatus.REFUNDING]: '退款中',
+  [RefundStatus.REFUNDED]: '已退款',
+  [RefundStatus.REJECTED]: '已驳回',
+  [RefundStatus.FAILED]: '退款失败',
+};
+
+/** 退款单来源中文文案（C6：用户自助 / 团长代退 / 后台强制） */
+export const REFUND_SOURCE_LABEL: Record<string, string> = {
+  user: '用户自助',
+  leader: '团长代退',
+  admin: '后台强制',
+};
+
 /** ab_supplier_share.status（应付状态机 · C10 人工对公） */
 export enum SupplierShareStatus {
   PENDING = 'pending',

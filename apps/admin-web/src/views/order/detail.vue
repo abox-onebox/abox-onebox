@@ -45,6 +45,13 @@
               强制退款
             </el-button>
           </el-tooltip>
+          <!--
+            C6 第二段的入口：订单停在 refund_applying 说明团长已提交代退申请，
+            正确动作是去「退款管理」审批，而不是在这里强制退款（D11 会返回 40008 指路）。
+          -->
+          <el-button v-if="needRefundAudit" type="warning" @click="goRefundAudit">
+            去退款审批
+          </el-button>
         </div>
       </div>
 
@@ -415,6 +422,14 @@ async function load(): Promise<void> {
 
 function back(): void {
   router.push('/order/list');
+}
+
+/** 订单停在退款待审批 → 给出通往 P34 的直达入口（带着订单号，落地即筛到那一行） */
+const needRefundAudit = computed(() => detail.value?.order.status === 'refund_applying');
+
+function goRefundAudit(): void {
+  const orderNo = detail.value?.order.orderNo;
+  router.push({ path: '/finance/refund', query: orderNo ? { keyword: orderNo } : undefined });
 }
 
 function statusTagType(status: string): 'success' | 'warning' | 'danger' | 'info' | 'primary' {

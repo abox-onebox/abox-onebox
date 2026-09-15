@@ -111,6 +111,17 @@ export enum ErrorCode {
   REFUND_FAILED = 40010,
   /** 扩展（M3-3）：强制退款的指定金额与可退金额不符（D11） */
   REFUND_AMOUNT_MISMATCH = 40011,
+  /** 扩展（M3-4）：退款单不存在（D41/D42） */
+  REFUND_NOT_FOUND = 40012,
+  /** 扩展（M3-4）：退款单状态不允许该操作（如对已驳回的单再次审批） */
+  REFUND_STATUS_ILLEGAL = 40013,
+  /**
+   * 扩展（M3-4）：缺少「申请前订单状态」，驳回不可执行（D42）
+   *
+   * 刻意 fail-closed：状态回退必须有据可依，猜一个状态比操作失败更糟。
+   * 运营不会因此卡死 —— 兜底通道是 D11 强制退款。
+   */
+  REFUND_ORIGIN_UNKNOWN = 40014,
 
   /** ---- 5xxxx 财务 / 结算 / 供应商 ---- */
   SUPPLIER_NOT_QUALIFIED = 50001,
@@ -172,6 +183,9 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.PAY_NOT_FOUND]: '支付单不存在',
   [ErrorCode.REFUND_FAILED]: '退款失败',
   [ErrorCode.REFUND_AMOUNT_MISMATCH]: '退款金额与可退金额不符',
+  [ErrorCode.REFUND_NOT_FOUND]: '退款单不存在',
+  [ErrorCode.REFUND_STATUS_ILLEGAL]: '退款单当前状态不支持该操作',
+  [ErrorCode.REFUND_ORIGIN_UNKNOWN]: '退款申请缺少原状态记录，无法驳回',
   [ErrorCode.SUPPLIER_NOT_QUALIFIED]: '供应商资质未通过审核',
   [ErrorCode.DISTRIBUTION_CENTER_LOCKED]: '集散中心配置不可删除（存在历史结算）',
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',

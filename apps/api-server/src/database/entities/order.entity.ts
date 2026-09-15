@@ -305,6 +305,27 @@ export class Refund {
   @Column({ name: 'reversed_at', type: 'datetime', precision: 3, nullable: true })
   reversedAt?: Date | null;
 
+  /**
+   * 申请退款**之前**的订单状态（C6 第二段「驳回 → 回原状态」的唯一依据）
+   *
+   * ⚠️ 为什么必须有这一列：订单状态机对退款分支只画了**单向**箭头
+   *    （`cut_off/cooked/delivering/delivered/completed → refund_applying`），
+   *    申请时代退接口把 `ab_order.status` 原地改成了 `refund_applying`，
+   *    原状态就此丢失。没有它，D42 驳回只能靠「猜」——按时间猜会退回错误的
+   *    节点（已 `completed` 的单被退成 `paid`，等于把佣金基数与取餐事实一起抹掉）。
+   *
+   * 取值：`applyByLeader` / `forceRefund` 写入申请瞬间的 `order.status`；
+   *      D11 强制退款不经过「驳回」分支，该列只作审计留痕。
+   */
+  @Column({
+    name: 'order_status_before',
+    type: 'varchar',
+    length: 16,
+    nullable: true,
+    comment: '申请退款前的订单状态（C6 驳回时回退的目标状态）',
+  })
+  orderStatusBefore?: string | null;
+
   @Column({ type: 'int', default: 0 })
   version!: number;
 

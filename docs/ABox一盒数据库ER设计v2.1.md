@@ -48,12 +48,12 @@
 | `ab_set_meal_item` | `supplier_id` 不再唯一约束（可重复，前期一人多菜） |
 | `ab_supplier` | 增加 `type` 字段（出餐型/集散型/混合型） |
 | `ab_team_leader` | 增加 `balance` 字段（余额账户）；`level` 等级字段（C2）；`signed_at` 改为 `agreed_at` 勾选协议（C3）；**增加 `floor` 楼层维度（2026-09-15 裁定② 恢复）**；**增加收款方式三字段 `payout_type` / `payout_account`（脱敏存储）/ `payout_name`（C11 · 提现前置条件，2026-09-15 补）** |
-| `ab_refund` | 增加代退三段式字段：`apply_source`、`apply_reason`、`apply_by_leader_id`、`approve_admin_id`、`approve_at`（C6） |
+| `ab_refund` | 增加代退三段式字段：`apply_source`、`apply_reason`、`apply_by_leader_id`、`approve_admin_id`、`approve_at`（C6）；**增加 `order_status_before`（申请前订单状态 · D42 驳回回退的唯一依据，2026-09-15 补）** |
 | `ab_balance_log` | **增加出款字段 `payout_channel` / `payout_batch_no` / `tax_withheld_amount`（P2-5 · C11，2026-09-15 补）** |
 
 ---
 
-## 二、ER 总览（24 张表 · 2026-09-15 增补 `ab_withdraw`）
+## 二、ER 总览（25 张表 · 2026-09-15 增补 `ab_withdraw`）
 
 ```
                               ┌──────────────────┐
@@ -584,8 +584,23 @@ ALTER TABLE `ab_operation_log`
 | --- | --- |
 | `ab_refund.amount` | **用户实际付出去的钱** = `total_amount − discount_amount`（＝微信实付 + 余额抵扣）。**不是** `pay_amount` |
 | `ab_refund.auditor_id` | 后台强制退款时 = 操作人（「自己批准自己」）；D41 审批时 = 真实审批人 |
+| `ab_refund.order_status_before` | **申请前的订单状态** —— D42 驳回时订单要回到哪里的**唯一依据**。见 §5.3 |
 | `ab_supplier_share.type` | `normal` / `reversal`；`reversal` 行的 `share_date` = **冲减登记日**（决定进哪一期的结算单） |
 | `ab_supplier_share.origin_id` | 反向流水指向的原行 id（对账时用于回溯） |
+
+### 5.3 M3-4 新增列：`ab_refund.order_status_before`（**有 DDL 变更**）
+
+> M3-4（退款审批 D40–D42）**唯一**的表结构变更，就是这一列。
+
+| 项 | 说明 |
+| --- | --- |
+| 列名 | `order_status_before`（`tinyint`，可空） |
+| 语义 | 这笔退款申请**提交时**订单所处的状态（`pending_pay` / `paid` / `preparing` / `delivering` / `completed` …） |
+| 写入时机 | `applyByLeader`（C6 第一段 · 团长代退）与 `forceRefund`（D11 · 后台强制退款，审计留痕） |
+| 读取时机 | `rejectByAdmin`（D42 · 驳回）—— 把订单从当前的 `refund_applying` 回退到本列记录的状态 |
+| 为什么必须有 | 订单状态机对退款分支**只有单向箭头**（`paid → refund_applying`），反向没有边。不记原状态，驳回时就**无家可回** —— 只能猜一个默认值，猜错就把订单放回错误状态 |
+| 缺失如何处理 | **fail-closed → 40014**：缺列值（历史数据/脏写）时**拒绝驳回**，而不是回退到某个默认状态。宁可让运营走人工，也不静默把订单状态写错 |
+| 可空性 | 允许为 `NULL`（历史行），但 D42 读到 `NULL` 即报 40014 —— 可空是兼容，不是「可以不写」 |
 
 ---
 

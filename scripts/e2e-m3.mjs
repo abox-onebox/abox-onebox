@@ -36,6 +36,20 @@
  *   · D12 `GET  /admin/orders/export`      —— 表头 + 二维数组 / **完整手机号** / 强制留痕（含 IP）
  *   · 权限：finance 可读 · viewer 10003 · 小程序 token 打 `/admin/orders` → 10003
  *
+ * ## M3-4 退款审批批次新增（§16 · C6 第二段）
+ *   · D40 `GET  /admin/finance/refunds`        —— Tab（pending/approved/rejected/refunded/all）/
+ *                                                summary 不受分页影响 / 关键词（单号 + 订单号 + 昵称）/
+ *                                                行内**拆两路**金额（微信 / 余额）/ 手机号脱敏 / 枚举下发
+ *   · D41 `POST .../refunds/:id/approve`       —— 审批通过 → 实际退款（与 D11 **同一个执行口**）：
+ *                                                微信原路退 + 余额退回 + 反向结算（未计佣则不写负行）/
+ *                                                重复审批 40013 / 不存在 40012
+ *   · D42 `POST .../refunds/:id/reject`        —— 驳回 → 订单回到**申请前**状态（`order_status_before`）/
+ *                                                资金零变动（无任何 ab_balance_log）/ 驳回后可重新申请 /
+ *                                                缺原状态 → **40014 fail-closed**
+ *   · 权限：**两级白名单** —— operator 能读（D40）但不能批（D41/D42 → 10003）；
+ *           viewer 10003；小程序 token 10003；finance 有权限（拿到业务层 40013 而非 10003）
+ *   · 操作日志：通过 / 驳回均自动落库，`targetId = 退款单 id`
+ *
  * ## 三类安全断言（这是本批次的核心价值）
  *   1. **主体隔离**：小程序 token 打 `/admin/*` → 10003；后台 token 打 `/orders` → 10002
  *      （两套账号表的 id 各自自增，不做隔离就是**静默越权**，见 jwt-auth.guard.ts）
@@ -47,10 +61,12 @@
  * 账号类用例使用**带时间戳的用户名**，重复跑不会因「登录名已占用（20009）」而误判。
  * 需要干净数据库时先 `node scripts/gate.mjs seed`。
  *
- * ⚠️ **时间窗前提**：§15 订单中心要造真实订单，而 U6 只能在
+ * ⚠️ **时间窗前提**：§15 订单中心与 §16 退款审批都要造真实订单，而 U6 只能在
  *    `[T-1 14:00, T-1 23:00)` 这个窗口内下单 —— 与 `e2e-m1` / `e2e-m2` 同一约束。
- *    因此**整套需在北京时间 14:00–23:00 之间运行**，窗口外 §15 会给出唯一的
+ *    因此**整套需在北京时间 14:00–23:00 之间运行**，窗口外 §15/§16 各给出唯一的
  *    可读失败而非连锁红。
+ * ⚠️ **一个用户同一出餐日只能下一单**（U6 → 30004）：§15 用 1001/1002/1005，
+ *    §16 用 1003/1004/1040，改夹具时别撞车。
  *
  * 用法：node scripts/e2e-m3.mjs
  * 端口：默认 3103（`E2E_PORT` 可覆盖）。gate.mjs 的 `verify` 串跑时三脚本各占一端口。
@@ -127,6 +143,29 @@ function writeDb(sql, params = []) {
     return db.prepare(sql).run(...params).changes ?? 0;
   } finally {
     db.close();
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 轮询等待某个 DB 条件成立（**夹具专用**）
+ *
+ * ⚠️ 为什么必须有它：`POST /pay/mock/paid` 走的是**事件回调** ——
+ *    `MockWxPayProvider.simulatePaid` 只 `emit('paid')` 就返回，真正的落库由
+ *    监听器异步完成（另外还有一条 `MOCK_PAY_AUTO_SUCCESS` 的 800ms 自动回调）。
+ *    也就是说 **HTTP 200 时订单可能还是 `pending_pay`**，直接读库断言会随机红
+ *    —— 首轮「通过」往往只是恰好赢了这个竞态。
+ *    凡是要断言「某个异步动作已落库」，一律用本函数等，别用单次 readDb。
+ */
+async function waitDb(sql, params, predicate, { timeout = 6000, interval = 120 } = {}) {
+  const deadline = Date.now() + timeout;
+  let row = null;
+  for (;;) {
+    row = readDb(sql, params);
+    if (row && predicate(row)) return row;
+    if (Date.now() > deadline) return row;
+    await sleep(interval);
   }
 }
 
@@ -1808,6 +1847,624 @@ async function main() {
       userOnOrders.body?.code === 10003,
       '双主体隔离：小程序 token 打 /admin/orders → 10003（与 /orders 只差一个前缀，正是隔离依据）',
       `code=${userOnOrders.body?.code}`,
+    );
+  }
+
+  // ==========================================================================
+  // §16 M3-4 退款审批（C6 第二段 · D40–D42）
+  // ==========================================================================
+  log('\n§16 M3-4 退款审批（C6 三段式收口 · D40–D42）');
+
+  /**
+   * 本组验的是 C6 的**第二段**：运营审批团长代退申请。
+   *
+   * 三段式的另外两段已在前面的批次验过（① L7 代退申请 = M2 · ③ 实际退款 =
+   * M3-3 的 D11），本组要证明的是「第二段能把首尾正确接起来」：
+   *   · 通过 → 走 `executeRefund` **同一个执行口**（不复制一份退款逻辑）
+   *   · 驳回 → 订单回到**申请前**的状态（靠 `ab_refund.order_status_before`，不靠猜）
+   *
+   * ⚠️ 与 §15 同一时段前提：造订单只能走 U6，需在北京时间 14:00–23:00 之间运行。
+   * ⚠️ **一个用户同一出餐日只能下一单**（U6 → 30004），且 U6 的重复判定**只排除
+   *    `cancelled`**。§15 已占用 1002（王芳 · 后被回拨到昨日）/ 1005（陈强 · 已退款），
+   *    故本组另取：张磊 1003（楼5 · 楼群2）/ 赵静 1004（楼6 · 楼群3）/
+   *    李明 1001（楼1 · 楼群1，§15 的 ordC 已取消故可再下单）。
+   *    三者都归属团长 1（李明），由李明代退。
+   */
+  if (!orderWindowOpen) {
+    fail(
+      '§16 前置：当前不在下单窗口 —— 退款审批整组跳过',
+      '（与 §15 同一前提：北京时间 14:00–23:00）',
+    );
+  } else {
+    const K16 = (s) => `e2e-m3-rf-${stamp}-${s}`;
+    const ldr1 = u.token; // 李明 = 团长 1（代退申请必须由归属团长发起）
+    const u3 = await userLogin('dev:1003'); // 张磊 · 楼 5（楼群 2 · 已开团）
+    const u4 = await userLogin('dev:1004'); // 赵静 · 楼 6（楼群 3 · 已开团）
+
+    // ======================================================== 夹具 1 · R1
+    // 张磊 1 份 · 微信全额 · 用于 D41 审批通过（未计佣 → 无佣金冲销）
+    const oR1 = await call('POST', '/orders', {
+      token: u3.token,
+      idem: K16('r1'),
+      body: { mealDate: dPlus1, quantity: 1 },
+    });
+    const noR1 = oR1.body?.data?.orderNo;
+    const paidR1 = await call('POST', '/pay/mock/paid', { body: { orderNo: noR1 } });
+    const rowR1 = await waitDb(
+      'SELECT status, total_amount, pay_amount, balance_used FROM ab_order WHERE order_no = ?',
+      [noR1],
+      (r) => r.status === 'paid',
+    );
+    assert(
+      oR1.body?.code === 0 &&
+        paidR1.body?.code === 0 &&
+        rowR1?.status === 'paid' &&
+        Number(rowR1?.pay_amount) === 25.8,
+      '§16 夹具 R1 · 张磊 1 份已支付（微信实付 ¥25.80 · 等异步回调落地）',
+      `orderNo=${noR1} status=${rowR1?.status} pay=${rowR1?.pay_amount}`,
+    );
+
+    const apR1 = await call('POST', `/orders/${noR1}/refund-apply`, {
+      token: ldr1,
+      body: { reasonType: 'quality', reason: 'e2e · 菜品有异味' },
+    });
+    const rfR1 = readDb(
+      'SELECT id, refund_no, status, amount, order_status_before FROM ab_refund WHERE order_no = ? ORDER BY id DESC LIMIT 1',
+      [noR1],
+    );
+    assert(
+      apR1.body?.code === 0 && rfR1?.status === 'applying' && Number(rfR1?.amount) === 25.8,
+      'C6 第一段（回归）：代退申请只登记，退款单金额 = 用户实际付出去的钱',
+      `refundNo=${rfR1?.refund_no} status=${rfR1?.status} amount=${rfR1?.amount}`,
+    );
+    assert(
+      rfR1?.order_status_before === 'paid',
+      'C6 第二段可执行性：申请时落「申请前的订单状态」（状态机对退款分支只有单向箭头，不记就无家可回）',
+      `order_status_before=${rfR1?.order_status_before}`,
+    );
+
+    // ======================================================== 夹具 2 · R2
+    // 赵静 1 份 · **余额抵扣 ¥5.00** · 用于验证「退款拆两路」
+    // 余额账户由佣金入账 / 后台充值产生（本地无充值接口），故用 SQL 预置**输入**；
+    // 退款接口负责写的字段（余额变动、流水）一律不碰。
+    const cqBal = readDb('SELECT id FROM ab_balance WHERE user_id = 1004');
+    if (cqBal) {
+      writeDb("UPDATE ab_balance SET balance = '20.00', version = version + 1 WHERE user_id = 1004");
+    } else {
+      writeDb(
+        "INSERT INTO ab_balance (user_id, balance, frozen, total_in, total_out, version, created_at, updated_at) VALUES (1004, '20.00', '0.00', '20.00', '0.00', 1, datetime('now'), datetime('now'))",
+      );
+    }
+    const balBeforeR2 = readDb('SELECT balance, frozen FROM ab_balance WHERE user_id = 1004');
+
+    const oR2 = await call('POST', '/orders', {
+      token: u4.token,
+      idem: K16('r2'),
+      body: { mealDate: dPlus1, quantity: 1, useBalanceFen: 500 },
+    });
+    const noR2 = oR2.body?.data?.orderNo;
+    // 显式传 `amountFen` = 实付额（2080），别依赖「省略即取订单实付」的约定 ——
+    // 金额一旦对不上，回调会被判为异常而不落库，症状是「订单金额全对但状态不动」
+    const paidR2 = await call('POST', '/pay/mock/paid', {
+      body: { orderNo: noR2, amountFen: 2080 },
+    });
+    const rowR2 = await waitDb(
+      'SELECT status, total_amount, pay_amount, balance_used FROM ab_order WHERE order_no = ?',
+      [noR2],
+      (r) => r.status === 'paid',
+    );
+    assert(
+      oR2.body?.code === 0 &&
+        paidR2.body?.code === 0 &&
+        rowR2?.status === 'paid' &&
+        Number(rowR2?.total_amount) === 25.8 &&
+        Number(rowR2?.pay_amount) === 20.8 &&
+        Number(rowR2?.balance_used) === 5,
+      '§16 夹具 R2 · 赵静用余额抵扣 ¥5.00 下单（总额 ¥25.80 = 微信 ¥20.80 + 余额 ¥5.00）',
+      `orderNo=${noR2} status=${rowR2?.status} total=${rowR2?.total_amount} pay=${rowR2?.pay_amount} balance=${rowR2?.balance_used}`,
+    );
+
+    const apR2 = await call('POST', `/orders/${noR2}/refund-apply`, {
+      token: ldr1,
+      body: { reasonType: 'missing', reason: 'e2e · 少送一份' },
+    });
+    const rfR2 = readDb(
+      'SELECT id, refund_no, amount FROM ab_refund WHERE order_no = ? ORDER BY id DESC LIMIT 1',
+      [noR2],
+    );
+    assert(
+      apR2.body?.code === 0 && Number(rfR2?.amount) === 25.8,
+      '退款单金额 = `total_amount − discount_amount`（**不是** pay_amount —— 只退微信那段会让用户少了抵扣）',
+      `amount=${rfR2?.amount}`,
+    );
+
+    // ======================================================== 夹具 3 · R3
+    // 李明 1 份 · 用于 D42 驳回 → 回原状态 → 重新申请
+    // （李明在 §15 的 ordC 已取消，U6 的重复判定只排除 cancelled，故可再下单）
+    const oR3 = await call('POST', '/orders', {
+      token: u.token,
+      idem: K16('r3'),
+      body: { mealDate: dPlus1, quantity: 1, leaderCode: 'LDR0001' },
+    });
+    const noR3 = oR3.body?.data?.orderNo;
+    const paidR3 = await call('POST', '/pay/mock/paid', { body: { orderNo: noR3 } });
+    const rowR3Paid = await waitDb(
+      'SELECT status FROM ab_order WHERE order_no = ?',
+      [noR3],
+      (r) => r.status === 'paid',
+    );
+    const apR3 = await call('POST', `/orders/${noR3}/refund-apply`, {
+      token: ldr1,
+      body: { reasonType: 'late', reason: 'e2e · 送达延误' },
+    });
+    const rfR3 = readDb(
+      'SELECT id, refund_no, status, order_status_before FROM ab_refund WHERE order_no = ? ORDER BY id DESC LIMIT 1',
+      [noR3],
+    );
+    assert(
+      oR3.body?.code === 0 &&
+        paidR3.body?.code === 0 &&
+        rowR3Paid?.status === 'paid' &&
+        apR3.body?.code === 0 &&
+        rfR3?.status === 'applying',
+      '§16 夹具 R3 · 李明已支付订单进入代退申请',
+      `orderNo=${noR3} status=${rowR3Paid?.status} refundNo=${rfR3?.refund_no}`,
+    );
+
+    // ======================================================== A · D40 列表
+    const pend40 = await call('GET', '/admin/finance/refunds?tab=pending&pageSize=100', {
+      token: adminToken,
+    });
+    const pendList = pend40.body?.data?.list ?? [];
+    assert(
+      pend40.body?.code === 0 &&
+        pendList.length > 0 &&
+        pendList.every((r) => r.status === 'applying'),
+      'D40 tab=pending 只含「待审批」（状态集合由服务端展开，端上不自己拼）',
+      `code=${pend40.body?.code} count=${pendList.length} statuses=${JSON.stringify([
+        ...new Set(pendList.map((r) => r.status)),
+      ])}`,
+    );
+    assert(
+      pendList.some((r) => r.refundNo === rfR1.refund_no) &&
+        pendList.some((r) => r.refundNo === rfR2.refund_no) &&
+        pendList.some((r) => r.refundNo === rfR3.refund_no),
+      'D40 三张夹具单都在待审批队列里（每次 verify 跑完都遗留 apply 记录属正常，故用 refundNo 定位而非条数）',
+      `含R1=${pendList.some((r) => r.refundNo === rfR1.refund_no)} 含R2/R3同理`,
+    );
+
+    const rowPendR2 = pendList.find((r) => r.refundNo === rfR2.refund_no);
+    assert(
+      rowPendR2?.wxAmountFen === 2080 &&
+        rowPendR2?.balanceAmountFen === 500 &&
+        rowPendR2?.amountFen === 2580,
+      'D40 行内**拆两路**金额：微信 ¥20.80 走通道 + 余额 ¥5.00 单独退回（审批前就能看清钱去哪）',
+      `wx=${rowPendR2?.wxAmountFen} balance=${rowPendR2?.balanceAmountFen} total=${rowPendR2?.amountFen}`,
+    );
+    assert(
+      rowPendR2?.canApprove === true &&
+        rowPendR2?.canReject === true &&
+        rowPendR2?.blockReason === null &&
+        rowPendR2?.orderStatusBefore === 'paid' &&
+        !!rowPendR2?.orderStatusBeforeText,
+      'D40/D42 按钮可用性与「驳回将回到哪」由服务端下发（端上不自行判断状态机）',
+      `canApprove=${rowPendR2?.canApprove} before=${rowPendR2?.orderStatusBeforeText}`,
+    );
+
+    const kw40 = await call('GET', `/admin/finance/refunds?tab=all&keyword=${noR3}&pageSize=50`, {
+      token: adminToken,
+    });
+    assert(
+      kw40.body?.code === 0 &&
+        (kw40.body?.data?.list ?? []).length === 1 &&
+        kw40.body?.data?.list[0]?.orderNo === noR3,
+      'D40 关键词可按**订单号**命中（运营往往是拿着订单号来查退款的）',
+      `total=${kw40.body?.data?.total}`,
+    );
+    const kwNick = await call(
+      'GET',
+      `/admin/finance/refunds?tab=all&keyword=${encodeURIComponent('张磊')}&pageSize=50`,
+      { token: adminToken },
+    );
+    assert(
+      kwNick.body?.code === 0 && (kwNick.body?.data?.list ?? []).some((r) => r.orderNo === noR1),
+      'D40 关键词可按**用户昵称**命中（子查询 ab_user，不靠端上先查用户）',
+      `total=${kwNick.body?.data?.total}`,
+    );
+
+    const rawPhones40 = JSON.stringify(pendList).match(/1[3-9]\d{9}/g) ?? [];
+    assert(
+      rawPhones40.length === 0 &&
+        pendList.every((r) => r.user?.phoneMasked === null || String(r.user.phoneMasked).includes('****')),
+      'D40 手机号脱敏（后台列表不给全号 —— 完整号只有 D12 导出那条受审计的通道）',
+      `found=${rawPhones40.join(',') || '无'}`,
+    );
+    assert(
+      (pend40.body?.data?.statusOptions ?? []).some((s) => s.value === 'refunded') &&
+        (pend40.body?.data?.sourceOptions ?? []).some((s) => s.value === 'leader'),
+      'D40 枚举映射由服务端下发（状态 / 来源两张表，端上不维护第二份）',
+      `statuses=${(pend40.body?.data?.statusOptions ?? []).length} sources=${(
+        pend40.body?.data?.sourceOptions ?? []
+      ).length}`,
+    );
+
+    const pg1 = await call('GET', '/admin/finance/refunds?tab=all&page=1&pageSize=1', {
+      token: adminToken,
+    });
+    const pg50 = await call('GET', '/admin/finance/refunds?tab=all&page=1&pageSize=50', {
+      token: adminToken,
+    });
+    assert(
+      JSON.stringify(pg1.body?.data?.summary) === JSON.stringify(pg50.body?.data?.summary) &&
+        pg1.body?.data?.list?.length === 1,
+      'D40 summary 按**同一过滤条件的全量**统计，不受分页影响（与 D8/L10/L19 同一约定）',
+      `pending=${pg50.body?.data?.summary?.pendingCount}`,
+    );
+    assert(
+      pg50.body?.data?.summary?.pendingCount === pendList.length,
+      'D40 summary 与列表自洽：待审批数 = tab=pending 的总数',
+      `summary=${pg50.body?.data?.summary?.pendingCount} list=${pendList.length}`,
+    );
+
+    const rfDetail = await call('GET', `/admin/finance/refunds/detail/${rfR1.id}`, {
+      token: adminToken,
+    });
+    assert(
+      rfDetail.body?.code === 0 &&
+        rfDetail.body?.data?.refundNo === rfR1.refund_no &&
+        rfDetail.body?.data?.amountFen === 2580,
+      'D40 单条详情可用（通过弹窗里的金额来自服务端，不接受端上计算）',
+      `amountFen=${rfDetail.body?.data?.amountFen}`,
+    );
+
+    // ======================================================== B · D41 通过
+    const appr1 = await call('POST', `/admin/finance/refunds/${rfR1.id}/approve`, {
+      token: adminToken,
+      body: { remark: 'e2e 已核实，同意退款' },
+    });
+    const ap1 = appr1.body?.data;
+    assert(
+      appr1.body?.code === 0 &&
+        ap1?.status === 'refunded' &&
+        ap1?.refundedFen === 2580 &&
+        ap1?.wxRefundedFen === 2580 &&
+        ap1?.balanceRefundedFen === 0,
+      'D41 审批通过 → 实际退款（全额微信实付走通道原路退）',
+      `code=${appr1.body?.code} status=${ap1?.status} wx=${ap1?.wxRefundedFen} balance=${ap1?.balanceRefundedFen}`,
+    );
+    assert(
+      ap1?.orderStatusBefore === 'paid' && ap1?.order?.status === 'refunded',
+      'D41 通过后订单收口 refunded，并回带「申请前状态」（审计要知道这一单从哪来）',
+      `before=${ap1?.orderStatusBefore} after=${ap1?.order?.status}`,
+    );
+    assert(
+      ap1?.reversal?.commissionReversedFen === 0 &&
+        ap1?.reversal?.commissionReversedQuantity === 0,
+      'D41 未计佣的订单退款**不产生佣金负行**（反冲逻辑与 D11 完全共用 —— 唯一执行口）',
+      `reversed=${ap1?.reversal?.commissionReversedFen}`,
+    );
+    assert(
+      ['not_generated', 'reduced', 'offset'].includes(String(ap1?.reversal?.supplierShareMode)) &&
+        (ap1?.reversal?.supplierShareMode !== 'not_generated' ||
+          ap1?.reversal?.supplierShareAdjusted === 0),
+      'D41 应付冲减三态明确；未生成时不造空冲销行（与 D11 同口径）',
+      `mode=${ap1?.reversal?.supplierShareMode} rows=${ap1?.reversal?.supplierShareAdjusted}`,
+    );
+
+    const rfR1After = readDb(
+      'SELECT status, auditor_id, audit_at, audit_remark, wx_refund_no, refunded_at, reversed FROM ab_refund WHERE id = ?',
+      [rfR1.id],
+    );
+    assert(
+      rfR1After?.status === 'refunded' &&
+        Number(rfR1After?.auditor_id) > 0 &&
+        !!rfR1After?.audit_at &&
+        String(rfR1After?.audit_remark).includes('同意退款') &&
+        !!rfR1After?.wx_refund_no &&
+        Number(rfR1After?.reversed) === 1,
+      'D41 落库：审批人 / 审批时刻 / 审批备注 / 微信退款单号 / 反向结算位全部写实（谁批的、什么时候批的、钱退到哪）',
+      `status=${rfR1After?.status} auditor=${rfR1After?.auditor_id} wxNo=${rfR1After?.wx_refund_no} reversed=${rfR1After?.reversed}`,
+    );
+    const commR1 = readRows(
+      'SELECT id FROM ab_commission WHERE order_id = (SELECT id FROM ab_order WHERE order_no = ?)',
+      [noR1],
+    );
+    assert(
+      commR1.length === 0,
+      'D41 该单从未计佣 → 库里也无佣金行（不存在「凭空写一条反向冲销」）',
+      `rows=${commR1.length}`,
+    );
+
+    const apAgain = await call('POST', `/admin/finance/refunds/${rfR1.id}/approve`, {
+      token: adminToken,
+      body: {},
+    });
+    assert(
+      apAgain.body?.code === 40013,
+      'D41 幂等闸门：已退款的单再审批 → 40013（不产生第二笔出款）',
+      `code=${apAgain.body?.code} msg=${apAgain.body?.message}`,
+    );
+    const rejAgain = await call('POST', `/admin/finance/refunds/${rfR1.id}/reject`, {
+      token: adminToken,
+      body: { reason: 'e2e 已终态' },
+    });
+    assert(
+      rejAgain.body?.code === 40013,
+      'D42 已终态的单也不可驳回 → 40013（终态不可逆，状态位是唯一依据）',
+      `code=${rejAgain.body?.code}`,
+    );
+    const apMissing = await call('POST', '/admin/finance/refunds/99999999/approve', {
+      token: adminToken,
+      body: {},
+    });
+    assert(
+      apMissing.body?.code === 40012,
+      'D41 不存在的退款单 → 40012（与「状态不对」区分，便于端上提示不同话术）',
+      `code=${apMissing.body?.code}`,
+    );
+
+    // ======================================================== C · D41 两路退款
+    const appr2 = await call('POST', `/admin/finance/refunds/${rfR2.id}/approve`, {
+      token: fin2.token, // 财务也能审批（类/方法级白名单都含 finance）
+      body: { remark: 'e2e 财务审批' },
+    });
+    const ap2 = appr2.body?.data;
+    assert(
+      appr2.body?.code === 0 &&
+        ap2?.wxRefundedFen === 2080 &&
+        ap2?.balanceRefundedFen === 500 &&
+        ap2?.refundedFen === 2580,
+      'D41 退款**拆两路**：微信实付 ¥20.80 原路退 + 余额抵扣 ¥5.00 退回余额（把余额喂给通道会被微信拒，喂进去了就是重复出款）',
+      `wx=${ap2?.wxRefundedFen} balance=${ap2?.balanceRefundedFen} 合计=${ap2?.refundedFen}`,
+    );
+
+    const balAfterR2 = readDb('SELECT balance, frozen FROM ab_balance WHERE user_id = 1004');
+    assert(
+      Number(balAfterR2?.balance) === Number(balBeforeR2?.balance),
+      'D41 余额回到下单前（下单冻结 → 支付消费 → 退款退回可用余额，三段闭环）',
+      `${balBeforeR2?.balance} → ${balAfterR2?.balance}`,
+    );
+    const refundLog = readDb(
+      "SELECT type, direction, amount, related_id FROM ab_balance_log WHERE type = 'refund' AND related_id = ? ORDER BY id DESC LIMIT 1",
+      [rfR2.refund_no],
+    );
+    assert(
+      !!refundLog && Number(refundLog?.direction) === 1 && Number(refundLog?.amount) === 5,
+      'D41 余额退回写流水（type=refund · direction=+1 · 关联退款单号）—— 与 L19 余额流水同一本账',
+      `type=${refundLog?.type} dir=${refundLog?.direction} amount=${refundLog?.amount}`,
+    );
+    const appr2Again = await call('POST', `/admin/finance/refunds/${rfR2.id}/approve`, {
+      token: adminToken,
+      body: {},
+    });
+    assert(
+      appr2Again.body?.code === 40013,
+      'D41 财务审批后 admin 重复审批同样被拦（幂等与角色无关）',
+      `code=${appr2Again.body?.code}`,
+    );
+
+    // ======================================================== D · D42 驳回
+    const rej3 = await call('POST', `/admin/finance/refunds/${rfR3.id}/reject`, {
+      token: adminToken,
+      body: { reason: 'e2e 已补送，不予退款' },
+    });
+    const rj3 = rej3.body?.data;
+    assert(
+      rej3.body?.code === 0 &&
+        rj3?.refundStatus === 'rejected' &&
+        rj3?.orderStatus === 'paid' &&
+        rj3?.orderStatusText === '已支付' &&
+        rj3?.fundsMoved === false,
+      'D42 驳回 → 订单回到**申请前**状态（paid），且回执明确「资金零变动」',
+      `refund=${rj3?.refundStatus} order=${rj3?.orderStatus}/${rj3?.orderStatusText} fundsMoved=${rj3?.fundsMoved}`,
+    );
+    const rowR3AfterRej = readDb('SELECT status FROM ab_order WHERE order_no = ?', [noR3]);
+    const rfR3AfterRej = readDb('SELECT status, audit_remark FROM ab_refund WHERE id = ?', [rfR3.id]);
+    assert(
+      rowR3AfterRej?.status === 'paid' &&
+        rfR3AfterRej?.status === 'rejected' &&
+        String(rfR3AfterRej?.audit_remark).includes('已补送'),
+      'D42 落库：订单回 paid + 退款单 rejected + 驳回理由入审计（不做无理由驳回）',
+      `order=${rowR3AfterRej?.status} refund=${rfR3AfterRej?.status} remark=${rfR3AfterRej?.audit_remark}`,
+    );
+    const balLogR3 = readDb('SELECT COUNT(*) AS c FROM ab_balance_log WHERE related_id = ?', [
+      rfR3.refund_no,
+    ]);
+    assert(
+      Number(balLogR3?.c) === 0,
+      'D42 驳回**不产生任何资金流水**（第一段没冻钱、第二段驳回也不可能退钱 —— 资金零变动要用账来证）',
+      `balance_log(related=${rfR3.refund_no})=${balLogR3?.c}`,
+    );
+
+    // 驳回不是终局：团长可以重新提交（真实场景：原因填错被驳回）
+    const apR3b = await call('POST', `/orders/${noR3}/refund-apply`, {
+      token: ldr1,
+      body: { reasonType: 'quality', reason: 'e2e · 重新提交（原因更正）' },
+    });
+    const rfR3b = readDb(
+      'SELECT id, refund_no, status, order_status_before FROM ab_refund WHERE order_no = ? ORDER BY id DESC LIMIT 1',
+      [noR3],
+    );
+    assert(
+      apR3b.body?.code === 0 &&
+        rfR3b?.status === 'applying' &&
+        rfR3b?.refund_no !== rfR3.refund_no &&
+        rfR3b?.order_status_before === 'paid',
+      'D42 驳回后可**重新申请**（生成新退款单，原驳回单保留备查；旧的 rejected 不占幂等位）',
+      `refundNo=${rfR3b?.refund_no} before=${rfR3b?.order_status_before}`,
+    );
+
+    // ======================================================== E · 缺原状态 → 40014
+    writeDb('UPDATE ab_refund SET order_status_before = NULL WHERE id = ?', [rfR3b.id]);
+    const rejNoOrigin = await call('POST', `/admin/finance/refunds/${rfR3b.id}/reject`, {
+      token: adminToken,
+      body: { reason: 'e2e 缺原状态' },
+    });
+    assert(
+      rejNoOrigin.body?.code === 40014 && /原状态/.test(String(rejNoOrigin.body?.message)),
+      'D42 缺「申请前状态」→ 40014 并拒绝执行（**fail-closed**：猜一个状态比操作失败更糟）',
+      `code=${rejNoOrigin.body?.code} msg=${rejNoOrigin.body?.message}`,
+    );
+    const rowR3NoOrigin = readDb('SELECT status FROM ab_order WHERE order_no = ?', [noR3]);
+    const rfR3bNoOrigin = readDb('SELECT status FROM ab_refund WHERE id = ?', [rfR3b.id]);
+    assert(
+      rowR3NoOrigin?.status === 'refund_applying' && rfR3bNoOrigin?.status === 'applying',
+      'D42 40014 时订单与退款单**双双原地不动**（不产生「驳回失败但状态已改」的半截结果）',
+      `order=${rowR3NoOrigin?.status} refund=${rfR3bNoOrigin?.status}`,
+    );
+
+    // 补齐数据后照常执行 —— 40014 是「数据闸门」，不是「把单据永久锁死」
+    writeDb('UPDATE ab_refund SET order_status_before = ? WHERE id = ?', ['paid', rfR3b.id]);
+    const rejFixed = await call('POST', `/admin/finance/refunds/${rfR3b.id}/reject`, {
+      token: adminToken,
+      body: { reason: 'e2e 补齐原状态后驳回' },
+    });
+    assert(
+      rejFixed.body?.code === 0 &&
+        rejFixed.body?.data?.orderStatus === 'paid' &&
+        rejFixed.body?.data?.refundStatus === 'rejected',
+      'D42 补齐原状态后可正常驳回（fail-closed 只在缺数据时拦，不误伤正常流程）',
+      `code=${rejFixed.body?.code} order=${rejFixed.body?.data?.orderStatus}`,
+    );
+    const apOnRejected = await call('POST', `/admin/finance/refunds/${rfR3b.id}/approve`, {
+      token: adminToken,
+      body: {},
+    });
+    assert(
+      apOnRejected.body?.code === 40013,
+      'D42 已驳回的单**不可再通过** → 40013（终态不可逆：要退就重新申请，留痕才清楚）',
+      `code=${apOnRejected.body?.code}`,
+    );
+
+    // 第三张：驳回**不消耗申请次数**，最终收口为已退款
+    const apR3c = await call('POST', `/orders/${noR3}/refund-apply`, {
+      token: ldr1,
+      body: { reasonType: 'quality', reason: 'e2e · 二度更正后提交' },
+    });
+    const rfR3c = readDb(
+      'SELECT id, refund_no, status FROM ab_refund WHERE order_no = ? ORDER BY id DESC LIMIT 1',
+      [noR3],
+    );
+    assert(
+      apR3c.body?.code === 0 &&
+        rfR3c?.status === 'applying' &&
+        rfR3c?.refund_no !== rfR3.refund_no &&
+        rfR3c?.refund_no !== rfR3b.refund_no,
+      '同一个订单可**反复申请**（每次生成新退款单，前两张 rejected 留在库里备查 —— 审计看得到「提了几次、为什么被拒」）',
+      `三次单号=${rfR3.refund_no}/${rfR3b.refund_no}/${rfR3c?.refund_no}`,
+    );
+    const appr3 = await call('POST', `/admin/finance/refunds/${rfR3c.id}/approve`, {
+      token: adminToken,
+      body: { remark: 'e2e 三度往来后通过' },
+    });
+    assert(
+      appr3.body?.code === 0 &&
+        appr3.body?.data?.status === 'refunded' &&
+        appr3.body?.data?.refundedFen === 2580 &&
+        appr3.body?.data?.orderStatusBefore === 'paid',
+      'D41 三度往来后最终退款成功（审批与「申请过几次」无关，只看当前这张单的状态）',
+      `code=${appr3.body?.code} refunded=${appr3.body?.data?.refundedFen}`,
+    );
+
+    // ======================================================== F · 权限边界
+    const opName = `e2e_ops_${stamp}`;
+    const mkOp = await call('POST', '/admin/system/accounts', {
+      token: adminToken,
+      body: { username: opName, password: PWD, role: 'operator', realName: 'e2e 运营专员' },
+    });
+    const op = await adminLogin(opName, PWD);
+    const opRead = await call('GET', '/admin/finance/refunds?tab=pending&pageSize=1', {
+      token: op.token,
+    });
+    assert(
+      mkOp.body?.code === 0 && opRead.body?.code === 0,
+      'D40 类级白名单含 operator：运营**能看**待审批队列（要跟进用户，不能两眼一抹黑）',
+      `code=${opRead.body?.code}`,
+    );
+    const opApprove = await call('POST', `/admin/finance/refunds/${rfR1.id}/approve`, {
+      token: op.token,
+      body: {},
+    });
+    assert(
+      opApprove.body?.code === 10003,
+      'D41/D42 **方法级收窄**：operator 能看不能批 → 10003（决定「钱退不退」是资金动作，不该由运营拍板）',
+      `code=${opApprove.body?.code}`,
+    );
+
+    const viewerName16 = `e2e_vw_${stamp}`;
+    await call('POST', '/admin/system/accounts', {
+      token: adminToken,
+      body: { username: viewerName16, password: PWD, role: 'viewer', realName: 'e2e 只读观察者' },
+    });
+    const viewer16 = await adminLogin(viewerName16, PWD);
+    const viewRead = await call('GET', '/admin/finance/refunds?tab=all&pageSize=1', {
+      token: viewer16.token,
+    });
+    assert(
+      viewRead.body?.code === 10003,
+      'D40 viewer 两级白名单都进不来 → 10003（只读观察者只有看板）',
+      `code=${viewRead.body?.code}`,
+    );
+    const userReadRefund = await call('GET', '/admin/finance/refunds', { token: u.token });
+    assert(
+      userReadRefund.body?.code === 10003,
+      '双主体隔离：小程序 token 打 /admin/finance/refunds → 10003（与 /leader/* 天然分开）',
+      `code=${userReadRefund.body?.code}`,
+    );
+    const finApproveDone = await call('POST', `/admin/finance/refunds/${rfR1.id}/approve`, {
+      token: fin2.token,
+      body: {},
+    });
+    assert(
+      finApproveDone.body?.code === 40013,
+      'finance 有审批权限：拿到的是**业务层**的 40013（守卫放行，状态闸门拦下）—— 与 operator 的 10003 区分开',
+      `code=${finApproveDone.body?.code}`,
+    );
+
+    // ======================================================== G · 操作日志
+    const finLogs = await call('GET', '/admin/system/logs?module=finance&page=1&pageSize=50', {
+      token: adminToken,
+    });
+    const finActions = (finLogs.body?.data?.list ?? []).map((r) => r.action);
+    assert(
+      finActions.some((a) => a.includes('退款审批通过')) &&
+        finActions.some((a) => a.includes('退款审批驳回')),
+      'D41/D42 声明式 @OperationLog() 生效：通过 / 驳回都自动落库（业务模块零侵入）',
+      `actions=${JSON.stringify([...new Set(finActions)])}`,
+    );
+    const approveLog = (finLogs.body?.data?.list ?? []).find(
+      (r) => r.action.includes('退款审批通过') && String(r.targetId) === String(rfR1.id),
+    );
+    assert(
+      !!approveLog,
+      'D41 操作日志的 targetId = **退款单 id**（可按退款单号追溯「谁批的」，与 D10 的 targetParam 同一机制）',
+      `targetId=${approveLog?.targetId} 期望=${rfR1.id}`,
+    );
+
+    // ======================================================== H · 与 D8/D9 联动
+    const listAfterAll = await call('GET', `/admin/orders?mealDate=${dPlus1}&pageSize=100`, {
+      token: adminToken,
+    });
+    const d8R1 = (listAfterAll.body?.data?.list ?? []).find((r) => r.orderNo === noR1);
+    const d8R3 = (listAfterAll.body?.data?.list ?? []).find((r) => r.orderNo === noR3);
+    assert(
+      d8R1?.status === 'refunded' &&
+        d8R1?.refund?.status === 'refunded' &&
+        d8R1?.refund?.statusText === '已退款',
+      'D8 订单列表反映最新退款单（审批通过后运营在订单中心也看得到结果）',
+      `status=${d8R1?.status} refund=${d8R1?.refund?.statusText}`,
+    );
+    assert(
+      d8R3?.status === 'refunded' && d8R3?.refund?.statusText === '已退款',
+      'D8 同一订单的「驳回 → 重新申请 → 通过」最终收口为已退款（多张退款单时取最新一张）',
+      `status=${d8R3?.status} refund=${d8R3?.refund?.statusText}`,
+    );
+    const detAfter = await call('GET', `/admin/orders/${noR1}`, { token: adminToken });
+    assert(
+      detAfter.body?.data?.actions?.canForceRefund === false &&
+        /退款/.test(String(detAfter.body?.data?.actions?.refundBlockReason)),
+      'D9 已退款订单的 canForceRefund=false 且给出原因（D11 不会再被误点）',
+      `reason=${detAfter.body?.data?.actions?.refundBlockReason}`,
     );
   }
 
