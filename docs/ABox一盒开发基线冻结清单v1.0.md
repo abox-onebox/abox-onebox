@@ -15,10 +15,10 @@
 | 原型版本 | v4.10.0（37 页，已部署；结算成本项可配置版） |
 | 现行资产 | 26 份 |
 | 已废弃资产 | 5 份（存档，勿参考） |
-| 工程骨架 | `abox-onebox/` · **443 个文件**（阶段四产出） |
+| 工程骨架 | `abox-onebox/` · **449 个文件**（阶段四产出） |
 | 数据库表 | **25 张**（ER v2.1：23 张 + 评审新增 `ab_leader_invite` + M2 新增 `ab_withdraw`） |
 | 技术栈 | uni-app(Vue3+TS) + NestJS + MySQL 8 + Redis 7 + 微信支付 V3；**佣金出款走灵活用工平台代发**（C11，见目录结构 v2.0） |
-| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `3d034d2`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
+| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `956bbd2`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
 | 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**；M1（后端 + 小程序基座）· M2（团长端全链路）已端到端验收；**M3（运营后台 + 供应商端）进行中**（M3-1 后台鉴权基座 · M3-2 套餐编排 D1–D7 · M3-3 订单中心 D8–D12 已落地） |
 
 ---
@@ -39,9 +39,9 @@
 | 10 | `ABox一盒协作规范v1.0.md` | 分支 / 提交 / 评审 / 配置纪律 / 文档变更流程 / DoD（阶段四） | 12,013 | `422595eff119` |
 | 11 | `ABox一盒合规资质与协议清单v1.0.md` | 资质与协议要点（阶段三）· 资金定性=自营 + 佣金个税走灵活用工 | 15,446 | `d3a9b3a0f902` |
 | 12 | `ABox一盒开发前准备计划v1.0.html` | 四阶段推进路线（准备期总纲） | 28,685 | `feb3c6c759a2` |
-| 13 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四） | 16,095 | `aa8c33fb2ec4` |
-| 14 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 | 58,408 | `a5fcbd7e2ac1` |
-| 15 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 25 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor） | 39,027 | `b3c1bac0d18a` |
+| 13 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四） | 16,519 | `4cb4f05a75e9` |
+| 14 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 | 62,088 | `79a0f84e59a4` |
+| 15 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 25 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor + ab_refund.order_status_before） | 40,535 | `45cf9443b3de` |
 | 16 | `ABox一盒本地开发手册v1.0.md` | 不依赖云资源的本地开发手册（四驱动开关 · 本地跑通登录→下单→支付→回调） | 15,697 | `0a1cccd8a63d` |
 | 17 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 | 19,393 | `69e1adde9292` |
 | 18 | `ABox一盒表结构评审意见v1.0.md` | ER 评审结论（阶段二）· P0×6 + 4 张补齐 DDL | 24,817 | `53e5f67f568c` |
@@ -70,7 +70,7 @@
 
 ## 四、工程骨架 `abox-onebox/`（阶段四产出）
 
-**总计 443 个文件**，按区域分布：
+**总计 449 个文件**，按区域分布：
 
 | 区域 | 文件数 |
 | --- | --- |
@@ -86,8 +86,11 @@
 | `.prettierrc.json` | 1 |
 | `CONTRIBUTING.md` | 1 |
 | `README.md` | 1 |
+| `_m3c.log` | 1 |
+| `_m3d.log` | 1 |
+| `_m3e.log` | 1 |
 | `apps/admin-web` | 77 |
-| `apps/api-server` | 193 |
+| `apps/api-server` | 196 |
 | `apps/miniprogram` | 80 |
 | `commitlint.config.cjs` | 1 |
 | `data` | 1 |
@@ -138,7 +141,7 @@
 | 16 | `scripts/e2e-m1.mjs` |  | 12,487 | `fd69e5f28323` |
 | 17 | `scripts/e2e-m2.mjs` |  | 48,439 | `db82927bc941` |
 | 18 | `scripts/lib/e2e-server.mjs` |  | 8,161 | `62b1429c3cda` |
-| 19 | `packages/shared-types/src/enums/order-status.ts` |  | 3,895 | `c9fcd79d1b15` |
+| 19 | `packages/shared-types/src/enums/order-status.ts` |  | 4,529 | `c2481e6d3beb` |
 | 20 | `packages/shared-types/src/enums/leader-level.ts` |  | 1,614 | `6a371c28de60` |
 | 21 | `packages/shared-types/src/enums/payout-channel.ts` |  | 1,972 | `2b2fd157fa37` |
 | 22 | `apps/api-server/src/modules/finance/payout.service.ts` |  | 635 | `e61750f399d3` |
@@ -158,7 +161,7 @@
 | 36 | `apps/api-server/src/common/interceptors/idempotent.interceptor.ts` |  | 4,998 | `c57dc09bcaeb` |
 | 37 | `apps/api-server/src/modules/finance/commission.service.ts` |  | 13,854 | `83f05e90d5e1` |
 | 38 | `apps/api-server/src/modules/finance/withdraw.service.ts` |  | 8,952 | `3dfa71377d4c` |
-| 39 | `apps/api-server/src/modules/finance/refund.service.ts` |  | 16,107 | `c957de2936ed` |
+| 39 | `apps/api-server/src/modules/finance/refund.service.ts` |  | 25,319 | `fa9aafe6bab3` |
 | 40 | `apps/api-server/src/modules/finance/leader-finance.controller.ts` |  | 3,256 | `9496efa3e87c` |
 | 41 | `apps/api-server/src/modules/order/leader-order.service.ts` |  | 14,523 | `54285d5da8e7` |
 | 42 | `apps/api-server/src/modules/team-leader/workbench.service.ts` |  | 6,171 | `9dc90864a47e` |
@@ -172,7 +175,7 @@
 | 50 | `apps/api-server/src/common/constants/admin-role.ts` |  | 4,605 | `6c5ab8df26f8` |
 | 51 | `apps/api-server/src/common/decorators/operation-log.decorator.ts` |  | 1,463 | `d9980b6251a1` |
 | 52 | `apps/api-server/src/common/interceptors/operation-log.interceptor.ts` |  | 6,431 | `8be66881aed6` |
-| 53 | `apps/api-server/src/common/constants/error-code.ts` |  | 9,090 | `dc1f6b53dec4` |
+| 53 | `apps/api-server/src/common/constants/error-code.ts` |  | 9,845 | `9b2709b8aee2` |
 | 54 | `apps/admin-web/src/api/request.ts` |  | 4,529 | `739e3e115d78` |
 | 55 | `apps/admin-web/src/api/auth.ts` |  | 2,262 | `2341475025f9` |
 | 56 | `apps/admin-web/src/router/guards.ts` |  | 2,523 | `47f9d2ab636d` |
@@ -187,7 +190,14 @@
 | 65 | `apps/api-server/src/modules/finance/reversal.service.ts` |  | 14,705 | `aa6a5cfd3e96` |
 | 66 | `apps/admin-web/src/api/order.ts` |  | 8,547 | `d4706221d804` |
 | 67 | `apps/admin-web/src/views/order/list.vue` |  | 17,670 | `06d88e56d646` |
-| 68 | `scripts/e2e-m3.mjs` |  | 81,474 | `6085b6473e49` |
+| 68 | `scripts/e2e-m3.mjs` |  | 113,750 | `6343f51fb6ea` |
+| 69 | `apps/api-server/src/modules/finance/refund-admin.service.ts` |  | 12,164 | `8281685c4cae` |
+| 70 | `apps/api-server/src/modules/finance/refund-admin.controller.ts` |  | 4,484 | `a72a21a641c3` |
+| 71 | `apps/api-server/src/modules/finance/dto/refund-admin.dto.ts` |  | 3,839 | `afe4177c79ec` |
+| 72 | `apps/api-server/src/database/entities/order.entity.ts` |  | 10,801 | `5e644876e5a2` |
+| 73 | `apps/admin-web/src/api/finance.ts` |  | 4,787 | `c5415498ec40` |
+| 74 | `apps/admin-web/src/views/finance/refund.vue` |  | 18,046 | `aa5bfd754a75` |
+| 75 | `apps/admin-web/src/views/order/detail.vue` |  | 23,753 | `9afb57e30ebe` |
 
 > 骨架含：根配置（pnpm workspace / TS / ESLint / Prettier / commitlint）+ CI 四作业 + Docker Compose（MySQL 8 + Redis 7，无 RabbitMQ）
 > + 小程序 21 页骨架 + 后台 33 视图骨架 + 后端 15 模块 / 8 定时任务 / 3 消费者 + 4 个 packages。
@@ -204,7 +214,7 @@
 | 3 | `tests/bracket_check.py` | 括号与反引号配平 | 2,297 | `665a00c07c76` |
 | 4 | `tests/js-syntax-check.js` | JS 语法校验 | 785 | `1e5cfda6093b` |
 | 5 | `tests/check_online.py` | 线上部署核验 | 1,475 | `3efc02e45877` |
-| 6 | `tests/baseline_manifest.py` | 本清单生成器（基线变更时重跑） | 21,349 | `a75e848a70fd` |
+| 6 | `tests/baseline_manifest.py` | 本清单生成器（基线变更时重跑） | 22,256 | `4081f6665a55` |
 
 ---
 
