@@ -15,19 +15,25 @@
  *
  * 用法：node scripts/e2e-m1.mjs
  * ⚠️ 前置：先跑一次 `node scripts/gate.mjs seed`（干净数据库 + 相对运行日的分配）
+ *
+ * 端口：默认 3101（`E2E_PORT` 可覆盖）—— 与 e2e-m2 分开，避免 `gate.mjs verify`
+ *       串跑时两个脚本抢同一个端口（详见 scripts/lib/e2e-server.mjs 顶部说明）。
  */
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const API_DIR = join(ROOT, 'apps', 'api-server');
-const NODE_DIR = dirname(process.execPath);
-const PATH_SEP = process.platform === 'win32' ? ';' : ':';
-const BASE = 'http://localhost:3000/api/v1';
-const DB_PATH = join(ROOT, 'data', 'abox-dev.sqlite');
+import {
+  BASE,
+  DB_PATH,
+  PORT,
+  assertPortFree,
+  installCleanupHooks,
+  makeCall,
+  sleep,
+  startApiServer,
+  stopApiServer,
+  waitHealthy,
+} from './lib/e2e-server.mjs';
 
 const results = [];
 const log = (s) => process.stdout.write(`${s}\n`);
@@ -49,72 +55,7 @@ function assert(cond, name, detail = '') {
 // ---------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------
-async function call(method, path, opts = {}) {
-  const headers = { 'Content-Type': 'application/json', [ 'X-Client' ]: 'e2e' };
-  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
-  if (opts.idem) headers['Idempotency-Key'] = opts.idem;
-
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers,
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-  });
-  let json = null;
-  try {
-    json = await res.json();
-  } catch {
-    /* 非 JSON（网关错误页） */
-  }
-  return { status: res.status, body: json };
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// ---------------------------------------------------------------------------
-// 起服务
-// ---------------------------------------------------------------------------
-function startServer() {
-  const env = {
-    ...process.env,
-    PATH: [
-      join(API_DIR, 'node_modules', '.bin'),
-      join(ROOT, 'node_modules', '.bin'),
-      NODE_DIR,
-      process.env.PATH,
-    ].join(PATH_SEP),
-    NODE_PATH: join(dirname(NODE_DIR), 'workspace', 'node_modules'),
-  };
-  const child = spawn('ts-node -r tsconfig-paths/register src/main.ts', {
-    cwd: API_DIR,
-    shell: true,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  child.stdout.on('data', (b) => {
-    const s = b.toString();
-    if (/error|Error|✖|异常/.test(s)) process.stderr.write(`[api] ${s}`);
-  });
-  child.stderr.on('data', (b) => {
-    const s = b.toString();
-    // 忽略 nest 的 source-map 噪音
-    if (!/source-map|at /.test(s)) process.stderr.write(`[api:err] ${s}`);
-  });
-  return child;
-}
-
-async function waitHealthy(timeoutMs = 90000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < timeoutMs) {
-    try {
-      const r = await call('GET', '/health');
-      if (r.status === 200 && r.body?.code === 0) return true;
-    } catch {
-      /* 还没起来 */
-    }
-    await sleep(600);
-  }
-  return false;
-}
+const call = makeCall(BASE);
 
 // ---------------------------------------------------------------------------
 // 主流程
@@ -122,11 +63,13 @@ async function waitHealthy(timeoutMs = 90000) {
 async function main() {
   log(`\n=== ABox M1 端到端验收 ===\n数据库：${DB_PATH}\n`);
 
-  const server = startServer();
-  const healthy = await waitHealthy();
+  installCleanupHooks();
+  await assertPortFree(PORT);
+  const server = startApiServer(PORT);
+  const healthy = await waitHealthy(BASE, { child: server });
   if (!healthy) {
-    fail('服务启动', '健康检查超时（90s）');
-    server.kill('SIGKILL');
+    fail('服务启动', `健康检查超时（90s）· ${BASE}/health`);
+    await stopApiServer(server, PORT);
     return;
   }
   ok('服务启动', `${BASE}/health`);
@@ -348,8 +291,8 @@ async function main() {
   }
 
   // ---------- 汇总 ----------
-  server.kill('SIGKILL');
-  await sleep(300);
+  // 连根回收（Windows 下 shell:true 只起一层 cmd.exe，必须 taskkill /T 才能收掉 ts-node）
+  await stopApiServer(server, PORT);
 
   const failed = results.filter((r) => !r.pass);
   log('\n──────── 汇总 ────────');
