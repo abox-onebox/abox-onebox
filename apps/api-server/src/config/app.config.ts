@@ -21,6 +21,14 @@ export interface AppConfig {
   apiPrefix: string;
   jwtSecret: string;
   jwtExpiresIn: string;
+  /** 后台访问令牌有效期（比小程序的 7d 短得多 —— 后台是高权限面） */
+  adminJwtExpiresIn: string;
+  /** 后台刷新令牌有效期（与小程序 refresh 同量级） */
+  adminRefreshExpiresIn: string;
+  /** 后台连续登录失败锁定阈值（次） */
+  adminLoginMaxAttempts: number;
+  /** 后台登录锁定时长（秒） */
+  adminLoginLockSeconds: number;
   drivers: {
     db: DbDriver;
     queue: QueueDriver;
@@ -53,6 +61,10 @@ export default registerAs('app', (): AppConfig => ({
   apiPrefix: str(process.env.API_PREFIX, '/api/v1'),
   jwtSecret: str(process.env.JWT_SECRET, 'change_me_before_go_live'),
   jwtExpiresIn: str(process.env.JWT_EXPIRES_IN, '7d'),
+  adminJwtExpiresIn: str(process.env.ADMIN_JWT_EXPIRES_IN, '12h'),
+  adminRefreshExpiresIn: str(process.env.ADMIN_REFRESH_EXPIRES_IN, '7d'),
+  adminLoginMaxAttempts: num(process.env.ADMIN_LOGIN_MAX_ATTEMPTS, 5),
+  adminLoginLockSeconds: num(process.env.ADMIN_LOGIN_LOCK_SECONDS, 900),
   drivers: {
     db: str(process.env.DB_DRIVER, 'mysql') as DbDriver,
     queue: str(process.env.QUEUE_DRIVER, 'redis') as QueueDriver,

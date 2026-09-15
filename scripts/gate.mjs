@@ -62,6 +62,8 @@ const GATES = {
   'e2e:m1': { cwd: '.', cmd: 'node scripts/e2e-m1.mjs', group: 'e2e', env: { E2E_PORT: '3101' } },
   // M2 端到端验收：团长申请即生效（C3）+ 身份守卫 + floor 落库 + 等级口径回归
   'e2e:m2': { cwd: '.', cmd: 'node scripts/e2e-m2.mjs', group: 'e2e', env: { E2E_PORT: '3102' } },
+  // M3 端到端验收：后台登录/锁定/吊销 + 主体隔离 + 角色白名单 + 操作日志
+  'e2e:m3': { cwd: '.', cmd: 'node scripts/e2e-m3.mjs', group: 'e2e', env: { E2E_PORT: '3103' } },
 };
 
 /** 组合门禁别名 */
@@ -69,8 +71,8 @@ const ALIASES = {
   shared: ['shared:types', 'shared:utils'],
   typecheck: ['typecheck:api', 'typecheck:admin', 'typecheck:mp'],
   build: ['build:api', 'build:admin', 'build:mp'],
-  /** 端到端验收一键跑：重置种子 → 起服务跑真实 HTTP 全链路（M1 + M2） */
-  verify: ['seed', 'e2e:m1', 'e2e:m2'],
+  /** 端到端验收一键跑：重置种子 → 起服务跑真实 HTTP 全链路（M1 + M2 + M3） */
+  verify: ['seed', 'e2e:m1', 'e2e:m2', 'e2e:m3'],
   all: [
     'shared',
     'lint',

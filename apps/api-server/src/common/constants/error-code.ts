@@ -47,6 +47,10 @@ export enum ErrorCode {
   LEADER_EXISTS = 20007,
   /** 扩展：暂不能退出团长（余额未结清 / 有在途提现 / 有待结算佣金） */
   LEADER_QUIT_BLOCKED = 20008,
+  /** 扩展（M3）：后台登录名已被占用（D52） */
+  ADMIN_USERNAME_TAKEN = 20009,
+  /** 扩展（M3）：该后台账号受保护，不能停用 / 降级（自己 / 最后一个超级管理员） */
+  ADMIN_ACCOUNT_PROTECTED = 20010,
 
   /** ---- 3xxxx 套餐与下单 ---- */
   /** 截单窗口外下单（U6 校验第 1 步） */
@@ -117,6 +121,8 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.USER_DISABLED]: '账号已被停用',
   [ErrorCode.LEADER_EXISTS]: '你已是团长',
   [ErrorCode.LEADER_QUIT_BLOCKED]: '暂不能退出：请先结清余额并等待提现到账',
+  [ErrorCode.ADMIN_USERNAME_TAKEN]: '登录名已被占用',
+  [ErrorCode.ADMIN_ACCOUNT_PROTECTED]: '该账号受保护，不能停用或降级',
   [ErrorCode.ORDER_CUTOFF]: '今日 24:00 已截单，明日请早',
   [ErrorCode.QUANTITY_EXCEED]: '份数超出单次上限',
   [ErrorCode.ORDER_STATUS_ILLEGAL]: '当前订单状态不支持该操作',

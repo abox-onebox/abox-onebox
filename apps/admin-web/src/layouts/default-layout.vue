@@ -15,8 +15,12 @@
 
     <el-container>
       <el-header class="ab-layout__header">
-        <span class="ab-layout__crumb">{{ $route.meta.title || $route.name }}</span>
-        <span class="ab-layout__user">运营账号</span>
+        <span class="ab-layout__crumb">{{ pageTitle }}</span>
+        <span class="ab-layout__user">
+          <el-tag size="small" type="info" effect="plain">{{ auth.roleLabel || '—' }}</el-tag>
+          <span class="ab-layout__name">{{ auth.displayName || '—' }}</span>
+          <el-button link type="primary" @click="onLogout">退出登录</el-button>
+        </span>
       </el-header>
       <el-main class="ab-layout__main">
         <router-view />
@@ -26,15 +30,50 @@
 </template>
 
 <script setup lang="ts">
+/**
+ * 后台主壳（运营 + 供应商共用）
+ *
+ * ⚠️ **菜单来源是服务端下发的 `account.menus`**（经 permission store 与前端
+ *    NAV 取交集），本页不做任何 role → 菜单的硬编码判断。
+ *    供应商账号登录后自然只剩「商家」一组，无需在此 if/else。
+ *
+ * 面包屑标题按「当前 path → NAV 反查」得到，避免 39 个视图各写一份 meta.title
+ * （两份清单必然漂移）。
+ */
 import { computed } from 'vue';
-import { ADMIN_NAV, SUPPLIER_NAV } from '@/constants';
-import { useAuthStore } from '@/stores/auth';
+import { useRoute, useRouter } from 'vue-router';
+import { ElMessageBox } from 'element-plus';
 
+import { useAuthStore } from '@/stores/auth';
+import { usePermissionStore } from '@/stores/permission';
+
+const route = useRoute();
+const router = useRouter();
 const auth = useAuthStore();
-// role=supplier 只渲染供应商菜单（P21–P26）
-const navGroups = computed(() =>
-  auth.role === 'supplier' ? [{ group: '商家', items: SUPPLIER_NAV }] : ADMIN_NAV,
-);
+const perm = usePermissionStore();
+
+const navGroups = computed(() => perm.navGroups);
+
+const pageTitle = computed(() => {
+  const hit = navGroups.value.flatMap((g) => g.items).find((i) => i.path === route.path);
+  return hit
+    ? `${hit.title}${hit.page !== '—' ? ` · ${hit.page}` : ''}`
+    : (route.meta.title ?? String(route.name ?? ''));
+});
+
+async function onLogout(): Promise<void> {
+  try {
+    await ElMessageBox.confirm('确认退出当前后台账号？', '退出登录', {
+      confirmButtonText: '退出',
+      cancelButtonText: '取消',
+      type: 'warning',
+    });
+  } catch {
+    return; // 用户取消
+  }
+  await auth.logout();
+  void router.replace('/login');
+}
 </script>
 
 <style lang="scss" scoped>
@@ -67,6 +106,17 @@ const navGroups = computed(() =>
     justify-content: space-between;
     background: $c-surface;
     border-bottom: 1px solid $c-border;
+  }
+
+  &__user {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+  }
+
+  &__name {
+    font-size: $fs-caption;
+    color: $c-text;
   }
 
   &__main {

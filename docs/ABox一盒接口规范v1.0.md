@@ -153,13 +153,26 @@
 
 | # | 方法 | 路径 | 说明 | 入参 | 出参要点 |
 | --- | --- | --- | --- | --- | --- |
-| A1 | POST | `/auth/wx-login` | 小程序登录（唯一入口） | `{ code, leaderCode? }` | `{ token, refreshToken, expiresIn, user:{id,nickName,avatar,isLeader,level,leaderId,buildingId} }` |
-| A2 | POST | `/auth/admin-login` | 后台登录（供应商 / 运营同一接口，按账号角色返回） | `{ username, password, captcha? }` | `{ token, refreshToken, expiresIn, account:{id,name,role,menus[]} }` |
-| A3 | POST | `/auth/refresh` | 刷新令牌 | `{ refreshToken }` | 同 A1 精简 |
+| A1 | POST | `/auth/login` | 小程序登录（唯一入口） | `{ code, nickname?, avatarUrl?, inviteCode? }` | `{ token, isNewUser, isLeader, user:{id,nickname,avatarUrl,phone,buildingId,teamLeaderId}, leader:{…}\|null }` |
+| A2 | POST | `/auth/admin-login` | 后台登录（供应商 / 运营同一接口，按账号角色返回） | `{ username, password, captcha? }` | `{ token, refreshToken, expiresIn, account:{id,username,name,role,roleLabel,supplierId,menus[]} }` |
+| A3 | POST | `/auth/refresh` | 刷新令牌 | `{ refreshToken }` | 同 A2 出参（轮换 access + refresh） |
 | A4 | POST | `/auth/logout` | 登出 | — | `null` |
 | A5 | GET | `/auth/profile` | 当前登录者 | — | 小程序返回 `user`；后台返回 `account`（含 `menus` 供前端渲染） |
+| A6 | GET | `/auth/me` | 小程序端便捷别名（等价 A5 的用户分支） | — | 同 A5 用户分支 |
 
 > 后台登录失败 5 次锁定 15 分钟（`code: 20005`）；账号体系独立于小程序，见 ER `ab_admin_user`。
+>
+> **M3 实现口径**
+>
+> | 项 | 口径 |
+> | --- | --- |
+> | A1 路径 | 实装为 `/auth/login`（v1.0 曾写作 `/auth/wx-login`，无别名保留）。出参与旧稿差异：`nickname`（非 `nickName`）、`avatarUrl`；`isLeader/leader` 平铺在 `data` 顶层（便于端上直接切 tab），`refreshToken` 一期未下发（见 A3） |
+> | **双主体隔离** | `typ` 声明主体类型（`user`/`admin`，**缺省视为 `user`** 以兼容 M1/M2 旧令牌）。`JwtAuthGuard` 按路径集中隔离：`/admin/*` 与 `/supplier/*` **只收 `typ=admin`**，其余端点 **只收 `typ≠admin`** → 越权方向返回 `10003`（用户打后台）与 `10002`（后台打用户端）。**两套账号表 id 各自自增，不隔离即静默越权**。另：`/auth/profile` 与 `/auth/logout` 为**主体无关端点**，两种令牌都收，由 A5 按 `typ` 分流 |
+> | A2 失败与锁定 | 校验顺序：**① 锁定闸门 ② 账号存在性与口令 ③ 账号状态**。①②失败同为 `20005`（不区分「账号不存在」与「密码错」→ 防用户名枚举），文案带剩余次数；锁定后即使口令正确也拒绝（否则响应差异会变成密码 oracle）。口令正确但账号停用 → `20006`。锁定计数落 KV `admin:login:fail:<username>`，**窗口 TTL 只首次落**（否则攻击者每 14 分钟失败一次即可永久锁死账号） |
+> | A2 令牌有效期 | access `ADMIN_JWT_EXPIRES_IN`（默认 **12h**，短于小程序的 7d —— 后台是高权限面）；refresh `ADMIN_REFRESH_EXPIRES_IN`（默认 7d） |
+> | A3 范围 | **一期仅服务后台**：小程序 A1 未下发 `refreshToken`，端上无值可传。用 **access token** 调本接口 → `10003`（否则「快过期令牌换新令牌」= 永不过期）；`rt=true` 的刷新令牌打业务端点 → `10002`。刷新时**重新查库**，角色变更/停用即刻生效 |
+> | A4 | **服务端无状态，不吊销任何令牌**（JWT 无状态；靠短 TTL + 前端清态）。这是**有意为之而非缺陷**，已在此显式记录，避免后人反复「修」它 |
+> | A5 | 每次**查库**取最新 `menus`，是前端刷新页面重建侧边栏的唯一来源；也是独立于 `AdminGuard` 的第二条账号状态防线（停用账号的旧令牌打 A5 → `20006`） |
 
 ---
 
@@ -614,6 +627,9 @@ approve
 
 ### 6.7 系统管理（M37）
 
+> **实现状态**：`D51–D56` 已实装（M3-1 基座批次）；`D57–D60` 待 M3-7。
+> 落点：`apps/api-server/src/modules/admin/` · 页面：`apps/admin-web/src/views/system/`。
+
 | # | 方法 | 路径 | 说明 |
 | --- | --- | --- | --- |
 | D51 | GET | `/admin/system/accounts?page=` | 运营账号（M37-01） |
@@ -626,6 +642,21 @@ approve
 | D58 | PUT | `/admin/system/configs` | 批量更新配置（**写日志 + 二次确认**） |
 | D59 | GET | `/admin/system/templates` | 通知模板（M37-04） |
 | D60 | PUT | `/admin/system/templates/{id}` | 编辑通知模板 |
+
+**M3-1 实现口径（D51–D56）**
+
+| 项 | 口径 |
+| --- | --- |
+| 权限范围 | 类级 `@Roles('super_admin','admin')` —— `operator` / `finance` / `viewer` / `supplier` 一律 `10003`。**前端菜单过滤只是体验层，判定权威在此** |
+| D51 出参 | 分页（`{list,page,pageSize,total,hasMore}`）+ 每行附 `roleLabel` 与 `menus[]`（账号管理页可预览该角色可见菜单）。**任何接口都不回 `passwordHash`** |
+| D52 入参 | `username`（3–64 位 `[A-Za-z0-9_.-]`）· `password`（≥8 位，**须同时含字母与数字**）· `role` · `realName?` · `supplierId?` · `phone?`。`role=supplier` 时 **`supplierId` 必填**（否则该账号登录后处处空白，形同故障）→ 缺则 `10001`；登录名重复 → `20009` |
+| D53 入参 | `realName?` / `role?` / `supplierId?` / `phone?` / `status?`（1 启用 / 2 停用）。**不含密码**（改密属独立审计路径，一期由超管重建账号） |
+| D53 防自锁 | 三条规则均返回 `20010`：① 不能停用自己 ② 不能降级自己 ③ 不能停用/降级**最后一个启用的 super_admin**。（③ 在「只有一个超管」时不可独立触发 —— 必先被 ①② 拦下，它是超管 ≥2 时的防线） |
+| D53 副作用 | 角色或状态变更 → 写 KV 吊销标记 `admin:revoked:<id>`，**该账号旧 access token 立即失效**（`10002`），把原本最长 12h 的特权滞留窗口压到 0 |
+| D54 出参 | `{ list: [{role,label,menus[],menuCount,isSystem}], note }`。`menuCount = -1` 表示全量通配（super_admin 的 `['*']`）。**menu key = 前端路由 path** |
+| D55 | **一期明确不支持**（`10001` + 可行路径指引）。角色菜单定义在服务端代码 `common/constants/admin-role.ts`；改权限请走 D53 改账号角色。**刻意不返回「保存成功」** —— 权限改了却不生效比明确不支持危险得多 |
+| D56 过滤 | `operatorId` / `module` / `date`（**按北京时间自然日**，服务端换算 `[d 00:00+08, d+1 00:00+08)`）。出参附 `operators[]` 供筛选器直接用 |
+| D56 写入 | 由全局 `OperationLogInterceptor` 按 `@OperationLog({module,action})` 元数据落库：**写操作才记**（GET 不标）；**失败的请求也记**（`responseData.error.code`，审计要回答「谁试图做了什么但被拒」）；请求体内 `password`/`token` 等自动脱敏为 `[redacted]`；**写库失败仅 WARN，不影响业务** |
 
 ---
 
@@ -691,6 +722,8 @@ approve
 | **20006** | 账号已被停用 | 小程序用户黑名单（**扩展**） | 403 |
 | **20007** | 你已是团长 | 重复提交申请（C3 无审核，**扩展**） | 409 |
 | **20008** | 暂不能退出：请先结清余额并等待提现到账 | 退出团长时资金未清（余额/冻结/在途提现/待结算佣金，`data.blockers` 逐条下发，**扩展**） | 409 |
+| **20009** | 登录名已被占用 | D52 新增账号时 `username` 已存在（**扩展**） | 409 |
+| **20010** | 账号受保护，不能停用或降级 | D53 防自锁三条规则（停用自己 / 降级自己 / 动最后一个 `super_admin`）（**扩展**） | 403 |
 | **30001** | 今日 24:00 已截单，明日请早 | 截单窗口外下单 | 409 |
 | **30002** | 份数超出单次上限 | 超过 `order.max_quantity` | 400 |
 | **30003** | 当前订单状态不支持该操作 | 状态机拒绝 | 409 |
@@ -714,7 +747,7 @@ approve
 | **50004** | 可提现余额不足 | 提现申请超出可用余额（L12） | 409 |
 | **90001** | 系统繁忙，请稍后再试 | 未捕获异常 | 500 |
 
-> **扩展码**：`20006` / `20007` / `20008` / `30008` / `30009` / `30010` 号段内文档原未列、但工程实现需要，已按「号段末尾登记」规则回写本表（见 `apps/api-server/src/common/constants/error-code.ts` 头部纪律）。**禁止挪用文档已占用的号位。**
+> **扩展码**：`20006` / `20007` / `20008` / `20009` / `20010` / `30008` / `30009` / `30010` 号段内文档原未列、但工程实现需要，已按「号段末尾登记」规则回写本表（见 `apps/api-server/src/common/constants/error-code.ts` 头部纪律）。**禁止挪用文档已占用的号位。**
 
 > **前端契约**：`code` 为**稳定标识**，文案可迭代；端上对 `10002`（跳登录）、`30001`（截单提示）、`40004`（引导联系团长）做特殊分支处理。
 

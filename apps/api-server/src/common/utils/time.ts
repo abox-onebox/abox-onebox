@@ -21,6 +21,25 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const isDateStr = (v: unknown): v is string =>
   typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
+/**
+ * 把 `'12h'` / `'7d'` / `'30m'` / `'45s'` 这类时长字符串换算为秒。
+ *
+ * 用途：JWT 的 `expiresIn` 支持人类可读写法，但**出参契约要秒数**
+ * （`{ expiresIn }` 端上用来算刷新时机），不能把 `'12h'` 直接透出去。
+ * 无法解析时返回 0 —— 由调用方决定是否视为「不设过期」，不抛错。
+ */
+export function durationToSeconds(v: string | undefined): number {
+  if (!v) return 0;
+  const m = /^(\d+)\s*([smhd])?$/i.exec(v.trim());
+  if (!m) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  const unit = (m[2] ?? 's').toLowerCase();
+  const factor = unit === 'd' ? 86400 : unit === 'h' ? 3600 : unit === 'm' ? 60 : 1;
+  return Number(m[1]) * factor;
+}
+
 /** 北京时间「当天」的 yyyy-MM-dd */
 export function todayBj(at: Date = new Date()): string {
   return new Date(at.getTime() + BJ_OFFSET_MS).toISOString().slice(0, 10);

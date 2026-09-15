@@ -49,8 +49,18 @@ export function calcSettlement(
   };
 }
 
-/** 后台导航（运营 role=admin） */
+/**
+ * 后台导航（运营 role=admin / operator / finance / viewer · P27–P37）
+ *
+ * ⚠️ **每项的 `path` 即服务端 `account.menus[]` 里的 menu key**。
+ *    新增页面必须**同时**在 `api-server/src/common/constants/admin-role.ts`
+ *    的 `ADMIN_MENU_KEYS` 登记 —— 否则路由能进、菜单不显示（静默过滤掉）。
+ */
 export const ADMIN_NAV = [
+  {
+    group: '概览',
+    items: [{ path: '/dashboard', title: '工作台', page: '—', module: '概览' }],
+  },
   {
     group: '套餐',
     items: [

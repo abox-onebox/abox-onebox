@@ -17,6 +17,13 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/dashboard/index.vue'),
       },
 
+      // 权限兜底（路由守卫拦下无权路径 / 菜单为空时落到这里）
+      {
+        path: '403',
+        name: 'Forbidden',
+        component: () => import('@/views/error/403.vue'),
+      },
+
       // 套餐编排 M31 · P27–P29
       {
         path: 'meal/matrix',

@@ -142,6 +142,37 @@ export class KvService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * 自增计数（登录失败次数 / 限流等）
+   *
+   * ⚠️ **TTL 只在首次自增时落，后续自增沿用首次的到期时刻**（滑动窗口的固定窗口版）。
+   *    若每次自增都刷新 TTL，攻击者只要保持每 14 分钟失败一次就能把账号**永久锁死**。
+   *
+   * @returns 自增后的值（从 1 开始）
+   */
+  async incr(key: string, ttlSec?: number): Promise<number> {
+    if (this.useMemory()) {
+      const hit = this.memory.get(key);
+      const alive = !!hit && (hit.expireAt === 0 || hit.expireAt > Date.now());
+      const next = (alive ? Number(hit!.value) : 0) + 1;
+      const expireAt = alive
+        ? hit!.expireAt
+        : ttlSec && ttlSec > 0
+          ? Date.now() + ttlSec * 1000
+          : 0;
+      this.memory.set(key, { value: String(next), expireAt });
+      return next;
+    }
+    try {
+      const n = await this.redis!.incr(key);
+      if (n === 1 && ttlSec && ttlSec > 0) await this.redis!.expire(key, ttlSec);
+      return n;
+    } catch {
+      this.degraded = true;
+      return this.incr(key, ttlSec);
+    }
+  }
+
   async onModuleDestroy(): Promise<void> {
     if (this.redis) {
       try {

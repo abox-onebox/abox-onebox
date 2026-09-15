@@ -531,10 +531,39 @@ PARTITION BY RANGE (TO_DAYS(`created_at`)) (
 | `ab_payment_log` | 不变 |
 | `ab_commission` | 不变（流水表；佣金比例由 4 级阶梯 8/9/10/12% 配置驱动 · C2） |
 | `ab_supplier_share` | 不变（分账流水） |
-| `ab_admin_user` | 不变 |
-| `ab_operation_log` | 不变 |
+| `ab_admin_user` | **+`supplier_id`**（供应商后台账号绑定 `ab_supplier.id`；NULL = 运营账号）· 见下方 §5.1 |
+| `ab_operation_log` | **+`snapshot`**（JSON，操作者/角色/时刻，审计回放）· 见下方 §5.1 |
 | `ab_config` | 不变 |
 | `ab_message` | 不变 |
+
+### 5.1 M3 补丁（2 张表各加 1 列）
+
+> **为什么这两列必须在 M3 之前补上**：账号体系的「运营 + 供应商同工程、按 role 过滤菜单」
+> 与「所有后台写操作可审计」是 M3 的验收前提。两列都**不新增表**（总表数仍 **25 张**）。
+
+```sql
+-- ① 供应商后台账号的身份锚点
+ALTER TABLE `ab_admin_user`
+  ADD COLUMN `supplier_id` BIGINT UNSIGNED DEFAULT NULL
+    COMMENT '绑定 ab_supplier.id；role=supplier 时必填（S* 与 P21–P26 的数据范围锚点）'
+    AFTER `role`,
+  ADD KEY `idx_admin_supplier` (`supplier_id`);
+
+-- ② 操作日志的结构化快照（谁在什么角色下、什么时刻做的）
+ALTER TABLE `ab_operation_log`
+  ADD COLUMN `snapshot` JSON DEFAULT NULL
+    COMMENT '变更上下文快照：{ operator, role, at }（P2-1 审计回放）'
+    AFTER `response_data`;
+```
+
+**口径要点**
+
+| 项 | 说明 |
+| --- | --- |
+| `role` 枚举 | `super_admin` / `admin` / `operator` / `finance` / `viewer` / **`supplier`**（v1.0 的枚举漏了 supplier，M3 补齐） |
+| 角色 → 菜单 | **不建 `ab_admin_role` 表**：由 `apps/api-server/src/common/constants/admin-role.ts` 代码定义，等出现「运营自定义角色」诉求再迁表（届时该文件降级为默认种子） |
+| 口令存储 | `password_hash` 格式 `scrypt:<saltHex>:<hashHex>`（node:crypto 零依赖）；种子期另有 `dev_plain:<明文>` 占位，**上线前必须清空** |
+| 令牌吊销 | 不入库：`adminRevokeKey(id)` 写 KV（`admin:revoked:<id>`），`AdminGuard` 比对令牌 `iat` |
 
 ---
 
