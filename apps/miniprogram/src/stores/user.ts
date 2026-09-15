@@ -1,14 +1,17 @@
 import { defineStore } from 'pinia';
 
-/** 本地存储键（与 utils/storage 约定一致，勿随意改名） */
-const TOKEN_KEY = 'abox_token';
-const USER_KEY = 'abox_user';
+import { STORAGE_KEYS, readStorage, writeStorage, removeStorage } from '@/utils/storage';
 
 export interface UserInfo {
   id: number;
-  nickname: string;
-  avatarUrl?: string;
-  buildingId?: number;
+  nickname: string | null;
+  avatarUrl: string | null;
+  /** ⚠️ C3 / L9：仅微信授权登录，**不取手机号与地址**；此字段一律为 null */
+  phone: string | null;
+  /** 所属办公楼（经团长邀请链接绑定；未绑定则无法下单） */
+  buildingId: number | null;
+  /** 默认归属团长 */
+  teamLeaderId: number | null;
 }
 
 /**
@@ -17,17 +20,20 @@ export interface UserInfo {
  * 口径：C3 · 仅微信授权登录，**不取手机号与地址**（L9）；
  *      昵称头像走微信开放能力，电话与地址一律不落库。
  *
- * 契约：POST /auth/login（《接口规范 v1.0》A1）
- *   入参 { code } → 出参 { token, isLeader, user }
+ * 契约：POST /auth/login（《接口规范 v1.0》A1）→ 出参 { token, isNewUser, isLeader, user }
  */
 export const useUserStore = defineStore('user', {
   state: () => ({
     token: '' as string,
     info: null as UserInfo | null,
+    /** 是否新注册用户（首次登录时可做一次性引导） */
+    isNewUser: false as boolean,
   }),
 
   getters: {
     isLoggedIn: (state): boolean => state.token !== '',
+    /** 是否已绑定办公楼（未绑定 → 首页会提示「通过团长邀请链接进入」） */
+    hasBuilding: (state): boolean => !!state.info?.buildingId,
   },
 
   actions: {
@@ -37,34 +43,40 @@ export const useUserStore = defineStore('user', {
      */
     restore(): void {
       try {
-        const token = uni.getStorageSync(TOKEN_KEY);
-        if (typeof token === 'string' && token) {
-          this.token = token;
-        }
-        const info = uni.getStorageSync(USER_KEY);
-        if (info && typeof info === 'object') {
-          this.info = info as UserInfo;
-        }
+        const token = readStorage<string>(STORAGE_KEYS.token, '');
+        if (token) this.token = token;
+
+        const info = readStorage<UserInfo | null>(STORAGE_KEYS.user, null);
+        if (info && typeof info === 'object') this.info = info;
       } catch (err) {
         // 本地存储不可用时保持未登录态，不阻断小程序启动
         console.warn('[user] 恢复登录态失败，按未登录处理', err);
       }
     },
 
-    /** 登录成功后落状态并持久化（由登录流程在拿到 token 后调用） */
-    setLogin(token: string, info: UserInfo): void {
+    /** 登录成功后落状态并持久化（由 utils/auth.ts 在拿到 token 后调用） */
+    setLogin(token: string, info: UserInfo, isNewUser = false): void {
       this.token = token;
       this.info = info;
-      uni.setStorageSync(TOKEN_KEY, token);
-      uni.setStorageSync(USER_KEY, info);
+      this.isNewUser = isNewUser;
+      writeStorage(STORAGE_KEYS.token, token);
+      writeStorage(STORAGE_KEYS.user, info);
+    },
+
+    /** 局部更新资料（如绑定办公楼后） */
+    patchInfo(patch: Partial<UserInfo>): void {
+      if (!this.info) return;
+      this.info = { ...this.info, ...patch };
+      writeStorage(STORAGE_KEYS.user, this.info);
     },
 
     /** 退出登录 / token 失效时清理 */
     clear(): void {
       this.token = '';
       this.info = null;
-      uni.removeStorageSync(TOKEN_KEY);
-      uni.removeStorageSync(USER_KEY);
+      this.isNewUser = false;
+      removeStorage(STORAGE_KEYS.token);
+      removeStorage(STORAGE_KEYS.user);
     },
   },
 });

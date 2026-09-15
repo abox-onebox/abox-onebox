@@ -19,5 +19,19 @@ module.exports = {
     '@typescript-eslint/no-explicit-any': 'warn',
     '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
   },
+  overrides: [
+    {
+      // 小程序跑在 uni-app 运行时下，`uni` 等是平台全局。
+      // ⚠️ typescript-eslint 的 eslint-recommended 只对 .ts 关掉 `no-undef`，
+      //    `.vue` 的 script 块不受影响 → 不声明会误报 no-undef。
+      files: ['apps/miniprogram/**/*.{ts,vue}'],
+      globals: {
+        uni: 'readonly',
+        wx: 'readonly',
+        getCurrentPages: 'readonly',
+        getApp: 'readonly',
+      },
+    },
+  ],
   ignorePatterns: ['dist', 'node_modules', 'unpackage', '*.d.ts'],
 };

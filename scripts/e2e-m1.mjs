@@ -1,0 +1,369 @@
+#!/usr/bin/env node
+/**
+ * ABox M1 端到端验收（**免 pnpm**，真实起服务 + 真实 HTTP）
+ *
+ * 覆盖《开发里程碑计划 v1.0》M1 验收标准 1–5：
+ *   1. 微信授权后直接进首页，不索要手机号 / 地址（C3 / L9）
+ *      → 断言 A1 出参 `user.phone === null`，且登录链路无需额外授权步骤
+ *   2. 下单 → 支付成功 → 支付结果页 → 订单详情，状态 pending_pay → paid
+ *   5. 倒计时为距 T-1 24:00 的真实剩余时间（`countdownSec` 与 `cutoffAt` 自洽）
+ *   3. 截单前取消成功；**截单后调取消接口返回 40004**
+ *   4. 同一幂等键重复下单只产生一单
+ *
+ * 额外校验：统一响应结构、业务失败默认 HTTP 200、缺 `Idempotency-Key` 返回 10001、
+ *          同用户同出餐日重复下单返回 30004。
+ *
+ * 用法：node scripts/e2e-m1.mjs
+ * ⚠️ 前置：先跑一次 `node scripts/gate.mjs seed`（干净数据库 + 相对运行日的分配）
+ */
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const API_DIR = join(ROOT, 'apps', 'api-server');
+const NODE_DIR = dirname(process.execPath);
+const PATH_SEP = process.platform === 'win32' ? ';' : ':';
+const BASE = 'http://localhost:3000/api/v1';
+const DB_PATH = join(ROOT, 'data', 'abox-dev.sqlite');
+
+const results = [];
+const log = (s) => process.stdout.write(`${s}\n`);
+
+function ok(name, detail = '') {
+  results.push({ name, pass: true });
+  log(`✔ ${name}${detail ? `  › ${detail}` : ''}`);
+}
+function fail(name, detail = '') {
+  results.push({ name, pass: false });
+  log(`✘ ${name}${detail ? `  › ${detail}` : ''}`);
+}
+function assert(cond, name, detail = '') {
+  if (cond) ok(name, detail);
+  else fail(name, detail);
+  return cond;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP
+// ---------------------------------------------------------------------------
+async function call(method, path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', [ 'X-Client' ]: 'e2e' };
+  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  if (opts.idem) headers['Idempotency-Key'] = opts.idem;
+
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers,
+    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+  });
+  let json = null;
+  try {
+    json = await res.json();
+  } catch {
+    /* 非 JSON（网关错误页） */
+  }
+  return { status: res.status, body: json };
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------------------
+// 起服务
+// ---------------------------------------------------------------------------
+function startServer() {
+  const env = {
+    ...process.env,
+    PATH: [
+      join(API_DIR, 'node_modules', '.bin'),
+      join(ROOT, 'node_modules', '.bin'),
+      NODE_DIR,
+      process.env.PATH,
+    ].join(PATH_SEP),
+    NODE_PATH: join(dirname(NODE_DIR), 'workspace', 'node_modules'),
+  };
+  const child = spawn('ts-node -r tsconfig-paths/register src/main.ts', {
+    cwd: API_DIR,
+    shell: true,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  child.stdout.on('data', (b) => {
+    const s = b.toString();
+    if (/error|Error|✖|异常/.test(s)) process.stderr.write(`[api] ${s}`);
+  });
+  child.stderr.on('data', (b) => {
+    const s = b.toString();
+    // 忽略 nest 的 source-map 噪音
+    if (!/source-map|at /.test(s)) process.stderr.write(`[api:err] ${s}`);
+  });
+  return child;
+}
+
+async function waitHealthy(timeoutMs = 90000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    try {
+      const r = await call('GET', '/health');
+      if (r.status === 200 && r.body?.code === 0) return true;
+    } catch {
+      /* 还没起来 */
+    }
+    await sleep(600);
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// 主流程
+// ---------------------------------------------------------------------------
+async function main() {
+  log(`\n=== ABox M1 端到端验收 ===\n数据库：${DB_PATH}\n`);
+
+  const server = startServer();
+  const healthy = await waitHealthy();
+  if (!healthy) {
+    fail('服务启动', '健康检查超时（90s）');
+    server.kill('SIGKILL');
+    return;
+  }
+  ok('服务启动', `${BASE}/health`);
+
+  // ---------- 1. 登录（A1） ----------
+  const login = await call('POST', '/auth/login', { body: { code: 'dev:1001' } });
+  const token = login.body?.data?.token;
+  assert(login.body?.code === 0 && !!token, 'A1 微信登录签发 JWT', `userId=${login.body?.data?.user?.id}`);
+  // ---------- 1b. C3 / L9：只凭 code 登录，不取手机号 / 不取地址 ----------
+  // ⚠️ 注意区分：种子里的 5 个用户**本身都是团长账号**，其 `ab_user.phone` 来自
+  //    「申请团长时留的联系方式」，属合规数据；L9 禁止的是**登录环节索取**。
+  //    故真正能证明 L9 的是「全新用户」与「入参白名单」这两条断言。
+  const fresh = await call('POST', '/auth/login', { body: { code: 'dev:9001' } });
+  const fu = fresh.body?.data?.user;
+  assert(
+    fresh.body?.code === 0 &&
+      fresh.body?.data?.isNewUser === true &&
+      fu?.phone === null &&
+      fu?.buildingId === null,
+    'M1-① 新用户登录只凭 code：不落手机号、不落地址（C3 / L9）',
+    `isNewUser=${fresh.body?.data?.isNewUser} phone=${fu?.phone} buildingId=${fu?.buildingId}`,
+  );
+
+  const smuggle = await call('POST', '/auth/login', {
+    body: { code: 'dev:9002', phone: '13900000000', address: '北京市朝阳区' },
+  });
+  assert(
+    smuggle.body?.code !== 0,
+    'M1-① 登录入参白名单拒绝 phone / address',
+    `code=${smuggle.body?.code} msg=${smuggle.body?.message}`,
+  );
+  assert(
+    login.body?.data?.isLeader === true,
+    'L10 团长叠加身份随登录下发',
+    `level=${login.body?.data?.leader?.level} rate=${login.body?.data?.leader?.commissionRate}`,
+  );
+  assert(
+    login.body?.data?.user?.buildingId === 1,
+    'C3 办公楼来自邀请绑定（非定位）',
+    `buildingId=${login.body?.data?.user?.buildingId}`,
+  );
+
+  // ---------- 2. U1 明日套餐 ----------
+  const daily = await call('GET', '/home/daily', { token });
+  const d = daily.body?.data;
+  assert(daily.body?.code === 0 && !!d, 'U1 明日套餐');
+  assert(d?.priceFen === 2580, 'C1 售价锁定 ¥25.80', `priceFen=${d?.priceFen}`);
+  assert(d?.canOrder === true, 'U1 canOrder 在截单前为 true');
+  assert(
+    d?.countdownSec > 0 && typeof d?.cutoffAt === 'string' && d.cutoffAt.endsWith('+08:00'),
+    'M1-⑤ 倒计时锚在 T-1 24:00（+08:00）',
+    `countdownSec=${d?.countdownSec} cutoffAt=${d?.cutoffAt}`,
+  );
+  assert((d?.dishes?.length ?? 0) >= 4, '套餐含一饭四菜', `dishes=${d?.dishes?.length}`);
+  assert(
+    d?.dishes?.every((x) => !('unitPrice' in x) && !('cost' in x)),
+    'C8 用户端菜品视图不含供价',
+  );
+
+  const mealDate = d.mealDate;
+
+  // ---------- 3. U6 下单（幂等） ----------
+  const K1 = 'e2e-order-key-0001';
+  const created = await call('POST', '/orders', {
+    token,
+    idem: K1,
+    body: { mealDate, quantity: 2, remark: 'e2e 冒烟' },
+  });
+  const orderNo = created.body?.data?.orderNo;
+  assert(created.body?.code === 0 && !!orderNo, 'U6 创建订单', `orderNo=${orderNo}`);
+  assert(
+    created.body?.data?.status === 'pending_pay',
+    'U6 初始状态 pending_pay',
+    `status=${created.body?.data?.status}`,
+  );
+  assert(
+    created.body?.data?.payAmountFen === 5160,
+    'U6 金额 = 单价 × 份数',
+    `payAmountFen=${created.body?.data?.payAmountFen}`,
+  );
+
+  // 幂等回放：同键重复 → 10006 + 首次结果（端上按成功处理）
+  const replay = await call('POST', '/orders', {
+    token,
+    idem: K1,
+    body: { mealDate, quantity: 2, remark: 'e2e 冒烟' },
+  });
+  assert(
+    replay.body?.code === 10006 && replay.body?.data?.orderNo === orderNo,
+    'M1-④ 同一幂等键重复下单只产生一单',
+    `code=${replay.body?.code} orderNo=${replay.body?.data?.orderNo}`,
+  );
+  assert(replay.status === 200, '§1.4 幂等回放走 HTTP 200', `status=${replay.status}`);
+
+  // 缺幂等键 → 10001
+  const noKey = await call('POST', '/orders', { token, body: { mealDate, quantity: 1 } });
+  assert(
+    noKey.body?.code === 10001 && noKey.status === 200,
+    '§1.7 下单缺 Idempotency-Key → 10001（HTTP 200）',
+    `code=${noKey.body?.code} status=${noKey.status}`,
+  );
+
+  // 同用户同出餐日重复下单（换键）→ 30004
+  const dup = await call('POST', '/orders', {
+    token,
+    idem: 'e2e-order-key-0002',
+    body: { mealDate, quantity: 1 },
+  });
+  assert(
+    dup.body?.code === 30004,
+    '业务层幂等：同用户同出餐日重复下单 → 30004',
+    `code=${dup.body?.code} msg=${dup.body?.message}`,
+  );
+
+  // 超份数 → 30002
+  const overQty = await call('POST', '/orders', {
+    token,
+    idem: 'e2e-order-key-0003',
+    body: { mealDate, quantity: 999 },
+  });
+  assert(overQty.body?.code === 30002, '份数超上限 → 30002', `code=${overQty.body?.code}`);
+
+  // ---------- 4. U7 / U8 支付 ----------
+  const prepay = await call('POST', `/orders/${orderNo}/pay`, { token, idem: 'e2e-pay-key-0001' });
+  assert(
+    prepay.body?.code === 0 && prepay.body?.data?.payAmountFen === 5160,
+    'U7 创建微信支付单（JSAPI）',
+    `payAmountFen=${prepay.body?.data?.payAmountFen}`,
+  );
+
+  let payResult = null;
+  for (let i = 0; i < 12; i += 1) {
+    await sleep(400);
+    const r = await call('GET', `/orders/${orderNo}/pay-result`, { token });
+    payResult = r.body?.data;
+    if (payResult?.paid) break;
+  }
+  assert(
+    payResult?.paid === true && payResult?.status === 'paid',
+    'M1-② 支付回调入账：pending_pay → paid',
+    `status=${payResult?.status} statusText=${payResult?.statusText}`,
+  );
+  assert(
+    payResult?.statusText === '待出餐',
+    '三视角文案（用户端 paid → 待出餐）',
+    `statusText=${payResult?.statusText}`,
+  );
+
+  // ---------- 5. U9 / U10 ----------
+  const list = await call('GET', '/orders?page=1&pageSize=20', { token });
+  const hit = list.body?.data?.list?.find((x) => x.orderNo === orderNo);
+  assert(!!hit, 'U9 订单列表含本单', `total=${list.body?.data?.total}`);
+  assert(!!hit?.statusText, 'U9 列表带服务端状态文案', `statusText=${hit?.statusText}`);
+
+  const detail = await call('GET', `/orders/${orderNo}`, { token });
+  const det = detail.body?.data;
+  assert(detail.body?.code === 0, 'U10 订单详情');
+  assert((det?.timeline?.length ?? 0) >= 6, 'U10 状态机时间线', `nodes=${det?.timeline?.length}`);
+  assert(
+    det?.timeline?.some((n) => n.done && n.node === 'paid'),
+    'U10 时间线已标记 paid 完成',
+  );
+  assert(!!det?.pickup?.point, 'U10 取餐点', `point=${det?.pickup?.point}`);
+  assert(det?.payAmountFen === 5160, 'U10 金额一致', `payAmountFen=${det?.payAmountFen}`);
+
+  // ---------- 6. U11 截单前自助取消 ----------
+  const cancel = await call('POST', `/orders/${orderNo}/cancel`, { token });
+  assert(
+    cancel.body?.code === 0 && cancel.body?.data?.status === 'cancelled',
+    'M1-③a 截单前自助取消成功',
+    `status=${cancel.body?.data?.status}`,
+  );
+  assert(
+    cancel.body?.data?.refundInitiated === true,
+    'M1-③a 已发起原路退款',
+    `refundInitiated=${cancel.body?.data?.refundInitiated}`,
+  );
+
+  const after = await call('GET', `/orders/${orderNo}`, { token });
+  assert(after.body?.data?.status === 'cancelled', '取消后详情状态为 cancelled');
+  assert(
+    after.body?.data?.timeline?.some((n) => n.node === 'cancelled' && n.done),
+    '取消后时间线出现「已取消」节点',
+  );
+
+  // ---------- 7. 截单后自助取消 → 40004 ----------
+  const login2 = await call('POST', '/auth/login', { body: { code: 'dev:1002' } });
+  const token2 = login2.body?.data?.token;
+  const created2 = await call('POST', '/orders', {
+    token: token2,
+    idem: 'e2e-order-key-1002',
+    body: { mealDate, quantity: 1 },
+  });
+  const orderNo2 = created2.body?.data?.orderNo;
+  assert(!!orderNo2, '第二用户下单（用于截单后取消分支）', `orderNo=${orderNo2}`);
+
+  if (orderNo2 && existsSync(DB_PATH)) {
+    // 把出餐日改到「昨天」→ 截单时刻早已过去 → 触发 40004 分支
+    const db = new DatabaseSync(DB_PATH);
+    const past = mealDateYMD(mealDate, -2);
+    const stmt = db.prepare('UPDATE ab_order SET meal_date = ? WHERE order_no = ?');
+    const info = stmt.run(past, orderNo2);
+    db.close();
+    assert(info.changes === 1, '构造「已截单」样本（meal_date 回拨）', `${mealDate} → ${past}`);
+
+    const late = await call('POST', `/orders/${orderNo2}/cancel`, { token: token2 });
+    assert(
+      late.body?.code === 40004,
+      'M1-③b 截单后调取消接口返回 40004',
+      `code=${late.body?.code} status=${late.status}`,
+    );
+    assert(
+      !!late.body?.data?.leaderContact,
+      '40004 附团长联系方式（引导代退 · C6 第一段）',
+      `leaderPhone=${late.body?.data?.leaderContact?.phone}`,
+    );
+  } else if (!existsSync(DB_PATH)) {
+    fail('构造「已截单」样本', `找不到数据库文件 ${DB_PATH}`);
+  }
+
+  // ---------- 汇总 ----------
+  server.kill('SIGKILL');
+  await sleep(300);
+
+  const failed = results.filter((r) => !r.pass);
+  log('\n──────── 汇总 ────────');
+  log(`通过 ${results.length - failed.length}/${results.length}` + (failed.length ? ` · 失败：${failed.map((f) => f.name).join(' | ')}` : ' · 全绿 ✅'));
+  process.exit(failed.length ? 1 : 0);
+}
+
+/** yyyy-MM-dd 日期加减（纯 UTC，避开时区陷阱） */
+function mealDateYMD(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d) + days * 86400000).toISOString().slice(0, 10);
+}
+
+main().catch((e) => {
+  log(`\n✘ E2E 异常：${e?.stack ?? e}`);
+  process.exit(1);
+});

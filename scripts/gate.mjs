@@ -42,6 +42,8 @@ const GATES = {
     cwd: 'apps/api-server',
     cmd: 'ts-node -r tsconfig-paths/register src/database/seeds/seed.ts',
   },
+  // M1 端到端验收：真实起服务 + 真实 HTTP，覆盖验收标准 1–5（含幂等回放与 40004 分支）
+  'e2e:m1': { cwd: '.', cmd: 'node scripts/e2e-m1.mjs', group: 'e2e' },
 };
 
 /** 组合门禁别名 */
@@ -49,6 +51,8 @@ const ALIASES = {
   shared: ['shared:types', 'shared:utils'],
   typecheck: ['typecheck:api', 'typecheck:admin', 'typecheck:mp'],
   build: ['build:api', 'build:admin', 'build:mp'],
+  /** M1 验收一键跑：重置种子 → 起服务跑真实 HTTP 全链路 */
+  verify: ['seed', 'e2e:m1'],
   all: [
     'shared',
     'lint',

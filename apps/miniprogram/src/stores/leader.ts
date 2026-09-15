@@ -1,13 +1,12 @@
 import { defineStore } from 'pinia';
-import { LeaderLevel } from '@abox/shared-types';
+import { LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
 
-/** 本地存储键（与原型同源，勿随意改名） */
-const IS_LEADER_KEY = 'abox_is_leader';
-const LEADER_KEY = 'abox_leader';
+import { STORAGE_KEYS, readStorage, writeStorage, removeStorage } from '@/utils/storage';
 
 export interface LeaderInfo {
   id: number;
-  realName: string;
+  /** 真实姓名（A1 登录出参不含；M2 拉团长档案后补齐，故为可选） */
+  realName?: string | null;
   level: LeaderLevel;
   /** 佣金费率，DECIMAL(5,4) 的字符串形式，如 "0.1200"（首席 12%） */
   commissionRate: string;
@@ -20,32 +19,34 @@ export interface LeaderInfo {
  *
  * 口径：L10 · 团长是**叠加身份**，与普通用户共用同一小程序身份（不是独立端）。
  *      登录后用 `abox_is_leader` 持久化，据此动态决定是否展示团长入口：
- *        false → tabBar 4 项（首页 / 供应商 / 订单 / 我的）
- *        true  → tabBar 5 项（首页 / 供应商 / 📦团长 / 订单 / 我的）
+ *        false → 底部 4 项（首页 / 溯源 / 订单 / 我的）
+ *        true  → 底部 5 项（首页 / 溯源 / 团长 / 订单 / 我的）
  *
- * 契约：GET /leader/profile（《接口规范 v1.0》L 域）
+ * 契约：POST /auth/login 返回 `isLeader` + `leader`；后续增量走 GET /leader/profile（M2）
  */
 export const useLeaderStore = defineStore('leader', {
   state: () => ({
-    /** 是否具备团长身份（控制 📦 团长 tab 是否出现） */
+    /** 是否具备团长身份（控制「团长」tab 是否出现） */
     isLeader: false as boolean,
     info: null as LeaderInfo | null,
   }),
 
   getters: {
-    /** 佣金等级对应费率（以团长档案为准，兜底取等级默认值） */
+    /** 佣金等级对应费率（以团长档案为准，兜底 0） */
     rate: (state): number => Number(state.info?.commissionRate ?? 0),
+    /** 等级文案（用于角标）；文案唯一来源 = shared-types 的 LEADER_LEVEL_META */
+    levelLabel: (state): string =>
+      LEADER_LEVEL_META[state.info?.level ?? LeaderLevel.TRAINEE].label,
   },
 
   actions: {
     /** 从本地存储恢复团长身份（App.vue onLaunch 调用） */
     restore(): void {
       try {
-        this.isLeader = uni.getStorageSync(IS_LEADER_KEY) === true;
-        const info = uni.getStorageSync(LEADER_KEY);
-        if (info && typeof info === 'object') {
-          this.info = info as LeaderInfo;
-        }
+        this.isLeader = readStorage<boolean>(STORAGE_KEYS.isLeader, false) === true;
+
+        const info = readStorage<LeaderInfo | null>(STORAGE_KEYS.leader, null);
+        if (info && typeof info === 'object') this.info = info;
       } catch (err) {
         // 存储不可用 → 按普通用户处理（不展示团长入口）
         console.warn('[leader] 恢复团长身份失败，按普通用户处理', err);
@@ -56,16 +57,16 @@ export const useLeaderStore = defineStore('leader', {
     setLeader(info: LeaderInfo): void {
       this.isLeader = true;
       this.info = info;
-      uni.setStorageSync(IS_LEADER_KEY, true);
-      uni.setStorageSync(LEADER_KEY, info);
+      writeStorage(STORAGE_KEYS.isLeader, true);
+      writeStorage(STORAGE_KEYS.leader, info);
     },
 
     /** 30 天未促单被取消资格、或主动退出时清理 */
     clear(): void {
       this.isLeader = false;
       this.info = null;
-      uni.removeStorageSync(IS_LEADER_KEY);
-      uni.removeStorageSync(LEADER_KEY);
+      removeStorage(STORAGE_KEYS.isLeader);
+      removeStorage(STORAGE_KEYS.leader);
     },
   },
 });

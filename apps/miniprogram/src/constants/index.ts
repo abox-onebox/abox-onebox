@@ -9,6 +9,19 @@ export * from './env';
 /** C1 · 套餐统一价（元） */
 export const UNIT_PRICE = 25.8;
 
+/**
+ * 单笔订单份数上限（**默认值**）
+ * ⚠️ 权威值在服务端 `ab_config.order.max_quantity`（超限返回 `30002`）；
+ *    此处仅用于端上步进器封顶，避免用户白填一遍再被拒。
+ */
+export const ORDER_MAX_QUANTITY = 20;
+
+/**
+ * 列表分页默认条数（与《接口规范》§1.3 `PAGE_DEFAULT.pageSize` 一致）
+ * ⚠️ 权威值在 `@abox/shared-types` 的 `PAGE_DEFAULT`；此处仅供端上分页请求复用。
+ */
+export const PAGE_SIZE = 20;
+
 /** C9 · 单份成本项「默认 / 示例值」（元）
  * ⚠️ 口径修订 2026-09-15：**成本项不写死**，按实际执行；平台毛利为**结果值**。
  *    运行期以服务端下发的 ab_config + 供应商采购价表为准，此处仅为默认值与兜底。
