@@ -565,6 +565,28 @@ ALTER TABLE `ab_operation_log`
 | 口令存储 | `password_hash` 格式 `scrypt:<saltHex>:<hashHex>`（node:crypto 零依赖）；种子期另有 `dev_plain:<明文>` 占位，**上线前必须清空** |
 | 令牌吊销 | 不入库：`adminRevokeKey(id)` 写 KV（`admin:revoked:<id>`），`AdminGuard` 比对令牌 `iat` |
 
+### 5.2 M3-3 反向结算的落点（**无 DDL 变更**）
+
+> M3-3（订单中心 D8–D12）没有新增表、也没有新增列 —— 反向结算全部**落回既有列**。
+> 这里把它写清楚，是因为「退款要改哪些表」散在代码里最容易漏掉一张。
+
+| 表 | 写什么 | 口径 |
+| --- | --- | --- |
+| `ab_refund` | 新增一行（`apply_source='admin'`，`status='refunding' → 'refunded'`）· **`reversed=1` + `reversed_at`** | `reversed` 是「反向结算已执行」幂等位；`cancelled_at` 在 `ab_order` 上近似承载退款时刻（无独立 `refunded_at` 列） |
+| `ab_order` | `status='refunded'` · `cancelled_at=now` | 退款是**终态**；`cancelled_at` 复用为「异常区时间线」的发生时间 |
+| `ab_commission` | **新增一行** `type='reversal'`（`amount` / `quantity` **取负**）+ 原 `normal` 行 `status='cancelled'` | **C9：原记录不得改写**。金额改成 0 会让佣金明细的「发生额」永久失真 |
+| `ab_balance` / `ab_balance_log` | 余额退回（`type='refund'`,`direction=+1`）/ 佣金冲销（`direction=−1`） | 余额**允许被扣成负数**：佣金已提现就形成欠款，由后续佣金抵扣；硬拦会把退款卡死 |
+| `ab_supplier_share` | 未付款行 → 直接扣减（扣空置 `status='reversed'`）；已付款行 → **写反向流水**（`type='reversal'`，`origin_id` 指向原行）挂**下期**抵扣 | 已付款行**不得改写**（钱已转出，改写等于篡改已发生的付款）。未生成应付时（`mode='not_generated'`）**不造空冲销行** —— 跑批按「有效订单」汇总，已退款单自然不在其中 |
+
+**关键字段速查**
+
+| 字段 | 语义 |
+| --- | --- |
+| `ab_refund.amount` | **用户实际付出去的钱** = `total_amount − discount_amount`（＝微信实付 + 余额抵扣）。**不是** `pay_amount` |
+| `ab_refund.auditor_id` | 后台强制退款时 = 操作人（「自己批准自己」）；D41 审批时 = 真实审批人 |
+| `ab_supplier_share.type` | `normal` / `reversal`；`reversal` 行的 `share_date` = **冲减登记日**（决定进哪一期的结算单） |
+| `ab_supplier_share.origin_id` | 反向流水指向的原行 id（对账时用于回溯） |
+
 ---
 
 ## 六、关键索引设计

@@ -25,6 +25,17 @@
  *   · D7 `POST /admin/meal/templates`      —— 成本 = 供价求和；supplierId 由菜品反查；重复菜 10001
  *   · 选择器 `/admin/meal/dishes` `/admin/meal/distribution-centers`
  *
+ * ## M3-3 订单中心批次新增（§15）
+ *   · D8 `GET  /admin/orders`              —— 全平台流 / 异常 Tab / 11 态过滤 / 关键词（号 + 昵称）/
+ *                                            summary 不受分页影响 / 手机号脱敏 / 筛选下拉
+ *   · D9 `GET  /admin/orders/:orderNo`     —— 明细 + 时间线 + 支付 + 佣金 + actions（按钮口径唯一在服务端）
+ *   · D10 `POST /admin/orders/manual-adjust` —— **目标值**语义（幂等不翻倍）/ 30002 / 30003 / 30014 /
+ *                                            跨楼群 30015 / 原因 10001 / 自动写日志且 targetId=订单号
+ *   · D11 `POST /admin/orders/:orderNo/force-refund` —— 40011 防误操作 / 30003 / 40008 幂等 /
+ *                                            C9 反向冲销（佣金负行 + 原行 cancelled + 余额扣减）/ 应付三态
+ *   · D12 `GET  /admin/orders/export`      —— 表头 + 二维数组 / **完整手机号** / 强制留痕（含 IP）
+ *   · 权限：finance 可读 · viewer 10003 · 小程序 token 打 `/admin/orders` → 10003
+ *
  * ## 三类安全断言（这是本批次的核心价值）
  *   1. **主体隔离**：小程序 token 打 `/admin/*` → 10003；后台 token 打 `/orders` → 10002
  *      （两套账号表的 id 各自自增，不做隔离就是**静默越权**，见 jwt-auth.guard.ts）
@@ -35,6 +46,11 @@
  * ## 可重复跑（幂等）
  * 账号类用例使用**带时间戳的用户名**，重复跑不会因「登录名已占用（20009）」而误判。
  * 需要干净数据库时先 `node scripts/gate.mjs seed`。
+ *
+ * ⚠️ **时间窗前提**：§15 订单中心要造真实订单，而 U6 只能在
+ *    `[T-1 14:00, T-1 23:00)` 这个窗口内下单 —— 与 `e2e-m1` / `e2e-m2` 同一约束。
+ *    因此**整套需在北京时间 14:00–23:00 之间运行**，窗口外 §15 会给出唯一的
+ *    可读失败而非连锁红。
  *
  * 用法：node scripts/e2e-m3.mjs
  * 端口：默认 3103（`E2E_PORT` 可覆盖）。gate.mjs 的 `verify` 串跑时三脚本各占一端口。
@@ -78,6 +94,37 @@ function readDb(sql, params = []) {
   const db = new DatabaseSync(DB_PATH);
   try {
     return db.prepare(sql).get(...params) ?? null;
+  } finally {
+    db.close();
+  }
+}
+
+/** 读多行（`readDb` 的复数版） */
+function readRows(sql, params = []) {
+  if (!existsSync(DB_PATH)) return [];
+  const db = new DatabaseSync(DB_PATH);
+  try {
+    return db.prepare(sql).all(...params);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * 直写数据库（**仅作测试夹具**）
+ *
+ * 有些状态位在原型里没有对外接口（`delivered` 属出餐/配送，M4 才有），但 M3 的
+ * 后台能力必须在真实数据上验证。与 `e2e-m2.mjs` 同一手法：用 SQL 把订单搬到
+ * 「已送达」「昨日」等位置，再跑被测接口。
+ *
+ * ⚠️ 只改**状态位与日期**这类无法通过公开接口到达的字段，绝不用它伪造被测接口
+ *    自身负责写入的字段 —— 否则测试就变成「自己写、自己读」的空转。
+ */
+function writeDb(sql, params = []) {
+  if (!existsSync(DB_PATH)) return 0;
+  const db = new DatabaseSync(DB_PATH);
+  try {
+    return db.prepare(sql).run(...params).changes ?? 0;
   } finally {
     db.close();
   }
@@ -1158,6 +1205,611 @@ async function main() {
     '失败的编排请求**也记日志**（审计要回答「谁试图做了什么但被拒」）',
     `action=${failInMeal?.action} code=${failInMeal?.responseData?.error?.code}`,
   );
+
+  // ==========================================================================
+  // §15 M3-3 订单中心 D8–D12
+  // ==========================================================================
+  log('\n§15 M3-3 订单中心（D8–D12）');
+
+  /**
+   * ⚠️ 下单窗口依赖真实时钟：`isOrderable(T)` = `[T-1 14:00, T-1 23:00)`（截单窗口 60min）。
+   *    于是**只有「明日」能下单**，且整组必须在**北京时间 14:00–23:00** 之间运行
+   *    —— 与 `e2e-m1` / `e2e-m2` 同一前提（造订单只能走 U6，绕不过这个闸）。
+   *    窗口外先给出**一条可读的失败**，而不是让二十条断言连锁红成一片。
+   */
+  const u2 = await userLogin('dev:1002'); // 王芳 · 楼 4（国贸组）· 归属团长 1
+  const u5 = await userLogin('dev:1005'); // 陈强 · 楼 2（国贸组）· 无默认团长 → 必须凭邀请码
+  const winCheck = await call('GET', `/home/daily?mealDate=${dPlus1}`, { token: u2.token });
+  const orderWindowOpen = winCheck.body?.data?.canOrder === true;
+
+  if (!orderWindowOpen) {
+    fail(
+      '§15 前置：当前不在下单窗口 —— 订单中心整组跳过',
+      `canOrder=${winCheck.body?.data?.canOrder} reason=${winCheck.body?.data?.reason}` +
+        '（本套件需在北京时间 14:00–23:00 之间运行）',
+    );
+  } else {
+    // ---------------------------------------------------------- 夹具：三张订单
+    // A 王芳 2 份 · 待支付 → 改单 / 异常 Tab / 导出 / 详情 / 已截单闸门
+    // B 陈强 2 份 · 已支付 →（直写）今日已送达 → L9 计佣 → D11 强制退款 + 反向冲销
+    // C 李明 1 份 · 下单后取消 → 证明「已取消不算异常」
+    const K = (s) => `e2e-m3-ord-${stamp}-${s}`;
+
+    const ordA = await call('POST', '/orders', {
+      token: u2.token,
+      idem: K('a'),
+      body: { mealDate: dPlus1, quantity: 2 },
+    });
+    const noA = ordA.body?.data?.orderNo;
+    assert(
+      ordA.body?.code === 0 && !!noA,
+      'D8–D12 夹具 · 王芳下单 2 份（明日 · 国贸组）',
+      `orderNo=${noA} code=${ordA.body?.code}`,
+    );
+
+    const ordB = await call('POST', '/orders', {
+      token: u5.token,
+      idem: K('b'),
+      body: { mealDate: dPlus1, quantity: 2, leaderCode: 'LDR0001' },
+    });
+    const noB = ordB.body?.data?.orderNo;
+    assert(
+      ordB.body?.code === 0 && !!noB,
+      'D11 夹具 · 陈强凭邀请码 LDR0001 下单（归属团长 1）',
+      `orderNo=${noB} code=${ordB.body?.code}`,
+    );
+
+    const paidB = await call('POST', '/pay/mock/paid', { body: { orderNo: noB } });
+    assert(
+      paidB.body?.code === 0,
+      'D11 夹具 · mock 支付成功（微信实付 ¥51.60）',
+      `code=${paidB.body?.code}`,
+    );
+
+    const ordC = await call('POST', '/orders', {
+      token: u.token,
+      idem: K('c'),
+      body: { mealDate: dPlus1, quantity: 1 },
+    });
+    const noC = ordC.body?.data?.orderNo;
+    const cancelC = await call('POST', `/orders/${noC}/cancel`, { token: u.token });
+    assert(
+      ordC.body?.code === 0 && cancelC.body?.code === 0 && !!noC,
+      'D8 夹具 · 第三单下单后取消',
+      `orderNo=${noC} cancel=${cancelC.body?.code}`,
+    );
+
+    // ---------------------------------------------------------- D8 全平台订单流
+    const LIST_Q = `mealDate=${dPlus1}&groupId=1`;
+    const list1 = await call('GET', `/admin/orders?${LIST_Q}&page=1&pageSize=50`, {
+      token: adminToken,
+    });
+    const L1 = list1.body?.data;
+    assert(
+      list1.body?.code === 0 && Array.isArray(L1?.list) && L1.total >= 3,
+      'D8 全平台订单流可查询（mealDate + groupId 过滤）',
+      `code=${list1.body?.code} total=${L1?.total}`,
+    );
+
+    const rowA = (L1?.list ?? []).find((r) => r.orderNo === noA);
+    assert(!!rowA, 'D8 列表命中目标订单', `orderNo=${noA}`);
+    assert(
+      rowA?.status === 'pending_pay' && !!rowA?.statusText,
+      'D8 行含状态位与**服务端下发的中文文案**（端上不维护第二份状态映射）',
+      `status=${rowA?.status} statusText=${rowA?.statusText}`,
+    );
+    assert(
+      !!rowA?.buildingName && !!rowA?.groupName && !!rowA?.setMealName && !!rowA?.mainDishName,
+      'D8 行一次补齐楼群 / 办公楼 / 套餐 / 主荤（P30 表格不再 N+1 补数据）',
+      `${rowA?.groupName} · ${rowA?.buildingName} · ${rowA?.setMealName} · ${rowA?.mainDishName}`,
+    );
+    assert(
+      rowA?.unitPriceFen === 2580 &&
+        rowA?.totalAmountFen === 5160 &&
+        rowA?.payAmountFen === 5160 &&
+        rowA?.balanceUsedFen === 0,
+      'D8 金额出参为**整数分**且与 C1 售价一致（¥25.80 × 2 = 5160 分）',
+      `unit=${rowA?.unitPriceFen} total=${rowA?.totalAmountFen} pay=${rowA?.payAmountFen}`,
+    );
+    assert(
+      typeof rowA?.phoneMasked === 'string' && rowA.phoneMasked.includes('****'),
+      'D8 后台列表**同样脱敏**（全号只有 D12 导出一条路 —— 不给后台开后门）',
+      `phoneMasked=${rowA?.phoneMasked}`,
+    );
+    const rawPhonesOnList = JSON.stringify(L1?.list ?? []).match(/1[3-9]\d{9}/g) ?? [];
+    assert(
+      rawPhonesOnList.length === 0,
+      'D8 出参整包不含任何完整手机号（脱敏纪律）',
+      `found=${rawPhonesOnList.join(',') || '无'}`,
+    );
+
+    // summary：断言**不变量**而非魔数 —— 库里还有 m1/m2 留下的历史单，
+    // 写死「共 3 单」在 verify 串跑时必红（这与 M3-2 学到的教训同源）。
+    const sum50 = L1?.summary;
+    const listP1 = await call('GET', `/admin/orders?${LIST_Q}&page=1&pageSize=1`, {
+      token: adminToken,
+    });
+    assert(
+      JSON.stringify(listP1.body?.data?.summary) === JSON.stringify(sum50) &&
+        listP1.body?.data?.list?.length === 1,
+      'D8 summary 按**同一过滤条件的全量**统计，不受分页影响（与 L10/L19 同一约定）',
+      `pageSize=1 → total=${listP1.body?.data?.total} validQty=${listP1.body?.data?.summary?.validQuantity}`,
+    );
+    assert(
+      sum50?.totalCount >= 3 &&
+        sum50?.validCount >= 2 &&
+        sum50.validCount < sum50.totalCount &&
+        sum50?.validQuantity >= 4 &&
+        sum50?.validAmountFen === sum50?.validQuantity * 2580,
+      'D8 summary 自洽：已取消不进「有效单」，且有效金额 = 有效份数 × 单价',
+      `total=${sum50?.totalCount} valid=${sum50?.validCount} qty=${sum50?.validQuantity} amount=${sum50?.validAmountFen}`,
+    );
+    assert(
+      sum50?.abnormalCount >= 1 && sum50?.pendingPayCount >= 1 && sum50?.refundingCount === 0,
+      'D8 summary 单列出异常单 / 待支付单（运营一眼知道今天有多少单要追）',
+      `abnormal=${sum50?.abnormalCount} pendingPay=${sum50?.pendingPayCount} refunding=${sum50?.refundingCount}`,
+    );
+
+    const abn = await call('GET', `/admin/orders?${LIST_Q}&tab=abnormal&pageSize=50`, {
+      token: adminToken,
+    });
+    const abnList = abn.body?.data?.list ?? [];
+    const ABNORMAL_OK = ['pending_pay', 'refund_applying', 'refunding'];
+    assert(
+      abn.body?.code === 0 &&
+        abnList.length > 0 &&
+        abnList.every((r) => ABNORMAL_OK.includes(r.status)),
+      'D8 tab=abnormal 只含「待支付 / 退款待审批 / 退款中」',
+      `count=${abnList.length} statuses=${JSON.stringify([...new Set(abnList.map((r) => r.status))])}`,
+    );
+    assert(
+      abnList.some((r) => r.orderNo === noA) && !abnList.some((r) => r.orderNo === noC),
+      'D8 已取消**不算异常**（它是正常终态，算进去这个 Tab 会永远噪杂）',
+      `含A=${abnList.some((r) => r.orderNo === noA)} 含C=${abnList.some((r) => r.orderNo === noC)}`,
+    );
+
+    const byStatus = await call('GET', `/admin/orders?${LIST_Q}&status=pending_pay&pageSize=50`, {
+      token: adminToken,
+    });
+    assert(
+      byStatus.body?.code === 0 &&
+        (byStatus.body?.data?.list ?? []).length > 0 &&
+        (byStatus.body?.data?.list ?? []).every((r) => r.status === 'pending_pay'),
+      'D8 status 过滤有效',
+      `count=${byStatus.body?.data?.list?.length}`,
+    );
+
+    const byKwNo = await call('GET', `/admin/orders?keyword=${noA}&pageSize=50`, {
+      token: adminToken,
+    });
+    assert(
+      byKwNo.body?.code === 0 &&
+        byKwNo.body?.data?.list?.length === 1 &&
+        byKwNo.body?.data?.list?.[0]?.orderNo === noA,
+      'D8 keyword 命中订单号（精确到一单）',
+      `count=${byKwNo.body?.data?.list?.length}`,
+    );
+    const byKwName = await call('GET', `/admin/orders?keyword=${encodeURIComponent('王芳')}&pageSize=50`, {
+      token: adminToken,
+    });
+    assert(
+      byKwName.body?.code === 0 &&
+        (byKwName.body?.data?.list ?? []).length > 0 &&
+        (byKwName.body?.data?.list ?? []).every((r) => r.userName === '王芳'),
+      'D8 keyword 也能命中下单用户昵称（昵称要走子查询，无法只靠 o.* 表达）',
+      `count=${byKwName.body?.data?.list?.length}`,
+    );
+
+    const badTab = await call('GET', '/admin/orders?tab=nope', { token: adminToken });
+    assert(
+      badTab.body?.code === 10001,
+      'D8 tab 只接受 all / abnormal → 其它值 10001（枚举白名单）',
+      `code=${badTab.body?.code}`,
+    );
+
+    const page2 = await call('GET', `/admin/orders?${LIST_Q}&page=2&pageSize=2`, {
+      token: adminToken,
+    });
+    assert(
+      page2.body?.code === 0 &&
+        (page2.body?.data?.list ?? []).length <= 2 &&
+        page2.body?.data?.total === listP1.body?.data?.total,
+      'D8 翻页只改当前页数据，不动 total',
+      `page2 len=${page2.body?.data?.list?.length} total=${page2.body?.data?.total}`,
+    );
+
+    const opt = await call('GET', '/admin/orders/filter-options', { token: adminToken });
+    assert(
+      opt.body?.code === 0 &&
+        (opt.body?.data?.groups ?? []).length >= 5 &&
+        (opt.body?.data?.buildings ?? []).length >= 5 &&
+        (opt.body?.data?.leaders ?? []).length >= 5 &&
+        (opt.body?.data?.statuses ?? []).length === 11,
+      'D8 前置 · 筛选下拉（楼群 / 办公楼 / 团长 / 11 态）由**服务端**下发',
+      `groups=${opt.body?.data?.groups?.length} buildings=${opt.body?.data?.buildings?.length} statuses=${opt.body?.data?.statuses?.length}`,
+    );
+    assert(
+      (opt.body?.data?.buildings ?? []).length > 0 &&
+        (opt.body?.data?.buildings ?? []).every((b) => typeof b.groupId !== 'undefined'),
+      'D8 前置 · 办公楼下拉带 groupId（改单弹窗据此只列**同楼群**候选）',
+      `sample=${JSON.stringify(opt.body?.data?.buildings?.[0])}`,
+    );
+
+    // ---------------------------------------------------------- D9 详情
+    const detA = await call('GET', `/admin/orders/${noA}`, { token: adminToken });
+    const dA = detA.body?.data;
+    assert(
+      detA.body?.code === 0 &&
+        dA?.dishes?.length === 4 &&
+        dA.dishes.every((x) => !!x.slotLabel && !!x.name),
+      'D9 详情含一饭四菜明细与档位文案',
+      `dishes=${dA?.dishes?.length} slots=${JSON.stringify(dA?.dishes?.map((x) => x.slotLabel))}`,
+    );
+    assert(
+      Array.isArray(dA?.timeline) &&
+        dA.timeline.length >= 4 &&
+        dA.timeline.every((n) => typeof n.done === 'boolean'),
+      'D9 时间线按状态机产出（含 done 标记，端上不自己推演）',
+      `nodes=${dA?.timeline?.length}`,
+    );
+    assert(
+      dA?.actions?.canAdjust === true &&
+        dA?.actions?.canForceRefund === false &&
+        /未支付/.test(String(dA?.actions?.refundBlockReason)) &&
+        dA?.actions?.refundableFen === 5160,
+      'D9 actions 由**服务端**裁定按钮可用性与可退金额（待支付：可改单 / 不可退款）',
+      `canAdjust=${dA?.actions?.canAdjust} canForceRefund=${dA?.actions?.canForceRefund} refundable=${dA?.actions?.refundableFen}`,
+    );
+    assert(
+      dA?.payment === null && (dA?.commission ?? []).length === 0,
+      'D9 未支付单无支付流水、无佣金明细',
+      `payment=${dA?.payment} commission=${dA?.commission?.length}`,
+    );
+
+    const missDet = await call('GET', '/admin/orders/AB99999999999999', { token: adminToken });
+    assert(missDet.body?.code === 30010, 'D9 订单不存在 → 30010', `code=${missDet.body?.code}`);
+
+    // ---------------------------------------------------------- D10 手动改单
+    const adj1 = await call('POST', '/admin/orders/manual-adjust', {
+      token: adminToken,
+      body: {
+        orderNo: noA,
+        action: 'change_quantity',
+        quantity: 3,
+        reason: 'e2e 用户电话要求加 1 份',
+      },
+    });
+    assert(
+      adj1.body?.code === 0 &&
+        adj1.body?.data?.changed === true &&
+        adj1.body?.data?.before?.quantity === 2 &&
+        adj1.body?.data?.after?.quantity === 3 &&
+        adj1.body?.data?.after?.totalAmountFen === 7740 &&
+        adj1.body?.data?.after?.payAmountFen === 7740,
+      'D10 改份数按**目标值**生效（2 → 3 份，金额同步 3 × ¥25.80 = 7740 分）',
+      `before=${adj1.body?.data?.before?.quantity} after=${adj1.body?.data?.after?.quantity} total=${adj1.body?.data?.after?.totalAmountFen}`,
+    );
+
+    const adjAgain = await call('POST', '/admin/orders/manual-adjust', {
+      token: adminToken,
+      body: { orderNo: noA, action: 'change_quantity', quantity: 3, reason: 'e2e 重放同一目标值' },
+    });
+    assert(
+      adjAgain.body?.code === 0 &&
+        adjAgain.body?.data?.changed === false &&
+        adjAgain.body?.data?.after?.quantity === 3,
+      'D10 目标值语义**天然幂等**：重放同一目标 → changed=false 且不翻倍（增量语义会变 4 份）',
+      `changed=${adjAgain.body?.data?.changed} qty=${adjAgain.body?.data?.after?.quantity}`,
+    );
+
+    const adjOver = await call('POST', '/admin/orders/manual-adjust', {
+      token: adminToken,
+      // 50：大于业务上限（`ab_config.order.max_quantity` = 20）但小于 DTO 硬顶 100，
+      // 因此命中的是**业务闸门**而非 DTO 白名单 —— 两者是两层，别混为一谈。
+      body: { orderNo: noA, action: 'change_quantity', quantity: 50, reason: 'e2e 超上限' },
+    });
+    assert(
+      adjOver.body?.code === 30002 && /20/.test(String(adjOver.body?.message)),
+      'D10 改份数超业务上限 → 30002（上限读 `ab_config`，与下单共用同一配置）',
+      `code=${adjOver.body?.code} msg=${adjOver.body?.message}`,
+    );
+
+    const adjDtos = await call('POST', '/admin/orders/manual-adjust', {
+      token: adminToken,
+      body: { orderNo: noA, action: 'change_quantity', quantity: 999, reason: 'e2e 超 DTO 硬顶' },
+    });
+    assert(
+      adjDtos.body?.code === 10001,
+      'D10 份数超出 DTO 硬顶（100）→ 10001：**两层闸门各司其职**（白名单拦荒唐值，业务闸门拦超配）',
+      `code=${adjDtos.body?.code}`,
+    );
+
+    const adjShort = await call('POST', '/admin/orders/manual-adjust', {
+      token: adminToken,
+      body: { orderNo: noA, action: 'change_quantity', quantity: 3, reason: 'x' },
+    });
+    assert(
+      adjShort.body?.code === 10001,
+      'D10 改单原因过短 → 10001（DTO 白名单，不给「无理由改单」留口子）',
+      `code=${adjShort.body?.code}`,
+    );
+
+    const adjPaidQty = await call('POST', '/admin/orders/manual-adjust', {
+      token: adminToken,
+      body: { orderNo: noB, action: 'change_quantity', quantity: 3, reason: 'e2e 已支付改份数' },
+    });
+    assert(
+      adjPaidQty.body?.code === 30003 && /退款|补收/.test(String(adjPaidQty.body?.message)),
+      'D10 已支付订单改份数 → 30003 且**讲清正确路径**（补收/退款是支付通道动作，一期引导「先退款再下单」）',
+      `code=${adjPaidQty.body?.code} msg=${adjPaidQty.body?.message}`,
+    );
+
+    const adjBld = await call('POST', '/admin/orders/manual-adjust', {
+      token: adminToken,
+      body: {
+        orderNo: noB,
+        action: 'change_building',
+        buildingId: 4,
+        reason: 'e2e 取餐点变更（同楼群）',
+      },
+    });
+    assert(
+      adjBld.body?.code === 0 &&
+        adjBld.body?.data?.changed === true &&
+        adjBld.body?.data?.after?.buildingId === 4,
+      'D10 改取餐楼同楼群放行（已支付单也允许 —— 只改取餐地、不涉金额）',
+      `building=${adjBld.body?.data?.before?.buildingId} → ${adjBld.body?.data?.after?.buildingId}`,
+    );
+
+    const adjCross = await call('POST', '/admin/orders/manual-adjust', {
+      token: adminToken,
+      body: {
+        orderNo: noB,
+        action: 'change_building',
+        buildingId: 5,
+        reason: 'e2e 跨楼群改单',
+      },
+    });
+    assert(
+      adjCross.body?.code === 30015 && /楼群/.test(String(adjCross.body?.message)),
+      'D10 跨楼群改单 → 30015（跨群等于连套餐与集散一起换，请走「取消 + 重新下单」）',
+      `code=${adjCross.body?.code}`,
+    );
+
+    const detA2 = await call('GET', `/admin/orders/${noA}`, { token: adminToken });
+    assert(
+      (detA2.body?.data?.operationLogs ?? []).some((l) => String(l.action).includes('手动改单')),
+      'D9 详情带出该单的后台操作日志（P31 审计折叠面板直接用，不用另调 D56）',
+      `logs=${detA2.body?.data?.operationLogs?.length}`,
+    );
+
+    const ordLogs = await call('GET', '/admin/system/logs?module=order&pageSize=100', {
+      token: adminToken,
+    });
+    const adjLog = (ordLogs.body?.data?.list ?? []).find(
+      (r) => String(r.action).includes('手动改单') && r.targetId === noA,
+    );
+    assert(
+      !!adjLog && adjLog.operatorId != null,
+      'D10 改单自动写操作日志，且 targetId = 订单号（目标取自**请求体**，路径里没有订单号）',
+      `targetId=${adjLog?.targetId} operator=${adjLog?.operatorName}`,
+    );
+    assert(
+      (ordLogs.body?.data?.list ?? []).some((r) => r.failed === true && r.module === 'order'),
+      '被拒的改单**也记日志**（审计要回答「谁试图做了什么但被拒」）',
+      `failed=${(ordLogs.body?.data?.list ?? []).filter((r) => r.failed).length}`,
+    );
+
+    // ---------------------------------------------------------- D12 导出
+    const exp = await call('GET', `/admin/orders/export?${LIST_Q}`, { token: adminToken });
+    const eD = exp.body?.data;
+    assert(
+      exp.body?.code === 0 &&
+        Array.isArray(eD?.headers) &&
+        eD.headers.length >= 15 &&
+        (eD?.list ?? []).length >= 3,
+      'D12 导出返回「表头 + 二维数组」（端上拼 CSV；服务端不引 exceljs，也不在内存里多留一份全号）',
+      `headers=${eD?.headers?.length} rows=${eD?.list?.length}`,
+    );
+    const expRowA = (eD?.list ?? []).find((r) => r[0] === noA);
+    assert(
+      !!expRowA && expRowA.length === eD?.headers?.length,
+      'D12 每行列数与表头一致（错位会让运营把份数读成金额）',
+      `列数=${expRowA?.length}/${eD?.headers?.length}`,
+    );
+    assert(
+      expRowA?.[3] === '18600000002',
+      'D12 导出给**完整手机号**（与 D8 列表脱敏形成对照：拿到全号只有这一条路，且必须留痕）',
+      `phone=${expRowA?.[3]}`,
+    );
+    assert(
+      eD?.truncated === false && eD?.count === (eD?.list ?? []).length && !!eD?.fileName,
+      'D12 count / truncated / fileName 自洽（超 5000 行才截断并提示运营缩小范围）',
+      `count=${eD?.count} truncated=${eD?.truncated} file=${eD?.fileName}`,
+    );
+
+    const expLogs = await call('GET', '/admin/system/logs?module=order&pageSize=100', {
+      token: adminToken,
+    });
+    const expLog = (expLogs.body?.data?.list ?? []).find(
+      (r) => String(r.action).includes('导出') && r.targetId === dPlus1,
+    );
+    assert(
+      !!expLog && !!expLog.requestIp,
+      'D12 导出**强制留痕**：写操作日志（含筛选条件与来源 IP）—— 含全号导出的合规底线',
+      `target=${expLog?.targetId} ip=${expLog?.requestIp}`,
+    );
+
+    // ---------------------------------------------------------- D11 强制退款
+    const badAmt = await call('POST', `/admin/orders/${noB}/force-refund`, {
+      token: adminToken,
+      body: { reason: 'e2e 金额不符', amountFen: 1234 },
+    });
+    assert(
+      badAmt.body?.code === 40011,
+      'D11 可退金额不符 → 40011（这是「防看错订单」的二次确认参数，**不是部分退款**）',
+      `code=${badAmt.body?.code}`,
+    );
+
+    const refundUnpaid = await call('POST', `/admin/orders/${noA}/force-refund`, {
+      token: adminToken,
+      body: { reason: 'e2e 未支付退款' },
+    });
+    assert(
+      refundUnpaid.body?.code === 30003,
+      'D11 未支付订单强制退款 → 30003（没有钱可退）',
+      `code=${refundUnpaid.body?.code}`,
+    );
+
+    // B 单先走完 L9 计佣 —— 没有佣金行，「反向冲销」无从验证
+    writeDb(
+      "UPDATE ab_order SET meal_date = ?, status = 'delivered', team_leader_id = 1 WHERE order_no = ?",
+      [bjToday(), noB],
+    );
+    const lming2 = await userLogin('dev:1001');
+    const confirmB = await call('POST', '/leader/pickup/confirm', {
+      token: lming2.token,
+      idem: `e2e-m3-pickup-${stamp}`,
+      body: { orderNos: [noB] },
+    });
+    assert(
+      confirmB.body?.code === 0 &&
+        confirmB.body?.data?.confirmedCount === 1 &&
+        confirmB.body?.data?.commissionFen === 619,
+      'D11 前置 · L9 一键分发计佣（2 份 × ¥25.80 × 12% = 619 分）',
+      `commissionFen=${confirmB.body?.data?.commissionFen} rate=${confirmB.body?.data?.rate}`,
+    );
+
+    const balBefore = readDb('SELECT balance FROM ab_balance WHERE user_id = 1001');
+    const rf = await call('POST', `/admin/orders/${noB}/force-refund`, {
+      token: adminToken,
+      body: { reason: 'e2e 餐品异物 · 现场客诉', reasonType: 'quality', amountFen: 5160 },
+    });
+    const rfD = rf.body?.data;
+    assert(
+      rf.body?.code === 0 &&
+        rfD?.status === 'refunded' &&
+        rfD?.refundedFen === 5160 &&
+        rfD?.wxRefundedFen === 5160 &&
+        rfD?.balanceRefundedFen === 0,
+      'D11 强制退款：微信实付走通道原路退、余额抵扣单独退回（拆两路 —— 把余额喂给通道会被拒，喂进去了就是重复出款）',
+      `status=${rfD?.status} 合计=${rfD?.refundedFen} wx=${rfD?.wxRefundedFen} balance=${rfD?.balanceRefundedFen}`,
+    );
+    assert(
+      rfD?.reversal?.commissionReversedFen === 619 &&
+        rfD?.reversal?.commissionReversedQuantity === -2,
+      'D11 反向结算：佣金按**原行金额取负**冲销（2 份 → −2 份 · 619 分）',
+      `reversed=${rfD?.reversal?.commissionReversedFen} qty=${rfD?.reversal?.commissionReversedQuantity}`,
+    );
+
+    const commRows = readRows(
+      'SELECT type, status, amount, quantity FROM ab_commission WHERE order_id = (SELECT id FROM ab_order WHERE order_no = ?) ORDER BY id',
+      [noB],
+    );
+    assert(
+      commRows.length === 2 &&
+        commRows[0].type === 'normal' &&
+        commRows[0].status === 'cancelled' &&
+        Number(commRows[0].amount) > 0 &&
+        commRows[1].type === 'reversal' &&
+        Number(commRows[1].amount) < 0,
+      'C9 原记录**不得改写**：冲销写新行（金额取负），原行只翻 status=cancelled（发生额永久保真）',
+      JSON.stringify(commRows.map((r) => `${r.type}/${r.status}/${r.amount}`)),
+    );
+
+    const balAfter = readDb('SELECT balance FROM ab_balance WHERE user_id = 1001');
+    assert(
+      Math.round((Number(balBefore?.balance) - Number(balAfter?.balance)) * 100) === 619,
+      'D11 佣金冲销同步扣减团长余额（余额**允许为负** —— 已提现就形成欠款由后续佣金抵扣，硬拦会把退款卡死）',
+      `${balBefore?.balance} → ${balAfter?.balance}`,
+    );
+    assert(
+      ['not_generated', 'reduced', 'offset'].includes(String(rfD?.reversal?.supplierShareMode)) &&
+        Array.isArray(rfD?.reversal?.notes) &&
+        (rfD?.reversal?.supplierShareMode !== 'not_generated' ||
+          rfD?.reversal?.supplierShareAdjusted === 0),
+      'D11 应付冲减三态明确（未生成 / 已扣减 / 已付款挂下期抵扣）；未生成时**不造空冲销行**',
+      `mode=${rfD?.reversal?.supplierShareMode} rows=${rfD?.reversal?.supplierShareAdjusted} notes=${JSON.stringify(rfD?.reversal?.notes)}`,
+    );
+
+    const rfAgain = await call('POST', `/admin/orders/${noB}/force-refund`, {
+      token: adminToken,
+      body: { reason: 'e2e 重复退款' },
+    });
+    assert(
+      rfAgain.body?.code === 40008,
+      'D11 重复强制退款 → 40008（幂等闸门，不产生第二张退款单）',
+      `code=${rfAgain.body?.code} msg=${rfAgain.body?.message}`,
+    );
+
+    const uBOrder = await call('GET', `/orders/${noB}`, { token: u5.token });
+    assert(
+      uBOrder.body?.data?.status === 'refunded' && !!uBOrder.body?.data?.statusText,
+      'D11 退款落地后**用户侧立即可见**（订单转 refunded，文案由服务端下发）',
+      `status=${uBOrder.body?.data?.status} statusText=${uBOrder.body?.data?.statusText}`,
+    );
+
+    const listAfterRf = await call('GET', `/admin/orders?mealDate=${bjToday()}&pageSize=50`, {
+      token: adminToken,
+    });
+    const rowB2 = (listAfterRf.body?.data?.list ?? []).find((r) => r.orderNo === noB);
+    assert(
+      rowB2?.status === 'refunded' &&
+        rowB2?.refund?.status === 'refunded' &&
+        rowB2?.refund?.statusText === '已退款' &&
+        rowB2?.refund?.applySource === 'admin',
+      'D8 列表带出最新退款单（applySource=admin 后台强制 · 文案「已退款」）',
+      `status=${rowB2?.status} refund=${JSON.stringify(rowB2?.refund)}`,
+    );
+
+    // ---------------------------------------------------------- D10 已截单闸门
+    // 直接把 A 的出餐日回拨到「昨日」→ 截单时刻早已过去。
+    // 这是唯一能触达 30014 的办法：过去日期根本下不了单（U6 先拦 30001）。
+    writeDb('UPDATE ab_order SET meal_date = ? WHERE order_no = ?', [dMinus1, noA]);
+    const adjPast = await call('POST', '/admin/orders/manual-adjust', {
+      token: adminToken,
+      body: { orderNo: noA, action: 'change_quantity', quantity: 5, reason: 'e2e 已截单改单' },
+    });
+    assert(
+      adjPast.body?.code === 30014 && /截单/.test(String(adjPast.body?.message)),
+      'D10 已过截单 → 30014（供应商已按原份数备货，再改会让备货与单据对不上）',
+      `code=${adjPast.body?.code} msg=${adjPast.body?.message}`,
+    );
+    const detPast = await call('GET', `/admin/orders/${noA}`, { token: adminToken });
+    assert(
+      detPast.body?.data?.actions?.canAdjust === false &&
+        /截单/.test(String(detPast.body?.data?.actions?.adjustBlockReason)),
+      'D9 已截单时 canAdjust=false 且给出**原因**（P30 据此置灰按钮并挂 tooltip）',
+      `canAdjust=${detPast.body?.data?.actions?.canAdjust} reason=${detPast.body?.data?.actions?.adjustBlockReason}`,
+    );
+
+    // ---------------------------------------------------------- 权限边界
+    const finOnOrders = await call('GET', '/admin/orders?pageSize=1', { token: fin2.token });
+    assert(
+      finOnOrders.body?.code === 0,
+      'D8 类级 @Roles 白名单：finance **可读**订单（对账要用）',
+      `code=${finOnOrders.body?.code}`,
+    );
+
+    const viewerName = `e2e_view_${stamp}`;
+    const mkViewer = await call('POST', '/admin/system/accounts', {
+      token: adminToken,
+      body: { username: viewerName, password: PWD, role: 'viewer', realName: 'e2e 只读观察者' },
+    });
+    const viewer = await adminLogin(viewerName, PWD);
+    const viewerOnOrders = await call('GET', '/admin/orders?pageSize=1', { token: viewer.token });
+    assert(
+      mkViewer.body?.code === 0 && !!viewer.token && viewerOnOrders.body?.code === 10003,
+      'D8 viewer 不在白名单 → 10003（只读观察者只有看板；菜单过滤是体验层，兜底在守卫）',
+      `code=${viewerOnOrders.body?.code}`,
+    );
+    const userOnOrders = await call('GET', '/admin/orders', { token: u.token });
+    assert(
+      userOnOrders.body?.code === 10003,
+      '双主体隔离：小程序 token 打 /admin/orders → 10003（与 /orders 只差一个前缀，正是隔离依据）',
+      `code=${userOnOrders.body?.code}`,
+    );
+  }
 
   // ==========================================================================
   // 汇总

@@ -84,6 +84,16 @@ export enum ErrorCode {
    *    放行就等于**让运营在后台亲手制造一个「看得见但点不动」的套餐**。
    */
   MEAL_PUBLISH_AFTER_CUTOFF = 30013,
+  /**
+   * 扩展（M3-3）：已过截单时刻，不能手动改单（D10）
+   *
+   * ⚠️ 与 30003 的分工：30003 是「状态不允许」（如已出餐 / 已退款单），
+   *    本码专指**时间闸门**（订单状态可能仍是 `paid`，但截单已过 → 供应商已按
+   *    原份数备货，再改单会让备货与单据对不上）。分开是为了让端上给出不同文案。
+   */
+  ORDER_ADJUST_AFTER_CUTOFF = 30014,
+  /** 扩展（M3-3）：改单目标办公楼与订单不在同一楼群（D10） */
+  ORDER_ADJUST_CROSS_GROUP = 30015,
 
   /** ---- 4xxxx 支付 / 退款 / 出款 ---- */
   PAY_CREATE_FAILED = 40001,
@@ -99,6 +109,8 @@ export enum ErrorCode {
   PAY_NOT_FOUND = 40009,
   /** 扩展：退款失败 */
   REFUND_FAILED = 40010,
+  /** 扩展（M3-3）：强制退款的指定金额与可退金额不符（D11） */
+  REFUND_AMOUNT_MISMATCH = 40011,
 
   /** ---- 5xxxx 财务 / 结算 / 供应商 ---- */
   SUPPLIER_NOT_QUALIFIED = 50001,
@@ -147,6 +159,8 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.MEAL_ASSIGNMENT_EXISTS]: '该楼群当日已有套餐分配，请直接编辑',
   [ErrorCode.MEAL_ASSIGNMENT_NOT_FOUND]: '套餐分配不存在',
   [ErrorCode.MEAL_PUBLISH_AFTER_CUTOFF]: '已过截单时刻，不能再上架',
+  [ErrorCode.ORDER_ADJUST_AFTER_CUTOFF]: '已过截单时刻，不能再改单',
+  [ErrorCode.ORDER_ADJUST_CROSS_GROUP]: '目标办公楼与订单不在同一楼群',
   [ErrorCode.PAY_CREATE_FAILED]: '支付单创建失败，请稍后重试',
   [ErrorCode.BALANCE_NOT_ENOUGH]: '余额不足',
   [ErrorCode.WITHDRAW_BELOW_MIN]: '提现金额低于最低限额',
@@ -157,6 +171,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.REFUND_DUPLICATED]: '退款申请已存在，请勿重复提交',
   [ErrorCode.PAY_NOT_FOUND]: '支付单不存在',
   [ErrorCode.REFUND_FAILED]: '退款失败',
+  [ErrorCode.REFUND_AMOUNT_MISMATCH]: '退款金额与可退金额不符',
   [ErrorCode.SUPPLIER_NOT_QUALIFIED]: '供应商资质未通过审核',
   [ErrorCode.DISTRIBUTION_CENTER_LOCKED]: '集散中心配置不可删除（存在历史结算）',
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',

@@ -62,7 +62,7 @@ export class OperationLogInterceptor implements NestInterceptor {
 
     const subject = req.admin ?? (req.user?.typ === 'admin' ? req.user : undefined) ?? undefined;
 
-    const targetId = this.resolveTargetId(req.params, meta.targetParam);
+    const targetId = this.resolveTargetId(req.params, req.body, meta.targetParam);
     const requestData = this.sanitize({
       params: req.params ?? {},
       query: req.query ?? {},
@@ -81,16 +81,35 @@ export class OperationLogInterceptor implements NestInterceptor {
     }
   }
 
-  /** 取对象 ID：优先显式 params，其次常见命名 */
+  /**
+   * 取操作对象 ID
+   *
+   * 顺序：显式 `targetParam` → 常见 **params** 命名 → 常见 **body** 命名。
+   *
+   * ⚠️ 为什么要看 body：像 D10 手动改单这种「目标对象在请求体里」的接口
+   *    （`POST /admin/orders/manual-adjust` 带 `{orderNo}`），只看 params 会得到
+   *    `targetId=null`。这条日志就再也挂不到那笔订单上了 —— 而订单详情页正是
+   *    靠 `target_id` 反查「这单被谁改过」的。
+   *    显式 `targetParam` 仍优先，方便个别接口指定非通用字段名。
+   */
   private resolveTargetId(
     params: Record<string, string> | undefined,
+    body: unknown,
     explicit?: string,
   ): string | null {
-    if (!params) return null;
+    const bodyObj =
+      body && typeof body === 'object' && !Array.isArray(body)
+        ? (body as Record<string, unknown>)
+        : undefined;
     const keys = explicit ? [explicit] : ['id', 'orderNo', 'leaderId', 'userId', 'username'];
+
     for (const k of keys) {
-      const v = params[k];
+      const v = params?.[k];
       if (v !== undefined && v !== '') return String(v);
+    }
+    for (const k of keys) {
+      const v = bodyObj?.[k];
+      if (v !== undefined && v !== null && v !== '') return String(v);
     }
     return null;
   }

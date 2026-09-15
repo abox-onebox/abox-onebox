@@ -98,6 +98,14 @@ export enum RefundStatus {
   REFUNDING = 'refunding',
   REFUNDED = 'refunded',
   REJECTED = 'rejected',
+  /**
+   * 通道退款失败（补充态 · M3-3）
+   *
+   * ⚠️ 为什么需要它：`refunding` 是「处理中」，不能兼作失败态 —— 否则
+   *    「微信明确拒绝」与「还在处理」会混成一个状态，运营看不出该催谁。
+   *    为失败态时订单回退到退款前状态（由调用方决定），退款单保留备查。
+   */
+  FAILED = 'failed',
 }
 
 /** ab_supplier_share.status（应付状态机 · C10 人工对公） */

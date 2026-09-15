@@ -497,8 +497,57 @@ export class OrderService {
     return { changed: true };
   }
 
-  /** 支付单创建前需要的信息（供 payment 域 U7 使用） */
-  async preparePrepay(userId: number, orderNo: string) {
+  /**
+   * D10 改单专用：把该订单的**冻结余额**同步到新的抵扣额
+   *
+   * 为什么必须单独有这个方法：下单时 `balanceUsed` 是从可用余额**冻结**过去的
+   * （`freezeBalance`），并没有真正花掉。改单改了抵扣额却不调整冻结额，
+   * 就会出现「订单只抵 ¥10、却冻着 ¥25.80」—— 用户余额凭空少了一截，
+   * 而且在他自己那侧看不到任何解释。
+   *
+   * 余额的四个动作（冻结 / 解冻 / 消费 / 退回）都留在本文件，
+   * 就是为了让「钱的状态」只有一处实现、只有一处能改错。
+   *
+   * @returns `deltaFen > 0` 表示多冻了，`< 0` 表示解冻了
+   */
+  async syncFrozenBalance(orderId: number, newBalanceUsedFen: number): Promise<number> {
+    return this.dataSource.transaction(async (m: EntityManager) => {
+      const order = await m.findOne(Order, { where: { id: orderId } });
+      if (!order) throw new BizException(ErrorCode.ORDER_NOT_FOUND);
+
+      const oldFen = toFen(order.balanceUsed);
+      const delta = newBalanceUsedFen - oldFen;
+      if (delta === 0) return 0;
+
+      if (delta > 0) {
+        // 抵扣额变大 → 再冻一部分（可用余额不足 → 40002）
+        const bal = await this.getOrCreateBalance(m, order.userId);
+        if (toFen(bal.balance) < delta) {
+          throw new BizException(
+            ErrorCode.BALANCE_NOT_ENOUGH,
+            `可用余额 ¥${bal.balance} 不足以再多抵扣 ¥${toYuanStr(delta)}`,
+          );
+        }
+        await this.freezeBalance(m, order.userId, delta, order.orderNo);
+      } else {
+        // 抵扣额变小 → 解冻差额（冻结额不会小于抵扣额，故不会解出负数）
+        await this.releaseBalance(m, order.userId, -delta, order.orderNo);
+      }
+
+      await m
+        .getRepository(Order)
+        .update(
+          { id: order.id },
+          { balanceUsed: toYuanStr(newBalanceUsedFen), version: (order.version ?? 0) + 1 },
+        );
+      return delta;
+    });
+  }
+
+  /** 支付单创建前需要的信息（供 payment 域 U7 使用） */ async preparePrepay(
+    userId: number,
+    orderNo: string,
+  ) {
     const order = await this.loadOwnOrder(userId, orderNo);
     if (order.status !== OrderStatus.PENDING_PAY) {
       throw new BizException(
