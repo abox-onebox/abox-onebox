@@ -14,7 +14,7 @@
  * 版本比较按数值段解析（v1.10 > v1.9），非字典序。
  * 无法解析出版本号的文件一律保留。
  */
-import { readdirSync, copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readdirSync, copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +22,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const docsDir = join(repoRoot, 'docs');
 const sourceDir = join(repoRoot, '..');
+
+/**
+ * 显式排除清单：即使文件躺在工作区根目录，也不镜像进 docs/。
+ * 「ABox一盒小程序产品方案v1.0.md」已被 PRDv2.1 取代，但**没有更高版本号可自动淘汰**，
+ * 若继续镜像进 docs/ 会被专家团误读 → 已移入 ../archive/，并在此登记兜底。
+ */
+const EXCLUDE = new Set(['ABox一盒小程序产品方案v1.0.md']);
 
 if (!existsSync(docsDir)) mkdirSync(docsDir, { recursive: true });
 
@@ -47,7 +54,10 @@ function cmpVer(a, b) {
 }
 
 const all = readdirSync(sourceDir).filter(
-  (f) => f.startsWith('ABox一盒') && (f.endsWith('.md') || f.endsWith('.html')),
+  (f) =>
+    f.startsWith('ABox一盒') &&
+    (f.endsWith('.md') || f.endsWith('.html')) &&
+    !EXCLUDE.has(f),
 );
 
 // 分组：同「base + 扩展名」视为同一份文档的不同版本
@@ -85,3 +95,17 @@ for (const f of dropped) {
   console.log('  skipped:', f, '(存在更高版本)');
 }
 console.log(`完成：同步 ${keep.length} 份文档到 docs/，跳过 ${dropped.length} 份旧版本。`);
+
+// docs/ 是工作区根目录的**镜像**，它必须与 keep 集合一致。
+// 历史版本的 docs/ 副本若只在「被淘汰」一侧，会永久滞留（copyFileSync 不会删除），
+// 这正是「废弃文档混放、专家团无从判断哪份有效」的根因 → 一律清掉。
+const mirrored = readdirSync(docsDir).filter(
+  (f) => f.startsWith('ABox一盒') && (f.endsWith('.md') || f.endsWith('.html')),
+);
+const keepSet = new Set(keep);
+const stale = mirrored.filter((f) => !keepSet.has(f));
+for (const f of stale) {
+  rmSync(join(docsDir, f));
+  console.log('  removed:', f, '(镜像中已陈旧/被淘汰)');
+}
+if (stale.length) console.log(`清理陈旧镜像 ${stale.length} 份。`);
