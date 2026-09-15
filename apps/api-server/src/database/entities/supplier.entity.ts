@@ -113,7 +113,7 @@ export class Dish {
   @Column({ type: 'varchar', length: 512, nullable: true })
   description?: string | null;
 
-  @Column({ name: 'cost_price', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '成本（分账依据 · C9）' })
+  @Column({ name: 'cost_price', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '菜品供价（C9 修订：与供应商**逐菜协商**，非固定口径）' })
   costPrice!: string;
 
   @Column({ name: 'sale_count', type: 'int', default: 0 })

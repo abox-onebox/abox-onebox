@@ -325,7 +325,7 @@ const TABLES: string[] = [
     \`name\` VARCHAR(64) NOT NULL, \`supplier_id\` BIGINT UNSIGNED NOT NULL,
     \`address\` VARCHAR(256) NOT NULL, \`contact_name\` VARCHAR(32) DEFAULT NULL,
     \`contact_phone\` VARCHAR(20) DEFAULT NULL,
-    \`rice_fee\` DECIMAL(8,2) NOT NULL DEFAULT 2.00, \`pack_fee\` DECIMAL(8,2) NOT NULL DEFAULT 3.00,
+    \`rice_fee\` DECIMAL(8,2) NOT NULL DEFAULT 0.00, \`pack_fee\` DECIMAL(8,2) NOT NULL DEFAULT 0.00,
     \`service_groups\` JSON DEFAULT NULL, \`status\` TINYINT NOT NULL DEFAULT 1,
     \`version\` INT UNSIGNED NOT NULL DEFAULT 0,
     \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),

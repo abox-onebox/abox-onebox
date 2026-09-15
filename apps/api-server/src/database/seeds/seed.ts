@@ -23,8 +23,14 @@ import { User } from '../entities/user.entity';
  *  3. 数字与原型 v4.9.2 同源（李明 186 单 / ¥575.86 等）
  */
 
-const UNIT_PRICE = '25.80';
-const SUPPLIER_COST_TOTAL = '14.00';
+const UNIT_PRICE = '25.80'; // C1 锁定：套餐统一售价
+
+/**
+ * C9 示例值 · 供应商供价合计（4 家菜品供应商）
+ * ⚠️ **非固定口径**：实际以供价表「与各供应商逐菜协商价」为准，
+ *    本值仅供本地种子 / 演示使用，禁止在业务逻辑中当作常量校验。
+ */
+const DEMO_SUPPLIER_COST_TOTAL = '14.00';
 
 function assertNotProduction(): void {
   if (process.env.NODE_ENV === 'production') {
@@ -70,27 +76,35 @@ async function main(): Promise<void> {
     { id: 5, name: '远洋光华组', city: '北京', district: '朝阳区', status: 1, version: 0 },
   ]);
 
-  // ---------- 2. 全局配置（18 项） ----------
+  // ---------- 2. 全局配置（23 项） ----------
+  // ⚠️ C9 口径修订（2026-09-15）：成本项**不写死**，全部走配置；平台毛利为**结果值**。
+  //    等式：售价 = 供应商供价 + 集散/场地费 + 打包人工 + 配送费 + 佣金 + 平台毛利
   const cfgRepo = dataSource.getRepository(SysConfig);
   await cfgRepo.clear();
   await cfgRepo.save(
     [
-      ['set_meal.default_price', UNIT_PRICE, '套餐默认售价（C1 统一定价）'],
+      ['set_meal.default_price', UNIT_PRICE, '套餐默认售价（C1 锁定统一定价）'],
       ['set_meal.publish_time', '14:00', '开团时间（T-1）'],
       ['set_meal.cutoff_time', '23:59', '截单时间（语义 = T-1 24:00）'],
       ['order.cutoff_window_minutes', '10', '截单前 10 分钟禁止下单'],
       ['set_meal.delivery_arrival_time', '11:30', '送达办公楼'],
-      ['commission.rate.trainee', '0.0800', '见习团长佣金（C2）'],
-      ['commission.rate.formal', '0.0900', '正式团长佣金（C2）'],
-      ['commission.rate.gold', '0.1000', '金牌团长佣金（C2）'],
-      ['commission.rate.chief', '0.1200', '首席团长佣金（C2）'],
+      ['commission.rate.trainee', '0.0800', '见习团长佣金（C2 锁定）'],
+      ['commission.rate.formal', '0.0900', '正式团长佣金（C2 锁定）'],
+      ['commission.rate.gold', '0.1000', '金牌团长佣金（C2 锁定）'],
+      ['commission.rate.chief', '0.1200', '首席团长佣金（C2 锁定）'],
       ['commission.auto_confirm_time', '14:00', '自动确认收货（T 日）'],
       ['commission.settle_hour', '02:00', '佣金结算时点（T+1）'],
       ['commission.min_withdraw', '10.00', '最低提现金额'],
       ['commission.payout_channel', 'FLEX_MANUAL', '出款通道（C11：灵活用工平台人工通道）'],
       ['distribution_center.default_count', '4', '集散中心默认数量（C4 表驱动）'],
-      ['distribution_center.rice_fee', '2.00', '米饭结算单价（C9）'],
-      ['distribution_center.pack_fee', '3.00', '打包结算单价（C9）'],
+      // —— C9 成本项（全部可变，默认 0，按实际登记）——
+      ['settlement.supplier_purchase_price', 'negotiated', '供应商供价来源：与各供应商**逐菜协商**（非固定）'],
+      ['settlement.site_fee', '0.00', '集散/场地费：集散中心**复用合作供应商场地 → 默认 0**'],
+      ['settlement.packing_labor_fee', '0.00', '打包人工：雇佣**兼职**打包（按件/按时/按班次），默认 0'],
+      ['settlement.delivery_fee', '0.00', '配送费：安排**货拉拉**送货（按趟/按路线），默认 0'],
+      ['settlement.gross_profit_policy', 'residual', '平台毛利口径：**结果值** = 售价 − 成本合计 − 佣金'],
+      ['distribution_center.rice_fee', '0.00', '米饭成本（默认并入供应商供价，本项默认 0，按实际登记）'],
+      ['distribution_center.pack_fee', '0.00', '打包费（改由平台兼职打包承担 → packing_labor_fee，本项默认 0）'],
       ['order.max_quantity', '20', '单次下单上限'],
       ['supplier.settle_cycle', 'daily', '供应商结算周期（C11：日结，人工对公转账）'],
     ].map(([configKey, configValue, description]) => ({ configKey, configValue, description })),
@@ -204,7 +218,9 @@ async function main(): Promise<void> {
     },
   ]);
 
-  // ---------- 4. 集散中心（4 · C4 表驱动，¥5/份 = 米 2 + 打包 3） ----------
+  // ---------- 4. 集散中心（4 · C4 表驱动） ----------
+  // ⚠️ C9 修订：集散中心**复用合作供应商场地 → 场地费默认 0**；
+  //    打包改由平台雇佣兼职承担（见配置 settlement.packing_labor_fee），故本处费用项默认 0，按实际登记。
   const dcRepo = dataSource.getRepository(DistributionCenter);
   await dcRepo.clear();
   await dcRepo.save([
@@ -215,8 +231,8 @@ async function main(): Promise<void> {
       address: '朝阳区建国路 88 号',
       contactName: '王师傅',
       contactPhone: '13800000001',
-      riceFee: '2.00',
-      packFee: '3.00',
+      riceFee: '0.00',
+      packFee: '0.00',
       serviceGroups: [1, 2],
       status: 1,
     },
@@ -227,8 +243,8 @@ async function main(): Promise<void> {
       address: '朝阳区光华路 21 号',
       contactName: '刘师傅',
       contactPhone: '13800000002',
-      riceFee: '2.00',
-      packFee: '3.00',
+      riceFee: '0.00',
+      packFee: '0.00',
       serviceGroups: [3, 2],
       status: 1,
     },
@@ -239,8 +255,8 @@ async function main(): Promise<void> {
       address: '朝阳区东三环中路 65 号',
       contactName: '赵师傅',
       contactPhone: '13800000003',
-      riceFee: '2.00',
-      packFee: '3.00',
+      riceFee: '0.00',
+      packFee: '0.00',
       serviceGroups: [1, 5],
       status: 1,
     },
@@ -251,8 +267,8 @@ async function main(): Promise<void> {
       address: '朝阳区四惠东',
       contactName: '钱师傅',
       contactPhone: '13800000004',
-      riceFee: '2.00',
-      packFee: '3.00',
+      riceFee: '0.00',
+      packFee: '0.00',
       serviceGroups: [4],
       status: 1,
     },
@@ -260,6 +276,7 @@ async function main(): Promise<void> {
 
   // ---------- 5. 菜品库 ----------
   // 说明：清单 §五 明确 8 道；另补 4 道主菜以支撑 §六 的 7 个套餐模板
+  // ⚠️ C9 修订：`costPrice` 为**菜品供价示例值**，实际以「与各供应商逐菜协商价」为准（非固定口径）
   const dishRepo = dataSource.getRepository(Dish);
   await dishRepo.clear();
   await dishRepo.save([
@@ -677,7 +694,7 @@ async function main(): Promise<void> {
       id: 1,
       name: '红烧肉套餐',
       price: '25.80',
-      costPrice: SUPPLIER_COST_TOTAL,
+      costPrice: DEMO_SUPPLIER_COST_TOTAL, // 示例值：实际按与各供应商逐菜协商价
       oneLiner: '招牌红烧肉 · 一饭四菜',
       status: 1,
     },
@@ -891,8 +908,26 @@ async function main(): Promise<void> {
   };
 
   console.log('✔ 种子导入完成：', JSON.stringify(check, null, 0));
+
+  // C9 口径修订（2026-09-15）：成本项**可配置**、平台毛利为**结果值**
+  // 下面用「示例值」演示等式闭合，实际一律以配置项 / 协商价 / 实际发生额为准
+  const demoSupplier = Number(DEMO_SUPPLIER_COST_TOTAL); // 供应商供价（示例）
+  const demoSiteFee = 0; // 集散/场地费（复用合作供应商场地 → 默认 0）
+  const demoPackingLabor = 0; // 打包人工（兼职）
+  const demoDelivery = 0; // 配送费（货拉拉）
+  const demoRate = 0.12; // 首席团长
+  const demoCommission = Number((Number(UNIT_PRICE) * demoRate).toFixed(2));
+  const demoGross =
+    Number(UNIT_PRICE) -
+    (demoSupplier + demoSiteFee + demoPackingLabor + demoDelivery) -
+    demoCommission;
+
+  console.log('  单份结算等式（成本项可配置 · 平台毛利为结果值）：');
   console.log(
-    `  结算校验：供应商 ${SUPPLIER_COST_TOTAL} + 集散 5.00 + 佣金 3.10(首席 12%) + 毛利 3.70 = ${UNIT_PRICE}`,
+    `    售价 ${UNIT_PRICE} = 供价 ${demoSupplier.toFixed(2)}(示例) + 场地 ${demoSiteFee.toFixed(2)} + 打包人工 ${demoPackingLabor.toFixed(2)} + 配送 ${demoDelivery.toFixed(2)} + 佣金 ${demoCommission.toFixed(2)}(首席 12%) + 毛利 ${demoGross.toFixed(2)}(结果值)`,
+  );
+  console.log(
+    '    ⚠️ 供应商供价按逐菜协商、打包人工与配送费按实际发生登记 —— 以上为示例，非固定口径',
   );
   console.log('  测试登录：POST /api/v1/auth/login  { "code": "dev:1001" }  → 李明（首席团长）');
 

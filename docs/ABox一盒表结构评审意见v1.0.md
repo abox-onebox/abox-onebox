@@ -105,7 +105,7 @@ MODIFY COLUMN `status` VARCHAR(24) NOT NULL DEFAULT 'pending_pay'
 
 C4 已裁决集散中心是**独立配置表** `ab_distribution_center`（表驱动、可增删、带分账参数）。这里却直接存 `supplier_id`，**绕过配置表**，导致：
 
-- 无法读取该集散中心的分账参数（米饭 ¥2 / 打包 ¥3）
+- 无法读取该集散中心的费用参数（集散/场地费、打包费 · C9 修订后默认均为 ¥0）
 - 集散中心增删后，历史分配无法追溯其配置版本
 - 与《目录结构 v2.0》的 `distribution-center/` 模块割裂
 
@@ -201,7 +201,7 @@ CREATE TABLE `ab_refund` (
   `wx_refund_no`   VARCHAR(64)  DEFAULT NULL COMMENT '微信退款单号',
   `refunded_at`    DATETIME(3)  DEFAULT NULL,
   `reversed`       TINYINT      NOT NULL DEFAULT 0
-    COMMENT '反向分账是否已执行（C9：回退供¥14+集散¥5+佣金，毛利留存）',
+    COMMENT '反向结算是否已执行（C9 修订：回退协商供价 + 场地费 + 打包人工/配送费 + 佣金，毛利留存）',
   `reversed_at`    DATETIME(3)  DEFAULT NULL,
   `version`        INT UNSIGNED NOT NULL DEFAULT 0,
   `created_at`     DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -225,7 +225,7 @@ CREATE TABLE `ab_refund` (
 **问题**：这两张表被列在 §五"未修改"，但 **§五 只给了 9 个表名，没有任何字段**。而：
 
 - `ab_commission` 是 **C2 四级佣金（8/9/10/12%）**的流水载体
-- `ab_supplier_share` 是 **C9 供应商 / 集散中心应付结算（供 ¥14 / 集散 ¥5）**与**反向冲减**的载体
+- `ab_supplier_share` 是 **C9 供应商 / 集散中心应付结算（按协商供价 + 场地费 + 打包人工 + 配送费）**与**反向冲减**的载体
 
 不定义为空谈。
 
@@ -243,7 +243,7 @@ CREATE TABLE `ab_commission` (
   `quantity`       INT UNSIGNED NOT NULL COMMENT '计入份数（实发）',
   `amount`         DECIMAL(10,2) NOT NULL COMMENT '佣金金额（正=入账，负=冲销）',
   `type`           VARCHAR(16)  NOT NULL DEFAULT 'normal'
-    COMMENT 'normal正常/reversal退款冲销（C9 反向分账）',
+    COMMENT 'normal正常/reversal退款冲销（C9 反向结算）',
   `status`         VARCHAR(16)  NOT NULL DEFAULT 'pending'
     COMMENT 'pending待结算/settled已打款/cancelled已冲销',
   `settled_at`     DATETIME(3)  DEFAULT NULL,
@@ -259,16 +259,16 @@ CREATE TABLE `ab_commission` (
 
 CREATE TABLE `ab_supplier_share` (
   `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `share_no`      VARCHAR(32)  NOT NULL COMMENT '分账单号',
+  `share_no`      VARCHAR(32)  NOT NULL COMMENT '应付结算单号',
   `share_date`    DATE         NOT NULL COMMENT '应付生成日（T+1）',
   `meal_date`     DATE         NOT NULL COMMENT '对应出餐日',
   `payee_type`    VARCHAR(16)  NOT NULL
     COMMENT 'supplier供应商/distribution_center集散中心（C9）',
   `payee_id`      BIGINT UNSIGNED NOT NULL COMMENT '供应商或集散中心 id',
-  `dish_id`       BIGINT UNSIGNED DEFAULT NULL COMMENT '菜品（供应商分账按菜品计）',
+  `dish_id`       BIGINT UNSIGNED DEFAULT NULL COMMENT '菜品（供应商应付按菜品计）',
   `quantity`      INT UNSIGNED NOT NULL COMMENT '份数',
-  `unit_price`    DECIMAL(8,2) NOT NULL COMMENT '单位分账金额（菜品成本单价 / 集散 ¥5）',
-  `amount`        DECIMAL(12,2) NOT NULL COMMENT '分账金额（正=分账，负=反向冲销）',
+  `unit_price`    DECIMAL(8,2) NOT NULL COMMENT '单位应付金额（协商供价 / 场地费 / 打包人工 / 配送费 · C9 修订）',
+  `amount`        DECIMAL(12,2) NOT NULL COMMENT '应付金额（正=应付，负=反向冲销）',
   `type`          VARCHAR(16)  NOT NULL DEFAULT 'normal'
     COMMENT 'normal正常/reversal反向冲销（C9 退款回退）',
   `channel`       VARCHAR(16)  NOT NULL DEFAULT 'manual'
@@ -287,7 +287,7 @@ CREATE TABLE `ab_supplier_share` (
   UNIQUE KEY `uk_share_no` (`share_no`),
   KEY `idx_share_payee` (`payee_type`, `payee_id`, `meal_date`),
   KEY `idx_share_status` (`status`, `share_date`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='供应商/集散中心应付结算流水（C9：供¥14/集散¥5；含反向冲减）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='供应商/集散中心应付结算流水（C9 修订：协商供价 + 场地费 + 打包人工 + 配送费；含反向冲减）';
 ```
 
 **结算方式（2026-09-14 定案）**：`ab_supplier_share` 只记录**应付**，实际付款由财务**人工对公转账**完成（平台对公账户 → 供应商对公账户）；因此 `channel` 当前恒为 `manual`，状态为 `待付款 / 已付款 / 已冲减`，`wxpay` 为二期预留。表名沿用 `share` 系历史命名，语义已收窄为「应付结算流水」。
@@ -332,11 +332,11 @@ export const fenToYuan = (f: number): string =>
 
 ### P1-3 `ab_supplier.share_rate` 定位已模糊
 
-C9 之后，供应商分账由**菜品成本单价**（`ab_dish.cost_price` / `ab_supplier_dish_daily.unit_price`）决定，**不再按比例**。`share_rate` 字段保留会误导实现。
+C9 之后，供应商应付由**与各供应商逐菜协商的供价**（`ab_dish.cost_price` / `ab_supplier_dish_daily.unit_price`，C9 修订）决定，**不再按比例**。`share_rate` 字段保留会误导实现。
 
 **建议**（二选一）
 
-- **A（推荐）**：保留字段但明确注释「**废弃（C9 后分账按菜品成本单价）；仅为兼容历史数据，新逻辑不得读取**」
+- **A（推荐）**：保留字段但明确注释「**废弃（C9 后应付按协商供价）；仅为兼容历史数据，新逻辑不得读取**」
 - **B**：直接从表中移除（若 v1.0 上线前无历史数据）
 
 ### P1-4 `ab_set_meal.status` 与 `ab_meal_assignment.status` 语义重叠

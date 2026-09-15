@@ -242,7 +242,7 @@ apps/admin-web/
 │   │   ├── finance/                    ← 财务结算（M35 · P34）
 │   │   │   ├── overview.vue
 │   │   │   ├── commission.vue          ← 团长佣金结算（4 级阶梯）
-│   │   │   ├── supplier-share.vue      ← 供应商应付结算（¥14.00 菜品成本 + ¥5.00 集散）
+│   │   │   ├── supplier-share.vue      ← 供应商应付结算（协商供价 + 场地费/打包人工/配送费 · C9 修订）
 │   │   │   ├── refund.vue              ← 退款管理（三段式审批）
 │   │   │   └── reconciliation.vue      ← 对账中心
 │   │   ├── stats/                      ← 数据统计（M36 · P35）
@@ -386,7 +386,7 @@ apps/api-server/
 │   │   │   ├── finance.module.ts
 │   │   │   ├── finance.controller.ts
 │   │   │   ├── commission.service.ts   ← 团长佣金（8/9/10/12%）
-│   │   │   ├── supplier-share.service.ts ← 供应商应付结算（菜品成本 ¥14.00；**日结**：T+1 生成应付，财务按日付款 · C11）
+│   │   │   ├── supplier-share.service.ts ← 供应商应付结算（按协商供价 + 费用项；**日结**：T+1 生成应付，财务按日付款 · C11）
 │   │   │   ├── refund.service.ts       ← 退款三段式（申请 → 审批 → 实退 · C6）
 │   │   │   ├── reversal.service.ts     ← 反向冲减（已结算后退款回退）
 │   │   │   ├── reconciliation.service.ts ← 对账

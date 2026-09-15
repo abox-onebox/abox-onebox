@@ -84,7 +84,12 @@ export class Commission {
 
 /**
  * ab_supplier_share 供应商 / 集散中心应付结算流水
- *   C9 —— 供 ¥14.00 / 集散 ¥5.00（米饭 ¥2 + 打包 ¥3）；退款走 type='reversal' 反向冲减
+ *   C9（2026-09-15 修订）—— 成本项**可配置、不写死**：
+ *     · 供应商供价 —— 与各供应商**逐菜协商**（成交价落库）
+ *     · 集散/场地费 —— 集散中心**复用合作供应商场地 → 默认 0**（按实际登记）
+ *     · 打包人工 / 配送费 —— 由**平台**承担（雇佣兼职打包 + 安排货拉拉送货）
+ *     · 平台毛利 = 售价 − 成本合计 − 佣金（**结果值**，不预设）
+ *   退款走 type='reversal' 反向冲减
  *   C11 —— 只记录**应付**，实际付款由财务人工对公转账日结，channel 恒为 manual
  * 依据：《表结构评审意见 v1.0》P0-6
  */
@@ -122,7 +127,7 @@ export class SupplierShare {
   @Column({ type: 'int', comment: '份数' })
   quantity!: number;
 
-  @Column({ name: 'unit_price', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '单位分账金额（¥14/¥5 拆分口径）' })
+  @Column({ name: 'unit_price', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '单位结算金额（按菜品协商价 / 场地费 / 打包人工 / 配送费分项落库）' })
   unitPrice!: string;
 
   @Column({ type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2, comment: '分账金额（正=分账，负=反向冲销）' })
@@ -253,7 +258,9 @@ export class BalanceLog {
 
 /**
  * ab_distribution_center 集散中心配置（C4 · 表驱动，默认 4 个，数量可配置）
- * 依据：《ER v2.1》§3.7 —— 分账固定 ¥5.00/份（米饭 ¥2.00 + 打包 ¥3.00），字段级拆分便于审计
+ * 依据：《ER v2.1》§3.7
+ * ⚠️ C9 修订（2026-09-15）：集散中心**复用合作供应商场地 → 场地费默认 0**；
+ *    打包改由平台雇佣兼职承担（平台成本项），故 riceFee / packFee 默认均为 0，按实际登记。
  */
 @Entity('ab_distribution_center')
 export class DistributionCenter {
@@ -267,7 +274,7 @@ export class DistributionCenter {
   @Column({ name: 'supplier_id', type: 'bigint', transformer: bigintTransformer, comment: '关联供应商（集散中心=某供应商，可同时出餐）' })
   supplierId!: number;
 
-  @Column({ type: 'varchar', length: 256, comment: '打包场地地址' })
+  @Column({ type: 'varchar', length: 256, comment: '场地地址（集散中心复用合作供应商场地）' })
   address!: string;
 
   @Column({ name: 'contact_name', type: 'varchar', length: 32, nullable: true })
@@ -276,10 +283,10 @@ export class DistributionCenter {
   @Column({ name: 'contact_phone', type: 'varchar', length: 20, nullable: true })
   contactPhone?: string | null;
 
-  @Column({ name: 'rice_fee', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, default: 2, comment: '米饭分账 ¥2/份（C9）' })
+  @Column({ name: 'rice_fee', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, default: 0, comment: '米饭费用（C9 修订：默认并入供应商供价，本项默认 0，按实际登记）' })
   riceFee!: string;
 
-  @Column({ name: 'pack_fee', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, default: 3, comment: '打包分账 ¥3/份（C9）' })
+  @Column({ name: 'pack_fee', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, default: 0, comment: '打包费用（C9 修订：改由平台兼职打包承担，本项默认 0，按实际登记）' })
   packFee!: string;
 
   @Column({ name: 'service_groups', type: 'json', nullable: true, comment: '服务的楼群 id 列表' })

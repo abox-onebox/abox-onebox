@@ -206,7 +206,7 @@ export class Refund {
   @Column({
     type: 'tinyint',
     default: 0,
-    comment: '反向分账是否已执行（C9：回退供¥14+集散¥5+佣金，毛利留存）',
+    comment: '反向结算是否已执行（C9：按实际供价/场地费/打包人工/配送费 + 佣金反向回退，平台毛利留存）',
   })
   reversed!: number;
 

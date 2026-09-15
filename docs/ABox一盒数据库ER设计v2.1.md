@@ -221,7 +221,7 @@ CREATE TABLE `ab_supplier_dish_daily` (
   `produce_date`  DATE NOT NULL COMMENT '生产日期',
   `plan_quantity` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '计划生产量',
   `actual_quantity` INT UNSIGNED DEFAULT NULL COMMENT '实际生产量',
-  `unit_price`    DECIMAL(8,2) NOT NULL COMMENT '分账单价',
+  `unit_price`    DECIMAL(8,2) NOT NULL COMMENT '当日供价单价（与供应商逐菜协商 · C9 修订，非固定）',
   `status`        VARCHAR(16) NOT NULL DEFAULT 'pending'
                   COMMENT 'pending/cooking/done',
   `completed_at`  DATETIME(3) DEFAULT NULL,
@@ -265,11 +265,11 @@ CREATE TABLE `ab_distribution_center` (
   `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `name`          VARCHAR(64) NOT NULL COMMENT '集散中心名，如"集散中心 1（国贸片）"',
   `supplier_id`   BIGINT UNSIGNED NOT NULL COMMENT '关联供应商（集散中心=某供应商，可同时出餐）',
-  `address`       VARCHAR(256) NOT NULL COMMENT '打包场地地址',
+  `address`       VARCHAR(256) NOT NULL COMMENT '场地地址（集散中心复用合作供应商场地 · C4）',
   `contact_name`  VARCHAR(32)  DEFAULT NULL,
   `contact_phone` VARCHAR(20)  DEFAULT NULL,
-  `rice_fee`      DECIMAL(8,2) NOT NULL DEFAULT 2.00 COMMENT '米饭分账 ¥2/份（C9）',
-  `pack_fee`      DECIMAL(8,2) NOT NULL DEFAULT 3.00 COMMENT '打包分账 ¥3/份（C9）',
+  `rice_fee`      DECIMAL(8,2) NOT NULL DEFAULT 0.00 COMMENT '集散/场地费（C9 修订：复用供应商场地 → 默认 ¥0，按实际登记）',
+  `pack_fee`      DECIMAL(8,2) NOT NULL DEFAULT 0.00 COMMENT '打包费（C9 修订：改由平台兼职承担 → settlement.packing_labor_fee，本项默认 ¥0）',
   `service_groups` JSON DEFAULT NULL COMMENT '服务的楼群 id 列表',
   `status`        TINYINT NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
   `version`       INT UNSIGNED NOT NULL DEFAULT 0,
@@ -282,7 +282,7 @@ CREATE TABLE `ab_distribution_center` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='集散中心配置（MVP 默认 4 个，数量可配置，不硬编码）';
 ```
 
-> ⭐ C4 裁决：运营按 4 个跑，但系统**不得硬编码**；分账固定 ¥5.00/份（米饭 ¥2.00 + 打包 ¥3.00，字段级拆分便于审计与后续调价，C9）。
+> ⭐ C4 裁决：运营按 4 个跑，但系统**不得硬编码**；集散中心**复用合作供应商场地**，场地 / 打包费用**默认 ¥0**（科目保留、字段级拆分便于审计，按实际登记）。<br>> **C9 修订（2026-09-15）**：原「固定 ¥5.00/份 = 米饭 ¥2.00 + 打包 ¥3.00」作废 —— 供价逐菜协商、场地复用默认 0、打包人工与配送费单列，平台毛利为结果值。
 
 ---
 
@@ -530,8 +530,13 @@ INSERT INTO ab_config (config_key, config_value, description) VALUES
 ('commission.min_withdraw', '10.00', '最低提现金额'),
 ('order.cutoff_window_minutes', '10', '截单前 10 分钟禁止下单'),
 ('distribution_center.default_count', '4', '集散中心默认数量（表驱动，可增删 · C4）'),
-('distribution_center.rice_fee', '2.00', '集散中心米饭分账（C9）'),
-('distribution_center.pack_fee', '3.00', '集散中心打包分账（C9）'),
+('distribution_center.rice_fee', '0.00', '集散/场地费（复用供应商场地 → 默认 0 · C9 修订）'),
+('distribution_center.pack_fee', '0.00', '打包费（改由平台兼职承担 → packing_labor_fee · C9 修订）'),
+('settlement.supplier_purchase_price', 'negotiated', '供应商供价来源：与各供应商逐菜协商（非固定 · C9 修订）'),
+('settlement.site_fee', '0.00', '集散/场地费：集散中心复用合作供应商场地 → 默认 0'),
+('settlement.packing_labor_fee', '0.00', '打包人工：雇佣兼职打包（按件/按时/按班次），默认 0'),
+('settlement.delivery_fee', '0.00', '配送费：安排货拉拉送货（按趟/按路线），默认 0'),
+('settlement.gross_profit_policy', 'residual', '平台毛利口径：结果值 = 售价 − 成本合计 − 佣金'),
 ('wechat.subscribe.app_id', '', '小程序 AppID'),
 ('wechat.pay.mch_id', '', '微信支付商户号');
 

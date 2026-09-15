@@ -22,7 +22,7 @@ export class SetMeal {
   @Column({ type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '售价 ¥25.80（C1）' })
   price!: string;
 
-  @Column({ name: 'cost_price', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '菜品成本合计 ¥14.00（C9）' })
+  @Column({ name: 'cost_price', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '供价合计（C9 修订：按与各供应商逐菜协商价，非固定）' })
   costPrice!: string;
 
   @Column({ name: 'cover_url', type: 'varchar', length: 512, nullable: true })

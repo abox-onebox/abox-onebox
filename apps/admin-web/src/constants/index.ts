@@ -8,13 +8,38 @@ export const COMMISSION_RATE = {
   chief: 0.12,
 } as const;
 
+/** C9 · 单份成本项「默认 / 示例值」（元）
+ * ⚠️ 口径修订 2026-09-15：**成本项不写死**，按实际执行；平台毛利为**结果值**。
+ *    运行期以 ab_config + 供应商采购价表为准，此处仅为默认值与兜底。
+ *    等式：售价 = 供应商供价 + 集散/场地费 + 打包人工 + 配送费 + 佣金 + 平台毛利
+ */
 export const SETTLEMENT = {
+  /** 供应商供价合计（与各供应商**逐菜协商**） */
   supplierTotal: 14.0,
-  distributionCenter: 5.0,
-  rice: 2.0,
-  packing: 3.0,
-  platformGrossProfit: 3.7,
+  /** 集散 / 场地费（集散中心**复用合作供应商场地 → 默认 0**） */
+  siteFee: 0.0,
+  /** 打包人工（雇佣**兼职**打包） */
+  packingLaborFee: 0.0,
+  /** 配送费（安排**货拉拉**送货） */
+  deliveryFee: 0.0,
 } as const;
+
+/** C9 · 计算单份结算明细（平台毛利为结果值） */
+export function calcSettlement(
+  items: Partial<typeof SETTLEMENT>,
+  commissionRate: number,
+  unitPrice: number = UNIT_PRICE,
+) {
+  const supplierTotal = items.supplierTotal ?? SETTLEMENT.supplierTotal;
+  const siteFee = items.siteFee ?? SETTLEMENT.siteFee;
+  const packingLaborFee = items.packingLaborFee ?? SETTLEMENT.packingLaborFee;
+  const deliveryFee = items.deliveryFee ?? SETTLEMENT.deliveryFee;
+  const commission = Number((unitPrice * commissionRate).toFixed(2));
+  const platformGrossProfit = Number(
+    (unitPrice - (supplierTotal + siteFee + packingLaborFee + deliveryFee) - commission).toFixed(2),
+  );
+  return { unitPrice, supplierTotal, siteFee, packingLaborFee, deliveryFee, commission, platformGrossProfit };
+}
 
 /** 后台导航（运营 role=admin） */
 export const ADMIN_NAV = [

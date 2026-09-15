@@ -24,7 +24,7 @@
     "format:check": "prettier --check \"**/*.{ts,vue,json,md,scss}\"",
     "prepare": "node scripts/setup-husky.mjs",
     "typecheck": "pnpm run build:shared && pnpm -r typecheck",
-    "test": "pnpm -r test",
+    "test": "pnpm run build:shared && pnpm -r test",
     "db:migrate": "pnpm --filter api-server db:migrate",
     "db:seed": "pnpm --filter api-server db:seed",
     "docker:up": "docker compose up -d",
