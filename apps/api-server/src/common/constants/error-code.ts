@@ -73,6 +73,17 @@ export enum ErrorCode {
   MEAL_SOLD_OUT = 30009,
   /** 扩展：订单不存在 */
   ORDER_NOT_FOUND = 30010,
+  /** 扩展（M3-2）：该楼群在该出餐日已有套餐分配（D2 重复创建） */
+  MEAL_ASSIGNMENT_EXISTS = 30011,
+  /** 扩展（M3-2）：套餐分配不存在（D3/D4 目标 id 非法） */
+  MEAL_ASSIGNMENT_NOT_FOUND = 30012,
+  /**
+   * 扩展（M3-2）：已过截单时刻，不能再上架（D4）
+   *
+   * ⚠️ 为什么必须拦：上架 = 用户端 `canOrder=true`，但下单会被截单硬闸（30001）拦下。
+   *    放行就等于**让运营在后台亲手制造一个「看得见但点不动」的套餐**。
+   */
+  MEAL_PUBLISH_AFTER_CUTOFF = 30013,
 
   /** ---- 4xxxx 支付 / 退款 / 出款 ---- */
   PAY_CREATE_FAILED = 40001,
@@ -133,6 +144,9 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.MEAL_NOT_FOUND]: '套餐不存在',
   [ErrorCode.MEAL_SOLD_OUT]: '已售罄',
   [ErrorCode.ORDER_NOT_FOUND]: '订单不存在',
+  [ErrorCode.MEAL_ASSIGNMENT_EXISTS]: '该楼群当日已有套餐分配，请直接编辑',
+  [ErrorCode.MEAL_ASSIGNMENT_NOT_FOUND]: '套餐分配不存在',
+  [ErrorCode.MEAL_PUBLISH_AFTER_CUTOFF]: '已过截单时刻，不能再上架',
   [ErrorCode.PAY_CREATE_FAILED]: '支付单创建失败，请稍后重试',
   [ErrorCode.BALANCE_NOT_ENOUGH]: '余额不足',
   [ErrorCode.WITHDRAW_BELOW_MIN]: '提现金额低于最低限额',

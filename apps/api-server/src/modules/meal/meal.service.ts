@@ -84,11 +84,26 @@ export class MealService {
     ]);
 
     const canOrder = assignment.status === 'active' && isOrderable(targetDate, cutoffWindow);
+
+    /**
+     * `reason` 必须区分「还没开团」与「快截单了」—— 两者都会让 `canOrder=false`，
+     * 但文案完全相反：前者是「再等等」，后者是「来不及了」。
+     *
+     * ⚠️ 曾经的写法只判断 `status !== 'active'`，于是**未到开团时刻**（T-1 14:00 之前）
+     *    也会落进「距截单不足 N 分钟」分支，对着一个还要等好几小时的套餐说
+     *    「请明日再订」。M3-2 支持运营提前编排后，这个分支从「几乎走不到」变成常见路径。
+     */
+    const now = Date.now();
+    const publishAtMs = publishAtOf(targetDate).getTime();
+    const notOpenYet = assignment.status === 'active' && now < publishAtMs;
+
     const reason = canOrder
       ? null
       : assignment.status !== 'active'
         ? '该办公楼今日未开团'
-        : `距截单不足 ${cutoffWindow} 分钟，请明日再订`;
+        : notOpenYet
+          ? `今日 ${toBjIso(publishAtOf(targetDate))!.slice(11, 16)} 开团，敬请期待`
+          : `距截单不足 ${cutoffWindow} 分钟，请明日再订`;
 
     return {
       mealDate: targetDate,

@@ -18,6 +18,7 @@
 | 协议 | HTTPS / JSON（`Content-Type: application/json; charset=utf-8`） |
 | 风格 | RESTful + 资源化路径；动词仅用于不可资源化的动作（`/cancel`、`/approve`、`/retry`） |
 | 文档产物 | Swagger 自动生成于 `/api/docs`（由 NestJS 装饰器产出，本文件为其人工契约前提） |
+| 最近修订 | 2026-09-15 · ① **M3-1 后台鉴权基座**：A1–A6 重写（双主体隔离 / 登录失败锁定 / 令牌吊销 / 无状态登出 / 查库求证）+ D51–D56 口径 + 错误码 20009·20010；② **M3-2 套餐编排**：D1–D7 实现口径表 + 两个扩展选择器（`/admin/meal/dishes`、`/admin/meal/distribution-centers`）+ 错误码 30011·30012·30013 |
 
 ---
 
@@ -508,21 +509,61 @@ POST /leader/quit   【Idempotency-Key 必填】  body: { reason? }
 | D5 | POST | `/admin/meal/assignments/copy` | 批量复制（某日 → 某周 / 指定日期集） |
 | D6 | GET | `/admin/meal/templates` | 套餐模板库（M31-04） |
 | D7 | POST | `/admin/meal/templates` | 存为模板 |
+| — | GET | `/admin/meal/dishes?keyword=` | **扩展**：菜品选择器（D7 编排页候选菜品 · 只读） |
+| — | GET | `/admin/meal/distribution-centers` | **扩展**：集散中心选择器（D2/D3 前置 · 只读） |
+
+> **实现状态**：D1–D7 **已实现**（M3-2，`apps/api-server/src/modules/meal/meal-admin.*`），验收脚本 `scripts/e2e-m3.mjs` §14。
+> **权限**：类级 `@Roles('super_admin','admin','operator')` —— 套餐编排是运营的日常动作，财务与只读观察者不该有写权限。前端菜单过滤只是体验层，服务端白名单才是边界。
+> **两个扩展选择器**为何挂在本模块而不在 `admin/supplier/*`：菜品的**管理**属 D23–D32（供应商模块），但这俩接口只做**只读挑选**；编排页不该依赖尚未落地的模块。
 
 **D1 出参（矩阵）**
 
 ```json
 {
+  "startDate": "2026-09-15",
+  "endDate": "2026-09-21",
   "dates": ["2026-09-15","2026-09-16"],
-  "groups": [{ "id":1, "name":"国贸楼群", "buildingIds":[1,2,3,4] }],
+  "groups": [{ "id":1, "name":"国贸三期组", "buildingIds":[1,2,3,4],
+               "assignedBuildings":[1,2,4], "emptyBuildings":[3] }],
   "cells": [
-    { "mealDate":"2026-09-15", "groupId":1, "assignmentId":5, "setMealName":"红烧肉套餐", "status":"published",
-      "dishCount":4, "distributionCenterId":1, "assignedBuildings":[1,2,3], "emptyBuildings":[4] }
-  ]
+    { "mealDate":"2026-09-15", "groupId":1, "assignmentId":5,
+      "setMealId":1, "setMealName":"红烧肉套餐", "setMealPriceFen":2580,
+      "status":"active", "statusHint":"已上架", "dishCount":4,
+      "distributionCenterId":1, "distributionCenterName":"集散中心 1（国贸/建外）",
+      "assignedBuildings":[1,2,4], "emptyBuildings":[3],
+      "soldCount":45, "cutoffPassed":false, "canPublish":true }
+  ],
+  "stats": { "dateCount":2, "groupCount":5, "cellCount":10,
+             "assignedCells":5, "publishedCells":3, "emptyCells":5, "totalSold":45 },
+  "note": "assignedBuildings = 楼群内「合作中」办公楼；emptyBuildings = 停用 / 待分配办公楼（UI 以禁用复选框呈现）。…"
 }
 ```
 
 > ⚠️ **矩阵单元格的 C 座口径**：`emptyBuildings` 表示该楼群内**未分配**的办公楼。原型 P27 中 C 座（龙湖 · 待分配）即此语义，UI 上以禁用复选框呈现，**与 P37 办公楼管理的状态一致**。
+>
+> ⚠️ **`ab_meal_assignment` 的粒度是「出餐日 × 楼群」**，没有「楼栋级分配」表。因此 `assignedBuildings` / `emptyBuildings` 是**派生值**：楼群内 `status=1`（合作中）算已分配，`status≠1`（停用 / 待分配）算未分配。种子数据里国贸组 C 座 `status=2` → 落进 `emptyBuildings`。
+
+**M3-2 实现口径（勿推翻）**
+
+| 主题 | 口径 | 为什么 |
+| --- | --- | --- |
+| D1 返回范围 | **完整网格**：`cells.length = dates.length × groups.length`，无分配的格子 `assignmentId=null` | 只回「有分配的格子」，运营就看不出**哪几天漏排了** —— 空格子本身就是信息 |
+| 单次查询上限 | 跨度 ≤ 31 天；且 `日期数 × 楼群数 ≤ 400` 格 | 防止「查一年」把网格一次吐出 |
+| **创建 ≠ 上架** | D2 建出来是 `pending`（用户端文案「该办公楼今日未开团」）；必须再走 D4 `publish` 才变 `active`、用户端才 `canOrder=true` | 编排可以提前几天做，开团是临近时的动作。两步分离不是冗余 |
+| 唯一性 | 同一「出餐日 × 楼群」唯一（`uk_meal_assignment_date_group`）；重复创建 → **30011** | 唯一的业务化。已 `cancelled` 的历史行会被**复用**（唯一索引占着位），不新建 |
+| D3 只改两项 | 只能改 `setMealId` / `distributionCenterId` | 改「出餐日 / 楼群」等于换成另一条分配，语义是删旧建新；混进 PUT 会让幂等与操作日志的「改前值 / 改后值」失去意义 |
+| D3 截单闸门 | 已过截单（T 日 00:00）的分配不可修改 → **30003** | 订单已产生，改套餐会让「用户买到的」与「后台记的」不一致 |
+| D4 上架闸门 | 已过截单时刻不许上架 → **30013** | 放行 = 用户端显示可下单、下单必被截单硬闸（30001）拦下 —— 等于**让运营亲手造一个「看得见点不动」的套餐** |
+| D4 下架 | **不设**截单闸门 | 紧急下架是安全阀（套餐出问题要立刻停止接单）。已产生的订单不受影响，退款走 D11 |
+| D4 幂等 | 重复同向操作返回当前状态，**不报错** | 运营双击按钮不该看到红字。这与「按 `Idempotency-Key` 去重」是两套机制，状态迁移本身天然幂等 |
+| D5 三条口径 | ① **不覆盖**已存在项（进 `skipped[]` 并给 `reason`）② 复制出的一律 `pending` ③ 已截单的目标日跳过 | ①运营最怕「覆盖了我昨天调好的排期」②复制 `active` 会**绕过 D4 开团**，让未来若干天同时对外可下单 ③给过去的日期补排餐没有意义 |
+| D5 事务 | 建多行时走一个事务 | 语义是「要么都建好，要么都不建」；部分成功会让运营无法判断哪几天已排好 |
+| D6 `usedCount` | = 被多少个**未取消**的分配引用 | 模板库里最有用的一列：为 0 的可直接清理；数值大的改动前要评估影响面 |
+| D7 入参**不含** | `supplierId` / `costPrice` / `shareAmount` | 供应商由菜品反查（`ab_dish.supplier_id`）、成本由菜品供价求和。让运营手填，迟早填出「记着 A 家的菜、算着 B 家的钱」，结算时才发现对不上 |
+| D7 校验 | 同一道菜不得占两个档位 → **10001**；菜品不存在 / 已下架 → **30008** | 「两道素菜」可以是两道**不同**的素菜 |
+| D7 售价缺省 | 未传 `price` → 回落 `ab_config.set_meal.default_price`（C1 锁定 ¥25.80） | 与 C1 统一定价同源 |
+| 档位映射 | `slot`：1 主荤 / 2 半荤 / 3 素菜 / 4 汤 / 5 主食；**由 `GET /admin/meal/dishes` 出参下发** | 端上不维护第二份映射，口径唯一在服务端 |
+| 选择器 | `/admin/meal/dishes` **只回上架菜品**（`status=1`） | 选中已下架的菜，D7 提交时必被打回；不如根本不给选 |
 
 ### 6.2 订单中心（M32）
 
@@ -734,6 +775,9 @@ approve
 | **30008** | 套餐不存在 | 分配已下架 / id 非法（**扩展**） | 404 |
 | **30009** | 已售罄 | 当日份数耗尽（**扩展**） | 409 |
 | **30010** | 订单不存在 | 单号非法 / 越权访问（**扩展**） | 404 |
+| **30011** | 该楼群当日已有套餐分配，请直接编辑 | D2 重复创建（`uk_meal_assignment_date_group` 的业务化） | 409 |
+| **30012** | 套餐分配不存在 | D3/D4 目标 id 非法；D5 源日无分配可复制（**扩展**） | 404 |
+| **30013** | 已过截单时刻，不能再上架 | D4 上架闸门 —— 放行会造出「看得见点不动」的套餐（**扩展**） | 409 |
 | **40001** | 支付单创建失败，请稍后重试 | 微信下单异常 | 502 |
 | **40002** | 余额不足 | 抵扣超出可用额 | 409 |
 | **40003** | 提现金额低于最低限额 | < ¥10.00 | 400 |
@@ -747,7 +791,7 @@ approve
 | **50004** | 可提现余额不足 | 提现申请超出可用余额（L12） | 409 |
 | **90001** | 系统繁忙，请稍后再试 | 未捕获异常 | 500 |
 
-> **扩展码**：`20006` / `20007` / `20008` / `20009` / `20010` / `30008` / `30009` / `30010` 号段内文档原未列、但工程实现需要，已按「号段末尾登记」规则回写本表（见 `apps/api-server/src/common/constants/error-code.ts` 头部纪律）。**禁止挪用文档已占用的号位。**
+> **扩展码**：`20006` / `20007` / `20008` / `20009` / `20010` / `30008` / `30009` / `30010` / `30011` / `30012` / `30013` 号段内文档原未列、但工程实现需要，已按「号段末尾登记」规则回写本表（见 `apps/api-server/src/common/constants/error-code.ts` 头部纪律）。**禁止挪用文档已占用的号位。**
 
 > **前端契约**：`code` 为**稳定标识**，文案可迭代；端上对 `10002`（跳登录）、`30001`（截单提示）、`40004`（引导联系团长）做特殊分支处理。
 
