@@ -22,6 +22,21 @@ export function phoneHash(phone: string, salt = 'abox_phone'): string {
     .digest('hex');
 }
 
+/**
+ * 收款账号脱敏（银行卡 / 支付宝）
+ *   `6222021234567890123` → `6222****0123`
+ *   短于 8 位时只留前 2 位 + 掩码。
+ *
+ * ⚠️ 落库口径：`ab_team_leader.payout_account` 与 `ab_withdraw.receive_account`
+ *    一律**存脱敏值**（业务只需展示与人工核对末四位，无需完整账号）。
+ */
+export function maskAccount(account?: string | null): string | null {
+  if (!account) return null;
+  const s = account.replace(/\s/g, '');
+  if (s.length <= 8) return `${s.slice(0, 2)}****`;
+  return `${s.slice(0, 4)}****${s.slice(-4)}`;
+}
+
 /** 简易 UUID v4（幂等键兜底 / mock 场景，无需引入 uuid 依赖） */
 export function uuidV4(): string {
   const hex = createHash('sha1')

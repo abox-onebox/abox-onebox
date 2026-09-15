@@ -79,6 +79,32 @@ function readDb(sql, params = []) {
   }
 }
 
+/**
+ * 直写数据库（**仅用于造「接口无法到达」的中间态**）
+ *
+ * 用途：`delivered`（已送达待取餐）没有对外接口 —— 出餐确认属供应商端（M3）、
+ *      配送生成属定时任务（M4）。而 M2 验收标准 2/3 依赖「今日已送达订单」，
+ *      故在此直写状态位，属于**测试夹具**而非绕过业务校验。
+ * ⚠️ 写前已停掉一切业务写入（服务空闲），并有 SQLITE_BUSY 重试。
+ */
+function writeDb(sql, params = []) {
+  if (!existsSync(DB_PATH)) return null;
+  for (let i = 0; i < 5; i++) {
+    const db = new DatabaseSync(DB_PATH);
+    try {
+      return db.prepare(sql).run(...params);
+    } catch (e) {
+      if (!/SQLITE_BUSY|database is locked/i.test(e.message)) throw e;
+    } finally {
+      db.close();
+    }
+  }
+  throw new Error(`writeDb 重试 5 次仍被锁：${sql}`);
+}
+
+/** 北京时间「今日」yyyy-MM-dd */
+const todayBj = () => new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+
 // ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
@@ -129,6 +155,21 @@ async function main() {
   // 1. M2-① 申请成为团长：勾选协议后**立即生效**
   // ==========================================================================
   const applicant = await login('dev:9101');
+
+  // ---- 前置守卫：§4 断言的是**绝对值**（余额 = 1548、提现 1 条…），
+  //      故必须跑在干净种子上。若检测到上次运行残留，明确报错退出，
+  //      而不是跑到一半崩在「leader 为 undefined」这类无关位置。
+  const dirtyLeader = readDb('SELECT id FROM ab_team_leader WHERE user_id = ?', [applicant.userId]);
+  const dirtyComm = readDb('SELECT COUNT(*) n FROM ab_commission');
+  if (dirtyLeader || Number(dirtyComm?.n) > 0) {
+    fail(
+      '前置 · 需干净种子',
+      `检测到残留（leader=${dirtyLeader ? 'yes' : 'no'} / ab_commission=${dirtyComm?.n} 条）→ 请先执行：node scripts/gate.mjs seed`,
+    );
+    await stopApiServer(server, PORT);
+    process.exit(1);
+  }
+
   assert(
     applicant.raw?.data?.isNewUser === true && applicant.isLeader === false,
     'M2-① 前置 · 全新用户登录时 isLeader=false',
@@ -354,6 +395,414 @@ async function main() {
     tryBuilding.body?.code === 10001,
     'L15 办公楼变更本期不开放（DTO 白名单拒绝 buildingId → 10001）',
     `code=${tryBuilding.body?.code}`,
+  );
+
+  // ==========================================================================
+  // 4. M2 全链路：L4–L7 订单聚合与代退 · L8–L9 分发计佣 · L10–L13 佣金提现 · L1/L2/L3
+  // ==========================================================================
+  const TODAY = todayBj();
+  const TOMORROW = new Date(Date.parse(`${TODAY}T00:00:00Z`) + 864e5).toISOString().slice(0, 10);
+
+  // ---- 4.0 夹具：李明（种子 chief · 12% · 楼 1）下单 5 份 → 支付 → 直写为「今日已送达」
+  const lming = await login('dev:1001');
+  const created = await call('POST', '/orders', {
+    token: lming.token,
+    idem: 'e2e-m2-order-0001',
+    body: { mealDate: TOMORROW, quantity: 5 },
+  });
+  const orderNo = created.body?.data?.orderNo;
+  assert(
+    created.body?.code === 0 && !!orderNo,
+    '夹具 · U6 下单成功（5 份 × ¥25.80）',
+    `orderNo=${orderNo}`,
+  );
+
+  const paid = await call('POST', '/pay/mock/paid', { body: { orderNo } });
+  assert(paid.body?.code === 0, '夹具 · mock 支付成功', `code=${paid.body?.code}`);
+
+  // `delivered` 无对外接口（出餐/配送属 M3/M4），此处直写状态位作为测试夹具
+  writeDb(
+    `UPDATE ab_order SET meal_date = ?, status = 'delivered', team_leader_id = 1 WHERE order_no = ?`,
+    [TODAY, orderNo],
+  );
+  const fixture = readDb('SELECT meal_date, status, team_leader_id FROM ab_order WHERE order_no = ?', [
+    orderNo,
+  ]);
+  assert(
+    fixture?.meal_date === TODAY &&
+      fixture?.status === 'delivered' &&
+      Number(fixture?.team_leader_id) === 1,
+    '夹具 · 订单已置为「今日 / 已送达 / 归属团长 1」',
+    `mealDate=${fixture?.meal_date} status=${fixture?.status} leader=${fixture?.team_leader_id}`,
+  );
+
+  // ---- 4.1 L1 工作台
+  const wb = await call('GET', '/leader/workbench', { token: lming.token });
+  const w = wb.body?.data;
+  assert(wb.body?.code === 0 && w?.today?.mealDate === TODAY, 'L1 工作台返回今日战报', `mealDate=${w?.today?.mealDate}`);
+  assert(
+    w?.today?.quantity === 5 && w?.today?.amountFen === 12900,
+    'L1 今日份数与成交额（5 × ¥25.80 = ¥129.00）',
+    `qty=${w?.today?.quantity} amountFen=${w?.today?.amountFen}`,
+  );
+  assert(
+    w?.today?.level === 'chief' && w?.today?.rate === 0.12 && w?.today?.levelLabel === '首席',
+    'L1 等级 / 费率 / 中文名快照',
+    `level=${w?.today?.level} rate=${w?.today?.rate} label=${w?.today?.levelLabel}`,
+  );
+  assert(
+    typeof w?.tomorrow?.canOrder === 'boolean' && !!w?.tomorrow?.cutoffAt,
+    'L1 明日进度含截单时刻与可否下单',
+    `cutoffAt=${w?.tomorrow?.cutoffAt} canOrder=${w?.tomorrow?.canOrder}`,
+  );
+  assert(!!w?.pickup?.point, 'L1 取餐点回显（办公楼 + 楼层）', `point=${w?.pickup?.point}`);
+  assert(
+    w?.today?.completedQuantity === 0 && w?.today?.commissionFen === 0,
+    'L1 未确认分发前佣金为 0（计佣基数是实发，不是下单）',
+    `completed=${w?.today?.completedQuantity} commissionFen=${w?.today?.commissionFen}`,
+  );
+
+  // ---- 4.2 L4 订单列表（脱敏纪律）/ L6 异常订单
+  const ordersRes = await call('GET', `/leader/orders?mealDate=${TODAY}`, { token: lming.token });
+  const list = ordersRes.body?.data?.list ?? [];
+  assert(ordersRes.body?.code === 0 && list.length >= 1, 'L4 所辖订单列表返回今日订单', `count=${list.length}`);
+  const target = list.find((x) => x.orderNo === orderNo);
+  assert(!!target, 'L4 列表含夹具订单', `orderNo=${orderNo}`);
+  assert(
+    typeof target?.phoneMasked === 'string' && target.phoneMasked.includes('****'),
+    'L4 手机号已脱敏（138****0007 形态）',
+    `phoneMasked=${target?.phoneMasked}`,
+  );
+  const rawPhones = JSON.stringify(list).match(/1[3-9]\d{9}/g) ?? [];
+  assert(
+    rawPhones.length === 0,
+    'L4 出参不含任何完整手机号（脱敏纪律）',
+    `found=${rawPhones.join(',') || '无'}`,
+  );
+
+  const abn = await call('GET', `/leader/orders/abnormal?mealDate=${TODAY}`, { token: lming.token });
+  assert(
+    abn.body?.code === 0 && Array.isArray(abn.body?.data?.list) && abn.body?.data?.count === 0,
+    'L6 异常订单接口可用（本日无待支付单 → 0 条）',
+    `count=${abn.body?.data?.count}`,
+  );
+
+  const exp = await call('GET', `/leader/orders/export?mealDate=${TODAY}`, { token: lming.token });
+  assert(
+    exp.body?.code === 0 && exp.body?.data?.count >= 1 && exp.body?.data?.list?.[0]?.length >= 8,
+    'L5 导出返回明细行（含完整手机号列）',
+    `count=${exp.body?.data?.count}`,
+  );
+  const opLog = readDb(
+    "SELECT module, action, target_id FROM ab_operation_log WHERE module='leader' AND action='export_orders' ORDER BY id DESC LIMIT 1",
+  );
+  assert(
+    opLog?.action === 'export_orders' && opLog?.target_id === TODAY,
+    'L5 导出写操作日志（涉完整手机号的合规留痕）',
+    `module=${opLog?.module} target=${opLog?.target_id}`,
+  );
+
+  // ---- 4.3 L8 今日取餐 / L9 一键分发（按实发份数计佣）
+  const pickup = await call('GET', '/leader/pickup/today', { token: lming.token });
+  const p = pickup.body?.data;
+  assert(
+    pickup.body?.code === 0 && p?.totalQuantity >= 5,
+    'L8 今日取餐总份数',
+    `total=${p?.totalQuantity} confirmed=${p?.confirmedQuantity} pending=${p?.pendingQuantity}`,
+  );
+  assert(p?.canConfirm === true, 'L8 存在已送达订单 → canConfirm=true', `canConfirm=${p?.canConfirm}`);
+
+  const confirm = await call('POST', '/leader/pickup/confirm', {
+    token: lming.token,
+    idem: 'e2e-m2-pickup-0001',
+    body: { orderNos: [orderNo] },
+  });
+  const c = confirm.body?.data;
+  assert(
+    confirm.body?.code === 0 && c?.confirmedCount === 1,
+    'L9 一键分发：订单转 completed',
+    `confirmedCount=${c?.confirmedCount}`,
+  );
+  assert(
+    c?.commissionFen === 1548,
+    'M2-③ 佣金 = 实发份数 × 等级费率（5 × 25.80 × 12% = ¥15.48）',
+    `commissionFen=${c?.commissionFen} rate=${c?.rate}`,
+  );
+
+  const replayConfirm = await call('POST', '/leader/pickup/confirm', {
+    token: lming.token,
+    idem: 'e2e-m2-pickup-0001',
+    body: { orderNos: [orderNo] },
+  });
+  assert(
+    replayConfirm.body?.code === 10006,
+    'L9 幂等重放 → 10006（返回首次结果，不重复计佣）',
+    `code=${replayConfirm.body?.code}`,
+  );
+  const commCount = readDb('SELECT COUNT(*) n FROM ab_commission WHERE order_id = (SELECT id FROM ab_order WHERE order_no = ?)', [orderNo]);
+  assert(Number(commCount?.n) === 1, 'L9 幂等：同一订单只产生一条佣金流水', `rows=${commCount?.n}`);
+
+  // ---- 4.4 L10 佣金明细 / L11 余额
+  const comm = await call('GET', `/leader/commissions?range=day&date=${TODAY}`, { token: lming.token });
+  const cs = comm.body?.data;
+  assert(
+    comm.body?.code === 0 && cs?.summary?.netFen === 1548 && cs?.summary?.quantity === 5,
+    'L10 佣金净额与份数（净额 = 实发 5 份 × ¥25.80 × 12%）',
+    `netFen=${cs?.summary?.netFen} qty=${cs?.summary?.quantity}`,
+  );
+  assert(
+    cs?.summary?.levelLabel === '首席' && cs?.list?.[0]?.amountFen === 1548,
+    'L10 明细行含等级 / 费率 / 金额快照',
+    `label=${cs?.summary?.levelLabel} amountFen=${cs?.list?.[0]?.amountFen}`,
+  );
+
+  const bal = await call('GET', '/leader/balance', { token: lming.token });
+  const b = bal.body?.data;
+  assert(
+    bal.body?.code === 0 && b?.balanceFen === 1548,
+    'M2-③ 余额与佣金一致（余额流水已入账）',
+    `balanceFen=${b?.balanceFen} totalInFen=${b?.totalInFen}`,
+  );
+  assert(b?.minWithdrawFen === 1000, 'L11 最低提现额 ¥10.00 来自 ab_config', `minFen=${b?.minWithdrawFen}`);
+  assert(
+    b?.pendingCommissionFen === 0,
+    'L11 佣金已入账（无待结算余额），可用额即佣金净额',
+    `pendingCommissionFen=${b?.pendingCommissionFen}`,
+  );
+
+  // ---- 4.5 L12 提现的三条拦截 + 正常提交
+  const lowW = await call('POST', '/leader/withdraw', {
+    token: lming.token,
+    idem: 'e2e-m2-wd-low',
+    body: { amount: 5 },
+  });
+  assert(
+    lowW.body?.code === 40003 && lowW.body?.data?.minFen === 1000,
+    'L12 低于最低额 → 40003（data 附 minFen）',
+    `code=${lowW.body?.code} minFen=${lowW.body?.data?.minFen}`,
+  );
+  // 回归 · 幂等键必须在**业务失败后释放**：否则键停在 __pending__，
+  //       同键重试会被误判为「请勿重复提交」10006，端上网络重试直接卡死。
+  const lowRetry = await call('POST', '/leader/withdraw', {
+    token: lming.token,
+    idem: 'e2e-m2-wd-low',
+    body: { amount: 5 },
+  });
+  assert(
+    lowRetry.body?.code === 40003,
+    '回归 · 失败后同幂等键可立即重试（40003，而非 10006 卡死）',
+    `code=${lowRetry.body?.code}`,
+  );
+
+  const noBind = await call('POST', '/leader/withdraw', {
+    token: applicant.token,
+    idem: 'e2e-m2-wd-nobind',
+    body: { amount: 10 },
+  });
+  assert(noBind.body?.code === 40007, 'L12 未绑定收款方式 → 40007', `code=${noBind.body?.code}`);
+
+  const bindLm = await call('PUT', '/leader/profile', {
+    token: lming.token,
+    body: { payoutType: 'bank', payoutAccount: '6217001234567890123', payoutName: '李明' },
+  });
+  assert(
+    bindLm.body?.code === 0 && bindLm.body?.data?.payoutBound === true,
+    'L15 绑定收款方式生效（提现前置条件）',
+    `bound=${bindLm.body?.data?.payoutBound}`,
+  );
+  assert(
+    bindLm.body?.data?.payoutAccount === '6217****0123',
+    'L15 收款账号脱敏存储',
+    `account=${bindLm.body?.data?.payoutAccount}`,
+  );
+
+  const bindApp = await call('PUT', '/leader/profile', {
+    token: applicant.token,
+    body: { payoutType: 'bank', payoutAccount: '6222021234567890123', payoutName: '测试团长' },
+  });
+  const noBal = await call('POST', '/leader/withdraw', {
+    token: applicant.token,
+    idem: 'e2e-m2-wd-nobal',
+    body: { amount: 10 },
+  });
+  assert(
+    bindApp.body?.code === 0 && noBal.body?.code === 50004,
+    'L12 已绑卡但可提现余额不足 → 50004',
+    `code=${noBal.body?.code}`,
+  );
+
+  const wd = await call('POST', '/leader/withdraw', {
+    token: lming.token,
+    idem: 'e2e-m2-wd-0001',
+    body: { amount: 10 },
+  });
+  const wdD = wd.body?.data;
+  assert(
+    wd.body?.code === 0 && wdD?.status === 'pending',
+    'M2-④ 提现申请可提交并进入待审批',
+    `status=${wdD?.status} no=${wdD?.withdrawNo}`,
+  );
+  assert(
+    /^WD\d{16}$/.test(String(wdD?.withdrawNo)),
+    'L12 提现单号格式 WD + yyyyMMdd + 8 位',
+    `withdrawNo=${wdD?.withdrawNo}`,
+  );
+
+  // 幂等回放：成功结果应被缓存（返回 10006 + 首次结果），且**不重复冻结**
+  // —— 若重复冻结，下方 `bal2` 的 frozenFen 会从 1000 变 2000 而断言失败。
+  const wdReplay = await call('POST', '/leader/withdraw', {
+    token: lming.token,
+    idem: 'e2e-m2-wd-0001',
+    body: { amount: 10 },
+  });
+  assert(
+    wdReplay.body?.code === 10006 && wdReplay.body?.data?.withdrawNo === wdD?.withdrawNo,
+    'L12 幂等重放 → 10006 + 首次结果（资金零副作用）',
+    `code=${wdReplay.body?.code} no=${wdReplay.body?.data?.withdrawNo}`,
+  );
+
+  const wds = await call('GET', '/leader/withdrawals', { token: lming.token });
+  assert(
+    wds.body?.code === 0 && wds.body?.data?.total >= 1 && wds.body?.data?.list?.[0]?.statusText === '待审批',
+    'L13 提现记录可查（含状态文案）',
+    `total=${wds.body?.data?.total} text=${wds.body?.data?.list?.[0]?.statusText}`,
+  );
+
+  const bal2 = await call('GET', '/leader/balance', { token: lming.token });
+  assert(
+    bal2.body?.data?.balanceFen === 548 && bal2.body?.data?.frozenFen === 1000,
+    'L11 提现冻结：可用 ¥5.48 / 冻结 ¥10.00（申请即冻，终态才释放）',
+    `balanceFen=${bal2.body?.data?.balanceFen} frozenFen=${bal2.body?.data?.frozenFen}`,
+  );
+  const wdRow = readDb('SELECT status, amount, payout_channel FROM ab_withdraw ORDER BY id DESC LIMIT 1');
+  assert(
+    wdRow?.status === 'pending' && Number(wdRow?.amount) === 10 && wdRow?.payout_channel === 'FLEX_MANUAL',
+    'L12 提现单落库且走灵活用工通道（C11 一期人工）',
+    `status=${wdRow?.status} channel=${wdRow?.payout_channel}`,
+  );
+
+  // ---- 4.5b L19 余额流水（与 L11 余额交叉验算）
+  // 口径：amount 恒为正，方向看 direction（1 收入 / -1 支出）；
+  //       提现「申请即冻结」也记一条 direction=-1 的流水。
+  const logs = await call('GET', '/leader/balance-logs', { token: lming.token });
+  const lg = logs.body?.data;
+  assert(logs.body?.code === 0 && Number(lg?.total) >= 2, 'L19 余额流水可查', `total=${lg?.total}`);
+
+  const wdLog = (lg?.list ?? []).find((r) => r.type === 'withdraw');
+  const cmLog = (lg?.list ?? []).find((r) => r.type === 'commission');
+  assert(
+    wdLog?.typeText === '提现' &&
+      wdLog?.direction === -1 &&
+      wdLog?.amountFen === 1000 &&
+      wdLog?.balanceAfterFen === 548,
+    'L19 提现冻结流水（方向 -1 / 金额恒正 / 操作后余额 ¥5.48）',
+    `dir=${wdLog?.direction} amount=${wdLog?.amountFen} after=${wdLog?.balanceAfterFen}`,
+  );
+  assert(
+    cmLog?.typeText === '佣金入账' && cmLog?.direction === 1 && cmLog?.amountFen === 1548,
+    'L19 佣金入账流水（方向 1 / ¥15.48 / 中文文案由服务端给）',
+    `dir=${cmLog?.direction} amount=${cmLog?.amountFen} text=${cmLog?.typeText}`,
+  );
+  assert(
+    lg?.summary?.inFen === 1548 && lg?.summary?.outFen === 1000 && lg?.summary?.netFen === 548,
+    'L19 收支汇总与 L11 可用余额相互验算（收 15.48 − 支 10.00 = 5.48）',
+    `in=${lg?.summary?.inFen} out=${lg?.summary?.outFen} net=${lg?.summary?.netFen}`,
+  );
+
+  const onlyComm = await call('GET', '/leader/balance-logs?type=commission', { token: lming.token });
+  const onlyTypes = (onlyComm.body?.data?.list ?? []).map((r) => r.type);
+  assert(
+    onlyComm.body?.code === 0 && onlyTypes.length > 0 && onlyTypes.every((t) => t === 'commission'),
+    'L19 支持按类型过滤（type=commission 只出佣金流水）',
+    `types=${onlyTypes.join(',') || '空'}`,
+  );
+
+  // ---- 4.6 L2 分享物料 / L3 小程序码
+  // 团长 id 以 DB 为准（apply 响应为主，DB 兜底），避免变量缺失时把脚本崩在无关位置
+  const appLeaderId = Number(
+    leader?.id ?? readDb('SELECT id FROM ab_team_leader WHERE user_id = ?', [applicant.userId])?.id,
+  );
+  assert(Number.isInteger(appLeaderId) && appLeaderId > 0, '前置 · 团长 id 可解析', `leaderId=${appLeaderId}`);
+  const share = await call('GET', '/leader/share', { token: applicant.token });
+  const expectCode = `LDR${String(appLeaderId).padStart(4, '0')}`;
+  assert(
+    share.body?.code === 0 && share.body?.data?.inviteCode === expectCode,
+    'L2 邀请码 = LDR + 团长 id（确定性生成，与 U6 leaderCode 对齐）',
+    `inviteCode=${share.body?.data?.inviteCode}`,
+  );
+  assert(!!share.body?.data?.path && !!share.body?.data?.shareQuery, 'L2 分享落地路径与参数串就绪', `${share.body?.data?.path}?${share.body?.data?.shareQuery}`);
+
+  const qr = await call('POST', '/leader/share/qrcode?width=500', { token: applicant.token });
+  assert(
+    qr.body?.code === 0 && qr.body?.data?.width === 500 && qr.body?.data?.scene === `l=${appLeaderId}`,
+    'L3 小程序码参数就绪（scene 携带团长 id）',
+    `scene=${qr.body?.data?.scene} width=${qr.body?.data?.width}`,
+  );
+  assert(
+    qr.body?.data?.mock === true && qr.body?.data?.qrcodeUrl === null,
+    'L3 未接微信能力前如实标记 mock + null（不伪造图片 URL）',
+    `mock=${qr.body?.data?.mock} url=${qr.body?.data?.qrcodeUrl}`,
+  );
+
+  // ---- 4.7 L7 团长代退申请（C6 第一段：资金零变动）
+  const beforeRefund = readDb('SELECT pay_amount, total_amount FROM ab_order WHERE order_no = ?', [orderNo]);
+  const applyRefund = await call('POST', `/orders/${orderNo}/refund-apply`, {
+    token: lming.token,
+    body: { reasonType: 'quality', reason: 'e2e · 菜品有异味', remark: '用户已拍照留证' },
+  });
+  assert(
+    applyRefund.body?.code === 0 && applyRefund.body?.data?.fundsMoved === false,
+    'M2-② 代退申请登记成功，回执明确「资金未动」',
+    `refundNo=${applyRefund.body?.data?.refundNo}`,
+  );
+
+  const refundRow = readDb(
+    'SELECT status, apply_source, amount, team_leader_id, reason, reason_type FROM ab_refund WHERE order_no = ? ORDER BY id DESC LIMIT 1',
+    [orderNo],
+  );
+  assert(
+    refundRow?.status === 'applying',
+    'M2-② ab_refund.status = applying（C6 第一段：只登记）',
+    `status=${refundRow?.status}`,
+  );
+  assert(
+    refundRow?.apply_source === 'leader' && Number(refundRow?.team_leader_id) === 1,
+    'M2-② 代退来源与发起团长落库',
+    `source=${refundRow?.apply_source} leader=${refundRow?.team_leader_id}`,
+  );
+  assert(
+    refundRow?.reason_type === 'quality' && String(refundRow?.reason).includes('拍照留证'),
+    'L7 reason 与 remark 合并入 reason（实体无独立 remark 列）',
+    `reason=${refundRow?.reason}`,
+  );
+
+  const afterRefund = readDb('SELECT status, pay_amount, total_amount FROM ab_order WHERE order_no = ?', [orderNo]);
+  assert(
+    afterRefund?.status === 'refund_applying',
+    'M2-② 订单进入 refund_applying',
+    `status=${afterRefund?.status}`,
+  );
+  assert(
+    Number(afterRefund?.pay_amount) === Number(beforeRefund?.pay_amount) &&
+      Number(afterRefund?.total_amount) === Number(beforeRefund?.total_amount),
+    'M2-② 资金零变动（订单金额未被改写、未触发退款）',
+    `pay=${afterRefund?.pay_amount}（原 ${beforeRefund?.pay_amount}）`,
+  );
+
+  const dupRefund = await call('POST', `/orders/${orderNo}/refund-apply`, {
+    token: lming.token,
+    body: { reasonType: 'other' },
+  });
+  assert(dupRefund.body?.code === 40008, 'M2-② 重复代退 → 40008（不产生第二张退款单）', `code=${dupRefund.body?.code}`);
+
+  const crossRefund = await call('POST', `/orders/${orderNo}/refund-apply`, {
+    token: zhang.token,
+    body: { reasonType: 'other' },
+  });
+  assert(
+    crossRefund.body?.code === 10003,
+    'L7 跨楼代退被拒 → 10003（越权防护先于状态判定）',
+    `code=${crossRefund.body?.code}`,
   );
 
   // ==========================================================================

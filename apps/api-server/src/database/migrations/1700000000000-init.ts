@@ -59,6 +59,9 @@ const TABLES: string[] = [
     \`withdrawn_amount\` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     \`pending_amount\` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     \`balance\` DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '可用余额',
+    \`payout_type\` VARCHAR(16) DEFAULT NULL COMMENT 'bank/alipay（2026-09-15 补 · L12 40007 绑定态载体）',
+    \`payout_account\` VARCHAR(64) DEFAULT NULL COMMENT '收款账号（脱敏）',
+    \`payout_name\` VARCHAR(32) DEFAULT NULL COMMENT '收款人姓名',
     \`status\` TINYINT NOT NULL DEFAULT 1 COMMENT '1在职 2停职',
     \`agreed_at\` DATETIME(3) DEFAULT NULL COMMENT '勾选协议时间（C3 提交即生效）',
     \`agree_version\` VARCHAR(16) DEFAULT NULL,
@@ -112,6 +115,29 @@ const TABLES: string[] = [
     PRIMARY KEY (\`id\`), UNIQUE KEY \`uk_invite_invitee\` (\`invitee_user_id\`),
     KEY \`idx_invite_inviter\` (\`inviter_leader_id\`,\`is_formal\`), KEY \`idx_invite_formal_at\` (\`formal_at\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='团长推荐关系（C2 晋级审计）'`,
+
+  `CREATE TABLE IF NOT EXISTS \`ab_withdraw\` (
+    \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    \`withdraw_no\` VARCHAR(32) NOT NULL COMMENT '提现单号 WD+yyyyMMdd+8位',
+    \`leader_id\` BIGINT UNSIGNED NOT NULL, \`user_id\` BIGINT UNSIGNED NOT NULL,
+    \`amount\` DECIMAL(12,2) NOT NULL COMMENT '申请金额（元）',
+    \`tax_withheld_amount\` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '平台代扣个税（C11）',
+    \`actual_amount\` DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '实际到账 = amount - tax',
+    \`payout_channel\` VARCHAR(16) NOT NULL DEFAULT 'FLEX_MANUAL' COMMENT 'FLEX_MANUAL/FLEX_API',
+    \`payout_batch_no\` VARCHAR(32) DEFAULT NULL COMMENT '出款批次号（人工登记）',
+    \`receive_type\` VARCHAR(16) NOT NULL DEFAULT 'bank', \`receive_account\` VARCHAR(64) NOT NULL,
+    \`receive_name\` VARCHAR(32) NOT NULL,
+    \`status\` VARCHAR(16) NOT NULL DEFAULT 'pending'
+      COMMENT 'pending待审批/approved已批准/paying打款中/success已到账/rejected已驳回/failed打款失败',
+    \`auditor_id\` BIGINT UNSIGNED DEFAULT NULL, \`audit_at\` DATETIME(3) DEFAULT NULL,
+    \`audit_remark\` VARCHAR(256) DEFAULT NULL, \`fail_reason\` VARCHAR(256) DEFAULT NULL,
+    \`paid_at\` DATETIME(3) DEFAULT NULL,
+    \`version\` INT UNSIGNED NOT NULL DEFAULT 0,
+    \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    \`updated_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (\`id\`), UNIQUE KEY \`uk_withdraw_no\` (\`withdraw_no\`),
+    KEY \`idx_withdraw_leader_time\` (\`leader_id\`,\`created_at\`), KEY \`idx_withdraw_status\` (\`status\`,\`created_at\`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='提现申请单（2026-09-15 补 · C11 出款口径）'`,
 
   `CREATE TABLE IF NOT EXISTS \`ab_supplier\` (
     \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -380,6 +406,7 @@ const TABLE_NAMES = [
   'ab_config',
   'ab_operation_log',
   'ab_admin_user',
+  'ab_withdraw',
   'ab_distribution_center',
   'ab_balance_log',
   'ab_balance',

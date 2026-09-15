@@ -17,6 +17,7 @@ const PREFIX = {
   ORDER: 'AB',
   REFUND: 'RF',
   SHARE: 'SH',
+  WITHDRAW: 'WD',
 } as const;
 
 type NoKind = keyof typeof PREFIX;
@@ -35,6 +36,9 @@ export const genRefundNo = (at?: Date): string => generate('REFUND', at);
 
 /** 应付结算单号：SH + yyyyMMdd + 8 位随机 */
 export const genShareNo = (at?: Date): string => generate('SHARE', at);
+
+/** 提现单号：WD + yyyyMMdd + 8 位随机（`ab_withdraw.withdraw_no`） */
+export const genWithdrawNo = (at?: Date): string => generate('WITHDRAW', at);
 
 /** 订单号格式校验（入参兜底，避免脏 orderNo 打到 DB） */
 export const isOrderNo = (v: string): boolean => /^AB\d{16}$/.test(v);

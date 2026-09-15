@@ -6,6 +6,7 @@ import { LEADER_LEVEL_META, LeaderLevel, LeaderStatus } from '@abox/shared-types
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
+import { maskAccount } from '../../common/utils/crypto';
 import { Building } from '../../database/entities/building.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { User } from '../../database/entities/user.entity';
@@ -134,6 +135,13 @@ export class TeamLeaderService {
       leader.floor = dto.floor || null;
     }
 
+    // 收款方式（L12 提现前置条件；账号一律脱敏存储）
+    if (dto.payoutType !== undefined) leader.payoutType = dto.payoutType || null;
+    if (dto.payoutAccount !== undefined) {
+      leader.payoutAccount = dto.payoutAccount ? maskAccount(dto.payoutAccount) : null;
+    }
+    if (dto.payoutName !== undefined) leader.payoutName = dto.payoutName || null;
+
     const saved = await this.leaderRepo.save(leader);
     return this.toProfile(saved);
   }
@@ -214,6 +222,11 @@ export class TeamLeaderService {
       totalCommission: leader.totalCommission,
       agreedAt: leader.agreedAt ?? null,
       agreeVersion: leader.agreeVersion ?? null,
+      /** 收款方式（提现前置条件 · L12 未绑定即 40007） */
+      payoutType: leader.payoutType ?? null,
+      payoutAccount: leader.payoutAccount ?? null,
+      payoutName: leader.payoutName ?? null,
+      payoutBound: Boolean(leader.payoutType && leader.payoutAccount && leader.payoutName),
     };
   }
 }

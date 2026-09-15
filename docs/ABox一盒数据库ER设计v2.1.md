@@ -26,7 +26,7 @@
 | `ab_company` | 简化模型，普通用户无需选公司 |
 | `ab_floor_leader` | **无楼长角色**，团长兼任取餐分发 |
 
-### 1.2 新增的表（7 张）
+### 1.2 新增的表（8 张）
 
 | 表名 | 用途 |
 | --- | --- |
@@ -37,6 +37,7 @@
 | `ab_supplier_dish_daily` | 供应商-菜品-日期对应（每日生产哪道菜） |
 | `ab_delivery_record` | 货拉拉送达记录（轻量） |
 | `ab_distribution_center` | 集散中心配置（C4 · 表驱动，默认 4 个，可增删） |
+| `ab_withdraw` | **提现申请单**（2026-09-15 补 · C11：出款走灵活用工代发代扣，须独立单承载提现单号 / 审批 / 打款状态） |
 
 ### 1.3 修改的表（7 张）
 
@@ -46,12 +47,13 @@
 | `ab_set_meal` | 删除 `uk_set_meal_date`（同一天可以有多个套餐分配给不同楼群） |
 | `ab_set_meal_item` | `supplier_id` 不再唯一约束（可重复，前期一人多菜） |
 | `ab_supplier` | 增加 `type` 字段（出餐型/集散型/混合型） |
-| `ab_team_leader` | 增加 `balance` 字段（余额账户）；`level` 等级字段（C2）；`signed_at` 改为 `agreed_at` 勾选协议（C3） |
+| `ab_team_leader` | 增加 `balance` 字段（余额账户）；`level` 等级字段（C2）；`signed_at` 改为 `agreed_at` 勾选协议（C3）；**增加 `floor` 楼层维度（2026-09-15 裁定② 恢复）**；**增加收款方式三字段 `payout_type` / `payout_account`（脱敏存储）/ `payout_name`（C11 · 提现前置条件，2026-09-15 补）** |
 | `ab_refund` | 增加代退三段式字段：`apply_source`、`apply_reason`、`apply_by_leader_id`、`approve_admin_id`、`approve_at`（C6） |
+| `ab_balance_log` | **增加出款字段 `payout_channel` / `payout_batch_no` / `tax_withheld_amount`（P2-5 · C11，2026-09-15 补）** |
 
 ---
 
-## 二、ER 总览（23 张表）
+## 二、ER 总览（24 张表 · 2026-09-15 增补 `ab_withdraw`）
 
 ```
                               ┌──────────────────┐
@@ -204,6 +206,9 @@ CREATE TABLE `ab_balance_log` (
   `balance_after` DECIMAL(12,2) NOT NULL COMMENT '操作后余额',
   `related_id`    VARCHAR(64) DEFAULT NULL COMMENT '关联订单ID/佣金ID',
   `remark`        VARCHAR(256) DEFAULT NULL,
+  `payout_channel`      VARCHAR(16) DEFAULT NULL COMMENT '出款通道（C11 · FLEX_MANUAL/FLEX_API）',
+  `payout_batch_no`     VARCHAR(32) DEFAULT NULL COMMENT '灵活用工出款批次号',
+  `tax_withheld_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '代扣个税（灵活用工回传）',
   `created_at`    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   KEY `idx_balance_log_user_time` (`user_id`, `created_at`),
@@ -211,7 +216,51 @@ CREATE TABLE `ab_balance_log` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='余额变动流水';
 ```
 
-### 3.5 `ab_supplier_dish_daily` 供应商-菜品-日对应
+### 3.5 `ab_withdraw` 提现申请单（C11 · 2026-09-15 补）⭐
+
+> **为何必须独立成表**：余额流水（`ab_balance_log`）只记「发生额」，无法承载提现单的
+> **审批状态机**（待审批 → 已批准 → 打款中 → 已到账 / 已驳回 / 打款失败）、
+> 审批人与驳回原因、以及灵活用工出款批次号。L12 / L13 与后台 D45 / D46 均依赖本表。
+
+```sql
+CREATE TABLE `ab_withdraw` (
+  `id`                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `withdraw_no`         VARCHAR(32) NOT NULL COMMENT '提现单号 WD+yyyyMMdd+8位',
+  `leader_id`           BIGINT UNSIGNED NOT NULL,
+  `user_id`             BIGINT UNSIGNED NOT NULL,
+  `amount`              DECIMAL(12,2) NOT NULL COMMENT '申请金额（元）',
+  `tax_withheld_amount` DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '平台代扣个税（C11）',
+  `actual_amount`       DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '实际到账 = amount - tax',
+  `payout_channel`      VARCHAR(16) NOT NULL DEFAULT 'FLEX_MANUAL' COMMENT 'FLEX_MANUAL/FLEX_API',
+  `payout_batch_no`     VARCHAR(32) DEFAULT NULL COMMENT '出款批次号（人工登记）',
+  `receive_type`        VARCHAR(16) NOT NULL DEFAULT 'bank',
+  `receive_account`     VARCHAR(64) NOT NULL COMMENT '收款账号（脱敏存储）',
+  `receive_name`        VARCHAR(32) NOT NULL,
+  `status`              VARCHAR(16) NOT NULL DEFAULT 'pending'
+                        COMMENT 'pending待审批/approved已批准/paying打款中/success已到账/rejected已驳回/failed打款失败',
+  `auditor_id`          BIGINT UNSIGNED DEFAULT NULL,
+  `audit_at`            DATETIME(3) DEFAULT NULL,
+  `audit_remark`        VARCHAR(256) DEFAULT NULL,
+  `fail_reason`         VARCHAR(256) DEFAULT NULL,
+  `paid_at`             DATETIME(3) DEFAULT NULL,
+  `version`             INT UNSIGNED NOT NULL DEFAULT 0,
+  `created_at`          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at`          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_withdraw_no` (`withdraw_no`),
+  KEY `idx_withdraw_leader_time` (`leader_id`, `created_at`),
+  KEY `idx_withdraw_status` (`status`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='提现申请单（C11 出款口径：灵活用工代发代扣）';
+```
+
+> **口径要点**
+> - **冻结时机**：L12 提交即冻结（`ab_balance.balance ↓` / `frozen ↑`），终态才释放；
+>   与此同时写一条 `ab_balance_log(type='withdraw', direction=-1)`，故 L19 流水与 L11 余额可相互验算。
+> - **`amount` 单位是「元」**（与其余接口出参「整数分」不同），端上提交前须转换。
+> - **不接微信「商家转账到零钱」**：一期人工对公/代发（`FLEX_MANUAL`），二期切 `FLEX_API`。
+> - 供应商 / 集散应付**不走本表**（属 `ab_supplier_share`，人工对公转账 + 回单号）。
+
+### 3.6 `ab_supplier_dish_daily` 供应商-菜品-日对应
 
 ```sql
 CREATE TABLE `ab_supplier_dish_daily` (
@@ -234,7 +283,7 @@ CREATE TABLE `ab_supplier_dish_daily` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='供应商每日生产哪道菜（前期动态/后期稳定）';
 ```
 
-### 3.6 `ab_delivery_record` 货拉拉送达记录
+### 3.7 `ab_delivery_record` 货拉拉送达记录
 
 ```sql
 CREATE TABLE `ab_delivery_record` (
@@ -258,7 +307,7 @@ CREATE TABLE `ab_delivery_record` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='货拉拉送达记录';
 ```
 
-### 3.7 `ab_distribution_center` 集散中心配置表（C4 · 新增）⭐
+### 3.8 `ab_distribution_center` 集散中心配置表（C4 · 新增）⭐
 
 ```sql
 CREATE TABLE `ab_distribution_center` (
@@ -499,6 +548,9 @@ PARTITION BY RANGE (TO_DAYS(`created_at`)) (
 | `ab_balance_log` | `idx_balance_log_user_time` (user_id, created_at) | 用户余额流水 |
 | `ab_supplier_dish_daily` | `uk_supplier_dish_date` (supplier_id, dish_id, produce_date) | 供应商日菜品去重 |
 | `ab_delivery_record` | `uk_delivery_date_group` (meal_date, building_group_id) | 一日一楼群一次配送 |
+| `ab_withdraw` | `uk_withdraw_no` (withdraw_no) | 提现单号唯一（`WD`+yyyyMMdd+8 位） |
+| `ab_withdraw` | `idx_withdraw_leader_time` (leader_id, created_at) | 团长提现记录（L13 列表） |
+| `ab_withdraw` | `idx_withdraw_status` (status, created_at) | 后台审批队列（D45） |
 
 ---
 
@@ -571,20 +623,23 @@ INSERT INTO ab_distribution_center (name, supplier_id, address, contact_name, co
 
 | 类别 | 数量 |
 | --- | --- |
-| 用户与角色域 | 3（user、team_leader、building） |
+| 用户与角色域 | 4（user、team_leader、building、leader_invite） |
 | 楼群域 | 1（building_group） |
 | 商家域 | 2（supplier、dish） |
 | 套餐域 | 3（set_meal、set_meal_item、meal_assignment） |
 | 供应商生产域 | 1（supplier_dish_daily） |
 | 订单与支付域 | 4（order、payment_log、refund、delivery_record） |
-| 财务域 | 4（commission、supplier_share、balance、balance_log） |
+| 财务域 | 5（commission、supplier_share、balance、balance_log、withdraw） |
 | 集散中心域 | 1（distribution_center） |
 | 系统域 | 4（admin_user、operation_log、config、message） |
-| **合计** | **23 张表** |
+| **合计** | **25 张表** |
 
-> 张数说明：较 v1.0 删除 3 张（address / company / floor_leader）、新增 7 张、修改 7 张、沿用 9 张。
-> ⚠️ 阶段二将补 `ab_leader_invite`（支撑 C2 晋级审计），届时合计为 **24 张表**。
+> 张数说明：较 v1.0 删除 3 张（address / company / floor_leader）、新增 8 张、修改 8 张、沿用 9 张。
+> ⚠️ 阶段二已补 `ab_leader_invite`（支撑 C2 晋级审计）与 `ab_withdraw`（C11 提现单），
+> **合计 25 张表** —— 与 `apps/api-server/src/database/entities/index.ts` 的 `ALL_ENTITIES` 逐张对齐，
+> 并由 `tests/baseline_manifest.py` 在门禁中校验。
 
 ---
 
 *文档结束 · ABox 一盒 · ER v2.1（回填 C2/C3/C4/C6/C9；阶段一基线一致性修补）· 2026-09-14*
+*2026-09-15 增补：`ab_withdraw` 提现申请单（C11）· `ab_balance_log` 出款字段 · `ab_team_leader` 收款方式三字段 + `floor` 恢复*

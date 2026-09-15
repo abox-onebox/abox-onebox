@@ -132,6 +132,43 @@ export class TeamLeader {
   })
   balance!: string;
 
+  /**
+   * ---- 收款方式（2026-09-15 补）----
+   *
+   * 为何必须落库：L12 提现的错误码 `40007 PAYOUT_NOT_BOUND`（未绑定收款方式）
+   * 需要「绑定态」这一概念 —— 只有一张 `ab_withdraw` 提现单表无法表达
+   * 「此人是否已绑卡」，首次提现将永远拿不到绑定入口而 40007 死锁。
+   *
+   * 口径：一期 `FLEX_MANUAL`（人工）下，本组字段是运营对公/对私转账的依据；
+   *   二期接灵活用工 API 后，以平台侧绑卡为准，本组字段退化为**快照**。
+   */
+  @Column({
+    name: 'payout_type',
+    type: 'varchar',
+    length: 16,
+    nullable: true,
+    comment: 'bank 银行卡 / alipay 支付宝',
+  })
+  payoutType?: string | null;
+
+  @Column({
+    name: 'payout_account',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+    comment: '收款账号（脱敏存储）',
+  })
+  payoutAccount?: string | null;
+
+  @Column({
+    name: 'payout_name',
+    type: 'varchar',
+    length: 32,
+    nullable: true,
+    comment: '收款人姓名',
+  })
+  payoutName?: string | null;
+
   @Column({ type: 'tinyint', default: 1, comment: '1在职 2停职' })
   status!: number;
 

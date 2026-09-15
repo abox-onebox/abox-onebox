@@ -1,6 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
+
+import { ReceiveType } from '@abox/shared-types';
 
 /**
  * 团长端 DTO（《接口规范》§4.5）
@@ -64,7 +76,12 @@ export class LeaderAgreementReqDto {
   agreementVersion!: string;
 }
 
-/** L15 · 修改团长资料（仅手机号 / 楼层；办公楼变更需后台审核，本期不开放） */
+/**
+ * L15 · 修改团长资料（手机号 / 楼层 / 收款方式；办公楼变更需后台审核，本期不开放）
+ *
+ * ⚠️ 收款方式三字段是 **L12 提现的前置条件** —— 未绑定即提现返回 `40007`。
+ *    落库时账号**脱敏存储**（`ab_team_leader.payout_account`）。
+ */
 export class UpdateLeaderProfileReqDto {
   @ApiPropertyOptional({
     description: '手机号（变更时查重，冲突返回 20004）',
@@ -79,4 +96,25 @@ export class UpdateLeaderProfileReqDto {
   @IsString()
   @MaxLength(32)
   floor?: string;
+
+  @ApiPropertyOptional({
+    description: '收款方式：bank 银行卡 / alipay 支付宝（提现前置条件）',
+    enum: ReceiveType,
+  })
+  @IsOptional()
+  @IsIn(Object.values(ReceiveType), { message: '收款方式需为 bank 或 alipay' })
+  payoutType?: string;
+
+  @ApiPropertyOptional({ description: '收款账号（落库脱敏）', example: '6222021234567890123' })
+  @IsOptional()
+  @IsString()
+  @MinLength(4, { message: '收款账号过短' })
+  @MaxLength(64)
+  payoutAccount?: string;
+
+  @ApiPropertyOptional({ description: '收款人姓名', example: '李明' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  payoutName?: string;
 }

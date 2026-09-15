@@ -24,6 +24,7 @@ interface CachedResult {
  *   1. 键不存在       → `setNx` 占位（值 `__pending__`）→ 放行
  *   2. 键 = `__pending__` → 抛 10006「请勿重复提交」（首次仍在处理中）
  *   3. 键 = 首次结果 JSON → 抛 10006 + `data`=首次结果（HTTP 200，端上按成功处理）
+ *   4. 业务抛错         → **删除键** → 同键可立即重试（见下方 `error` 分支说明）
  *
  * 设计取舍：重复命中走 **BizException(DUPLICATE_SUBMIT) + payload**，
  * 由全局异常过滤器统一成 `{ code:10006, data:首次结果 }` —— 与文档契约逐字一致，
@@ -71,16 +72,23 @@ export class IdempotentInterceptor implements NestInterceptor {
         switchMap((acquired) => {
           if (!acquired) return this.replayFirstResult(cacheKey);
           return next.handle().pipe(
-            tap((data) => {
-              const payload: CachedResult = { data: data ?? null, at: Date.now() };
-              void this.kv.set(cacheKey, JSON.stringify(payload), ttl).catch(() => undefined);
+            tap({
+              next: (data) => {
+                const payload: CachedResult = { data: data ?? null, at: Date.now() };
+                void this.kv.set(cacheKey, JSON.stringify(payload), ttl).catch(() => undefined);
+              },
+              error: () => {
+                // ⚠️ 业务失败必须**删除占位键**，否则键会一直停在 `__pending__`，
+                //    同一幂等键在 TTL 内重试会被误判为「请勿重复提交」（10006），
+                //    端上网络重试 / 用户改完再提交就永久卡死。
+                //    删除后：失败可重试，而成功结果仍被缓存（不会把失败固化成「幂等成功」）。
+                void this.kv.del(cacheKey).catch(() => undefined);
+              },
             }),
           );
         }),
       );
     });
-    // 说明：业务抛错时不写结果（键保留为 __pending__，TTL 到期后自然释放），
-    //      从而失败可重试，不会把一次失败永久固化成「幂等成功」。
   }
 
   /**

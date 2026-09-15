@@ -1,18 +1,35 @@
-import { Body, Controller, Get, Param, Post, Query, UseInterceptors } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { HEADER } from '@abox/shared-types';
 
 import { CurrentUser, JwtPayload } from '../../common/decorators/auth.decorator';
+import { CurrentLeader } from '../../common/decorators/leader.decorator';
 import { Idempotent } from '../../common/decorators/idempotent.decorator';
+import { LeaderGuard } from '../../common/guards/leader.guard';
 import { IdempotentInterceptor } from '../../common/interceptors/idempotent.interceptor';
+import { TeamLeader } from '../../database/entities/leader.entity';
+import { RefundApplyReqDto } from '../finance/dto/finance.dto';
+import { RefundService } from '../finance/refund.service';
 import { CreateOrderReqDto, OrderNoParamDto, OrdersQueryDto } from './dto/order.dto';
 import { OrderService } from './order.service';
 
 @ApiTags('订单')
 @Controller('orders')
 export class OrderController {
-  constructor(private readonly orderService: OrderService) {}
+  constructor(
+    private readonly orderService: OrderService,
+    private readonly refundService: RefundService,
+  ) {}
 
   @Post()
   @UseInterceptors(IdempotentInterceptor)
@@ -45,5 +62,24 @@ export class OrderController {
   })
   cancel(@CurrentUser() user: JwtPayload, @Param() p: OrderNoParamDto) {
     return this.orderService.cancel(user.sub, p.orderNo);
+  }
+
+  /**
+   * L7 · 团长代退申请（C6 第一段）
+   *
+   * ⚠️ 路径落在 `/orders/` 域（与用户自助取消同资源），但**鉴权走团长身份**：
+   *    `LeaderGuard` 会在 JWT 之后再查 `ab_team_leader` 确认在职（§1.5），
+   *    并在 service 内校验「订单属于本团长所辖楼栋」防跨楼越权。
+   * ⚠️ 本接口**只登记申请**（`ab_refund.status='applying'`），**资金零变动**。
+   */
+  @Post(':orderNo/refund-apply')
+  @UseGuards(LeaderGuard)
+  @ApiOperation({ summary: 'L7 团长代退申请（C6 第一段：只登记，不退款不回退）' })
+  refundApply(
+    @CurrentLeader() leader: TeamLeader,
+    @Param() p: OrderNoParamDto,
+    @Body() dto: RefundApplyReqDto,
+  ) {
+    return this.refundService.applyByLeader(leader, p.orderNo, dto);
   }
 }
