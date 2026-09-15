@@ -46,13 +46,19 @@ async function bootstrap() {
   const port = cfg.get<number>('app.port') ?? 3000;
   await app.listen(port);
 
-  const d =
-    cfg.get<{ db: string; queue: string; storage: string; providerMode: string }>('app.drivers') ??
-    { db: '?', queue: '?', storage: '?', providerMode: '?' };
+  const d = cfg.get<{ db: string; queue: string; storage: string; providerMode: string }>(
+    'app.drivers',
+  ) ?? { db: '?', queue: '?', storage: '?', providerMode: '?' };
   Logger.log(`API 已启动：http://localhost:${port}${prefix}  Swagger: /docs`, 'Bootstrap');
-  Logger.log(`驱动：db=${d.db} · queue=${d.queue} · storage=${d.storage} · provider=${d.providerMode}`, 'Bootstrap');
+  Logger.log(
+    `驱动：db=${d.db} · queue=${d.queue} · storage=${d.storage} · provider=${d.providerMode}`,
+    'Bootstrap',
+  );
   if (d.providerMode === 'mock') {
-    Logger.warn('当前为 MOCK 模式：登录用 code=dev:1001；支付成功自动回调（可关 MOCK_PAY_AUTO_SUCCESS）', 'Bootstrap');
+    Logger.warn(
+      '当前为 MOCK 模式：登录用 code=dev:1001；支付成功自动回调（可关 MOCK_PAY_AUTO_SUCCESS）',
+      'Bootstrap',
+    );
   }
 }
 

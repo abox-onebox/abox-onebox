@@ -13,25 +13,22 @@ export interface StorageConfig {
   local: { dir: string; publicBase: string };
 }
 
-export default registerAs(
-  'storage',
-  (): StorageConfig => ({
-    driver: (process.env.STORAGE_DRIVER ?? 'local') as StorageConfig['driver'],
-    cos: {
-      secretId: process.env.COS_SECRET_ID ?? '',
-      secretKey: process.env.COS_SECRET_KEY ?? '',
-      bucket: process.env.COS_BUCKET ?? '',
-      region: process.env.COS_REGION ?? 'ap-beijing',
-    },
-    minio: {
-      endpoint: process.env.MINIO_ENDPOINT ?? 'http://127.0.0.1:9000',
-      accessKey: process.env.MINIO_ACCESS_KEY ?? 'abox',
-      secretKey: process.env.MINIO_SECRET_KEY ?? 'abox123456',
-      bucket: process.env.MINIO_BUCKET ?? 'abox-uploads',
-    },
-    local: {
-      dir: process.env.LOCAL_UPLOAD_DIR ?? './data/uploads',
-      publicBase: process.env.LOCAL_UPLOAD_PUBLIC_BASE ?? 'http://localhost:3000/static',
-    },
-  }),
-);
+export default registerAs('storage', (): StorageConfig => ({
+  driver: (process.env.STORAGE_DRIVER ?? 'local') as StorageConfig['driver'],
+  cos: {
+    secretId: process.env.COS_SECRET_ID ?? '',
+    secretKey: process.env.COS_SECRET_KEY ?? '',
+    bucket: process.env.COS_BUCKET ?? '',
+    region: process.env.COS_REGION ?? 'ap-beijing',
+  },
+  minio: {
+    endpoint: process.env.MINIO_ENDPOINT ?? 'http://127.0.0.1:9000',
+    accessKey: process.env.MINIO_ACCESS_KEY ?? 'abox',
+    secretKey: process.env.MINIO_SECRET_KEY ?? 'abox123456',
+    bucket: process.env.MINIO_BUCKET ?? 'abox-uploads',
+  },
+  local: {
+    dir: process.env.LOCAL_UPLOAD_DIR ?? './data/uploads',
+    publicBase: process.env.LOCAL_UPLOAD_PUBLIC_BASE ?? 'http://localhost:3000/static',
+  },
+}));

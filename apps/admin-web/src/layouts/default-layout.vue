@@ -32,7 +32,9 @@ import { useAuthStore } from '@/stores/auth';
 
 const auth = useAuthStore();
 // role=supplier 只渲染供应商菜单（P21–P26）
-const navGroups = computed(() => (auth.role === 'supplier' ? [{ group: '商家', items: SUPPLIER_NAV }] : ADMIN_NAV));
+const navGroups = computed(() =>
+  auth.role === 'supplier' ? [{ group: '商家', items: SUPPLIER_NAV }] : ADMIN_NAV,
+);
 </script>
 
 <style lang="scss" scoped>

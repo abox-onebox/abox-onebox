@@ -27,23 +27,52 @@ export class Commission {
   @Column({ name: 'leader_level', type: 'varchar', length: 16, comment: '结算时等级快照（C2）' })
   leaderLevel!: string;
 
-  @Column({ type: 'decimal', transformer: rateTransformer, precision: 5, scale: 4, comment: '结算时费率快照 0.08/0.09/0.10/0.12' })
+  @Column({
+    type: 'decimal',
+    transformer: rateTransformer,
+    precision: 5,
+    scale: 4,
+    comment: '结算时费率快照 0.08/0.09/0.10/0.12',
+  })
   rate!: string;
 
-  @Column({ name: 'base_amount', type: 'decimal', transformer: moneyTransformer, precision: 10, scale: 2, comment: '计佣基数' })
+  @Column({
+    name: 'base_amount',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 10,
+    scale: 2,
+    comment: '计佣基数',
+  })
   baseAmount!: string;
 
   @Column({ type: 'int', comment: '计入份数（实发）' })
   quantity!: number;
 
-  @Column({ type: 'decimal', transformer: moneyTransformer, precision: 10, scale: 2, comment: '佣金金额（正=入账，负=冲销）' })
+  @Column({
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 10,
+    scale: 2,
+    comment: '佣金金额（正=入账，负=冲销）',
+  })
   amount!: string;
 
-  @Column({ type: 'varchar', length: 16, default: 'normal', comment: 'normal正常/reversal退款冲销（C9）' })
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: 'normal',
+    comment: 'normal正常/reversal退款冲销（C9）',
+  })
   type!: string;
 
   @Index('idx_commission_status')
-  @Column({ type: 'varchar', length: 16, default: 'pending', comment: 'pending待结算/settled已打款/cancelled已冲销' })
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: 'pending',
+    comment: 'pending待结算/settled已打款/cancelled已冲销',
+  })
   status!: string;
 
   @Column({ name: 'settled_at', type: 'datetime', precision: 3, nullable: true })
@@ -62,12 +91,19 @@ export class Commission {
   })
   payoutChannel!: string;
 
-  @Column({ name: 'payout_batch_no', type: 'varchar', length: 32, nullable: true, comment: '出款批次号' })
+  @Column({
+    name: 'payout_batch_no',
+    type: 'varchar',
+    length: 32,
+    nullable: true,
+    comment: '出款批次号',
+  })
   payoutBatchNo?: string | null;
 
   @Column({
     name: 'tax_withheld_amount',
-    type: 'decimal', transformer: moneyTransformer,
+    type: 'decimal',
+    transformer: moneyTransformer,
     precision: 10,
     scale: 2,
     default: 0,
@@ -118,22 +154,51 @@ export class SupplierShare {
   })
   payeeType!: string;
 
-  @Column({ name: 'payee_id', type: 'bigint', transformer: bigintTransformer, comment: '供应商或集散中心 id' })
+  @Column({
+    name: 'payee_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    comment: '供应商或集散中心 id',
+  })
   payeeId!: number;
 
-  @Column({ name: 'dish_id', type: 'bigint', transformer: bigintTransformer, nullable: true, comment: '菜品（供应商分账按菜品计）' })
+  @Column({
+    name: 'dish_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+    comment: '菜品（供应商分账按菜品计）',
+  })
   dishId?: number | null;
 
   @Column({ type: 'int', comment: '份数' })
   quantity!: number;
 
-  @Column({ name: 'unit_price', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '单位结算金额（按菜品协商价 / 场地费 / 打包人工 / 配送费分项落库）' })
+  @Column({
+    name: 'unit_price',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 8,
+    scale: 2,
+    comment: '单位结算金额（按菜品协商价 / 场地费 / 打包人工 / 配送费分项落库）',
+  })
   unitPrice!: string;
 
-  @Column({ type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2, comment: '分账金额（正=分账，负=反向冲销）' })
+  @Column({
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 12,
+    scale: 2,
+    comment: '分账金额（正=分账，负=反向冲销）',
+  })
   amount!: string;
 
-  @Column({ type: 'varchar', length: 16, default: 'normal', comment: 'normal正常/reversal反向冲销（C9）' })
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: 'normal',
+    comment: 'normal正常/reversal反向冲销（C9）',
+  })
   type!: string;
 
   @Column({
@@ -144,10 +209,22 @@ export class SupplierShare {
   })
   channel!: string;
 
-  @Column({ name: 'payment_voucher_no', type: 'varchar', length: 64, nullable: true, comment: '付款凭证号（银行回单号）' })
+  @Column({
+    name: 'payment_voucher_no',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+    comment: '付款凭证号（银行回单号）',
+  })
   paymentVoucherNo?: string | null;
 
-  @Column({ name: 'invoice_no', type: 'varchar', length: 64, nullable: true, comment: '供应商发票号（税前扣除凭证）' })
+  @Column({
+    name: 'invoice_no',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+    comment: '供应商发票号（税前扣除凭证）',
+  })
   invoiceNo?: string | null;
 
   @Column({
@@ -164,10 +241,22 @@ export class SupplierShare {
   @Column({ name: 'settled_at', type: 'datetime', precision: 3, nullable: true, comment: '结算日' })
   settledAt?: Date | null;
 
-  @Column({ name: 'paid_at', type: 'datetime', precision: 3, nullable: true, comment: '实际付款日（人工转账完成）' })
+  @Column({
+    name: 'paid_at',
+    type: 'datetime',
+    precision: 3,
+    nullable: true,
+    comment: '实际付款日（人工转账完成）',
+  })
   paidAt?: Date | null;
 
-  @Column({ name: 'origin_id', type: 'bigint', transformer: bigintTransformer, nullable: true, comment: '反向冲销时指向原分账记录' })
+  @Column({
+    name: 'origin_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+    comment: '反向冲销时指向原分账记录',
+  })
   originId?: number | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
@@ -187,16 +276,46 @@ export class Balance {
   @Column({ name: 'user_id', type: 'bigint', transformer: bigintTransformer })
   userId!: number;
 
-  @Column({ type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2, default: 0, comment: '可用余额' })
+  @Column({
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 12,
+    scale: 2,
+    default: 0,
+    comment: '可用余额',
+  })
   balance!: string;
 
-  @Column({ type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2, default: 0, comment: '冻结金额' })
+  @Column({
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 12,
+    scale: 2,
+    default: 0,
+    comment: '冻结金额',
+  })
   frozen!: string;
 
-  @Column({ name: 'total_in', type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2, default: 0, comment: '累计收入' })
+  @Column({
+    name: 'total_in',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 12,
+    scale: 2,
+    default: 0,
+    comment: '累计收入',
+  })
   totalIn!: string;
 
-  @Column({ name: 'total_out', type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2, default: 0, comment: '累计支出' })
+  @Column({
+    name: 'total_out',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 12,
+    scale: 2,
+    default: 0,
+    comment: '累计支出',
+  })
   totalOut!: string;
 
   @Column({ type: 'int', default: 0 })
@@ -233,7 +352,14 @@ export class BalanceLog {
   @Column({ type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2 })
   amount!: string;
 
-  @Column({ name: 'balance_after', type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2, comment: '操作后余额' })
+  @Column({
+    name: 'balance_after',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 12,
+    scale: 2,
+    comment: '操作后余额',
+  })
   balanceAfter!: string;
 
   @Column({ name: 'related_id', type: 'varchar', length: 64, nullable: true })
@@ -249,7 +375,15 @@ export class BalanceLog {
   @Column({ name: 'payout_batch_no', type: 'varchar', length: 32, nullable: true })
   payoutBatchNo?: string | null;
 
-  @Column({ name: 'tax_withheld_amount', type: 'decimal', transformer: moneyTransformer, precision: 10, scale: 2, default: 0, comment: '代扣个税' })
+  @Column({
+    name: 'tax_withheld_amount',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 10,
+    scale: 2,
+    default: 0,
+    comment: '代扣个税',
+  })
   taxWithheldAmount!: string;
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
@@ -271,7 +405,12 @@ export class DistributionCenter {
   name!: string;
 
   @Index('idx_dc_supplier')
-  @Column({ name: 'supplier_id', type: 'bigint', transformer: bigintTransformer, comment: '关联供应商（集散中心=某供应商，可同时出餐）' })
+  @Column({
+    name: 'supplier_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    comment: '关联供应商（集散中心=某供应商，可同时出餐）',
+  })
   supplierId!: number;
 
   @Column({ type: 'varchar', length: 256, comment: '场地地址（集散中心复用合作供应商场地）' })
@@ -283,10 +422,26 @@ export class DistributionCenter {
   @Column({ name: 'contact_phone', type: 'varchar', length: 20, nullable: true })
   contactPhone?: string | null;
 
-  @Column({ name: 'rice_fee', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, default: 0, comment: '米饭费用（C9 修订：默认并入供应商供价，本项默认 0，按实际登记）' })
+  @Column({
+    name: 'rice_fee',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 8,
+    scale: 2,
+    default: 0,
+    comment: '米饭费用（C9 修订：默认并入供应商供价，本项默认 0，按实际登记）',
+  })
   riceFee!: string;
 
-  @Column({ name: 'pack_fee', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, default: 0, comment: '打包费用（C9 修订：改由平台兼职打包承担，本项默认 0，按实际登记）' })
+  @Column({
+    name: 'pack_fee',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 8,
+    scale: 2,
+    default: 0,
+    comment: '打包费用（C9 修订：改由平台兼职打包承担，本项默认 0，按实际登记）',
+  })
   packFee!: string;
 
   @Column({ name: 'service_groups', type: 'json', nullable: true, comment: '服务的楼群 id 列表' })

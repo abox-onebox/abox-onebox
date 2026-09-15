@@ -29,33 +29,30 @@ export interface WechatConfig {
   subscribe: { templates: Record<string, string> };
 }
 
-export default registerAs(
-  'wechat',
-  (): WechatConfig => ({
-    mini: {
-      appId: process.env.WX_MINI_APPID ?? '',
-      appSecret: process.env.WX_MINI_SECRET ?? '',
+export default registerAs('wechat', (): WechatConfig => ({
+  mini: {
+    appId: process.env.WX_MINI_APPID ?? '',
+    appSecret: process.env.WX_MINI_SECRET ?? '',
+  },
+  pay: {
+    mchId: process.env.WXPAY_MCH_ID ?? '',
+    apiV3Key: process.env.WXPAY_API_V3_KEY ?? '',
+    serialNo: process.env.WXPAY_SERIAL_NO ?? '',
+    privateKeyPath: process.env.WXPAY_PRIVATE_KEY_PATH ?? '',
+    notifyUrl: process.env.WXPAY_NOTIFY_URL ?? '',
+  },
+  flex: {
+    name: process.env.FLEX_PLATFORM_NAME ?? '',
+    appId: process.env.FLEX_PLATFORM_APP_ID ?? '',
+    appSecret: process.env.FLEX_PLATFORM_APP_SECRET ?? '',
+    apiBase: process.env.FLEX_PLATFORM_API_BASE ?? '',
+    serviceFeeRate: Number(process.env.FLEX_PLATFORM_SERVICE_FEE_RATE ?? 0),
+  },
+  subscribe: {
+    templates: {
+      mealPublished: process.env.WX_TPL_MEAL_PUBLISHED ?? '',
+      deliveryArrived: process.env.WX_TPL_DELIVERY_ARRIVED ?? '',
+      commissionSettled: process.env.WX_TPL_COMMISSION_SETTLED ?? '',
     },
-    pay: {
-      mchId: process.env.WXPAY_MCH_ID ?? '',
-      apiV3Key: process.env.WXPAY_API_V3_KEY ?? '',
-      serialNo: process.env.WXPAY_SERIAL_NO ?? '',
-      privateKeyPath: process.env.WXPAY_PRIVATE_KEY_PATH ?? '',
-      notifyUrl: process.env.WXPAY_NOTIFY_URL ?? '',
-    },
-    flex: {
-      name: process.env.FLEX_PLATFORM_NAME ?? '',
-      appId: process.env.FLEX_PLATFORM_APP_ID ?? '',
-      appSecret: process.env.FLEX_PLATFORM_APP_SECRET ?? '',
-      apiBase: process.env.FLEX_PLATFORM_API_BASE ?? '',
-      serviceFeeRate: Number(process.env.FLEX_PLATFORM_SERVICE_FEE_RATE ?? 0),
-    },
-    subscribe: {
-      templates: {
-        mealPublished: process.env.WX_TPL_MEAL_PUBLISHED ?? '',
-        deliveryArrived: process.env.WX_TPL_DELIVERY_ARRIVED ?? '',
-        commissionSettled: process.env.WX_TPL_COMMISSION_SETTLED ?? '',
-      },
-    },
-  }),
-);
+  },
+}));

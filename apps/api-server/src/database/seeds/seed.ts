@@ -98,13 +98,33 @@ async function main(): Promise<void> {
       ['commission.payout_channel', 'FLEX_MANUAL', '出款通道（C11：灵活用工平台人工通道）'],
       ['distribution_center.default_count', '4', '集散中心默认数量（C4 表驱动）'],
       // —— C9 成本项（全部可变，默认 0，按实际登记）——
-      ['settlement.supplier_purchase_price', 'negotiated', '供应商供价来源：与各供应商**逐菜协商**（非固定）'],
+      [
+        'settlement.supplier_purchase_price',
+        'negotiated',
+        '供应商供价来源：与各供应商**逐菜协商**（非固定）',
+      ],
       ['settlement.site_fee', '0.00', '集散/场地费：集散中心**复用合作供应商场地 → 默认 0**'],
-      ['settlement.packing_labor_fee', '0.00', '打包人工：雇佣**兼职**打包（按件/按时/按班次），默认 0'],
+      [
+        'settlement.packing_labor_fee',
+        '0.00',
+        '打包人工：雇佣**兼职**打包（按件/按时/按班次），默认 0',
+      ],
       ['settlement.delivery_fee', '0.00', '配送费：安排**货拉拉**送货（按趟/按路线），默认 0'],
-      ['settlement.gross_profit_policy', 'residual', '平台毛利口径：**结果值** = 售价 − 成本合计 − 佣金'],
-      ['distribution_center.rice_fee', '0.00', '米饭成本（默认并入供应商供价，本项默认 0，按实际登记）'],
-      ['distribution_center.pack_fee', '0.00', '打包费（改由平台兼职打包承担 → packing_labor_fee，本项默认 0）'],
+      [
+        'settlement.gross_profit_policy',
+        'residual',
+        '平台毛利口径：**结果值** = 售价 − 成本合计 − 佣金',
+      ],
+      [
+        'distribution_center.rice_fee',
+        '0.00',
+        '米饭成本（默认并入供应商供价，本项默认 0，按实际登记）',
+      ],
+      [
+        'distribution_center.pack_fee',
+        '0.00',
+        '打包费（改由平台兼职打包承担 → packing_labor_fee，本项默认 0）',
+      ],
       ['order.max_quantity', '20', '单次下单上限'],
       ['supplier.settle_cycle', 'daily', '供应商结算周期（C11：日结，人工对公转账）'],
     ].map(([configKey, configValue, description]) => ({ configKey, configValue, description })),

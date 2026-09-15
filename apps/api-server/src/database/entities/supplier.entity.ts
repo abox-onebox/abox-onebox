@@ -37,7 +37,8 @@ export class Supplier {
 
   @Column({
     name: 'share_rate',
-    type: 'decimal', transformer: rateTransformer,
+    type: 'decimal',
+    transformer: rateTransformer,
     precision: 5,
     scale: 4,
     default: 0,
@@ -45,11 +46,23 @@ export class Supplier {
   })
   shareRate!: string;
 
-  @Column({ name: 'wx_sub_mch_id', type: 'varchar', length: 64, nullable: true, comment: '二期预留' })
+  @Column({
+    name: 'wx_sub_mch_id',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+    comment: '二期预留',
+  })
   wxSubMchId?: string | null;
 
   /** C11：对公账户信息**后置收集**，允许为空，不阻塞开发 */
-  @Column({ name: 'bank_account', type: 'varchar', length: 64, nullable: true, comment: '对公账户（可后置收集）' })
+  @Column({
+    name: 'bank_account',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+    comment: '对公账户（可后置收集）',
+  })
   bankAccount?: string | null;
 
   @Column({ name: 'bank_name', type: 'varchar', length: 64, nullable: true })
@@ -113,13 +126,27 @@ export class Dish {
   @Column({ type: 'varchar', length: 512, nullable: true })
   description?: string | null;
 
-  @Column({ name: 'cost_price', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '菜品供价（C9 修订：与供应商**逐菜协商**，非固定口径）' })
+  @Column({
+    name: 'cost_price',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 8,
+    scale: 2,
+    comment: '菜品供价（C9 修订：与供应商**逐菜协商**，非固定口径）',
+  })
   costPrice!: string;
 
   @Column({ name: 'sale_count', type: 'int', default: 0 })
   saleCount!: number;
 
-  @Column({ type: 'decimal', transformer: moneyTransformer, precision: 3, scale: 2, default: 0, comment: '评分' })
+  @Column({
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 3,
+    scale: 2,
+    default: 0,
+    comment: '评分',
+  })
   rating!: string;
 
   @Column({ type: 'tinyint', default: 1, comment: '1上架 0下架' })
@@ -161,7 +188,14 @@ export class SupplierDishDaily {
   @Column({ name: 'actual_quantity', type: 'int', nullable: true })
   actualQuantity?: number | null;
 
-  @Column({ name: 'unit_price', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '分账单价' })
+  @Column({
+    name: 'unit_price',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 8,
+    scale: 2,
+    comment: '分账单价',
+  })
   unitPrice!: string;
 
   @Column({ type: 'varchar', length: 16, default: 'pending', comment: 'pending/cooking/done' })

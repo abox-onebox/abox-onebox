@@ -12,7 +12,12 @@ export class Order {
   id!: number;
 
   @Index('uk_order_no', { unique: true })
-  @Column({ name: 'order_no', type: 'varchar', length: 32, comment: '业务订单号（应用层保证全局唯一）' })
+  @Column({
+    name: 'order_no',
+    type: 'varchar',
+    length: 32,
+    comment: '业务订单号（应用层保证全局唯一）',
+  })
   orderNo!: string;
 
   @Index('idx_order_user')
@@ -20,7 +25,12 @@ export class Order {
   userId!: number;
 
   @Index('idx_order_team_leader')
-  @Column({ name: 'team_leader_id', type: 'bigint', transformer: bigintTransformer, nullable: true })
+  @Column({
+    name: 'team_leader_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+  })
   teamLeaderId?: number | null;
 
   @Column({ name: 'building_id', type: 'bigint', transformer: bigintTransformer })
@@ -33,7 +43,12 @@ export class Order {
   setMealId!: number;
 
   @Index('idx_order_assignment')
-  @Column({ name: 'assignment_id', type: 'bigint', transformer: bigintTransformer, comment: '关联套餐分配' })
+  @Column({
+    name: 'assignment_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    comment: '关联套餐分配',
+  })
   assignmentId!: number;
 
   @Index('idx_order_status')
@@ -43,19 +58,54 @@ export class Order {
   @Column({ type: 'int', default: 1 })
   quantity!: number;
 
-  @Column({ name: 'unit_price', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '单价快照 ¥25.80' })
+  @Column({
+    name: 'unit_price',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 8,
+    scale: 2,
+    comment: '单价快照 ¥25.80',
+  })
   unitPrice!: string;
 
-  @Column({ name: 'total_amount', type: 'decimal', transformer: moneyTransformer, precision: 10, scale: 2 })
+  @Column({
+    name: 'total_amount',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 10,
+    scale: 2,
+  })
   totalAmount!: string;
 
-  @Column({ name: 'balance_used', type: 'decimal', transformer: moneyTransformer, precision: 10, scale: 2, default: 0, comment: '余额抵扣' })
+  @Column({
+    name: 'balance_used',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 10,
+    scale: 2,
+    default: 0,
+    comment: '余额抵扣',
+  })
   balanceUsed!: string;
 
-  @Column({ name: 'discount_amount', type: 'decimal', transformer: moneyTransformer, precision: 10, scale: 2, default: 0 })
+  @Column({
+    name: 'discount_amount',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 10,
+    scale: 2,
+    default: 0,
+  })
   discountAmount!: string;
 
-  @Column({ name: 'pay_amount', type: 'decimal', transformer: moneyTransformer, precision: 10, scale: 2, comment: '微信实付' })
+  @Column({
+    name: 'pay_amount',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 10,
+    scale: 2,
+    comment: '微信实付',
+  })
   payAmount!: string;
 
   @Column({ type: 'varchar', length: 256, nullable: true, comment: '备注（过敏等）' })
@@ -103,17 +153,34 @@ export class PaymentLog {
   orderNo!: string;
 
   @Index('idx_payment_transaction')
-  @Column({ name: 'transaction_id', type: 'varchar', length: 64, nullable: true, comment: '微信交易号' })
+  @Column({
+    name: 'transaction_id',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+    comment: '微信交易号',
+  })
   transactionId?: string | null;
 
-  @Column({ name: 'pay_amount', type: 'decimal', transformer: moneyTransformer, precision: 10, scale: 2 })
+  @Column({
+    name: 'pay_amount',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 10,
+    scale: 2,
+  })
   payAmount!: string;
 
   @Column({ name: 'pay_method', type: 'varchar', length: 16, default: 'wxpay_jsapi' })
   payMethod!: string;
 
   @Index('idx_payment_status')
-  @Column({ type: 'varchar', length: 16, default: 'pending', comment: 'pending/success/fail/refunded' })
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: 'pending',
+    comment: 'pending/success/fail/refunded',
+  })
   status!: string;
 
   @Column({ name: 'paid_at', type: 'datetime', precision: 3, nullable: true })
@@ -152,7 +219,13 @@ export class Refund {
   @Column({ name: 'user_id', type: 'bigint', transformer: bigintTransformer })
   userId!: number;
 
-  @Column({ name: 'team_leader_id', type: 'bigint', transformer: bigintTransformer, nullable: true, comment: '发起代退的团长' })
+  @Column({
+    name: 'team_leader_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+    comment: '发起代退的团长',
+  })
   teamLeaderId?: number | null;
 
   @Column({
@@ -164,7 +237,13 @@ export class Refund {
   })
   applySource!: string;
 
-  @Column({ type: 'decimal', transformer: moneyTransformer, precision: 10, scale: 2, comment: '退款金额（原路退用户）' })
+  @Column({
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 10,
+    scale: 2,
+    comment: '退款金额（原路退用户）',
+  })
   amount!: string;
 
   @Column({
@@ -188,7 +267,13 @@ export class Refund {
   })
   status!: string;
 
-  @Column({ name: 'auditor_id', type: 'bigint', transformer: bigintTransformer, nullable: true, comment: '审批人（后台账号）' })
+  @Column({
+    name: 'auditor_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+    comment: '审批人（后台账号）',
+  })
   auditorId?: number | null;
 
   @Column({ name: 'audit_at', type: 'datetime', precision: 3, nullable: true })
@@ -197,7 +282,13 @@ export class Refund {
   @Column({ name: 'audit_remark', type: 'varchar', length: 256, nullable: true })
   auditRemark?: string | null;
 
-  @Column({ name: 'wx_refund_no', type: 'varchar', length: 64, nullable: true, comment: '微信退款单号' })
+  @Column({
+    name: 'wx_refund_no',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+    comment: '微信退款单号',
+  })
   wxRefundNo?: string | null;
 
   @Column({ name: 'refunded_at', type: 'datetime', precision: 3, nullable: true })
@@ -206,7 +297,8 @@ export class Refund {
   @Column({
     type: 'tinyint',
     default: 0,
-    comment: '反向结算是否已执行（C9：按实际供价/场地费/打包人工/配送费 + 佣金反向回退，平台毛利留存）',
+    comment:
+      '反向结算是否已执行（C9：按实际供价/场地费/打包人工/配送费 + 佣金反向回退，平台毛利留存）',
   })
   reversed!: number;
 
@@ -239,10 +331,22 @@ export class DeliveryRecord {
   @Column({ name: 'expected_at', type: 'datetime', precision: 3, comment: '预计送达 11:30' })
   expectedAt!: Date;
 
-  @Column({ name: 'actual_at', type: 'datetime', precision: 3, nullable: true, comment: '实际送达' })
+  @Column({
+    name: 'actual_at',
+    type: 'datetime',
+    precision: 3,
+    nullable: true,
+    comment: '实际送达',
+  })
   actualAt?: Date | null;
 
-  @Column({ name: 'driver_name', type: 'varchar', length: 64, nullable: true, comment: '货拉拉司机' })
+  @Column({
+    name: 'driver_name',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+    comment: '货拉拉司机',
+  })
   driverName?: string | null;
 
   @Column({ name: 'driver_phone', type: 'varchar', length: 20, nullable: true })

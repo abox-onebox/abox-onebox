@@ -37,7 +37,8 @@ export interface AppConfig {
   };
 }
 
-const str = (v: string | undefined, fallback: string): string => (v && v.trim().length ? v.trim() : fallback);
+const str = (v: string | undefined, fallback: string): string =>
+  v && v.trim().length ? v.trim() : fallback;
 const num = (v: string | undefined, fallback: number): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -45,29 +46,26 @@ const num = (v: string | undefined, fallback: number): number => {
 const bool = (v: string | undefined, fallback: boolean): boolean =>
   v === undefined || v === '' ? fallback : v === 'true' || v === '1';
 
-export default registerAs(
-  'app',
-  (): AppConfig => ({
-    env: str(process.env.NODE_ENV, 'development'),
-    port: num(process.env.APP_PORT, 3000),
-    baseUrl: str(process.env.APP_BASE_URL, 'http://localhost:3000'),
-    apiPrefix: str(process.env.API_PREFIX, '/api/v1'),
-    jwtSecret: str(process.env.JWT_SECRET, 'change_me_before_go_live'),
-    jwtExpiresIn: str(process.env.JWT_EXPIRES_IN, '7d'),
-    drivers: {
-      db: str(process.env.DB_DRIVER, 'mysql') as DbDriver,
-      queue: str(process.env.QUEUE_DRIVER, 'redis') as QueueDriver,
-      storage: str(process.env.STORAGE_DRIVER, 'local') as StorageDriver,
-      providerMode: str(process.env.PROVIDER_MODE, 'mock') as ProviderMode,
-    },
-    tasksEnabled: bool(process.env.TASKS_ENABLED, true),
-    mock: {
-      wxOpenidPrefix: str(process.env.MOCK_WX_OPENID_PREFIX, 'mock_openid_'),
-      payAutoSuccess: bool(process.env.MOCK_PAY_AUTO_SUCCESS, true),
-      payCallbackDelayMs: num(process.env.MOCK_PAY_CALLBACK_DELAY_MS, 800),
-    },
-  }),
-);
+export default registerAs('app', (): AppConfig => ({
+  env: str(process.env.NODE_ENV, 'development'),
+  port: num(process.env.APP_PORT, 3000),
+  baseUrl: str(process.env.APP_BASE_URL, 'http://localhost:3000'),
+  apiPrefix: str(process.env.API_PREFIX, '/api/v1'),
+  jwtSecret: str(process.env.JWT_SECRET, 'change_me_before_go_live'),
+  jwtExpiresIn: str(process.env.JWT_EXPIRES_IN, '7d'),
+  drivers: {
+    db: str(process.env.DB_DRIVER, 'mysql') as DbDriver,
+    queue: str(process.env.QUEUE_DRIVER, 'redis') as QueueDriver,
+    storage: str(process.env.STORAGE_DRIVER, 'local') as StorageDriver,
+    providerMode: str(process.env.PROVIDER_MODE, 'mock') as ProviderMode,
+  },
+  tasksEnabled: bool(process.env.TASKS_ENABLED, true),
+  mock: {
+    wxOpenidPrefix: str(process.env.MOCK_WX_OPENID_PREFIX, 'mock_openid_'),
+    payAutoSuccess: bool(process.env.MOCK_PAY_AUTO_SUCCESS, true),
+    payCallbackDelayMs: num(process.env.MOCK_PAY_CALLBACK_DELAY_MS, 800),
+  },
+}));
 
 /** 便利：从 process.env 直接取驱动开关（data-source.ts 等非 DI 场景用） */
 export function readDrivers() {

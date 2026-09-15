@@ -19,10 +19,23 @@ export class SetMeal {
   @Column({ name: 'meal_date', type: 'date', nullable: true, comment: '模板日期（冗余，可空）' })
   mealDate?: string | null;
 
-  @Column({ type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '售价 ¥25.80（C1）' })
+  @Column({
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 8,
+    scale: 2,
+    comment: '售价 ¥25.80（C1）',
+  })
   price!: string;
 
-  @Column({ name: 'cost_price', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, comment: '供价合计（C9 修订：按与各供应商逐菜协商价，非固定）' })
+  @Column({
+    name: 'cost_price',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 8,
+    scale: 2,
+    comment: '供价合计（C9 修订：按与各供应商逐菜协商价，非固定）',
+  })
   costPrice!: string;
 
   @Column({ name: 'cover_url', type: 'varchar', length: 512, nullable: true })
@@ -31,7 +44,13 @@ export class SetMeal {
   @Column({ type: 'varchar', length: 512, nullable: true })
   description?: string | null;
 
-  @Column({ name: 'one_liner', type: 'varchar', length: 128, nullable: true, comment: '一句话介绍' })
+  @Column({
+    name: 'one_liner',
+    type: 'varchar',
+    length: 128,
+    nullable: true,
+    comment: '一句话介绍',
+  })
   oneLiner?: string | null;
 
   @Column({ type: 'tinyint', default: 1, comment: '1启用 0停用（模板库开关 · P1-4）' })
@@ -64,13 +83,25 @@ export class SetMealItem {
   dishId!: number;
 
   @Index('idx_set_meal_item_supplier')
-  @Column({ name: 'supplier_id', type: 'bigint', transformer: bigintTransformer, comment: '可重复（同一供应商可出多菜）' })
+  @Column({
+    name: 'supplier_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    comment: '可重复（同一供应商可出多菜）',
+  })
   supplierId!: number;
 
   @Column({ type: 'tinyint', comment: '档位 1主荤 2半荤 3素菜 4汤 5主食' })
   slot!: number;
 
-  @Column({ name: 'share_amount', type: 'decimal', transformer: moneyTransformer, precision: 8, scale: 2, nullable: true })
+  @Column({
+    name: 'share_amount',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 8,
+    scale: 2,
+    nullable: true,
+  })
   shareAmount?: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
@@ -101,7 +132,8 @@ export class MealAssignment {
   @Index('idx_meal_assignment_dc')
   @Column({
     name: 'distribution_center_id',
-    type: 'bigint', transformer: bigintTransformer,
+    type: 'bigint',
+    transformer: bigintTransformer,
     nullable: true,
     comment: '该楼群的集散中心（关联 ab_distribution_center · C4）',
   })
@@ -110,10 +142,22 @@ export class MealAssignment {
   @Column({ type: 'varchar', length: 16, default: 'pending', comment: 'pending/active/cancelled' })
   status!: string;
 
-  @Column({ name: 'publish_at', type: 'datetime', precision: 3, nullable: true, comment: '实际开放预订时间' })
+  @Column({
+    name: 'publish_at',
+    type: 'datetime',
+    precision: 3,
+    nullable: true,
+    comment: '实际开放预订时间',
+  })
   publishAt?: Date | null;
 
-  @Column({ name: 'cutoff_at', type: 'datetime', precision: 3, nullable: true, comment: '实际截单时间（冗余）' })
+  @Column({
+    name: 'cutoff_at',
+    type: 'datetime',
+    precision: 3,
+    nullable: true,
+    comment: '实际截单时间（冗余）',
+  })
   cutoffAt?: Date | null;
 
   @Column({ name: 'sold_count', type: 'int', default: 0, comment: '已订份数（实时累加）' })

@@ -28,7 +28,13 @@ import { Building, BuildingGroup } from './building.entity';
 import { Supplier, Dish, SupplierDishDaily } from './supplier.entity';
 import { SetMeal, SetMealItem, MealAssignment } from './meal.entity';
 import { Order, PaymentLog, Refund, DeliveryRecord } from './order.entity';
-import { Commission, SupplierShare, Balance, BalanceLog, DistributionCenter } from './finance.entity';
+import {
+  Commission,
+  SupplierShare,
+  Balance,
+  BalanceLog,
+  DistributionCenter,
+} from './finance.entity';
 import { AdminUser, OperationLog, SysConfig, Message } from './system.entity';
 
 /** 全量实体数组（TypeORM 注册用） */

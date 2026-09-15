@@ -20,7 +20,8 @@ export class LocalStorageProvider extends StorageProvider {
     super();
     const raw = this.config.get<string>('storage.local.dir') ?? './data/uploads';
     this.dir = resolve(process.cwd(), '..', '..', raw);
-    const base = this.config.get<string>('storage.local.publicBase') ?? 'http://localhost:3000/static';
+    const base =
+      this.config.get<string>('storage.local.publicBase') ?? 'http://localhost:3000/static';
     this.publicBase = base.replace(/\/+$/, '');
   }
 

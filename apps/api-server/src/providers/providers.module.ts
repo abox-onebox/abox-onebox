@@ -1,7 +1,11 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import { StorageProvider, STORAGE_PROVIDER, PendingCloudStorageProvider } from './storage/storage.provider';
+import {
+  StorageProvider,
+  STORAGE_PROVIDER,
+  PendingCloudStorageProvider,
+} from './storage/storage.provider';
 import { LocalStorageProvider } from './storage/local-storage.provider';
 import { FlexPayoutProvider, FLEX_PAYOUT_PROVIDER } from './flex-payout/flex-payout.provider';
 import { MockFlexPayoutProvider } from './flex-payout/mock-flex-payout.provider';
@@ -11,7 +15,11 @@ import { RealWxMiniProvider } from './wx-mini/real-wx-mini.provider';
 import { WX_PAY_PROVIDER, WxPayProvider } from './wx-pay/wx-pay.provider';
 import { MockWxPayProvider } from './wx-pay/mock-wx-pay.provider';
 import { RealWxPayProvider } from './wx-pay/real-wx-pay.provider';
-import { WX_NOTIFY_PROVIDER, WxNotifyProvider, MockWxNotifyProvider } from './wx-notify/wx-notify.provider';
+import {
+  WX_NOTIFY_PROVIDER,
+  WxNotifyProvider,
+  MockWxNotifyProvider,
+} from './wx-notify/wx-notify.provider';
 
 /**
  * 外部依赖模块（全局）

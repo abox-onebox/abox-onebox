@@ -35,11 +35,23 @@ export class User {
   gender!: number;
 
   @Index('idx_user_building')
-  @Column({ name: 'building_id', type: 'bigint', transformer: bigintTransformer, nullable: true, comment: '跟随团长所属办公楼' })
+  @Column({
+    name: 'building_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+    comment: '跟随团长所属办公楼',
+  })
   buildingId?: number | null;
 
   @Index('idx_user_team_leader')
-  @Column({ name: 'team_leader_id', type: 'bigint', transformer: bigintTransformer, nullable: true, comment: '所属团长' })
+  @Column({
+    name: 'team_leader_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+    comment: '所属团长',
+  })
   teamLeaderId?: number | null;
 
   @Column({ name: 'subscribe_flag', type: 'json', nullable: true })

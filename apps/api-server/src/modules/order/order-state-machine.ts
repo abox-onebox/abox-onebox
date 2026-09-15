@@ -20,10 +20,7 @@ export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
 };
 
 /** 截单后（cut_off 及以后）用户不可自助取消（C6） */
-export const USER_SELF_CANCEL_ALLOWED: OrderStatus[] = [
-  OrderStatus.PENDING_PAY,
-  OrderStatus.PAID,
-];
+export const USER_SELF_CANCEL_ALLOWED: OrderStatus[] = [OrderStatus.PENDING_PAY, OrderStatus.PAID];
 
 export function canTransit(from: OrderStatus, to: OrderStatus): boolean {
   return (ORDER_TRANSITIONS[from] ?? []).includes(to);

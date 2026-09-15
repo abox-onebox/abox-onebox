@@ -16,7 +16,12 @@ export class TeamLeader {
   id!: number;
 
   @Index('uk_team_leader_user', { unique: true })
-  @Column({ name: 'user_id', type: 'bigint', transformer: bigintTransformer, comment: '关联 ab_user.id' })
+  @Column({
+    name: 'user_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    comment: '关联 ab_user.id',
+  })
   userId!: number;
 
   @Index('idx_team_leader_building')
@@ -39,7 +44,8 @@ export class TeamLeader {
 
   @Column({
     name: 'commission_rate',
-    type: 'decimal', transformer: rateTransformer,
+    type: 'decimal',
+    transformer: rateTransformer,
     precision: 5,
     scale: 4,
     default: 0.08,
@@ -50,7 +56,12 @@ export class TeamLeader {
   @Column({ name: 'total_orders', type: 'int', default: 0 })
   totalOrders!: number;
 
-  @Column({ name: 'month_orders', type: 'int', default: 0, comment: '当月完成份数（C2 月单，每日跑批刷新）' })
+  @Column({
+    name: 'month_orders',
+    type: 'int',
+    default: 0,
+    comment: '当月完成份数（C2 月单，每日跑批刷新）',
+  })
   monthOrders!: number;
 
   @Column({
@@ -61,19 +72,54 @@ export class TeamLeader {
   })
   invitedFormalCount!: number;
 
-  @Column({ name: 'total_amount', type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2, default: 0 })
+  @Column({
+    name: 'total_amount',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 12,
+    scale: 2,
+    default: 0,
+  })
   totalAmount!: string;
 
-  @Column({ name: 'total_commission', type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2, default: 0 })
+  @Column({
+    name: 'total_commission',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 12,
+    scale: 2,
+    default: 0,
+  })
   totalCommission!: string;
 
-  @Column({ name: 'withdrawn_amount', type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2, default: 0 })
+  @Column({
+    name: 'withdrawn_amount',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 12,
+    scale: 2,
+    default: 0,
+  })
   withdrawnAmount!: string;
 
-  @Column({ name: 'pending_amount', type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2, default: 0 })
+  @Column({
+    name: 'pending_amount',
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 12,
+    scale: 2,
+    default: 0,
+  })
   pendingAmount!: string;
 
-  @Column({ type: 'decimal', transformer: moneyTransformer, precision: 12, scale: 2, default: 0, comment: '可用余额' })
+  @Column({
+    type: 'decimal',
+    transformer: moneyTransformer,
+    precision: 12,
+    scale: 2,
+    default: 0,
+    comment: '可用余额',
+  })
   balance!: string;
 
   @Column({ type: 'tinyint', default: 1, comment: '1在职 2停职' })
@@ -127,14 +173,31 @@ export class LeaderInvite {
   id!: number;
 
   @Index('idx_invite_inviter')
-  @Column({ name: 'inviter_leader_id', type: 'bigint', transformer: bigintTransformer, nullable: true, comment: '邀请人团长 id；自荐申请为 NULL' })
+  @Column({
+    name: 'inviter_leader_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+    comment: '邀请人团长 id；自荐申请为 NULL',
+  })
   inviterLeaderId?: number | null;
 
   @Index('uk_invite_invitee', { unique: true })
-  @Column({ name: 'invitee_user_id', type: 'bigint', transformer: bigintTransformer, comment: '被邀请用户 id（唯一）' })
+  @Column({
+    name: 'invitee_user_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    comment: '被邀请用户 id（唯一）',
+  })
   inviteeUserId!: number;
 
-  @Column({ name: 'invitee_leader_id', type: 'bigint', transformer: bigintTransformer, nullable: true, comment: '被邀请人转任团长后的 id' })
+  @Column({
+    name: 'invitee_leader_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+    comment: '被邀请人转任团长后的 id',
+  })
   inviteeLeaderId?: number | null;
 
   @Column({ name: 'invite_code', type: 'varchar', length: 32, nullable: true })
@@ -151,14 +214,31 @@ export class LeaderInvite {
   @Column({ name: 'bind_at', type: 'datetime', precision: 3, comment: '绑定时间（注册时）' })
   bindAt!: Date;
 
-  @Column({ name: 'invitee_level', type: 'varchar', length: 16, nullable: true, comment: '被邀请人等级快照' })
+  @Column({
+    name: 'invitee_level',
+    type: 'varchar',
+    length: 16,
+    nullable: true,
+    comment: '被邀请人等级快照',
+  })
   inviteeLevel?: string | null;
 
-  @Column({ name: 'is_formal', type: 'tinyint', default: 0, comment: '被邀请人是否已达正式及以上（C2 计数口径）' })
+  @Column({
+    name: 'is_formal',
+    type: 'tinyint',
+    default: 0,
+    comment: '被邀请人是否已达正式及以上（C2 计数口径）',
+  })
   isFormal!: number;
 
   @Index('idx_invite_formal_at')
-  @Column({ name: 'formal_at', type: 'datetime', precision: 3, nullable: true, comment: '被邀请人转正时间' })
+  @Column({
+    name: 'formal_at',
+    type: 'datetime',
+    precision: 3,
+    nullable: true,
+    comment: '被邀请人转正时间',
+  })
   formalAt?: Date | null;
 
   @Column({ type: 'varchar', length: 256, nullable: true })

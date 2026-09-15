@@ -28,16 +28,43 @@ export enum OrderStatus {
 }
 
 /** 用户端 5 态展示 */
-export type UserOrderStatusView = '待支付' | '待出餐' | '配送中' | '待取餐' | '已完成'
-  | '已取消' | '退款申请中' | '退款中' | '已退款';
+export type UserOrderStatusView =
+  | '待支付'
+  | '待出餐'
+  | '配送中'
+  | '待取餐'
+  | '已完成'
+  | '已取消'
+  | '退款申请中'
+  | '退款中'
+  | '已退款';
 
 /** 团长端 6 态展示 */
-export type LeaderOrderStatusView = '待支付' | '待出餐' | '已出餐' | '配送中' | '待取餐' | '已完成'
-  | '已取消' | '退款申请中' | '退款中' | '已退款';
+export type LeaderOrderStatusView =
+  | '待支付'
+  | '待出餐'
+  | '已出餐'
+  | '配送中'
+  | '待取餐'
+  | '已完成'
+  | '已取消'
+  | '退款申请中'
+  | '退款中'
+  | '已退款';
 
 /** 后台 8 态展示 */
-export type AdminOrderStatusView = '待支付' | '已支付' | '已截单' | '已出餐' | '配送中' | '待取餐' | '已完成'
-  | '已取消' | '退款申请中' | '退款中' | '已退款';
+export type AdminOrderStatusView =
+  | '待支付'
+  | '已支付'
+  | '已截单'
+  | '已出餐'
+  | '配送中'
+  | '待取餐'
+  | '已完成'
+  | '已取消'
+  | '退款申请中'
+  | '退款中'
+  | '已退款';
 
 /** 主状态 → 三视角展示文案 */
 export const ORDER_STATUS_VIEW: Record<

@@ -3,25 +3,25 @@
  * 目标：把默认蓝/橙主题整体拉回品牌暖棕 + 米色体系
  */
 :root {
-  --el-color-primary: #6E5435;
-  --el-color-primary-light-3: #9A8B72;
-  --el-color-primary-light-5: #B8A992;
-  --el-color-primary-light-7: #D6CBB8;
-  --el-color-primary-light-8: #E4D8C3;
-  --el-color-primary-light-9: #F6F0E5;
+  --el-color-primary: #6e5435;
+  --el-color-primary-light-3: #9a8b72;
+  --el-color-primary-light-5: #b8a992;
+  --el-color-primary-light-7: #d6cbb8;
+  --el-color-primary-light-8: #e4d8c3;
+  --el-color-primary-light-9: #f6f0e5;
   --el-color-primary-dark-2: #574026;
 
-  --el-color-success: #5B7C3A;
+  --el-color-success: #5b7c3a;
   // ⚠️ 警告色统一用暖红，覆盖 Element 默认橙
-  --el-color-warning: #C44536;
-  --el-color-danger: #C44536;
-  --el-color-info: #4A6FA5;
+  --el-color-warning: #c44536;
+  --el-color-danger: #c44536;
+  --el-color-info: #4a6fa5;
 
-  --el-bg-color: #FFFDF8;
-  --el-bg-color-page: #F6F0E5;
-  --el-text-color-primary: #6E5435;
-  --el-text-color-regular: #6E5435;
-  --el-border-color: #E4D8C3;
+  --el-bg-color: #fffdf8;
+  --el-bg-color-page: #f6f0e5;
+  --el-text-color-primary: #6e5435;
+  --el-text-color-regular: #6e5435;
+  --el-border-color: #e4d8c3;
   --el-border-radius-base: 8px;
   --el-font-family: KaiTi, STKaiti, 楷体, 'Noto Serif SC', serif;
 }

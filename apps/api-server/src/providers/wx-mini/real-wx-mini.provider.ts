@@ -60,7 +60,8 @@ export class RealWxMiniProvider extends WxMiniProvider {
       timeout: 5000,
     });
     const accessToken: string | undefined = tokenRes.data?.access_token;
-    if (!accessToken) throw new BizException(ErrorCode.INTERNAL_ERROR, '获取微信 access_token 失败');
+    if (!accessToken)
+      throw new BizException(ErrorCode.INTERNAL_ERROR, '获取微信 access_token 失败');
 
     const { data } = await axios.post(
       `https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token=${accessToken}`,

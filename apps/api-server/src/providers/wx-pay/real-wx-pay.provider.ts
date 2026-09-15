@@ -40,9 +40,7 @@ export class RealWxPayProvider extends WxPayProvider {
     const apiV3Key = this.config.get<string>('wechat.pay.apiV3Key') ?? '';
     const serialNo = this.config.get<string>('wechat.pay.serialNo') ?? '';
     if (!mchId || !apiV3Key || !serialNo) {
-      this.logger.warn(
-        '微信支付商户参数不完整（MCH_ID / API_V3_KEY / SERIAL_NO），真实支付不可用',
-      );
+      this.logger.warn('微信支付商户参数不完整（MCH_ID / API_V3_KEY / SERIAL_NO），真实支付不可用');
     }
   }
 

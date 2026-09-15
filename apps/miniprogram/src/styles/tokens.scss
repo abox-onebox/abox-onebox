@@ -4,30 +4,30 @@
 // ============================================================
 
 // ---- 品牌色 ----
-$c-bg:        #F6F0E5; // 米色 · 主背景
-$c-surface:   #FFFDF8; // 卡片面
-$c-text:      #6E5435; // 暖棕 · 主文字
-$c-text-weak: #9A8B72; // 次级文字
-$c-gold:      #C9A876; // 金棕 · 强调
-$c-border:    #E4D8C3;
+$c-bg: #f6f0e5; // 米色 · 主背景
+$c-surface: #fffdf8; // 卡片面
+$c-text: #6e5435; // 暖棕 · 主文字
+$c-text-weak: #9a8b72; // 次级文字
+$c-gold: #c9a876; // 金棕 · 强调
+$c-border: #e4d8c3;
 
 // ---- 状态色 ----
-$c-success:   #5B7C3A;
-$c-warning:   #C44536; // 警告统一用暖红，后台须覆盖 Element 默认橙
-$c-info:      #4A6FA5;
+$c-success: #5b7c3a;
+$c-warning: #c44536; // 警告统一用暖红，后台须覆盖 Element 默认橙
+$c-info: #4a6fa5;
 
 // ---- 等级色 ----
-$c-level-trainee: #8B7355;
-$c-level-regular: #C9A876;
-$c-level-gold:    #D9BF8E;
-$c-level-chief:   #B8892F;
+$c-level-trainee: #8b7355;
+$c-level-regular: #c9a876;
+$c-level-gold: #d9bf8e;
+$c-level-chief: #b8892f;
 
 // ---- 字阶（精简层级）----
-$fs-display:  44rpx;
-$fs-h1:       34rpx;
-$fs-h2:       30rpx;
-$fs-body:     28rpx;
-$fs-caption:  24rpx;
+$fs-display: 44rpx;
+$fs-h1: 34rpx;
+$fs-h2: 30rpx;
+$fs-body: 28rpx;
+$fs-caption: 24rpx;
 
 // ---- 间距（6 / 10 / 14 / 20 / 28 五档）----
 $space-1: 6rpx;
