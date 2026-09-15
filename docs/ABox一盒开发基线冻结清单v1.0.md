@@ -1,6 +1,6 @@
 # ABox 一盒 · 开发基线冻结清单 v1.0
 
-> **基线标识**：`v1.1-local-dev-base` · **冻结日期**：2026-09-14 · **最近修订**：2026-09-15（① C9 结算口径修订：成本项可配置 · 平台毛利为结果值 · 原型升 v4.10.0 · 废弃《产品方案 v1.0》移入 `archive/`；② M2-2.1/2.2 落地：团长叠加身份 + 申请即生效，`ab_team_leader` 补回 `floor`，「团长在职」判据统一 `status = 1`，等级值统一 `formal`；③ 验证路径纳入冻结：`scripts/gate.mjs` / `e2e-m1` / `e2e-m2` / `lib/e2e-server.mjs`）
+> **基线标识**：`v1.1-local-dev-base` · **冻结日期**：2026-09-14 · **最近修订**：2026-09-15（① C9 结算口径修订：成本项可配置 · 平台毛利为结果值 · 原型升 v4.10.0 · 废弃《产品方案 v1.0》移入 `archive/`；② M2-2.1/2.2 落地：团长叠加身份 + 申请即生效，`ab_team_leader` 补回 `floor`，「团长在职」判据统一 `status = 1`，等级值统一 `formal`；③ 验证路径纳入冻结：`scripts/gate.mjs` / `e2e-m1` / `e2e-m2` / `lib/e2e-server.mjs`；④ M3-1 后台鉴权基座落地：**双主体隔离**（小程序 `ab_user` 与后台 `ab_admin_user` 各自独立账号，靠 JWT `typ` 按路径隔离，越权 = 10002/10003）· 角色→菜单**以代码为唯一来源**（`admin-role.ts`，一期不建 `ab_admin_role` 表）· 令牌吊销走 KV（改角色/停用后旧 token 立即失效）· 声明式操作日志 · 错误码补 `20009`/`20010` · 验证路径纳入 `scripts/e2e-m3.mjs`）
 > **用途**：本清单声明开发阶段（M1 起）的**唯一输入版本**。开发方一律以本清单所列「现行」文件为准，**不得参考「已废弃」文件**。
 > **校验方式**：文件名 + 字节数 + SHA-256（前 12 位）三重核对；拿到文件后先跑一次摘要比对，防止版本漂移。
 
@@ -15,11 +15,11 @@
 | 原型版本 | v4.10.0（37 页，已部署；结算成本项可配置版） |
 | 现行资产 | 26 份 |
 | 已废弃资产 | 5 份（存档，勿参考） |
-| 工程骨架 | `abox-onebox/` · **427 个文件**（阶段四产出） |
+| 工程骨架 | `abox-onebox/` · **436 个文件**（阶段四产出） |
 | 数据库表 | **25 张**（ER v2.1：23 张 + 评审新增 `ab_leader_invite` + M2 新增 `ab_withdraw`） |
 | 技术栈 | uni-app(Vue3+TS) + NestJS + MySQL 8 + Redis 7 + 微信支付 V3；**佣金出款走灵活用工平台代发**（C11，见目录结构 v2.0） |
-| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `e287f3b`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
-| 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**，已开工 M1 |
+| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `2ef6a0d`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
+| 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**；M1（后端 + 小程序基座）· M2（团长端全链路）已端到端验收；**M3（运营后台 + 供应商端）进行中**（M3-1 后台鉴权基座已落地） |
 
 ---
 
@@ -40,8 +40,8 @@
 | 11 | `ABox一盒合规资质与协议清单v1.0.md` | 资质与协议要点（阶段三）· 资金定性=自营 + 佣金个税走灵活用工 | 15,446 | `d3a9b3a0f902` |
 | 12 | `ABox一盒开发前准备计划v1.0.html` | 四阶段推进路线（准备期总纲） | 28,685 | `feb3c6c759a2` |
 | 13 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四） | 16,095 | `aa8c33fb2ec4` |
-| 14 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 | 41,346 | `50520e338d28` |
-| 15 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 25 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor） | 35,019 | `3ddcaa55e726` |
+| 14 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 | 46,801 | `8ffc90f1a958` |
+| 15 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 25 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor） | 36,785 | `07dfd2763e38` |
 | 16 | `ABox一盒本地开发手册v1.0.md` | 不依赖云资源的本地开发手册（四驱动开关 · 本地跑通登录→下单→支付→回调） | 15,697 | `0a1cccd8a63d` |
 | 17 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 | 19,393 | `69e1adde9292` |
 | 18 | `ABox一盒表结构评审意见v1.0.md` | ER 评审结论（阶段二）· P0×6 + 4 张补齐 DDL | 24,817 | `53e5f67f568c` |
@@ -70,7 +70,7 @@
 
 ## 四、工程骨架 `abox-onebox/`（阶段四产出）
 
-**总计 427 个文件**，按区域分布：
+**总计 436 个文件**，按区域分布：
 
 | 区域 | 文件数 |
 | --- | --- |
@@ -86,8 +86,8 @@
 | `.prettierrc.json` | 1 |
 | `CONTRIBUTING.md` | 1 |
 | `README.md` | 1 |
-| `apps/admin-web` | 74 |
-| `apps/api-server` | 181 |
+| `apps/admin-web` | 76 |
+| `apps/api-server` | 187 |
 | `apps/miniprogram` | 80 |
 | `commitlint.config.cjs` | 1 |
 | `data` | 1 |
@@ -106,6 +106,7 @@
 | `scripts/deploy.sh` | 1 |
 | `scripts/e2e-m1.mjs` | 1 |
 | `scripts/e2e-m2.mjs` | 1 |
+| `scripts/e2e-m3.mjs` | 1 |
 | `scripts/gate.mjs` | 1 |
 | `scripts/init.sql` | 1 |
 | `scripts/lib` | 1 |
@@ -133,7 +134,7 @@
 | 12 | `scripts/setup.ps1` |  | 4,319 | `8f8eb8d2b0c3` |
 | 13 | `scripts/init.sql` |  | 200 | `54ae1e6803fa` |
 | 14 | `scripts/sync-docs.mjs` |  | 4,135 | `fc5b05301ea9` |
-| 15 | `scripts/gate.mjs` |  | 9,221 | `889be81c80e1` |
+| 15 | `scripts/gate.mjs` |  | 9,436 | `eeaeacde1c23` |
 | 16 | `scripts/e2e-m1.mjs` |  | 12,487 | `fd69e5f28323` |
 | 17 | `scripts/e2e-m2.mjs` |  | 48,439 | `db82927bc941` |
 | 18 | `scripts/lib/e2e-server.mjs` |  | 8,161 | `62b1429c3cda` |
@@ -145,7 +146,7 @@
 | 24 | `apps/miniprogram/src/constants/index.ts` |  | 4,094 | `e7efa02eebf2` |
 | 25 | `apps/miniprogram/src/uni.scss` |  | 622 | `016600e38e91` |
 | 26 | `apps/miniprogram/src/pages.json` |  | 3,470 | `3f08ea37d3ac` |
-| 27 | `apps/admin-web/src/constants/index.ts` |  | 3,922 | `671196172164` |
+| 27 | `apps/admin-web/src/constants/index.ts` |  | 4,360 | `2bc11554a750` |
 | 28 | `apps/admin-web/src/styles/element-override.scss` |  | 830 | `6dab60cc998b` |
 | 29 | `apps/api-server/src/app.module.ts` |  | 2,338 | `378e08442352` |
 | 30 | `apps/api-server/src/modules/order/order-state-machine.ts` |  | 6,246 | `c71905a46aca` |
@@ -165,6 +166,17 @@
 | 44 | `apps/miniprogram/src/api/leader-order.ts` |  | 8,757 | `db5668aa60b9` |
 | 45 | `apps/miniprogram/src/api/leader-finance.ts` |  | 7,764 | `c25171af33ef` |
 | 46 | `apps/miniprogram/src/api/balance.ts` |  | 2,631 | `5ac8fb7da240` |
+| 47 | `apps/api-server/src/common/guards/jwt-auth.guard.ts` |  | 3,684 | `f89e03f08c13` |
+| 48 | `apps/api-server/src/common/guards/admin.guard.ts` |  | 2,620 | `c49e7801c5e5` |
+| 49 | `apps/api-server/src/common/decorators/auth.decorator.ts` |  | 3,650 | `46f10b5df6e7` |
+| 50 | `apps/api-server/src/common/constants/admin-role.ts` |  | 4,605 | `6c5ab8df26f8` |
+| 51 | `apps/api-server/src/common/decorators/operation-log.decorator.ts` |  | 1,463 | `d9980b6251a1` |
+| 52 | `apps/api-server/src/common/interceptors/operation-log.interceptor.ts` |  | 5,621 | `bf5e9e31eaa3` |
+| 53 | `apps/api-server/src/common/constants/error-code.ts` |  | 7,327 | `b950e135c474` |
+| 54 | `apps/admin-web/src/api/request.ts` |  | 4,529 | `739e3e115d78` |
+| 55 | `apps/admin-web/src/api/auth.ts` |  | 2,262 | `2341475025f9` |
+| 56 | `apps/admin-web/src/router/guards.ts` |  | 2,523 | `47f9d2ab636d` |
+| 57 | `scripts/e2e-m3.mjs` |  | 28,398 | `c925d2a68dea` |
 
 > 骨架含：根配置（pnpm workspace / TS / ESLint / Prettier / commitlint）+ CI 四作业 + Docker Compose（MySQL 8 + Redis 7，无 RabbitMQ）
 > + 小程序 21 页骨架 + 后台 33 视图骨架 + 后端 15 模块 / 8 定时任务 / 3 消费者 + 4 个 packages。
@@ -181,7 +193,7 @@
 | 3 | `tests/bracket_check.py` | 括号与反引号配平 | 2,297 | `665a00c07c76` |
 | 4 | `tests/js-syntax-check.js` | JS 语法校验 | 785 | `1e5cfda6093b` |
 | 5 | `tests/check_online.py` | 线上部署核验 | 1,475 | `3efc02e45877` |
-| 6 | `tests/baseline_manifest.py` | 本清单生成器（基线变更时重跑） | 17,166 | `529a2c18501a` |
+| 6 | `tests/baseline_manifest.py` | 本清单生成器（基线变更时重跑） | 18,749 | `4351bb8fa472` |
 
 ---
 
