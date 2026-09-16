@@ -109,6 +109,10 @@
 > **命名纪律（C5）**：以上 4 名为**演示占位名**；主体是「北京巡礼之年科技有限公司」，**"巡礼之年"不得作供应商名**。
 > **供价合计（示例值）**：7.50 + 3.00 + 1.50 + 2.00 = **¥14.00/份**。
 > ⚠️ **C9 修订（2026-09-15）**：菜品供价**不写死** —— 须与各供应商**逐菜协商**确定；上表为**演示 / 初始种子值**，实际以采购合同为准。
+> ⚠️ **M3-8 修订（2026-09-16）**：这 4 家的 `audit_status = 'approved'` 且 `license_expire_at = '2027-12-31'`，
+> 即 `canServe = true`。**原因**：出餐链路（S1/S2/S3）的 S2 有资质前置校验（未通过 → 50001），
+> M3-6 引入 `audit_status` 时种子未跟上（默认 `pending`），会让演示环境一进 P21 就被拦、整条出餐链走不通。
+> 备选 6 家（§3.2）**刻意保持未登记证照** —— 它们不出餐不分账，用它们验证「未登记 ≠ 已过期」（`licenseState=unknown`）。
 
 ### 3.2 备选供应商（6 家 · 仅外卖跳转，不出餐不分账）
 
@@ -219,7 +223,14 @@
 
 ---
 
-## 八、每日菜单示例（`ab_supplier_dish_daily`）
+## 八、每日菜单与出餐确认（`ab_supplier_dish_daily` / `ab_supplier_dish_center_daily`）
+
+> **M3-8 补充**：出餐确认的粒度是 **(菜, 集散中心)**，故每日菜单在库里是**两张表**：
+> `ab_supplier_dish_daily`（日总量 · 父行，**生成即冻结**）+
+> `ab_supplier_dish_center_daily`（分中心明细，承载应送/实送份数与确认人时点）。
+> 二者均由 `ab_meal_assignment(status=active) × ab_set_meal_item` **派生**（S1/S2 首次访问时惰性生成；
+> S3 查全量），且**只生成 `planQuantity > 0` 的行**。
+> 下表的「计划份数 45」即父行；对应明细为「集散中心 1 ← 45 份」（种子里该日分配 `distribution_center_id = 1`）。
 
 **2026-09-15（周二）· 国贸三期组 · 红烧肉套餐**
 
@@ -268,7 +279,7 @@
 9. ab_leader_invite    （推荐关系）
 10. ab_set_meal        （7）+ ab_set_meal_item
 11. ab_meal_assignment （当日分配，可选）
-12. ab_supplier_dish_daily（当日菜单，可选）
+12. ab_supplier_dish_daily（当日菜单，可选）+ ab_supplier_dish_center_daily（分中心确认明细，M3-8）
 13. ab_order           （演示订单，可选）
 ```
 

@@ -264,3 +264,82 @@ export class SupplierDishDaily {
   @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
   updatedAt!: Date;
 }
+
+/**
+ * ab_supplier_dish_center_daily 供应商-菜品-**集散中心**-日 交付确认明细（M3-8 · S2 载体）
+ *
+ * ## 为什么不把这条明细塞进父表的 JSON 列
+ * 粒度天然是**一对多**：一道菜同一天要分别送到 N 个集散中心。
+ * 原型 P22 实证 —— 红烧肉当日 385 份 → 集散中心 1/2/3/4 各 120/96/88/81 份，
+ * 而「出餐确认」的交互粒度**正是按集散中心逐项勾选**。于是：
+ *   ① JSON 列无法做「哪些集散中心还没确认」的 SQL 聚合（S3 打包闸门刚需）；
+ *   ② 确认是一个**事件**（实送份数 + 操作人 + 时点），并发确认同一父行的 JSON 会**丢更新**；
+ *   ③ S3 要按集散中心 join 出「所有供应商的到位情况」，JSON 到不了。
+ * 故参照 `ab_set_meal_item`（套餐 → 菜 → 供应商）的明细独立成表风格。
+ *
+ * ⚠️ 与父表的关系：本表是明细、父表 `ab_supplier_dish_daily` 是**日计划总量**。
+ *    父表 `status` 由本表派生驱动 —— 全部分中心 confirmed 时，父表才置 `done`。
+ */
+@Entity('ab_supplier_dish_center_daily')
+@Index('uk_sddc', ['supplierId', 'dishId', 'produceDate', 'distributionCenterId'], { unique: true })
+export class SupplierDishCenterDaily {
+  @PkColumn()
+  id!: number;
+
+  @Index('idx_sddc_supplier')
+  @Column({ name: 'supplier_id', type: 'bigint', transformer: bigintTransformer })
+  supplierId!: number;
+
+  @Column({ name: 'dish_id', type: 'bigint', transformer: bigintTransformer })
+  dishId!: number;
+
+  @Index('idx_sddc_date_center')
+  @Column({ name: 'produce_date', type: 'date', comment: '出餐日（= 套餐日 T，非确认操作日）' })
+  produceDate!: string;
+
+  @Column({
+    name: 'distribution_center_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    comment: '送达目标集散中心',
+  })
+  distributionCenterId!: number;
+
+  @Column({ name: 'plan_quantity', type: 'int', default: 0, comment: '应送份数（分中心）' })
+  planQuantity!: number;
+
+  @Column({
+    name: 'actual_quantity',
+    type: 'int',
+    nullable: true,
+    comment: '实送份数；确认时登记，短送/多送都要留痕（对账依据）',
+  })
+  actualQuantity?: number | null;
+
+  @Column({ type: 'varchar', length: 16, default: 'pending', comment: 'pending / confirmed' })
+  status!: string;
+
+  @Column({ name: 'confirmed_at', type: 'datetime', precision: 3, nullable: true })
+  confirmedAt?: Date | null;
+
+  @Column({
+    name: 'confirmed_by',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+    comment: '确认操作账号（ab_admin_user.id）—— 出餐确认是责任动作，必须留痕',
+  })
+  confirmedBy?: number | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true, comment: '备注（如短送原因）' })
+  remark?: string | null;
+
+  @Column({ type: 'int', default: 0 })
+  version!: number;
+
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
+  updatedAt!: Date;
+}

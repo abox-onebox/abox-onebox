@@ -163,6 +163,25 @@ export enum ErrorCode {
   DISTRIBUTION_CENTER_NOT_FOUND = 50007,
   /** 扩展（M3-6）：类型与关联集散中心冲突（D27 改类型会把集散中心指向「不出餐也不集散」的供应商） */
   SUPPLIER_TYPE_CONFLICT = 50008,
+  /**
+   * 扩展（M3-8）：出餐确认已过截止时间（S2 · 出餐日当天 09:30 之后）
+   *
+   * ⚠️ 这是 **deadline 而非 earliest** —— 提前确认（T-1 备好就确认）是**允许**的，
+   *    只有「出餐日当天过了 09:30 才来确认」才拦。理由：09:30 是**集散中心开始打包**的
+   *    上游时点，晚了则集散中心拿不到到位信号、当日配送链断在源头。
+   *    刻意 fail-closed：不允许「补确认」把已错过的时点抹平 —— 事后补救走线下，
+   *    系统里的时间戳必须诚实（对账与追责都以它为准）。
+   */
+  COOK_CONFIRM_OVERDUE = 50009,
+  /** 扩展（M3-8）：当日无该菜品生产计划（S2 目标项不存在 / 不属于本供应商） */
+  PRODUCE_PLAN_NOT_FOUND = 50010,
+  /**
+   * 扩展（M3-8）：集散中心不在该菜品的配送范围（S2）
+   *
+   * 越界确认必须拦：否则供应商能把 A 片的份数确认到 B 片头上，S3 在 B 片
+   * 会显示「已到齐」而实物没到 —— 打包线在错误的时点开动。
+   */
+  COOK_CONFIRM_CENTER_MISMATCH = 50011,
 
   /** ---- 6xxxx 主数据（办公楼 / 楼群）---- */
   /** 扩展（M3-7）：办公楼不存在（D13/D14/D15 目标 id 非法或已软删） */
@@ -247,6 +266,9 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.SUPPLIER_NOT_FOUND]: '供应商不存在或已停用',
   [ErrorCode.DISTRIBUTION_CENTER_NOT_FOUND]: '集散中心不存在或已停用',
   [ErrorCode.SUPPLIER_TYPE_CONFLICT]: '供应商类型与关联集散中心冲突',
+  [ErrorCode.COOK_CONFIRM_OVERDUE]: '已过出餐确认截止时间（09:30），请联系运营线下处理',
+  [ErrorCode.PRODUCE_PLAN_NOT_FOUND]: '当日无该菜品生产计划',
+  [ErrorCode.COOK_CONFIRM_CENTER_MISMATCH]: '集散中心不在该菜品的配送范围',
   [ErrorCode.BUILDING_NOT_FOUND]: '办公楼不存在',
   [ErrorCode.BUILDING_GROUP_NOT_FOUND]: '楼群不存在',
   [ErrorCode.BUILDING_GROUP_NOT_EMPTY]: '楼群下仍有办公楼，请先移出成员楼',

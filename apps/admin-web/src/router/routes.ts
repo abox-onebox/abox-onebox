@@ -101,7 +101,24 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/supplier/takeout-links.vue'),
       },
 
-      // 商家端 P23 / P24 / P26（占位 · 待 M3-7+ 实装）
+      // 商家端 P21 / P22（M3-8 实装 · 出餐链路 S1–S3）—— 组件调 `/supplier/*`
+      {
+        path: 'supplier/workbench',
+        name: 'SupplierWorkbench',
+        component: () => import('@/views/supplier/workbench.vue'),
+      },
+      {
+        path: 'supplier/cook-confirm',
+        name: 'SupplierCookConfirm',
+        component: () => import('@/views/supplier/cook-confirm.vue'),
+      },
+      {
+        path: 'supplier/packing',
+        name: 'SupplierPacking',
+        component: () => import('@/views/supplier/packing.vue'),
+      },
+
+      // 商家端 P23 / P24 / P26（占位 · 待后续批次实装）
       {
         path: 'supplier/edit',
         name: 'SupplierEdit',

@@ -1,10 +1,16 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
-import { BuildingGroup } from '../../database/entities/building.entity';
+import { Building, BuildingGroup } from '../../database/entities/building.entity';
 import { DistributionCenter, SupplierShare } from '../../database/entities/finance.entity';
+import { MealAssignment, SetMealItem } from '../../database/entities/meal.entity';
 import { AdminUser, OperationLog } from '../../database/entities/system.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import {
+  Dish,
+  Supplier,
+  SupplierDishCenterDaily,
+  SupplierDishDaily,
+} from '../../database/entities/supplier.entity';
 import { SupplierAdminController } from './supplier-admin.controller';
 import { SupplierAdminService } from './supplier-admin.service';
 import { DishAdminController } from './dish/dish-admin.controller';
@@ -17,7 +23,7 @@ import { SupplierService } from './supplier.service';
  *
  * ## 三个控制器，三套主体，别搞混
  *   · `SupplierController`（`@Controller('supplier')`）—— **供应商端** S 系列，
- *     供应商 Web 看自己的资料 / 菜品（role=supplier，M3-7 实装）
+ *     供应商 Web 看自己的出餐计划 / 确认出餐 / 打包任务（role=supplier，**M3-8 实装 S1–S3**）
  *   · `SupplierAdminController`（`@Controller('admin/suppliers')`）—— **运营后台** D23–D28
  *   · `DishAdminController`（`@Controller('admin/dishes')`）—— **运营后台** 菜品库扩展
  *
@@ -31,9 +37,14 @@ import { SupplierService } from './supplier.service';
     TypeOrmModule.forFeature([
       Supplier,
       Dish,
+      SupplierDishDaily,
+      SupplierDishCenterDaily,
       DistributionCenter,
       SupplierShare,
       BuildingGroup,
+      Building,
+      MealAssignment,
+      SetMealItem,
       AdminUser,
       OperationLog,
     ]),

@@ -27,7 +27,7 @@
 | `ab_company` | 简化模型，普通用户无需选公司 |
 | `ab_floor_leader` | **无楼长角色**，团长兼任取餐分发 |
 
-### 1.2 新增的表（8 张）
+### 1.2 新增的表（9 张）
 
 | 表名 | 用途 |
 | --- | --- |
@@ -39,6 +39,7 @@
 | `ab_delivery_record` | 货拉拉送达记录（轻量） |
 | `ab_distribution_center` | 集散中心配置（C4 · 表驱动，默认 4 个，可增删） |
 | `ab_withdraw` | **提现申请单**（2026-09-15 补 · C11：出款走灵活用工代发代扣，须独立单承载提现单号 / 审批 / 打款状态） |
+| `ab_supplier_dish_center_daily` | **供应商-菜品-集散中心-日 交付确认明细**（2026-09-16 补 · M3-8：出餐确认的交互粒度是「一道菜分别送达 N 个集散中心」的**逐项**确认，需独立承载实送份数 / 确认人 / 确认时点） |
 
 ### 1.3 修改的表（7 张）
 
@@ -54,7 +55,7 @@
 
 ---
 
-## 二、ER 总览（25 张表 · 2026-09-15 增补 `ab_withdraw`）
+## 二、ER 总览（26 张表 · 2026-09-16 增补 `ab_supplier_dish_center_daily`）
 
 ```
                               ┌──────────────────┐
@@ -283,6 +284,44 @@ CREATE TABLE `ab_supplier_dish_daily` (
   KEY `idx_supplier_dish_date` (`produce_date`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='供应商每日生产哪道菜（前期动态/后期稳定）';
 ```
+
+#### 3.6.1 `ab_supplier_dish_center_daily` 供应商-菜品-**集散中心**-日 交付确认明细（M3-8 新增）
+
+```sql
+CREATE TABLE `ab_supplier_dish_center_daily` (
+  `id`                     BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `supplier_id`            BIGINT UNSIGNED NOT NULL,
+  `dish_id`                BIGINT UNSIGNED NOT NULL,
+  `produce_date`           DATE NOT NULL COMMENT '出餐日（= 套餐日 T，非确认操作日）',
+  `distribution_center_id` BIGINT UNSIGNED NOT NULL COMMENT '送达目标集散中心',
+  `plan_quantity`          INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '应送份数（分中心）',
+  `actual_quantity`        INT UNSIGNED DEFAULT NULL COMMENT '实送份数；短送/多送都要留痕（对账依据）',
+  `status`                 VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT 'pending / confirmed',
+  `confirmed_at`           DATETIME(3) DEFAULT NULL,
+  `confirmed_by`           BIGINT UNSIGNED DEFAULT NULL COMMENT '确认操作账号（ab_admin_user.id）',
+  `remark`                 VARCHAR(255) DEFAULT NULL COMMENT '备注（如短送原因）',
+  `version`                INT UNSIGNED NOT NULL DEFAULT 0,
+  `created_at`             DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at`             DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_sddc` (`supplier_id`, `dish_id`, `produce_date`, `distribution_center_id`),
+  KEY `idx_sddc_supplier` (`supplier_id`),
+  KEY `idx_sddc_date_center` (`produce_date`, `distribution_center_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='出餐确认明细（按集散中心逐项）';
+```
+
+> **为什么必须独立成表**（而不是在 `ab_supplier_dish_daily` 上挂 JSON 列）：
+> ① 粒度天然**一对多** —— 一道菜同一天要分别送到 N 个集散中心（原型 P22：红烧肉 385 份 → 4 个中心各 120/96/88/81），
+> JSON 列无法做「**哪些集散中心还没确认**」的 SQL 聚合，而这正是 S3 打包闸门的刚需；
+> ② 确认是一个**事件**（实送份数 + 操作人 + 时点），并发确认同一父行的 JSON 会**丢更新**；
+> ③ S3 要按集散中心 join 出「所有供应商的到位情况」，JSON 到不了。
+>
+> **与父表的关系**：本表是明细，`ab_supplier_dish_daily` 是**日计划总量**。
+> 父表 `status` 由本表**派生驱动**（无确认 `pending` / 部分 `cooking` / 全部 `done`），
+> 故**不新增 `partial`** —— 既有三值域已能表达，扩枚举会牵动 M1/M2 已验收的读端。
+>
+> **零产量不落库**：只生成 `plan_quantity > 0` 的行（`sold_count=0` 的分配很常见，
+> 照单生成会让 P21 长出一串「0 份」的菜）。
 
 ### 3.7 `ab_delivery_record` 货拉拉送达记录
 
@@ -773,16 +812,17 @@ INSERT INTO ab_distribution_center (name, supplier_id, address, contact_name, co
 | 楼群域 | 1（building_group） |
 | 商家域 | 2（supplier、dish） |
 | 套餐域 | 3（set_meal、set_meal_item、meal_assignment） |
-| 供应商生产域 | 1（supplier_dish_daily） |
+| 供应商生产域 | 2（supplier_dish_daily、supplier_dish_center_daily） |
 | 订单与支付域 | 4（order、payment_log、refund、delivery_record） |
 | 财务域 | 5（commission、supplier_share、balance、balance_log、withdraw） |
 | 集散中心域 | 1（distribution_center） |
 | 系统域 | 4（admin_user、operation_log、config、message） |
-| **合计** | **25 张表** |
+| **合计** | **26 张表** |
 
-> 张数说明：较 v1.0 删除 3 张（address / company / floor_leader）、新增 8 张、修改 8 张、沿用 9 张。
-> ⚠️ 阶段二已补 `ab_leader_invite`（支撑 C2 晋级审计）与 `ab_withdraw`（C11 提现单），
-> **合计 25 张表** —— 与 `apps/api-server/src/database/entities/index.ts` 的 `ALL_ENTITIES` 逐张对齐，
+> 张数说明：较 v1.0 删除 3 张（address / company / floor_leader）、新增 9 张、修改 8 张、沿用 9 张。
+> ⚠️ 阶段二已补 `ab_leader_invite`（支撑 C2 晋级审计）与 `ab_withdraw`（C11 提现单）；
+> M3-7 **零新表**（仅 `ab_building` 增 `population` 列）、**M3-8 补 `ab_supplier_dish_center_daily`**（出餐确认明细），
+> **合计 26 张表** —— 与 `apps/api-server/src/database/entities/index.ts` 的 `ALL_ENTITIES` 逐张对齐，
 > 并由 `tests/baseline_manifest.py` 在门禁中校验。
 
 ---

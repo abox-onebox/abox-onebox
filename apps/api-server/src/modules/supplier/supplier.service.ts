@@ -1,5 +1,791 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, EntityManager, In, IsNull, Repository } from 'typeorm';
 
-/** Supplier 服务 —— 占位骨架，开发阶段实现 */
+import {
+  LICENSE_EXPIRING_DAYS,
+  LicenseState,
+  SUPPLIER_AUDIT_STATUS_LABEL,
+  SUPPLIER_STATUS_LABEL,
+  SUPPLIER_TYPE_LABEL,
+  SupplierAuditStatus,
+  SupplierStatus,
+} from '@abox/shared-types';
+
+import { ErrorCode } from '../../common/constants/error-code';
+import { BizException } from '../../common/exceptions/biz.exception';
+import { toFen } from '../../common/utils/money';
+import { addDays, bjDateTime, toBjIso, todayBj, tomorrowBj } from '../../common/utils/time';
+import { Building, BuildingGroup } from '../../database/entities/building.entity';
+import { DistributionCenter } from '../../database/entities/finance.entity';
+import { MealAssignment, SetMealItem } from '../../database/entities/meal.entity';
+import {
+  Dish,
+  Supplier,
+  SupplierDishCenterDaily,
+  SupplierDishDaily,
+} from '../../database/entities/supplier.entity';
+import {
+  CookConfirmDto,
+  PackingTasksQueryDto,
+  SupplierWorkbenchQueryDto,
+} from './dto/supplier.dto';
+
+/** 出餐确认截止时刻（出餐日当天 HH:mm）—— 原型 P22「截止时间：09:30」 */
+const CONFIRM_DEADLINE_HOUR = 9;
+const CONFIRM_DEADLINE_MINUTE = 30;
+const CONFIRM_DEADLINE_TEXT = '09:30';
+
+/** `ab_supplier_dish_center_daily.status` 值域（二态） */
+const DETAIL_PENDING = 'pending';
+const DETAIL_CONFIRMED = 'confirmed';
+
+/**
+ * `ab_supplier_dish_daily.status` 值域 —— **刻意沿用既有三值，不扩枚举**
+ *
+ * 既有值域（ER v2.1 §3.6）：`pending` / `cooking` / `done`。
+ * 分中心维度的「部分确认」正好落在 `cooking`（在制 / 在途），
+ * 于是「父行状态」由明细派生即可，无需新增 `partial`：
+ *   · 无任何中心确认           → pending
+ *   · 部分中心确认（在途）      → cooking
+ *   · 全部中心确认             → done（并置 completed_at）
+ */
+const DAILY_PENDING = 'pending';
+const DAILY_COOKING = 'cooking';
+const DAILY_DONE = 'done';
+
+/** 派生出的「应送份数」：`sup:dish` → 日总量；`sup:dish:dc` → 分中心量 */
+interface DerivedPlan {
+  supplierId: number;
+  dishId: number;
+  total: number;
+  centers: Map<number, number>;
+}
+
+/**
+ * 供应商端服务（M3-8 · 《接口规范 v1.0》§6.5 S1–S3 · 原型 P21/P22）
+ *
+ * ## 三条贯穿本文件的纪律
+ *
+ * 1. **主体只看自己**：所有查询都以「账号绑定的 `supplierId`」收窄，
+ *    请求体里**不出现** `supplierId`（见 `dto/supplier.dto.ts` 头部）。
+ *    供应商隔离靠 `AdminGuard` 的 `typ` + `@Roles('supplier')` + 服务层收窄，
+ *    **不靠路径**（`admin.guard.ts` 的既有纪律）。
+ *
+ * 2. **出餐确认是 deadline，不是 earliest**：
+ *    `≤ 出餐日 09:30` 的含义是「**迟于** 09:30 不许确认」，提前备好提前确认**允许**。
+ *    这样既符合原型语义（09:30 是集散中心开始打包的上游时点），
+ *    又让「两侧都能被真实测到」—— 对**昨日**确认必拒（已过点），对**明日**确认必过（未到点），
+ *    无需给 e2e 开后门注入时钟。过期一律 **fail-closed**（50009），
+ *    不允许「补确认」把错过的时点抹平：系统里的时间戳必须诚实，对账与追责都以它为准。
+ *
+ * 3. **生产计划可派生但必须落库**：`ab_supplier_dish_daily` / `..._center_daily`
+ *    的来源是「当日 active 的套餐分配 × 套餐菜品构成 × 已售份数」，完全可实时算出。
+ *    但**仍然落库** —— 因为生产计划是给供应商的**承诺数**，一旦生成即**冻结**：
+ *    若截单后再有人改单（D11/D12），不能让供应商的备料量在背后悄悄变化。
+ *    故采用**惰性 ensure**：首次访问时生成，之后只读（重复调用幂等，不重算）。
+ *    改单后要刷新计划属运营动作，见本文件末尾 `notes` 的待办登记。
+ *
+ * ⚠️ **自营路线下的语义待复核**（2026-09-16 用户裁定：单主体自营，供应商供半成品）：
+ *    本文件的 `cook-confirm` 确认的是「**本供应商当日菜品生产完成 / 已交付**」，
+ *    这是一个**两条路线下都成立**的中性语义；「送到哪个集散中心」的交互粒度（原型 P22）
+ *    在自营下仍有效（半成品也要按点送达加工场所）。但「谁是出餐主体」在自营下变为
+ *    ABox 自己（持证加工场所），需要一次口径复核 —— 见 `ref/资质与合规.md` §八。
+ */
 @Injectable()
-export class SupplierService {}
+export class SupplierService {
+  private readonly logger = new Logger('SupplierPortal');
+
+  constructor(
+    private readonly dataSource: DataSource,
+    @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
+    @InjectRepository(Dish) private readonly dishRepo: Repository<Dish>,
+    @InjectRepository(SupplierDishDaily) private readonly dailyRepo: Repository<SupplierDishDaily>,
+    @InjectRepository(SupplierDishCenterDaily)
+    private readonly detailRepo: Repository<SupplierDishCenterDaily>,
+    @InjectRepository(DistributionCenter) private readonly dcRepo: Repository<DistributionCenter>,
+    @InjectRepository(MealAssignment) private readonly maRepo: Repository<MealAssignment>,
+    @InjectRepository(SetMealItem) private readonly itemRepo: Repository<SetMealItem>,
+    @InjectRepository(Building) private readonly buildingRepo: Repository<Building>,
+    @InjectRepository(BuildingGroup) private readonly groupRepo: Repository<BuildingGroup>,
+  ) {}
+
+  // =====================================================================
+  // S1 · 工作台
+  // =====================================================================
+
+  /**
+   * S1 `GET /supplier/workbench?date=` —— 今日 / 指定日出餐计划 + 备料清单
+   *
+   * `date` 缺省 = 该供应商「最近一个有生产计划的出餐日」（通常是明日 T+1，
+   * 因为 T-1 才是备货日）。刻意不写死 `tomorrowBj()`：周末或停团时，
+   * 最近有计划的日子可能不是明天。
+   */
+  async workbench(adminSupplierId: number | null | undefined, q: SupplierWorkbenchQueryDto) {
+    const supplier = await this.loadSupplier(adminSupplierId);
+    const date = q.date ?? (await this.defaultDate(supplier.id));
+    await this.ensureProducePlan(date, supplier.id);
+
+    const [dailies, details] = await Promise.all([
+      this.dailyRepo.find({
+        where: { supplierId: supplier.id, produceDate: date },
+        order: { id: 'ASC' },
+      }),
+      this.detailRepo.find({ where: { supplierId: supplier.id, produceDate: date } }),
+    ]);
+
+    const dishMap = await this.dishMapOf(dailies.map((d) => d.dishId));
+    const centerMap = await this.centerMapOf(details.map((d) => d.distributionCenterId));
+    const detailsOf = this.groupByDish(details);
+
+    const dishes = dailies.map((d) => {
+      const dish = dishMap.get(d.dishId);
+      const rows = detailsOf.get(d.dishId) ?? [];
+      const centers = rows
+        .filter((r) => Number(r.planQuantity) > 0 || r.status === DETAIL_CONFIRMED)
+        .map((r) => ({
+          distributionCenterId: r.distributionCenterId,
+          centerName:
+            centerMap.get(r.distributionCenterId)?.name ?? `集散中心 ${r.distributionCenterId}`,
+          centerAddress: centerMap.get(r.distributionCenterId)?.address ?? null,
+          planQuantity: Number(r.planQuantity),
+          actualQuantity: r.actualQuantity ?? null,
+          status: r.status,
+          confirmedAt: toBjIso(r.confirmedAt),
+        }));
+
+      const confirmedQuantity = centers
+        .filter((c) => c.status === DETAIL_CONFIRMED)
+        .reduce((sum, c) => sum + (c.actualQuantity ?? c.planQuantity), 0);
+      const planQuantity =
+        centers.reduce((sum, c) => sum + c.planQuantity, 0) || Number(d.planQuantity);
+
+      return {
+        dishId: d.dishId,
+        dishName: dish?.name ?? `菜品 ${d.dishId}`,
+        category: dish?.category ?? null,
+        imageUrl: dish?.imageUrl ?? null,
+        unitPriceFen: toFen(Number(d.unitPrice)),
+        /** 日计划总量（父行落库值，冻结数） */
+        planQuantity,
+        confirmedQuantity,
+        pendingQuantity: Math.max(0, planQuantity - confirmedQuantity),
+        /** 父行状态：pending 未开工 / cooking 部分送达 / done 全部送达 */
+        status: d.status,
+        completedAt: toBjIso(d.completedAt),
+        centers,
+      };
+    });
+
+    const deadlineAt = this.deadlineOf(date);
+    const overdue = Date.now() > deadlineAt.getTime();
+    const planTotal = dishes.reduce((s, d) => s + d.planQuantity, 0);
+    const confirmedTotal = dishes.reduce((s, d) => s + d.confirmedQuantity, 0);
+    const canServe = this.canServe(supplier);
+
+    return {
+      date,
+      supplier: {
+        id: supplier.id,
+        name: supplier.name,
+        type: supplier.type,
+        typeLabel:
+          SUPPLIER_TYPE_LABEL[supplier.type as keyof typeof SUPPLIER_TYPE_LABEL] ?? supplier.type,
+        status: supplier.status,
+        statusLabel: SUPPLIER_STATUS_LABEL[supplier.status] ?? String(supplier.status),
+        auditStatus: supplier.auditStatus,
+        auditStatusLabel:
+          SUPPLIER_AUDIT_STATUS_LABEL[
+            supplier.auditStatus as keyof typeof SUPPLIER_AUDIT_STATUS_LABEL
+          ] ?? supplier.auditStatus,
+        licenseState: this.licenseStateOf(supplier.licenseExpireAt),
+        canServe,
+      },
+      deadline: {
+        text: CONFIRM_DEADLINE_TEXT,
+        at: toBjIso(deadlineAt),
+        overdue,
+        /** 未过点且未全部确认 = 还能确认 */
+        canConfirm: !overdue && canServe,
+      },
+      dishes,
+      summary: {
+        dishCount: dishes.length,
+        centerCount: new Set(details.map((d) => d.distributionCenterId)).size,
+        planQuantity: planTotal,
+        confirmedQuantity: confirmedTotal,
+        pendingQuantity: Math.max(0, planTotal - confirmedTotal),
+        allConfirmed: dishes.length > 0 && dishes.every((d) => d.status === DAILY_DONE),
+        /** 一份都没派到（截单后未生成 / 当日停团）—— 端上给空态文案，别显示 0 份的表格 */
+        empty: dishes.length === 0,
+      },
+      notes: {
+        confirmRule: `出餐确认须在出餐日当天 ${CONFIRM_DEADLINE_TEXT} 前完成；提前确认随时可以，过点后系统不再受理。`,
+        planFrozen:
+          '计划份数由截单后的「楼群已售份数」汇总而来，生成后即冻结；如需调整请联系运营。',
+        notForSettlement: '本页份数是生产口径，不做结算依据；应付金额以「结算明细」为准。',
+      },
+    };
+  }
+
+  // =====================================================================
+  // S2 · 出餐确认
+  // =====================================================================
+
+  /**
+   * S2 `POST /supplier/meal/cook-confirm` —— 按集散中心逐项确认（原型 P22）
+   *
+   * 三类前置校验，顺序不可调换（先判「有没有资格」，再判「来不来得及」，最后判「是不是你的活」）：
+   *   ① `canServe` —— 合作中 ∧ 资质已通过 ∧ 证照未过期 → 50001
+   *   ② 时间闸门 —— 迟于出餐日 09:30 → 50009（fail-closed）
+   *   ③ 目标校验 —— 无该菜生产计划 → 50010；集散中心不在配送范围 → 50011
+   *
+   * **幂等**：已确认的项原样返回在 `skipped` 里，不报错、不改时间戳。
+   * 重复提交是网络重试的常态，不该让供应商看到「失败」。
+   */
+  async cookConfirm(
+    adminSupplierId: number | null | undefined,
+    adminId: number | null | undefined,
+    dto: CookConfirmDto,
+  ) {
+    const supplier = await this.loadSupplier(adminSupplierId);
+    this.assertCanServe(supplier);
+    this.assertNotOverdue(dto.date);
+    await this.ensureProducePlan(dto.date, supplier.id);
+
+    const dailies = await this.dailyRepo.find({
+      where: { supplierId: supplier.id, produceDate: dto.date },
+    });
+    const dailyOf = new Map(dailies.map((d) => [d.dishId, d]));
+    const details = await this.detailRepo.find({
+      where: { supplierId: supplier.id, produceDate: dto.date },
+    });
+
+    const dishMap = await this.dishMapOf(dto.items.map((i) => i.dishId));
+    const centerMap = await this.centerMapOf(dto.items.map((i) => i.distributionCenterId));
+
+    const confirmed: Array<Record<string, unknown>> = [];
+    const skipped: Array<Record<string, unknown>> = [];
+    const touched = new Set<number>();
+    const now = new Date();
+
+    await this.dataSource.transaction(async (m: EntityManager) => {
+      for (const item of dto.items) {
+        const daily = dailyOf.get(item.dishId);
+        if (!daily) {
+          throw new BizException(
+            ErrorCode.PRODUCE_PLAN_NOT_FOUND,
+            `当日没有「${dishMap.get(item.dishId)?.name ?? `菜品 ${item.dishId}`}」的生产计划，` +
+              '无法确认（请核对出餐日与菜品，或联系运营）',
+          );
+        }
+
+        const detail = details.find(
+          (d) => d.dishId === item.dishId && d.distributionCenterId === item.distributionCenterId,
+        );
+        if (!detail) {
+          throw new BizException(
+            ErrorCode.COOK_CONFIRM_CENTER_MISMATCH,
+            `「${dishMap.get(item.dishId)?.name ?? `菜品 ${item.dishId}`}」当日不送往` +
+              `「${centerMap.get(item.distributionCenterId)?.name ?? `集散中心 ${item.distributionCenterId}`}」，` +
+              '无法确认（配送范围由该集散中心服务的楼群决定）',
+          );
+        }
+
+        if (detail.status === DETAIL_CONFIRMED) {
+          skipped.push({
+            dishId: item.dishId,
+            dishName: dishMap.get(item.dishId)?.name ?? null,
+            distributionCenterId: item.distributionCenterId,
+            reason: 'already_confirmed',
+            confirmedAt: toBjIso(detail.confirmedAt),
+          });
+          continue;
+        }
+
+        detail.status = DETAIL_CONFIRMED;
+        // 不传 = 足额送达；传了则以申报值为准（短送留痕是对账依据）
+        detail.actualQuantity =
+          item.actualQuantity !== undefined ? item.actualQuantity : Number(detail.planQuantity);
+        detail.confirmedAt = now;
+        detail.confirmedBy = adminId ?? null;
+        if (item.remark !== undefined) detail.remark = item.remark;
+        await m.save(detail);
+
+        touched.add(item.dishId);
+        confirmed.push({
+          dishId: item.dishId,
+          dishName: dishMap.get(item.dishId)?.name ?? null,
+          distributionCenterId: item.distributionCenterId,
+          centerName: centerMap.get(item.distributionCenterId)?.name ?? null,
+          planQuantity: Number(detail.planQuantity),
+          actualQuantity: detail.actualQuantity,
+          confirmedAt: toBjIso(now),
+        });
+      }
+
+      // 父行状态由明细派生（pending / cooking / done），不新增枚举值
+      for (const dishId of touched) {
+        const daily = dailyOf.get(dishId);
+        if (!daily) continue;
+        const rows = await m.find(SupplierDishCenterDaily, {
+          where: { supplierId: supplier.id, dishId, produceDate: dto.date },
+        });
+        const confirmedQty = rows
+          .filter((r) => r.status === DETAIL_CONFIRMED)
+          .reduce((sum, r) => sum + Number(r.actualQuantity ?? r.planQuantity), 0);
+        const allConfirmed = rows.length > 0 && rows.every((r) => r.status === DETAIL_CONFIRMED);
+        const anyConfirmed = rows.some((r) => r.status === DETAIL_CONFIRMED);
+
+        daily.actualQuantity = confirmedQty;
+        daily.status = allConfirmed ? DAILY_DONE : anyConfirmed ? DAILY_COOKING : DAILY_PENDING;
+        daily.completedAt = allConfirmed ? now : null;
+        await m.save(daily);
+      }
+    });
+
+    const after = await this.dailyRepo.find({
+      where: { supplierId: supplier.id, produceDate: dto.date },
+    });
+    const dishIds = after.map((d) => d.dishId);
+    const afterDetails = await this.detailRepo.find({
+      where: { supplierId: supplier.id, produceDate: dto.date },
+    });
+    const afterDishMap = await this.dishMapOf(dishIds);
+
+    return {
+      date: dto.date,
+      confirmed,
+      skipped,
+      dishes: after.map((d) => {
+        const rows = afterDetails.filter((r) => r.dishId === d.dishId);
+        const confirmedCenters = rows.filter((r) => r.status === DETAIL_CONFIRMED).length;
+        return {
+          dishId: d.dishId,
+          dishName: afterDishMap.get(d.dishId)?.name ?? null,
+          status: d.status,
+          planQuantity:
+            rows.reduce((s, r) => s + Number(r.planQuantity), 0) || Number(d.planQuantity),
+          confirmedQuantity: Number(d.actualQuantity ?? 0),
+          centerCount: rows.length,
+          confirmedCenterCount: confirmedCenters,
+        };
+      }),
+      summary: {
+        submitted: dto.items.length,
+        confirmed: confirmed.length,
+        skipped: skipped.length,
+        allDone: after.length > 0 && after.every((d) => d.status === DAILY_DONE),
+      },
+    };
+  }
+
+  // =====================================================================
+  // S3 · 集散中心打包任务
+  // =====================================================================
+
+  /**
+   * S3 `GET /supplier/packing-tasks?date=` —— 集散中心打包任务（原型 P21/P22 的下游）
+   *
+   * **可见性**：只对「名下挂了启用中集散中心」的主体可见（原型的集散型 / 混合型）。
+   * 判定以**数据**为准（有没有 dc），不以类型标签为准 —— 标签与数据不一致时，
+   * 以「它确实有场地要打包」为真，否则会出现「有任务却看不到」。
+   *
+   * **前置闸门 `ready`**：该中心当日**所有**应到菜品都已确认送达，才 `ready=true`。
+   * 否则列出 `blockers`。这是原型那句「出餐确认后将推送给集散中心，由兼职打包并安排货拉拉配送」
+   * 的落地 —— 未到齐就开包，会包出缺菜的餐。
+   */
+  async packingTasks(adminSupplierId: number | null | undefined, q: PackingTasksQueryDto) {
+    const supplier = await this.loadSupplier(adminSupplierId);
+    const centers = await this.dcRepo.find({ where: { supplierId: supplier.id, status: 1 } });
+    const usable = centers.filter((c) => !c.deletedAt);
+
+    if (!usable.length) {
+      return {
+        visible: false,
+        reason:
+          '当前主体名下没有启用中的集散中心，没有打包任务。' +
+          '（打包任务仅对承担集散的供应商可见；如已配置集散中心请确认其状态为「启用」）',
+        date: q.date ?? null,
+        centers: [],
+      };
+    }
+
+    const date = q.date ?? (await this.defaultDate(supplier.id));
+    // ⚠️ 全量生成（不传 supplierId）：打包闸门要看到**所有**供应商的到位情况，
+    //    漏掉任何一家都会让「已到齐」成为假象。
+    await this.ensureProducePlan(date);
+
+    const allDetails = await this.detailRepo.find({
+      where: { produceDate: date, distributionCenterId: In(usable.map((c) => c.id)) },
+    });
+
+    const dailies = await this.dailyRepo.find({ where: { produceDate: date } });
+    const dailyOf = new Map(dailies.map((d) => [`${d.supplierId}:${d.dishId}`, d]));
+    const dishMap = await this.dishMapOf(dailies.map((d) => d.dishId));
+    const supplierNames = await this.supplierNameMap();
+
+    const { groups, assignments } = await this.loadDeliveryContext(date);
+    const routeNo = this.routeNoMap(usable);
+
+    const result = usable.map((center) => {
+      const rows = allDetails.filter(
+        (d) => d.distributionCenterId === center.id && Number(d.planQuantity) > 0,
+      );
+
+      const dishes = rows.map((r) => {
+        const dish = dishMap.get(r.dishId);
+        const key = `${r.supplierId}:${r.dishId}`;
+        return {
+          supplierId: r.supplierId,
+          supplierName: supplierNames.get(r.supplierId) ?? `供应商 ${r.supplierId}`,
+          dishId: r.dishId,
+          dishName: dish?.name ?? `菜品 ${r.dishId}`,
+          unitPriceFen: toFen(Number(dailyOf.get(key)?.unitPrice ?? 0)),
+          planQuantity: Number(r.planQuantity),
+          actualQuantity: r.actualQuantity ?? null,
+          status: r.status,
+          confirmedAt: toBjIso(r.confirmedAt),
+        };
+      });
+
+      const blockers = dishes
+        .filter((d) => d.status !== DETAIL_CONFIRMED)
+        .map((d) => ({
+          supplierName: d.supplierName,
+          dishName: d.dishName,
+          planQuantity: d.planQuantity,
+          status: d.status,
+        }));
+
+      // 该中心服务的楼群 → 路线 → 站点（楼栋）
+      const myGroups = groups.filter((g) => this.primaryCenterOf(g.id, usable) === center.id);
+      const routes = myGroups.map((g) => {
+        const stops =
+          assignments.buildingOf
+            .get(g.id)
+            ?.slice()
+            .sort((a, b) => a.id - b.id)
+            .map((b) => ({ buildingId: b.id, buildingName: b.name, address: b.address })) ?? [];
+        return {
+          routeNo: routeNo.get(g.id) ?? null,
+          buildingGroupId: g.id,
+          groupName: g.name,
+          quantity: assignments.soldOf.get(g.id) ?? 0,
+          stops,
+        };
+      });
+
+      const batchQuantity = routes.reduce((s, r) => s + r.quantity, 0);
+
+      return {
+        centerId: center.id,
+        centerName: center.name,
+        centerAddress: center.address,
+        contactName: center.contactName ?? null,
+        contactPhone: center.contactPhone ?? null,
+        ready: dishes.length > 0 && blockers.length === 0,
+        blockers,
+        dishes,
+        routes,
+        summary: {
+          batchQuantity,
+          routeCount: routes.length,
+          stopCount: routes.reduce((s, r) => s + r.stops.length, 0),
+          dishCount: dishes.length,
+          confirmedDishCount: dishes.filter((d) => d.status === DETAIL_CONFIRMED).length,
+        },
+      };
+    });
+
+    return {
+      visible: true,
+      date,
+      centers: result,
+      notes: {
+        gateRule:
+          '「可开始打包」= 该集散中心当日所有菜品均已确认送达。未到齐时请先催未确认的供应商，不要开包。',
+        routeRule:
+          '路线号（R1…Rn）按「主集散中心 id 升序」派生；站点顺序按楼栋 id 升序。' +
+          '本接口**不返回距离与单段时长** —— 无地图数据，原型上的 km/分钟是演示值，不做承诺。',
+        quantityRule: '打包份数 = 该中心所服务楼群的当日已售份数之和（与用户端下单数同源）。',
+      },
+    };
+  }
+
+  // =====================================================================
+  // 生产计划派生
+  // =====================================================================
+
+  /**
+   * 惰性生成生产计划（幂等）
+   *
+   * 派生链：`ab_meal_assignment`(active) × `ab_set_meal_item` → 按 (供应商, 菜, 集散中心) 聚合 `sold_count`
+   *
+   * 三处刻意的取舍：
+   *   ① **只生成 `planQuantity > 0` 的明细** —— 应送 0 份的集散中心不需要确认动作，
+   *      生成出来只会让 P22 长出一串「0 份」的空卡片。
+   *   ② **已有父行不重算** —— 父行是「已冻结的承诺数」。种子 / 运营已备好计划时，
+   *      只需补建缺失的**明细**（历史数据只有父行的场景）。
+   *   ③ `unit_price` 取 `ab_dish.cost_price`（菜品属性）而非 `ab_set_meal_item.share_amount`
+   *      —— 供价是「逐菜协商」的菜品属性，同一道菜在不同套餐里不应有两个供价。
+   */
+  private async ensureProducePlan(date: string, onlySupplierId?: number): Promise<void> {
+    const assignments = await this.maRepo.find({ where: { mealDate: date, status: 'active' } });
+    const usable = assignments.filter((a) => a.distributionCenterId);
+    if (!usable.length) return;
+
+    const setMealIds = [...new Set(usable.map((a) => a.setMealId))];
+    const items = setMealIds.length
+      ? await this.itemRepo.find({ where: { setMealId: In(setMealIds) } })
+      : [];
+    const itemsOf = new Map<number, SetMealItem[]>();
+    for (const it of items) {
+      const list = itemsOf.get(it.setMealId) ?? [];
+      list.push(it);
+      itemsOf.set(it.setMealId, list);
+    }
+
+    // ---- 聚合：一道菜在同一天要分别送几个集散中心各多少份 ----
+    const plans = new Map<string, DerivedPlan>();
+    for (const a of usable) {
+      const dcId = a.distributionCenterId as number;
+      for (const it of itemsOf.get(a.setMealId) ?? []) {
+        if (onlySupplierId && it.supplierId !== onlySupplierId) continue;
+        const key = `${it.supplierId}:${it.dishId}`;
+        const plan =
+          plans.get(key) ??
+          ({
+            supplierId: it.supplierId,
+            dishId: it.dishId,
+            total: 0,
+            centers: new Map(),
+          } as DerivedPlan);
+        plan.total += a.soldCount;
+        plan.centers.set(dcId, (plan.centers.get(dcId) ?? 0) + a.soldCount);
+        plans.set(key, plan);
+      }
+    }
+    if (!plans.size) return;
+
+    const [existingDaily, existingDetails] = await Promise.all([
+      this.dailyRepo.find({ where: { produceDate: date } }),
+      this.detailRepo.find({ where: { produceDate: date } }),
+    ]);
+    const dailyKey = new Set(existingDaily.map((d) => `${d.supplierId}:${d.dishId}`));
+    const detailKey = new Set(
+      existingDetails.map((d) => `${d.supplierId}:${d.dishId}:${d.distributionCenterId}`),
+    );
+
+    const dishMap = await this.dishMapOf([...plans.values()].map((p) => p.dishId));
+
+    const newDaily: Array<Partial<SupplierDishDaily>> = [];
+    const newDetails: Array<Partial<SupplierDishCenterDaily>> = [];
+
+    for (const plan of plans.values()) {
+      // ⚠️ 只生成**确有产量**的计划：`status=active` 但 `sold_count=0` 的分配很常见
+      //    （种子即有 —— bg3 用 setMeal2 但一份没卖），照单生成会让供应商在 P21
+      //    看到一串「0 份」的菜，而它们根本没有生产任务。
+      if (plan.total <= 0) continue;
+      const key = `${plan.supplierId}:${plan.dishId}`;
+      if (!dailyKey.has(key)) {
+        newDaily.push({
+          supplierId: plan.supplierId,
+          dishId: plan.dishId,
+          produceDate: date,
+          planQuantity: plan.total,
+          unitPrice: dishMap.get(plan.dishId)?.costPrice ?? '0.00',
+          status: DAILY_PENDING,
+        });
+      }
+      for (const [dcId, qty] of plan.centers) {
+        if (qty <= 0) continue;
+        if (detailKey.has(`${key}:${dcId}`)) continue;
+        newDetails.push({
+          supplierId: plan.supplierId,
+          dishId: plan.dishId,
+          produceDate: date,
+          distributionCenterId: dcId,
+          planQuantity: qty,
+          status: DETAIL_PENDING,
+        });
+      }
+    }
+
+    if (newDaily.length) await this.dailyRepo.save(this.dailyRepo.create(newDaily));
+    if (newDetails.length) await this.detailRepo.save(this.detailRepo.create(newDetails));
+    if (newDaily.length || newDetails.length) {
+      this.logger.log(
+        `出餐计划生成 date=${date} 父行+${newDaily.length} 明细+${newDetails.length}` +
+          (onlySupplierId ? `（仅供应商 ${onlySupplierId}）` : '（全量）'),
+      );
+    }
+  }
+
+  // =====================================================================
+  // 校验 / 工具
+  // =====================================================================
+
+  /** 取当前账号绑定的供应商（未绑定 / 已停用一律 50006） */
+  private async loadSupplier(supplierId: number | null | undefined): Promise<Supplier> {
+    if (!supplierId) {
+      throw new BizException(
+        ErrorCode.SUPPLIER_NOT_FOUND,
+        '当前账号未绑定供应商，无法查看出餐任务（请联系运营在后台「账号管理」中绑定）',
+      );
+    }
+    const s = await this.supplierRepo.findOne({ where: { id: supplierId } });
+    if (!s || s.status !== SupplierStatus.ACTIVE) {
+      throw new BizException(ErrorCode.SUPPLIER_NOT_FOUND, '供应商不存在或已停用');
+    }
+    return s;
+  }
+
+  /** 出餐前置：合作中 ∧ 资质已通过 ∧ 证照未过期（与 D23 `canServe` 同一判据） */
+  private assertCanServe(s: Supplier): void {
+    if (this.canServe(s)) return;
+    const reason =
+      s.status !== SupplierStatus.ACTIVE
+        ? '合作已停用'
+        : s.auditStatus !== SupplierAuditStatus.APPROVED
+          ? `资质${SUPPLIER_AUDIT_STATUS_LABEL[s.auditStatus as keyof typeof SUPPLIER_AUDIT_STATUS_LABEL] ?? s.auditStatus}`
+          : '证照已过期';
+    throw new BizException(
+      ErrorCode.SUPPLIER_NOT_QUALIFIED,
+      `当前不能出餐（${reason}）—— 请补充或更新资质后由运营重新核验`,
+    );
+  }
+
+  /** 时间闸门：迟于出餐日 09:30 → 50009（fail-closed） */
+  private assertNotOverdue(date: string): void {
+    const deadline = this.deadlineOf(date);
+    if (Date.now() <= deadline.getTime()) return;
+    throw new BizException(
+      ErrorCode.COOK_CONFIRM_OVERDUE,
+      `出餐确认截止时间为出餐日当天 ${CONFIRM_DEADLINE_TEXT}，本次针对 ${date} 的确认已超时。` +
+        '为避免记录失真，系统不再受理补确认 —— 请联系运营线下处理。',
+    );
+  }
+
+  private deadlineOf(date: string): Date {
+    return bjDateTime(date, CONFIRM_DEADLINE_HOUR, CONFIRM_DEADLINE_MINUTE);
+  }
+
+  private canServe(s: Supplier): boolean {
+    return (
+      s.status === SupplierStatus.ACTIVE &&
+      s.auditStatus === SupplierAuditStatus.APPROVED &&
+      this.licenseStateOf(s.licenseExpireAt) !== LicenseState.EXPIRED
+    );
+  }
+
+  /** 证照有效期档位（派生值，不落库）—— 与 D23/D25 同一口径 */
+  private licenseStateOf(expire?: string | null): LicenseState {
+    if (!expire) return LicenseState.UNKNOWN;
+    const today = todayBj();
+    if (expire < today) return LicenseState.EXPIRED;
+    if (expire <= addDays(today, LICENSE_EXPIRING_DAYS)) return LicenseState.EXPIRING;
+    return LicenseState.NORMAL;
+  }
+
+  /** `date` 缺省：该供应商「最近一个有生产计划的出餐日」，无则明日 */
+  private async defaultDate(supplierId: number): Promise<string> {
+    const today = todayBj();
+    const row = await this.dailyRepo
+      .createQueryBuilder('d')
+      .select('MIN(d.produce_date)', 'date')
+      .where('d.supplier_id = :supplierId AND d.produce_date >= :today', { supplierId, today })
+      .getRawOne<{ date: string | null }>();
+    return row?.date ?? tomorrowBj();
+  }
+
+  private async dishMapOf(ids: number[]): Promise<Map<number, Dish>> {
+    const uniq = [...new Set(ids)].filter((id) => Number.isFinite(id));
+    if (!uniq.length) return new Map();
+    const rows = await this.dishRepo.find({ where: { id: In(uniq) } });
+    return new Map(rows.map((r) => [r.id, r]));
+  }
+
+  private async centerMapOf(ids: number[]): Promise<Map<number, DistributionCenter>> {
+    const uniq = [...new Set(ids)].filter((id) => Number.isFinite(id));
+    if (!uniq.length) return new Map();
+    const rows = await this.dcRepo.find({ where: { id: In(uniq), deletedAt: IsNull() } });
+    return new Map(rows.map((r) => [r.id, r]));
+  }
+
+  private async supplierNameMap(): Promise<Map<number, string>> {
+    const rows = await this.supplierRepo.find();
+    return new Map(rows.map((r) => [r.id, r.name]));
+  }
+
+  private groupByDish(rows: SupplierDishCenterDaily[]): Map<number, SupplierDishCenterDaily[]> {
+    const map = new Map<number, SupplierDishCenterDaily[]>();
+    for (const r of rows) {
+      const list = map.get(r.dishId) ?? [];
+      list.push(r);
+      map.set(r.dishId, list);
+    }
+    return map;
+  }
+
+  /**
+   * 配送上下文：启用中的楼群 + 楼群→楼栋 + 楼群→当日已售份数
+   *
+   * ⚠️ 与 `building-admin.service.routeNoMap()` **同口径**（路线号按主集散中心 id 升序）。
+   *    两处各自实现是刻意的：跨模块 import 会在「办公楼模块」与「供应商模块」间
+   *    拉出一条服务依赖链，而这段逻辑只有十几行、且变更是全局性的（要改一起改）。
+   */
+  private async loadDeliveryContext(date: string) {
+    const [groups, buildings, assignments] = await Promise.all([
+      this.groupRepo.find({ where: { status: 1 } }),
+      this.buildingRepo.find({ where: { deletedAt: IsNull() } }),
+      this.maRepo.find({ where: { mealDate: date, status: 'active' } }),
+    ]);
+
+    const buildingOf = new Map<number, Building[]>();
+    for (const b of buildings) {
+      if (!b.buildingGroupId) continue;
+      const list = buildingOf.get(b.buildingGroupId) ?? [];
+      list.push(b);
+      buildingOf.set(b.buildingGroupId, list);
+    }
+
+    const soldOf = new Map<number, number>();
+    for (const a of assignments) {
+      soldOf.set(a.buildingGroupId, (soldOf.get(a.buildingGroupId) ?? 0) + a.soldCount);
+    }
+
+    return { groups: groups.filter((g) => !g.deletedAt), assignments: { buildingOf, soldOf } };
+  }
+
+  /**
+   * 楼群 → 主集散中心（服务该楼群、启用中 id 最小者）
+   * 与 `building-admin.service.centerPair()` 同口径。
+   */
+  private primaryCenterOf(groupId: number, centers: DistributionCenter[]): number | null {
+    const serving = centers
+      .filter((c) => (c.serviceGroups ?? []).includes(groupId))
+      .sort((a, b) => a.id - b.id);
+    return serving.length ? serving[0].id : null;
+  }
+
+  /** 楼群 → 路线号（R1…Rn）· 按主集散中心 id 升序编号 */
+  private routeNoMap(centers: DistributionCenter[]): Map<number, string> {
+    const groupIds = new Set<number>();
+    for (const c of centers) for (const g of c.serviceGroups ?? []) groupIds.add(g);
+
+    const withPrimary = [...groupIds]
+      .map((g) => ({ groupId: g, centerId: this.primaryCenterOf(g, centers) }))
+      .filter((x) => x.centerId !== null) as Array<{ groupId: number; centerId: number }>;
+
+    const centerOrder = [...new Set(withPrimary.map((x) => x.centerId))].sort((a, b) => a - b);
+    const noOf = new Map<number, string>();
+    withPrimary
+      .sort((a, b) => {
+        const d = centerOrder.indexOf(a.centerId) - centerOrder.indexOf(b.centerId);
+        return d !== 0 ? d : a.groupId - b.groupId;
+      })
+      .forEach((x, i) => noOf.set(x.groupId, `R${i + 1}`));
+    return noOf;
+  }
+}

@@ -99,8 +99,9 @@ export const ADMIN_NAV = [
 
 /** 供应商导航（role=supplier · P21–P26） */
 export const SUPPLIER_NAV = [
-  { path: '/dashboard', title: '商家工作台', page: 'P21', module: 'M21-01' },
-  { path: '/order/list', title: '出餐确认', page: 'P22', module: 'M21-02/03' },
+  { path: '/supplier/workbench', title: '商家工作台', page: 'P21', module: 'M21-01' },
+  { path: '/supplier/cook-confirm', title: '出餐确认', page: 'P22', module: 'M21-02' },
+  { path: '/supplier/packing', title: '打包任务', page: 'P22（下游）', module: 'M21-03' },
   { path: '/supplier/dishes', title: '我的菜品', page: 'P23', module: 'M22-01' },
   {
     path: '/supplier/edit',
@@ -109,4 +110,8 @@ export const SUPPLIER_NAV = [
     module: 'M22-02 · M24',
   },
   { path: '/finance/supplier-share', title: '应付结算明细', page: 'P25', module: 'M23-01/02' },
+  // ⚠️ 保留通用概览作为兜底落点（登录后默认路径不受菜单调整影响）。
+  //    `P21/P22` 原先借用 `/dashboard`、`/order/list` 顶替，M3-8 已有真实页面，
+  //    `/order/list`（订单中心）不再给供应商角色 —— 供应商不需要看全量订单。
+  { path: '/dashboard', title: '概览', page: '—', module: '通用' },
 ] as const;

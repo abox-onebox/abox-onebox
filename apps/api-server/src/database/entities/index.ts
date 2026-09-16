@@ -8,11 +8,11 @@
  * 楼群域（1）：BuildingGroup
  * 商家域（2）：Supplier / Dish
  * 套餐域（3）：SetMeal / SetMealItem / MealAssignment
- * 供应商生产域（1）：SupplierDishDaily
+ * 供应商生产域（2）：SupplierDishDaily / SupplierDishCenterDaily（M3-8 新增）
  * 订单与支付域（4）：Order / PaymentLog / Refund / DeliveryRecord
  * 财务域（6）：Commission / SupplierShare / Balance / BalanceLog / DistributionCenter / Withdraw
  * 系统域（4）：AdminUser / OperationLog / SysConfig / Message
- * 合计 25 张
+ * 合计 26 张
  */
 export * from './user.entity';
 export * from './leader.entity';
@@ -27,7 +27,7 @@ export * from './system.entity';
 import { User } from './user.entity';
 import { TeamLeader, LeaderInvite } from './leader.entity';
 import { Building, BuildingGroup } from './building.entity';
-import { Supplier, Dish, SupplierDishDaily } from './supplier.entity';
+import { Supplier, Dish, SupplierDishDaily, SupplierDishCenterDaily } from './supplier.entity';
 import { SetMeal, SetMealItem, MealAssignment } from './meal.entity';
 import { Order, PaymentLog, Refund, DeliveryRecord } from './order.entity';
 import {
@@ -53,6 +53,7 @@ export const ALL_ENTITIES = [
   SetMealItem,
   MealAssignment,
   SupplierDishDaily,
+  SupplierDishCenterDaily,
   Order,
   PaymentLog,
   Refund,

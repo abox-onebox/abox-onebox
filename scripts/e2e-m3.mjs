@@ -3375,8 +3375,9 @@ async function main() {
     `sample=${JSON.stringify(sRows[0]?.licenseState)}/${sRows[0]?.licenseStateLabel}`,
   );
   assert(
-    new Set(sRows.map((r) => r.licenseState)).has('unknown'),
-    'D23 种子供应商未登记证照有效期 → licenseState=unknown（**未登记 ≠ 已过期**，后置收集是合法的）',
+    new Set(sRows.map((r) => r.licenseState)).has('unknown') &&
+      sRows.some((r) => r.licenseState === 'normal'),
+    'D23 证照档位派生真实生效：备选供应商未登记 → unknown（**未登记 ≠ 已过期**，后置收集合法）；4 家演示供应商已核验 → normal',
     `states=${JSON.stringify([...new Set(sRows.map((r) => r.licenseState))])}`,
   );
   assert(
@@ -4710,6 +4711,342 @@ async function main() {
     'D18 编辑楼群留痕（`targetId` = 楼群 id）',
     `hit=${bldLogRows.filter((l) => l.action === '编辑楼群').length}`,
   );
+  }
+
+  // ==========================================================================
+  // §20 M3-8 出餐确认 S1–S3（原型 P21/P22 · 供应商端）
+  // ==========================================================================
+  //
+  // ⚠️ **本节刻意不依赖下单窗口**（与 §18/§19 同纪律），且更进一步：
+  //    「超时」用例一律用**昨日**，不用今日 —— 「今日是否已过 09:30」依运行时刻而定，
+  //    凌晨 00:00–09:30 跑就会翻。昨日一定过点，断言与时钟无关。
+  //    「应成功」用例一律用**明日**（T+1），此时截止点尚未到达 —— 这正是
+  //    「09:30 是 deadline 而非 earliest」的实现语义：提前确认允许。
+  {
+    const TMR = addDaysStr(bjToday(), 1);
+    const YST = addDaysStr(bjToday(), -1);
+    const FAR = addDaysStr(bjToday(), 60);
+
+    const supLogin = await adminLogin('sanweiwu', 'supplier123');
+    const supToken = supLogin.token;
+    const supAccountId = Number(seedSupplier?.id ?? 0);
+    const guest = await userLogin(`e2e_sup_${stamp}`);
+
+    // ---- A. 主体隔离（三个主体，三套账号体系） ----
+    assert(
+      supLogin.code === 0 && !!supToken,
+      '前置：种子供应商账号 sanweiwu 可登录（role=supplier，绑定 ab_supplier.id=1）',
+      `code=${supLogin.code} role=${supLogin.account?.role} supplierId=${supLogin.account?.supplierId}`,
+    );
+    const centOnSup = await call('GET', '/supplier/workbench', { token: guest.token });
+    assert(
+      centOnSup.body?.code === 10003,
+      '双主体隔离：小程序 token 打 /supplier/workbench → 10003（C 端与后台 id 各自自增，不隔离即静默越权）',
+      `code=${centOnSup.body?.code}`,
+    );
+    const adminOnSup = await call('GET', '/supplier/workbench', { token: adminToken });
+    assert(
+      adminOnSup.body?.code === 10003,
+      '双主体隔离：运营账号（role=super_admin）打 /supplier/* → 10003（供应商端点只对 role=supplier 开放）',
+      `code=${adminOnSup.body?.code}`,
+    );
+
+    // ---- B. S1 工作台 ----
+    const wb = await call('GET', '/supplier/workbench', { token: supToken });
+    const wbData = wb.body?.data;
+    assert(
+      wb.body?.code === 0 && wbData?.supplier?.name === '三味屋',
+      'S1 工作台返回本主体（三味屋）—— 数据范围由 token 里的 supplierId 收窄，请求体**不收** supplierId',
+      `code=${wb.body?.code} name=${wbData?.supplier?.name}`,
+    );
+    assert(
+      wbData?.supplier?.canServe === true,
+      'S1 下发 `canServe` 派生值（合作中 ∧ 资质已通过 ∧ 证照未过期）—— 端上先提示再放按钮，别让供应商点了才发现被拦',
+      `canServe=${wbData?.supplier?.canServe} audit=${wbData?.supplier?.auditStatus} license=${wbData?.supplier?.licenseState}`,
+    );
+    assert(
+      wbData?.date === TMR,
+      'S1 `date` 缺省 = 本主体最近一个有生产计划的出餐日（种子在 T+1，故为明日）—— 不写死 tomorrowBj()',
+      `date=${wbData?.date} 期望=${TMR}`,
+    );
+    assert(
+      (wbData?.dishes ?? []).length === 1 &&
+        wbData?.dishes?.[0]?.dishId === 1 &&
+        wbData?.dishes?.[0]?.dishName === '红烧肉',
+      'S1 列出本主体当日菜品（三味屋 = 红烧肉，一道）',
+      `dishes=${JSON.stringify((wbData?.dishes ?? []).map((d) => d.dishName))}`,
+    );
+    assert(
+      wbData?.dishes?.[0]?.planQuantity === 45 && wbData?.summary?.planQuantity === 45,
+      'S1 计划份数与「楼群已售份数」同源（种子里 bg1 已售 45 → 45 份）—— 派生自 ab_meal_assignment，不是另算一份',
+      `plan=${wbData?.dishes?.[0]?.planQuantity} summary=${wbData?.summary?.planQuantity}`,
+    );
+    assert(
+      (wbData?.dishes?.[0]?.centers ?? []).length === 1 &&
+        wbData?.dishes?.[0]?.centers?.[0]?.distributionCenterId === 1 &&
+        wbData?.dishes?.[0]?.centers?.[0]?.planQuantity === 45,
+      'S1 明细按**集散中心**拆分（原型 P22 的交互粒度：一道菜分别送到 N 个中心，各中心单独确认）',
+      `centers=${JSON.stringify((wbData?.dishes?.[0]?.centers ?? []).map((c) => `${c.centerName}:${c.planQuantity}`))}`,
+    );
+    assert(
+      wbData?.deadline?.text === '09:30' && wbData?.deadline?.overdue === false && wbData?.deadline?.canConfirm === true,
+      'S1 下发确认截止（出餐日当天 09:30）与是否已过点 —— 明日未到点，`canConfirm=true`',
+      `text=${wbData?.deadline?.text} overdue=${wbData?.deadline?.overdue} canConfirm=${wbData?.deadline?.canConfirm}`,
+    );
+    assert(
+      (wbData?.dishes?.[0]?.unitPriceFen ?? 0) > 0 &&
+        Number.isInteger(wbData?.dishes?.[0]?.unitPriceFen),
+      'S1 金额出参为**整数分**（unitPriceFen 取 ab_dish.cost_price = 7.50 → 750）',
+      `unitPriceFen=${wbData?.dishes?.[0]?.unitPriceFen}`,
+    );
+    assert(
+      !!wbData?.notes?.confirmRule && !!wbData?.notes?.planFrozen,
+      'S1 下发口径说明（确认规则 / 计划冻结 / 非结算依据）—— 端上直接渲染，不自己编文案',
+      `keys=${Object.keys(wbData?.notes ?? {}).join(',')}`,
+    );
+
+    // 惰性生成落库：父行 + 分中心明细
+    const lazyDaily = readDb(
+      'SELECT id, plan_quantity, status FROM ab_supplier_dish_daily WHERE supplier_id = 1 AND dish_id = 1 AND produce_date = ?',
+      [TMR],
+    );
+    const lazyDetail = readDb(
+      'SELECT id, plan_quantity, status FROM ab_supplier_dish_center_daily WHERE supplier_id = 1 AND dish_id = 1 AND produce_date = ? AND distribution_center_id = 1',
+      [TMR],
+    );
+    assert(
+      !!lazyDaily && !!lazyDetail && Number(lazyDetail.plan_quantity) === 45 && lazyDetail.status === 'pending',
+      'S1 首次访问**惰性生成**生产计划（父行 + 分中心明细）并落库 —— 计划是给供应商的承诺数，生成即冻结，不能每次实时重算',
+      `daily=${lazyDaily?.plan_quantity} detail=${lazyDetail?.plan_quantity}/${lazyDetail?.status}`,
+    );
+
+    const emptyWb = await call('GET', `/supplier/workbench?date=${FAR}`, { token: supToken });
+    assert(
+      emptyWb.body?.code === 0 &&
+        emptyWb.body?.data?.summary?.empty === true &&
+        (emptyWb.body?.data?.dishes ?? []).length === 0,
+      'S1 远期无计划日 → `summary.empty=true` 且 dishes 为空（端上走空态，而不是显示一张全 0 的表格）',
+      `empty=${emptyWb.body?.data?.summary?.empty} dishes=${(emptyWb.body?.data?.dishes ?? []).length}`,
+    );
+
+    // ---- C. S3 打包任务：闸门未就绪 ----
+    const pk1 = await call('GET', `/supplier/packing-tasks?date=${TMR}`, { token: supToken });
+    const pk1Data = pk1.body?.data;
+    const pk1Center = pk1Data?.centers?.[0];
+    assert(
+      pk1.body?.code === 0 && pk1Data?.visible === true && pk1Center?.centerId === 1,
+      'S3 对「名下挂了启用中集散中心」的主体可见（三味屋 type=both，名下有集散中心 1）',
+      `visible=${pk1Data?.visible} center=${pk1Center?.centerName}`,
+    );
+    assert(
+      pk1Center?.ready === false && (pk1Center?.blockers ?? []).length === 4,
+      'S3 前置闸门：该中心当日菜品**未全部确认送达** → `ready=false`，blockers 列出欠的 4 家（此刻三味屋也还没确认）—— 未到齐就开包会包出缺菜的餐',
+      `ready=${pk1Center?.ready} blockers=${JSON.stringify((pk1Center?.blockers ?? []).map((b) => b.supplierName))}`,
+    );
+    const allDetailsTmr = readRows(
+      'SELECT supplier_id, plan_quantity FROM ab_supplier_dish_center_daily WHERE produce_date = ? AND distribution_center_id = 1',
+      [TMR],
+    );
+    assert(
+      allDetailsTmr.length === 4,
+      'S3 查询会**全量派生**（不只本主体）：闸门要看到所有供应商的到位情况，漏掉任何一家「已到齐」都是假象',
+      `rows=${allDetailsTmr.length} suppliers=${JSON.stringify(allDetailsTmr.map((r) => r.supplier_id))}`,
+    );
+    assert(
+      (pk1Center?.routes ?? []).length === 2 &&
+        (pk1Center?.routes ?? []).every((r) => r.routeNo && r.stops.length > 0),
+      'S3 路线派生：集散中心 1 服务楼群 1/2 → 两条路线，各带 R 编号与站点链（按楼栋 id 升序）',
+      `routes=${JSON.stringify((pk1Center?.routes ?? []).map((r) => `${r.routeNo}:${r.groupName}:${r.quantity}`))}`,
+    );
+    assert(
+      pk1Center?.summary?.batchQuantity === 45 && pk1Center?.summary?.stopCount > 0,
+      'S3 打包份数 = 所服务楼群当日已售份数之和（bg1 45 + bg2 0 = 45）',
+      `batch=${pk1Center?.summary?.batchQuantity} stops=${pk1Center?.summary?.stopCount}`,
+    );
+    assert(
+      pk1Center?.distanceKm === undefined && pk1Center?.durationMin === undefined,
+      'S3 **不返回距离与单段时长**（无地图数据，原型上的 km/分钟是演示值，写进接口就是对外承诺）',
+      `keys=${Object.keys(pk1Center ?? {}).join(',')}`,
+    );
+    assert(
+      !!pk1Data?.notes?.gateRule && !!pk1Data?.notes?.routeRule,
+      'S3 下发闸门规则与路线口径说明',
+      `keys=${Object.keys(pk1Data?.notes ?? {}).join(',')}`,
+    );
+
+    // ---- D. S3 可见性：纯出餐型（名下无集散中心） ----
+    writeDb('UPDATE ab_distribution_center SET supplier_id = 2 WHERE id = 1');
+    const pkHidden = await call('GET', `/supplier/packing-tasks?date=${TMR}`, { token: supToken });
+    writeDb('UPDATE ab_distribution_center SET supplier_id = 1 WHERE id = 1');
+    assert(
+      pkHidden.body?.code === 0 &&
+        pkHidden.body?.data?.visible === false &&
+        !!pkHidden.body?.data?.reason,
+      'S3 名下无启用集散中心 → `visible=false` + reason（**HTTP 200**：没有这项任务是正常状态，不是错误，不该让端上走报错分支）',
+      `code=${pkHidden.body?.code} visible=${pkHidden.body?.data?.visible}`,
+    );
+
+    // ---- E. 资质闸门优先于时间闸门 ----
+    writeDb("UPDATE ab_supplier SET audit_status = 'rejected' WHERE id = 1");
+    const notQualified = await call('POST', '/supplier/meal/cook-confirm', {
+      token: supToken,
+      body: { date: TMR, items: [{ dishId: 1, distributionCenterId: 1 }] },
+    });
+    writeDb("UPDATE ab_supplier SET audit_status = 'approved' WHERE id = 1");
+    assert(
+      notQualified.body?.code === 50001,
+      'S2 资质闸门：`audit_status=rejected` → 50001（**未过点也要拦** —— 先判「有没有资格」，再判「来不来得及」）',
+      `code=${notQualified.body?.code} msg=${notQualified.body?.message}`,
+    );
+
+    // ---- F. S2 出餐确认（成功 + 幂等） ----
+    const cf1 = await call('POST', '/supplier/meal/cook-confirm', {
+      token: supToken,
+      body: { date: TMR, items: [{ dishId: 1, distributionCenterId: 1 }] },
+    });
+    assert(
+      cf1.body?.code === 0 &&
+        (cf1.body?.data?.confirmed ?? []).length === 1 &&
+        cf1.body?.data?.summary?.allDone === true,
+      'S2 出餐确认成功（明日 = 提前确认，09:30 是 **deadline 不是 earliest**）→ 全部分中心确认后 allDone=true',
+      `code=${cf1.body?.code} confirmed=${(cf1.body?.data?.confirmed ?? []).length} allDone=${cf1.body?.data?.summary?.allDone}`,
+    );
+    const cfDetailDb = readDb(
+      'SELECT status, actual_quantity, confirmed_by, confirmed_at FROM ab_supplier_dish_center_daily WHERE supplier_id = 1 AND produce_date = ? AND distribution_center_id = 1',
+      [TMR],
+    );
+    assert(
+      cfDetailDb?.status === 'confirmed' &&
+        Number(cfDetailDb?.actual_quantity) === 45 &&
+        Number(cfDetailDb?.confirmed_by) === supAccountId &&
+        !!cfDetailDb?.confirmed_at,
+      'S2 明细落库四要素（status=confirmed · actual_quantity · confirmed_by=操作账号 · confirmed_at）—— 出餐确认是**责任动作**，必须留痕',
+      `status=${cfDetailDb?.status} actual=${cfDetailDb?.actual_quantity} by=${cfDetailDb?.confirmed_by} 期望by=${supAccountId}`,
+    );
+    const cfDailyDb = readDb(
+      'SELECT status, actual_quantity, completed_at FROM ab_supplier_dish_daily WHERE supplier_id = 1 AND dish_id = 1 AND produce_date = ?',
+      [TMR],
+    );
+    assert(
+      cfDailyDb?.status === 'done' &&
+        Number(cfDailyDb?.actual_quantity) === 45 &&
+        !!cfDailyDb?.completed_at,
+      'S2 父行状态由明细**派生**（全部分中心确认 → `done` + completed_at；部分 → `cooking`）—— 沿用既有三值域，不新增 partial',
+      `status=${cfDailyDb?.status} actual=${cfDailyDb?.actual_quantity}`,
+    );
+    const cfAgain = await call('POST', '/supplier/meal/cook-confirm', {
+      token: supToken,
+      body: { date: TMR, items: [{ dishId: 1, distributionCenterId: 1 }] },
+    });
+    assert(
+      cfAgain.body?.code === 0 &&
+        (cfAgain.body?.data?.skipped ?? []).length === 1 &&
+        (cfAgain.body?.data?.confirmed ?? []).length === 0,
+      'S2 **幂等**：重复提交已确认项 → 进 skipped、不报错、不改时间戳（网络重试是常态，不该显示「失败」）',
+      `skipped=${(cfAgain.body?.data?.skipped ?? []).length} confirmed=${(cfAgain.body?.data?.confirmed ?? []).length}`,
+    );
+    const supLogs = await call('GET', '/admin/system/logs?pageSize=100', { token: adminToken });
+    assert(
+      (supLogs.body?.data?.list ?? []).some((l) => l.action === '出餐确认'),
+      'S2 写操作自动落操作日志（GET 的 S1/S3 不打日志 —— 否则列表接口会把日志表刷爆）',
+      `hit=${(supLogs.body?.data?.list ?? []).filter((l) => l.action === '出餐确认').length}`,
+    );
+
+    // ---- G. 闸门翻转：其余 3 家到位后 ready=true ----
+    writeDb(
+      "UPDATE ab_supplier_dish_center_daily SET status = 'confirmed', actual_quantity = plan_quantity, confirmed_at = datetime('now') WHERE produce_date = ? AND distribution_center_id = 1 AND supplier_id <> 1",
+      [TMR],
+    );
+    const pk2 = await call('GET', `/supplier/packing-tasks?date=${TMR}`, { token: supToken });
+    const pk2Center = pk2.body?.data?.centers?.[0];
+    assert(
+      pk2Center?.ready === true && (pk2Center?.blockers ?? []).length === 0,
+      'S3 闸门翻转：其余 3 家确认后 → `ready=true`、blockers 清空（与 §19 同款的**跨批次实时性证明**：上游一动，下游派生值立刻变）',
+      `ready=${pk2Center?.ready} blockers=${(pk2Center?.blockers ?? []).length} confirmed=${pk2Center?.summary?.confirmedDishCount}/${pk2Center?.summary?.dishCount}`,
+    );
+
+    // ---- H. S2 三类错误码 ----
+    const wrongCenter = await call('POST', '/supplier/meal/cook-confirm', {
+      token: supToken,
+      body: { date: TMR, items: [{ dishId: 1, distributionCenterId: 2 }] },
+    });
+    assert(
+      wrongCenter.body?.code === 50011,
+      'S2 集散中心不在配送范围 → 50011（否则供应商能把 A 片的份数确认到 B 片头上，B 片显示「已到齐」而实物没到）',
+      `code=${wrongCenter.body?.code} msg=${wrongCenter.body?.message}`,
+    );
+    const noPlan = await call('POST', '/supplier/meal/cook-confirm', {
+      token: supToken,
+      body: { date: TMR, items: [{ dishId: 999, distributionCenterId: 1 }] },
+    });
+    assert(
+      noPlan.body?.code === 50010,
+      'S2 当日无该菜品生产计划 → 50010（不属于本供应商 / 该日无计划，都不能默默接受）',
+      `code=${noPlan.body?.code}`,
+    );
+    const overdue = await call('POST', '/supplier/meal/cook-confirm', {
+      token: supToken,
+      body: { date: YST, items: [{ dishId: 1, distributionCenterId: 1 }] },
+    });
+    assert(
+      overdue.body?.code === 50009,
+      'S2 超过出餐日 09:30 → 50009 **fail-closed**（用昨日构造，与运行时刻无关；不接受「补确认」把错过的时点抹平）',
+      `code=${overdue.body?.code} msg=${overdue.body?.message}`,
+    );
+
+    // ---- I. 短送留痕 ----
+    writeDb(
+      "UPDATE ab_supplier_dish_center_daily SET status = 'pending', actual_quantity = NULL, confirmed_at = NULL, confirmed_by = NULL WHERE supplier_id = 1 AND produce_date = ? AND distribution_center_id = 1",
+      [TMR],
+    );
+    const shortShip = await call('POST', '/supplier/meal/cook-confirm', {
+      token: supToken,
+      body: {
+        date: TMR,
+        items: [{ dishId: 1, distributionCenterId: 1, actualQuantity: 40, remark: 'e2e 短送 5 份' }],
+      },
+    });
+    const shortDb = readDb(
+      'SELECT status, plan_quantity, actual_quantity, remark FROM ab_supplier_dish_center_daily WHERE supplier_id = 1 AND produce_date = ? AND distribution_center_id = 1',
+      [TMR],
+    );
+    assert(
+      shortShip.body?.code === 0 &&
+        Number(shortDb?.actual_quantity) === 40 &&
+        Number(shortDb?.plan_quantity) === 45 &&
+        String(shortDb?.remark ?? '').includes('短送'),
+      'S2 实送份数**不传 = 足额**、传了则以申报值为准（短送 40/45 与原因一并留痕）—— 对账必须看得见差额',
+      `plan=${shortDb?.plan_quantity} actual=${shortDb?.actual_quantity} remark=${shortDb?.remark}`,
+    );
+
+    // ---- J. 校验顺序与入参纪律 ----
+    const emptyItems = await call('POST', '/supplier/meal/cook-confirm', {
+      token: supToken,
+      body: { date: TMR, items: [] },
+    });
+    assert(
+      emptyItems.body?.code === 10001,
+      'S2 `items=[]` → 10001（至少一项；空数组静默成功会让「确认了」与「什么都没做」不可区分）',
+      `code=${emptyItems.body?.code}`,
+    );
+    const badDate = await call('POST', '/supplier/meal/cook-confirm', {
+      token: supToken,
+      body: { date: '2026/09/16', items: [{ dishId: 1, distributionCenterId: 1 }] },
+    });
+    assert(
+      badDate.body?.code === 10001,
+      'S2 日期格式非法 → 10001（服务端不猜日期）',
+      `code=${badDate.body?.code}`,
+    );
+    const withSupplierId = await call('POST', '/supplier/meal/cook-confirm', {
+      token: supToken,
+      body: { date: TMR, supplierId: 2, items: [{ dishId: 1, distributionCenterId: 1 }] },
+    });
+    assert(
+      withSupplierId.body?.code === 10001,
+      'S2 请求体带 `supplierId` → 10001（**主体由 token 决定**，收下这个字段就等于允许「A 供应商改 B 的计划」）',
+      `code=${withSupplierId.body?.code}`,
+    );
   }
 
   // ==========================================================================

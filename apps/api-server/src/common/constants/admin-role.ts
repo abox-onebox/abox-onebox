@@ -63,10 +63,19 @@ export const ADMIN_MENU_KEYS = [
   '/system/message-template',
 ] as const;
 
-/** 供应商侧菜单 key（与 `SUPPLIER_NAV` 的 path 逐项一致 · P21–P26） */
+/**
+ * 供应商侧菜单 key（与 `admin-web/src/constants/index.ts` 的 `SUPPLIER_NAV` 逐项一致 · P21–P26）
+ *
+ * ⚠️ M3-8 起 `P21/P22` 有了真实页面（`/supplier/workbench`、`/supplier/cook-confirm`、
+ *    `/supplier/packing`），不再借用 `/dashboard`、`/order/list` 顶替。
+ *    `/order/list`（订单中心）**已从供应商角色移除** —— 供应商不需要看全量订单；
+ *    `/dashboard` 保留为登录后的兜底落点。
+ */
 export const SUPPLIER_MENU_KEYS = [
   '/dashboard',
-  '/order/list',
+  '/supplier/workbench',
+  '/supplier/cook-confirm',
+  '/supplier/packing',
   '/supplier/dishes',
   '/supplier/edit',
   '/finance/supplier-share',
