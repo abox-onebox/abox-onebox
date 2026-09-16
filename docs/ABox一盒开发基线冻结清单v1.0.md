@@ -14,12 +14,12 @@
 | 基线标识 | `v1.1-local-dev-base`（提交历史重建后的现行 tag） |
 | 冻结日期 | 2026-09-14 |
 | 原型版本 | v4.10.0（37 页，已部署；结算成本项可配置版） |
-| 现行资产 | 28 份 |
+| 现行资产 | 29 份 |
 | 已废弃资产 | 7 份（存档，勿参考） |
-| 工程骨架 | `abox-onebox/` · **475 个文件**（阶段四产出） |
+| 工程骨架 | `abox-onebox/` · **476 个文件**（阶段四产出） |
 | 数据库表 | **26 张**（ER v2.1：23 张 + 评审新增 `ab_leader_invite` + M2 新增 `ab_withdraw` + M3-8 新增 `ab_supplier_dish_center_daily`） |
 | 技术栈 | uni-app(Vue3+TS) + NestJS + MySQL 8 + Redis 7 + 微信支付 V3；**佣金出款走灵活用工平台代发**（C11，见目录结构 v2.0） |
-| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `5fd4f02`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
+| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `bde9ea2`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
 | 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**；M1（后端 + 小程序基座）· M2（团长端全链路）已端到端验收；**M3（运营后台 + 供应商端）进行中**（M3-1 后台鉴权基座 · M3-2 套餐编排 D1–D7 · M3-3 订单中心 D8–D12 · M3-4 退款审批 D40–D42 · M3-5 后台团长管理 D19–D22 · M3-6 后台供应商管理 + 集散 D23–D32 · M3-7 后台办公楼与楼群 D13–D18 已落地 · **M3-8 供应商端出餐确认 S1–S3 已落地**；M3-9~M3-11 待写） |
 
 ---
@@ -33,29 +33,30 @@
 | 3 | `ABox一盒MVP优化交接包v1.3.md` | 锁定项 L1–L12 + 裁决 C1–C11（口径权威 · 文本版） | 20,108 | `3d5be8dd914d` |
 | 4 | `ABox一盒MVP优化执行报告v1.0.html` | A/B/C/D 四方向优化结论（⚠️ 历史文档：其「余额账户砍至二期」表述已被 PRD v2.1 覆盖） | 24,211 | `d88aa9b59b6e` |
 | 5 | `ABox一盒MVP原型审查报告v1.0.html` | 29 项问题清单（回归验收基准）· ⚠️ 历史快照：正文为 2026-09-14 发现记录，文首已加 C9 修订提示 | 13,434 | `c61775bfe94c` |
-| 6 | `ABox一盒PRDv2.1.md` | 产品需求文档 · 已回填 C1–C11 + M01-04 + §6.4 结算与出款通道定案 | 26,833 | `10906a9a83e9` |
+| 6 | `ABox一盒PRDv2.1.md` | 产品需求文档 · 已回填 C1–C11 + M01-04 + §6.4 结算与出款通道定案 | 27,668 | `53d054284c4b` |
 | 7 | `ABox一盒专家团进场就绪度审计报告v1.0.md` | 专家团进场就绪度审计（五维 · 结论均来自实机复跑） | 20,931 | `1a1f01936bf1` |
 | 8 | `ABox一盒专家团进场隐患修复验收单v1.0.md` | 3 P0 + 9 P1 + 8 P2 隐患修复验收单（CI 全绿 · M1 可开工） | 8,188 | `e7c6ace16e7c` |
-| 9 | `ABox一盒业务运作理解v2.0.md` | 业务时序与关键事实（已最终确认） | 9,031 | `05e25145ee01` |
-| 10 | `ABox一盒协作规范v1.0.md` | 分支 / 提交 / 评审 / 配置纪律 / 文档变更流程 / DoD（阶段四） | 12,013 | `422595eff119` |
-| 11 | `ABox一盒合规资质与协议清单v1.0.md` | 资质与协议要点（阶段三）· 资金定性=自营 + 佣金个税走灵活用工 | 15,446 | `d3a9b3a0f902` |
+| 9 | `ABox一盒业务运作理解v2.0.md` | 业务时序与关键事实（已最终确认） | 9,059 | `37e971cf0bd0` |
+| 10 | `ABox一盒协作规范v1.0.md` | 分支 / 提交 / 评审 / 配置纪律 / 文档变更流程 / DoD（阶段四） | 12,095 | `41d9c7b51a8e` |
+| 11 | `ABox一盒合规资质与协议清单v1.0.md` | 资质与协议要点（阶段三）· 资金定性=自营 + 佣金个税走灵活用工 · 2026-09-16 结算改采购应付口径 | 15,644 | `17c806a2a074` |
 | 12 | `ABox一盒外卖小程序上线资质与平台准入清单v1.2.md` | 自营路线上线资质与准入执行清单（v1.2 · 2026-09-16 裁定回归「单主体自营 + 半成品供应链」：不需 EDI / 不需平台备案 / 不涉二清；核心资质 = 食品经营许可证（热食类制售）） | 10,493 | `5ef0bca42795` |
 | 13 | `ABox一盒外卖小程序最快上线路径与提审自检清单v1.2.md` | 最快上线路径 + 提审自检清单（v1.2） | 17,812 | `084ffc9cac90` |
 | 14 | `ABox一盒开发前准备计划v1.0.html` | 四阶段推进路线（准备期总纲） | 28,685 | `feb3c6c759a2` |
-| 15 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四） | 22,769 | `061933e9eb4f` |
-| 16 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 | 91,772 | `dd6e9cca57ed` |
-| 17 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 26 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor + ab_refund.order_status_before）· 2026-09-16 M3-5 后台团长管理零 DDL（§5.4）· M3-6 ab_supplier 补 7 列（§5.5：资质审核四列 + license_expire_at + invoice_title + takeout_links）· M3-7 ab_building 增 population + 状态三态（§5.6，唯一 DDL、无新表）· **M3-8 新增 ab_supplier_dish_center_daily**（§3.6.1，供应商出餐确认分中心明细，本批次唯一 DDL） | 52,911 | `9e96ecce1776` |
-| 18 | `ABox一盒本地开发手册v1.0.md` | 不依赖云资源的本地开发手册（四驱动开关 · 本地跑通登录→下单→支付→回调） | 15,697 | `0a1cccd8a63d` |
-| 19 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 | 21,769 | `17afba5634a7` |
-| 20 | `ABox一盒表结构评审意见v1.0.md` | ER 评审结论（阶段二）· P0×6 + 4 张补齐 DDL | 24,817 | `53e5f67f568c` |
-| 21 | `ABox一盒订单状态机与全链路流转v1.0.md` | 订单域行为契约（阶段二）· 11 态 / 8 定时任务 / C6 退款三段式 / C11 出款通道 | 18,629 | `ac3901dcc284` |
-| 22 | `ABox一盒设计token规范v1.0.html` | 设计与实现共用视觉变量 | 20,375 | `34faff40f86e` |
-| 23 | `ABox一盒账号资源与密钥清单v1.0.md` | 外部资源核对表（阶段三）· 含 C10/C11 结算与出款通道定案 | 15,851 | `3973bac7ad74` |
-| 24 | `ABox一盒项目目录结构v2.0.md` | Monorepo 布局 · 端页模块映射 · v2.0.2 补 leader-expire.task | 34,822 | `b39104373c87` |
-| 25 | `手机测试指南.md` | 原型真机测试方式 | 5,615 | `fdadff0b2889` |
-| 26 | `prototype/index.html` | 可点击原型 v4.10.0（37 页 · 结算成本项可配置版 · 已部署线上） | 275,848 | `6069906879d5` |
-| 27 | `prototype/README.md` | 原型变更日志（已刷新至 v4.10.0，页索引 37 页；页面归属仍以《目录结构 v2.0》§十 为准） | 43,872 | `4ced2a5caa17` |
-| 28 | `prototype/manifest.json` | PWA 清单 | 679 | `a339bfd8ca0d` |
+| 15 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四） | 24,834 | `2e8c4cea28f6` |
+| 16 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 · 2026-09-16 S9 应付结算改「采购应付」口径 | 95,921 | `66e4bca8fd8d` |
+| 17 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 26 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor + ab_refund.order_status_before）· 2026-09-16 M3-5 后台团长管理零 DDL（§5.4）· M3-6 ab_supplier 补 7 列（§5.5：资质审核四列 + license_expire_at + invoice_title + takeout_links）· M3-7 ab_building 增 population + 状态三态（§5.6，唯一 DDL、无新表）· **M3-8 新增 ab_supplier_dish_center_daily**（§3.6.1，供应商出餐确认分中心明细，本批次唯一 DDL） | 53,808 | `ec57a024bc40` |
+| 18 | `ABox一盒本地开发手册v1.0.md` | 不依赖云资源的本地开发手册（四驱动开关 · 本地跑通登录→下单→支付→回调） | 15,703 | `0b5bfae270d7` |
+| 19 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 | 22,169 | `61915524f96e` |
+| 20 | `ABox一盒自营结算口径定义v1.0.md` | 自营口径下结算定义（2026-09-16 定稿）· 4 条裁定 + 2 条不变量：**退款不冲减供应商应付** / 计费基数取**实收量** / 应付对象**仅供应商采购款** / siteFee 改**自有场所摊销**；S9 出单 fail-closed + 幂等键；错误码预留 50012–50014 | 14,474 | `9374986e0ef8` |
+| 21 | `ABox一盒表结构评审意见v1.0.md` | ER 评审结论（阶段二）· P0×6 + 4 张补齐 DDL | 24,817 | `53e5f67f568c` |
+| 22 | `ABox一盒订单状态机与全链路流转v1.0.md` | 订单域行为契约（阶段二）· 11 态 / 8 定时任务 / C6 退款三段式 / C11 出款通道 | 18,802 | `73bfdbfabc76` |
+| 23 | `ABox一盒设计token规范v1.0.html` | 设计与实现共用视觉变量 | 20,375 | `34faff40f86e` |
+| 24 | `ABox一盒账号资源与密钥清单v1.0.md` | 外部资源核对表（阶段三）· 含 C10/C11 结算与出款通道定案 | 16,157 | `3ccb06fe9245` |
+| 25 | `ABox一盒项目目录结构v2.0.md` | Monorepo 布局 · 端页模块映射 · v2.0.2 补 leader-expire.task | 34,822 | `b39104373c87` |
+| 26 | `手机测试指南.md` | 原型真机测试方式 | 5,615 | `fdadff0b2889` |
+| 27 | `prototype/index.html` | 可点击原型 v4.10.0（37 页 · 结算成本项可配置版 · 已部署线上） | 275,848 | `6069906879d5` |
+| 28 | `prototype/README.md` | 原型变更日志（已刷新至 v4.10.0，页索引 37 页；页面归属仍以《目录结构 v2.0》§十 为准） | 43,872 | `4ced2a5caa17` |
+| 29 | `prototype/manifest.json` | PWA 清单 | 679 | `a339bfd8ca0d` |
 
 ---
 
@@ -75,7 +76,7 @@
 
 ## 四、工程骨架 `abox-onebox/`（阶段四产出）
 
-**总计 475 个文件**，按区域分布：
+**总计 476 个文件**，按区域分布：
 
 | 区域 | 文件数 |
 | --- | --- |
@@ -100,7 +101,7 @@
 | `commitlint.config.cjs` | 1 |
 | `data` | 1 |
 | `docker-compose.yml` | 1 |
-| `docs` | 26 |
+| `docs` | 27 |
 | `lint-staged.config.cjs` | 1 |
 | `package.json` | 1 |
 | `packages/eslint-config` | 2 |
@@ -150,7 +151,7 @@
 | 20 | `packages/shared-types/src/enums/leader-level.ts` |  | 1,614 | `6a371c28de60` |
 | 21 | `packages/shared-types/src/enums/payout-channel.ts` |  | 1,972 | `2b2fd157fa37` |
 | 22 | `apps/api-server/src/modules/finance/payout.service.ts` |  | 635 | `e61750f399d3` |
-| 23 | `packages/shared-utils/src/biz.ts` |  | 4,941 | `183d7ea2e070` |
+| 23 | `packages/shared-utils/src/biz.ts` |  | 6,417 | `f35b1531e6b0` |
 | 24 | `apps/miniprogram/src/constants/index.ts` |  | 4,094 | `e7efa02eebf2` |
 | 25 | `apps/miniprogram/src/uni.scss` |  | 622 | `016600e38e91` |
 | 26 | `apps/miniprogram/src/pages.json` |  | 3,470 | `3f08ea37d3ac` |
@@ -192,7 +193,7 @@
 | 62 | `apps/api-server/src/modules/order/order-admin.service.ts` |  | 30,326 | `528f91035164` |
 | 63 | `apps/api-server/src/modules/order/order-admin.controller.ts` |  | 5,432 | `6434847ba8cb` |
 | 64 | `apps/api-server/src/modules/order/dto/order-admin.dto.ts` |  | 5,629 | `2659c0d826f4` |
-| 65 | `apps/api-server/src/modules/finance/reversal.service.ts` |  | 14,705 | `aa6a5cfd3e96` |
+| 65 | `apps/api-server/src/modules/finance/reversal.service.ts` |  | 15,816 | `79f3e6a41f60` |
 | 66 | `apps/admin-web/src/api/order.ts` |  | 8,547 | `d4706221d804` |
 | 67 | `apps/admin-web/src/views/order/list.vue` |  | 17,670 | `06d88e56d646` |
 | 68 | `scripts/e2e-m3.mjs` |  | 241,427 | `2a2780d16725` |
@@ -265,7 +266,7 @@
 | 3 | `tests/bracket_check.py` | 括号与反引号配平 | 2,297 | `665a00c07c76` |
 | 4 | `tests/js-syntax-check.js` | JS 语法校验 | 785 | `1e5cfda6093b` |
 | 5 | `tests/check_online.py` | 线上部署核验 | 1,475 | `3efc02e45877` |
-| 6 | `tests/baseline_manifest.py` | 本清单生成器（基线变更时重跑） | 31,976 | `c5d6a7e2a5ef` |
+| 6 | `tests/baseline_manifest.py` | 本清单生成器（基线变更时重跑） | 32,435 | `d77c8edb114b` |
 
 ---
 
