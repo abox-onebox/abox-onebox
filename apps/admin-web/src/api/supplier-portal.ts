@@ -191,3 +191,61 @@ export interface PackingData {
 
 export const fetchPackingTasks = (date?: string) =>
   http.get<PackingData>('/supplier/packing-tasks', date ? { date } : undefined);
+
+// ============================================================================
+// S9 我的应付结算明细（P25 · M3-9）
+// ============================================================================
+
+export interface SettlementRow {
+  id: number;
+  shareNo: string;
+  /** 应付生成日（T+1 凌晨跑批） */
+  shareDate: string;
+  /** 出餐日 */
+  mealDate: string;
+  dishId: number | null;
+  dishName: string | null;
+  /** 实收量（= 计费基数：你申报的实送份数，未申报视为足额） */
+  quantity: number;
+  /** 我的协商单价 */
+  unitPriceFen: number;
+  amountFen: number;
+  /** pending 待付款 / success 已付款 */
+  status: string;
+  statusLabel: string;
+  /** 银行回单号（付款完成的唯一凭证） */
+  paymentVoucherNo: string | null;
+  invoiceNo: string | null;
+  paidAt: string | null;
+}
+
+export interface SettlementData {
+  date: string;
+  supplier: { id: number; name: string };
+  list: SettlementRow[];
+  summary: {
+    rowCount: number;
+    quantity: number;
+    amountFen: number;
+    pendingCount: number;
+    pendingAmountFen: number;
+    paidCount: number;
+    paidAmountFen: number;
+    /** 跨日期的待付合计 —— 供应商最关心的一个数：「平台还欠我多少」 */
+    pendingTotalAmountFen: number;
+    pendingTotalRowCount: number;
+    /** 该日尚未出单（跑批在 T+1 凌晨，或当日出餐确认未完成）→ 走空态 */
+    empty: boolean;
+  };
+  notes: Record<string, string>;
+}
+
+/**
+ * 我的应付结算明细（只读自己的）
+ *
+ * ⚠️ 出参**不含**终端售价 / 佣金 / 毛利 —— B2B 采购关系下供应商只该知道
+ *    「我的协商价 × 我的交付量」。这不是端上隐藏，而是服务端结构上就没有这些字段。
+ * ⚠️ 应付单在**次日凌晨**按前一日实收量生成，所以查「今天」常常是空的，属正常。
+ */
+export const fetchSettlement = (date?: string) =>
+  http.get<SettlementData>('/supplier/settlement', date ? { date } : undefined);

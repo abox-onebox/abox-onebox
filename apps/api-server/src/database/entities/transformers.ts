@@ -18,7 +18,7 @@ export const bigintTransformer: ValueTransformer = {
  * 背景：同一个 `DECIMAL(10,2)` 列，两个驱动读出来不一样：
  *   · MySQL 驱动 → string，如  "25.80"、"0.00"
  *   · SQLite(NUMERIC 亲和) → number，如 25.8、0
- * 若不统一，`'25.80' === row.price` 这类分账校验在本地必然误判，
+ * 若不统一，`'25.80' === row.price` 这类金额校验在本地必然误判，
  * 且前端展示会出现 25.8 而非 25.80 的价格（C1 定价口径）。
  *
  * 策略：写入原样透传（交给数据库做精度控制），读取统一 `toFixed(scale)` 为字符串。

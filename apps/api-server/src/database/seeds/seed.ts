@@ -104,7 +104,11 @@ async function main(): Promise<void> {
         'negotiated',
         '供应商供价来源：与各供应商**逐菜协商**（非固定）',
       ],
-      ['settlement.site_fee', '0.00', '集散/场地费：集散中心**复用合作供应商场地 → 默认 0**'],
+      [
+        'settlement.site_fee',
+        '0.00',
+        '场所摊销：ABox **自有持证场所**（自营口径）—— 默认 0 表示**未登记**，不代表真实为 0',
+      ],
       [
         'settlement.packing_labor_fee',
         '0.00',

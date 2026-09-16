@@ -18,7 +18,7 @@
 | 协议 | HTTPS / JSON（`Content-Type: application/json; charset=utf-8`） |
 | 风格 | RESTful + 资源化路径；动词仅用于不可资源化的动作（`/cancel`、`/approve`、`/retry`） |
 | 文档产物 | Swagger 自动生成于 `/api/docs`（由 NestJS 装饰器产出，本文件为其人工契约前提） |
-| 最近修订 | 2026-09-16 · ① **M3-1 后台鉴权基座**：A1–A6 重写（双主体隔离 / 登录失败锁定 / 令牌吊销 / 无状态登出 / 查库求证）+ D51–D56 口径 + 错误码 20009·20010；② **M3-2 套餐编排**：D1–D7 实现口径表 + 两个扩展选择器（`/admin/meal/dishes`、`/admin/meal/distribution-centers`）+ 错误码 30011·30012·30013；③ **M3-3 订单中心**：D8–D12 实现口径表 + C9 反向结算 + `executeRefund` 唯一执行口 + 错误码 30014·30015·40009–40011；④ **M3-4 退款审批（C6 三段式收口）**：D40–D42 实现口径表 + `ab_refund.order_status_before` + 错误码 40012·40013·40014；⑤ **M3-5 后台团长管理**：§6.3 补 D19–D22 实现口径表（26 项）+ 错误码 20011·20012·20013（**零 DDL 变更**）；⑥ **M3-6 后台供应商管理 + 集散**：§6.4 补 D23–D32 实现口径表（34 项）+ 扩展接口登记（`filter-options` / 详情 / 外卖链接 / 菜品库）+ `ab_supplier` 7 新列 + 错误码 50003·50005·50006·50007·50008；⑦ **M3-7 后台办公楼与楼群（P37 五视图）**：§6.3 补 D13–D18 实现口径表（27 项）+ 扩展接口登记（`filter-options` / `overview` / `delivery-map` / 详情）+ `ab_building` 增 `population` 列 + **状态三态修订**（`BuildingStatus` 1/2/3）+ `DistributionGap` 覆盖缺口三因 + 错误码 60001–60005（新号段 `6xxxx 主数据`）；⑧ **M3-8 供应商端出餐确认（S1–S3 · 原型 P21/P22）**：§五 补 S1–S3 实现口径表（派生落库 / 09:30 deadline 语义 / 按集散中心逐项确认 + 幂等 / S3 闸门与路线派生 / 不返回距离时长）+ 新表 `ab_supplier_dish_center_daily`（25→26 张）+ 错误码 50009·50010·50011；⑨ **结算口径改自营（2026-09-16 路线二次裁定）**：S9 应付结算口径**整表重写**（性质=半成品采购应付 / 计费基数=**实收量** / 应付对象仅供应商 / 场地费-打包-配送转为 ABox 自身成本不出付款单 / fail-closed 出单 + 未出单异常清单 / ⭐ **用户退款不冲减供应商应付**）+ 退款冲销段旧口径**作废标注**（`reverseSupplierShares` 待回退，列为 M3-9 开工前置）+ 错误码预留 50012·50013·50014 —— 详见《ABox一盒自营结算口径定义v1.0.md》 |
+| 最近修订 | 2026-09-16 · ① **M3-1 后台鉴权基座**：A1–A6 重写（双主体隔离 / 登录失败锁定 / 令牌吊销 / 无状态登出 / 查库求证）+ D51–D56 口径 + 错误码 20009·20010；② **M3-2 套餐编排**：D1–D7 实现口径表 + 两个扩展选择器（`/admin/meal/dishes`、`/admin/meal/distribution-centers`）+ 错误码 30011·30012·30013；③ **M3-3 订单中心**：D8–D12 实现口径表 + C9 反向结算 + `executeRefund` 唯一执行口 + 错误码 30014·30015·40009–40011；④ **M3-4 退款审批（C6 三段式收口）**：D40–D42 实现口径表 + `ab_refund.order_status_before` + 错误码 40012·40013·40014；⑤ **M3-5 后台团长管理**：§6.3 补 D19–D22 实现口径表（26 项）+ 错误码 20011·20012·20013（**零 DDL 变更**）；⑥ **M3-6 后台供应商管理 + 集散**：§6.4 补 D23–D32 实现口径表（34 项）+ 扩展接口登记（`filter-options` / 详情 / 外卖链接 / 菜品库）+ `ab_supplier` 7 新列 + 错误码 50003·50005·50006·50007·50008；⑦ **M3-7 后台办公楼与楼群（P37 五视图）**：§6.3 补 D13–D18 实现口径表（27 项）+ 扩展接口登记（`filter-options` / `overview` / `delivery-map` / 详情）+ `ab_building` 增 `population` 列 + **状态三态修订**（`BuildingStatus` 1/2/3）+ `DistributionGap` 覆盖缺口三因 + 错误码 60001–60005（新号段 `6xxxx 主数据`）；⑧ **M3-8 供应商端出餐确认（S1–S3 · 原型 P21/P22）**：§五 补 S1–S3 实现口径表（派生落库 / 09:30 deadline 语义 / 按集散中心逐项确认 + 幂等 / S3 闸门与路线派生 / 不返回距离时长）+ 新表 `ab_supplier_dish_center_daily`（25→26 张）+ 错误码 50009·50010·50011；⑨ **结算口径改自营（2026-09-16 路线二次裁定）**：S9 应付结算口径**整表重写**（性质=半成品采购应付 / 计费基数=**实收量** / 应付对象仅供应商 / 场地费-打包-配送转为 ABox 自身成本不出付款单 / fail-closed 出单 + 未出单异常清单 / ⭐ **用户退款不冲减供应商应付**）+ 退款冲销段旧口径**作废标注**（`reverseSupplierShares` 待回退，列为 M3-9 开工前置）+ 错误码预留 50012·50013·50014 —— 详见《ABox一盒自营结算口径定义v1.0.md》；⑩ **M3-9 应付结算 S9 落地（自营口径首次实装 · 零 DDL）**：§五 补 S9 供应商端结算自查实现口径 + §6.5 补 D36/D37 实现口径表（出单 / 列表 / 付款登记 / 未出单异常清单）+ **回退 M3-3 `reverseSupplierShares`**（退款**不再**冲减供应商应付；出参显式声明 `supplierShareAdjusted=0` + `supplierShareMode='not_applicable'`）+ 落点登记（`/admin/supplier-shares` · `/supplier/settlement`）+ 错误码 50012·50013（**50014 未使用，号位已释放**）+ e2e `§21` 新增 41 条断言 |
 
 ---
 
@@ -485,7 +485,7 @@ POST /leader/quit   【Idempotency-Key 必填】  body: { reason? }
 | S6 | PUT | `/supplier/dishes/{id}` | 编辑菜品 |
 | S7 | POST | `/supplier/dish-applications` | 上架申请（申请参加某日套餐）（M22-02） |
 | S8 | GET | `/supplier/history?page=` | 历史供应记录 + 好评率（M22-03） |
-| S9 | GET | `/supplier/shares?date=&page=` | **应付结算明细**（日明细 + 周期汇总）（M23-01） |
+| **S9** | GET | **`/supplier/settlement?date=`** | **应付结算明细 / 自查**（日明细 + **跨日期待付合计**）（M23-01 · **已实装** M3-9） |
 | S10 | GET | `/supplier/settle-account` | **对公结算账户**信息（M23-02） |
 | S11 | POST | `/supplier/invoices` | 月度开票申请（M23-03） |
 | S12 | GET | `/supplier/profile` | 商家资料 + 资质（M24-01） |
@@ -563,6 +563,22 @@ ab_meal_assignment(status=active) × ab_set_meal_item
 | 可见性 | **供应商端禁止出现**终端售价 ¥25.80 / 佣金 / 毛利 / 成本合计（不变量 I1：B2B 采购只该看到「我的价 × 我的量」） |
 
 **付款方式不变**：本接口只做「应付金额计算与状态展示」—— 实际付款由财务走**人工对公转账**（系统不做任何支付通道调用），故状态是 `待付 / 已付 / 已冲减`，而非「分账成功 / 失败」。自营下**须索取增值税发票**（`invoice_no` 为税前扣除凭证）。
+
+**M3-9 实现口径（S9 · 供应商端结算自查）**
+
+> **实现状态**：**S9 已实装**（M3-9）。落点 `apps/api-server/src/modules/supplier/supplier.controller.ts`（`GET /supplier/settlement`）
+> —— **刻意复用财务侧** `SupplierShareService.supplierView()`，而不是在供应商模块里再读一遍表：应付行的结构与状态文案只有一份实现，
+> 就不会出现「运营看到的数」与「供应商看到的数」不一致。代价是 supplier 模块 → finance 模块的**单向依赖**（无循环）。
+> 视图 P25 `/supplier/settlement`（`apps/admin-web/src/views/supplier/settlement.vue`）；验收 `scripts/e2e-m3.mjs` **§21**。
+
+| 项 | 口径 |
+| --- | --- |
+| 路径偏离登记 | 文档原规划 `/supplier/shares`，实装为 **`/supplier/settlement`** —— 供应商端 `/supplier/shares` 与运营端 `/admin/supplier-shares` **仅差一个前缀**，正是双主体最容易看错的一对；用 `settlement` 在**命名层**把「供应商自查」与「平台结算台」分开（与 `/admin/suppliers` ↔ `/supplier` 的既有处理同思路）。⚠️ 页面上「供应商结算/资料」模块编号仍是 **S9**（`S4` 已被「我的菜品库」占用，不得借用） |
+| 数据范围 | 由 token 内 `supplierId` 收窄，**请求体不收 `supplierId`**（带了即 `10001`）；查询恒带 `payee_type='supplier'` —— 即便将来出现别的应付主体，供应商也读不到 |
+| `date` 缺省 | 缺省取**今日（北京时间）**；出单在 T+1 凌晨，故「当日无单」是正常态 → `empty=true` + 空列表（**HTTP 200**，不走报错分支） |
+| 两个待付数 | `pendingAmountFen` = **该日**待付；`pendingTotalAmountFen` + `pendingTotalRowCount` = **不限日期**的待付合计。供应商真正关心的是「平台还欠我多少」，只给单日数等于逼他自己累加（e2e 用「增量 + 库内对照」双口径验证，不写死金额） |
+| 枚举下发 | 状态文案由服务端下发（`statusOptions`），端上不维护第二份 |
+| I1 落地位置 | 出参**结构里就没有**售价 / 佣金 / 毛利 / 成本项（不是靠前端隐藏）—— e2e §21 逐字段扫描断言 |
 
 ---
 
@@ -852,8 +868,10 @@ ab_meal_assignment(status=active) × ab_set_meal_item
 | D33 | GET | `/admin/finance/overview?date=&range=` | 资金总览（日/周/月 GMV、平台收入、佣金支出）（M35-01） |
 | D34 | GET | `/admin/finance/commissions?date=&leaderId=&page=` | 团长佣金结算明细（M35-02） |
 | D35 | POST | `/admin/finance/commissions/settle` | 手动触发佣金入账（复核后重跑，**幂等**） |
-| D36 | GET | `/admin/finance/supplier-shares?period=&supplierId=` | **供应商应付结算单**（按周期汇总）（M35-03） |
-| D37 | POST | `/admin/finance/supplier-shares/{id}/confirm-payment` | **付款登记**（上传银行回单号 → 状态置已付）（M35-03） |
+| **D36** | GET | **`/admin/supplier-shares?date=&supplierId=&status=&keyword=&page=`** | **供应商应付结算单**（按出餐日，非「周期汇总」）（M35-03 · **已实装** M3-9） |
+| D36a | GET | `/admin/supplier-shares/exceptions?date=` | **未出单异常清单**（M35-03 · 扩展接口 · M3-9） |
+| D36b | POST | `/admin/supplier-shares/generate` | **手动出单 / 补跑**（与跑批同一执行口）（M35-03 · 扩展接口 · M3-9） |
+| **D37** | POST | **`/admin/supplier-shares/{id}/payment`** | **付款登记**（银行回单号必填 → 状态置 `success`）（M35-03 · **已实装** M3-9） |
 | D38 | GET | `/admin/finance/balances?userId=&page=` | 余额账户管理（M35-04） |
 | D39 | POST | `/admin/finance/balances/adjust` | 充值 / 扣减 / 冻结（**必填原因 + 写日志**）（M35-04） |
 | D40 | GET | `/admin/finance/refunds?status=&page=` | 退款流水（M35-05） |
@@ -879,14 +897,37 @@ approve
   → 推送微信订阅消息给用户（退款结果必推）
 ```
 
-> ⚠️🚧 **【2026-09-16 自营裁定 · 本节旧口径已作废，待回退】**
+> ⚠️✅ **【2026-09-16 自营裁定 · 本节旧口径已作废，回退已完成（M3-9）】**
 > 原文为：「已付款后再退款：若 `ab_supplier_share` 已登记付款（`success`），须走 `reversal.service` 写**反向流水**（`type='reversal'`）并在**下期结算抵扣**；未付款的应付单直接冲减。」
 > **作废理由**：该口径成立的前提是「供应商按用户卖出的份数**分账**」（旧有效订单口径）。
 > 自营下应付基数是**实收量**（供应商实际交付的半成品），半成品在出餐日当日已交付并投入使用，
 > **用户退不退款与供应商无关** → 退款**不得冲减**供应商应付。
 > `type='reversal'` **保留但改义**为「应付单生成后发现算错」的**纠错冲销**（运营主动动作，非退款副作用）。
-> **需同步回退** `modules/finance/reversal.service.ts` 的 `reverseSupplierShares()`（**M3-9 开工前置项**）。
+> ✅ **回退已完成（M3-9）**：`modules/finance/reversal.service.ts` 已移除 `reverseSupplierShares()`；出参改为显式声明 `supplierShareAdjusted = 0` + `supplierShareMode = 'not_applicable'` —— **保留字段而不是删掉**，是为了让「应付分文未动」成为一条可断言的事实（而不是「没人提到它」）。
 > 佣金冲销与用户余额回退**不受影响**（那是 ABox ↔ 团长/用户 的关系）。详见《ABox一盒自营结算口径定义v1.0.md》§5。
+
+**M3-9 实现口径（D36/D37 · 应付结算 S9 · 自营口径首次实装）**
+
+> 落点 `apps/api-server/src/modules/finance/supplier-share-admin.controller.ts` · `supplier-share.service.ts` · `dto/supplier-share.dto.ts`；
+> 跑批 `apps/api-server/src/tasks/supplier-share.task.ts`（**T+1 02:00**）；页面 P34 `/finance/supplier-share`（`apps/admin-web/src/views/finance/supplier-share.vue`）；
+> 验收 `scripts/e2e-m3.mjs` **§21**（41 条断言 · **不依赖下单窗口**，夹具全部自造）。
+
+| 项 | 口径 |
+| --- | --- |
+| 路径偏离登记 | 文档原规划 `/admin/finance/supplier-shares`，实装为 **`/admin/supplier-shares`**（资源式挂在模块根，与同批的 `/admin/suppliers` 一致）。**前缀仍是 `/admin/*`，鉴权依据不变** —— 路径变了要回写文档，正是因为「前缀即鉴权依据」这条纪律 |
+| 权限（两级白名单） | **类级** `@Roles('super_admin','admin','finance','operator')` —— 运营要跟进「为什么没出单」所以**能看**；**方法级** `generate` / `payment` 收窄到 `('super_admin','admin','finance')` —— **决定「欠多少」「付没付」是资金动作**。`viewer` / `supplier` 一律 `10003` |
+| 出单粒度 | 一行 = **(供应商, 菜品, 出餐日)**；`share_date` = 出单日、`meal_date` = 出餐日，**两个日期都要**（前者回答「哪期结算」、后者回答「哪天的货」） |
+| 计费基数 | `ab_supplier_dish_daily.actual_quantity`（S2 申报值）；**`NULL` 视为足额 = `plan_quantity`**（与 S2「不传即足额」同语义，不是「没数据就不付」） |
+| ⭐ 单价来源 | 取 `ab_supplier_dish_daily.unit_price` —— **出餐计划生成时冻结的协商价快照**；为空才回落 `ab_dish.cost_price`。若恒取当前成本价，就会出现「T 日按旧价交货、结算按新价付」，供应商对账必然拒绝（本批**修正了口径文档 §4.1 的旧写法**，e2e 用「夹具价 ≠ 当前成本价」把这条钉住） |
+| fail-closed（出单） | 供应商资质异常（`canServe=false`，与 S2 的 50001 **同判据、同顺序**）→ 不出单；父行 `status != 'done'` → 不出单（`not_started` / `incomplete`）；`actual_missing`（已置完成但实收为空的历史数据）→ 不出单；实收 0 → 无采购事实，不出单 |
+| fail-closed（付款） | 仅 `pending` 可登记（否则 **`50012`**：已付款的单再登记一次就是**重复出款**，钱转出去追不回来）；缺回单号 → **`50013`**（回单号是「这笔钱确实付了」的唯一凭证）；**同一回单号用于两笔 → `10001`**（两笔支出挂同一凭证，对账时分不清哪笔真付了） |
+| 幂等（软层） | 同一 `(供应商, 菜品, 出餐日)` 已有有效 `normal` 行即跳过 —— **刻意不建 DB 唯一索引**：本表还要容纳 `type='reversal'` 负行，同键正负两行是**合法冲销**，唯一索引会误伤 |
+| 异常清单 | `GET .../exceptions?date=`（`date` **必填**）——「历史上所有没出单的原因」不是一份可执行的清单；已出单的行会被过滤掉（清单要能收口，不能越看越长） |
+| 出单出参 | `created[]` 回填 **`id`** —— 运营拿到 created 要能**直接对某条登记付款**，只给单号等于让人再去列表里搜一遍 |
+| 汇总口径 | `summary` 按**同一过滤条件的全量**统计（与 D8 / D40 / L10 / L19 同一约定），并按状态拆 `pending` / `paid` |
+| 按钮口径 | `canRegisterPayment` + `blockReason` 由服务端下发，端上不自算 |
+| 操作日志 | `generate` / `payment` 由 `@OperationLog()` 声明式落 `ab_operation_log` |
+| 与 S2 的关系 | 出单**只读父行**（`ab_supplier_dish_daily`），不读分中心明细 —— 明细是「谁在哪确认的」的过程留痕，付款只需总量 |
 
 **M3-4 实现口径（D40–D42）**
 
@@ -1073,6 +1114,8 @@ approve
 | **50009** | 已过出餐确认截止时间 | S2 迟于出餐日当天 09:30 才确认 —— **fail-closed**，不接受「补确认」把错过的时点抹平（时间戳必须诚实，对账与追责都以它为准）（**扩展**） | 409 |
 | **50010** | 当日无该菜品生产计划 | S2 目标菜不属于本供应商 / 该日无生产计划（**扩展**） | 404 |
 | **50011** | 集散中心不在该菜品的配送范围 | S2 越界确认 —— 若放行，供应商能把 A 片的份数确认到 B 片头上，S3 在 B 片显示「已到齐」而实物没到，打包线在错误的时点开动（**扩展**） | 400 |
+| **50012** | 应付单不存在或当前状态不可操作 | D37 付款登记目标 id 非法；或状态非 `pending`（已付款再登记就是**重复出款**，钱转出去追不回来）—— 与 50006/50007 同一形态：「查得到但动不了」与「压根不存在」合流一个码（对操作员是同一件事）（**扩展**） | 409 |
+| **50013** | 付款登记缺银行回单号 | D37 `paymentVoucherNo` **必填** —— 回单号是「这笔钱确实付了」的唯一凭证；没有它，系统里的 `success` 只是一句口头承诺（**扩展**） | 400 |
 | **60001** | 办公楼不存在 | D13 详情 / D15 编辑目标 id 非法；D14 `buildingGroupId`、D17/D18 `buildingIds` 里含不存在的楼 —— **不静默跳过**（否则运营以为挂上了 3 栋、实际只挂上 2 栋）（**扩展**） | 404 |
 | **60002** | 楼群不存在 | D14 传入的 `buildingGroupId` 非法；D16 详情 / D17 / D18 目标 id 非法（**扩展**） | 404 |
 | **60003** | 楼群下仍有办公楼，不能停用 | D18 停用非空楼群 —— **fail-closed**：停用会让成员楼**静默**失去开团能力，而楼自身状态仍显示「营业中」，运营在 P37 列表上看不出异常。出参带 `data.remaining` 与「改用停用」以外的出路提示（**扩展**） | 409 |
@@ -1080,7 +1123,7 @@ approve
 | **60005** | 办公楼名称已存在 | D14 新建 / D15 改名撞已有楼名 —— 同名楼会让「按楼筛选」变成歧义操作（**扩展**） | 409 |
 | **90001** | 系统繁忙，请稍后再试 | 未捕获异常 | 500 |
 
-> **扩展码**：`20006` / `20007` / `20008` / `20009` / `20010` / `20011` / `20012` / `20013` / `30008` / `30009` / `30010` / `30011` / `30012` / `30013` / `30014` / `30015` / `40009` / `40010` / `40011` / `40012` / `40013` / `40014` / `50003` / `50005` / `50006` / `50007` / `50008` / `50009` / `50010` / `50011` / `60001` / `60002` / `60003` / `60004` / `60005` 号段内文档原未列、但工程实现需要，已按「号段末尾登记」规则回写本表（见 `apps/api-server/src/common/constants/error-code.ts` 头部纪律）。**禁止挪用文档已占用的号位。**
+> **扩展码**：`20006` / `20007` / `20008` / `20009` / `20010` / `20011` / `20012` / `20013` / `30008` / `30009` / `30010` / `30011` / `30012` / `30013` / `30014` / `30015` / `40009` / `40010` / `40011` / `40012` / `40013` / `40014` / `50003` / `50005` / `50006` / `50007` / `50008` / `50009` / `50010` / `50011` / `50012` / `50013` / `60001` / `60002` / `60003` / `60004` / `60005` 号段内文档原未列、但工程实现需要，已按「号段末尾登记」规则回写本表（见 `apps/api-server/src/common/constants/error-code.ts` 头部纪律）。**禁止挪用文档已占用的号位。**
 
 > **号段划分**：`1xxxx` 通用 · `2xxxx` 账号/团长身份 · `3xxxx` 套餐与订单 · `4xxxx` 支付与退款 · `5xxxx` 供应商与集散 · **`6xxxx` 主数据（办公楼 / 楼群）** · `9xxxx` 系统。
 

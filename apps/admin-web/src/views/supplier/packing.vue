@@ -144,7 +144,7 @@ onMounted(load);
         <el-table :data="c.dishes" size="small" border>
           <el-table-column prop="supplierName" label="供应商" min-width="120" />
           <el-table-column prop="dishName" label="菜品" min-width="120" />
-          <el-table-column label="分账单价" width="110" align="right">
+          <el-table-column label="采购单价" width="110" align="right">
             <template #default="{ row }">{{ money(row.unitPriceFen) }}</template>
           </el-table-column>
           <el-table-column prop="planQuantity" label="应送份数" width="100" align="right" />

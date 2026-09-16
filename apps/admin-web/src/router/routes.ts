@@ -117,6 +117,12 @@ export const routes: RouteRecordRaw[] = [
         name: 'SupplierPacking',
         component: () => import('@/views/supplier/packing.vue'),
       },
+      // 商家端 P25（M3-9 实装 · 应付结算自查 S4）—— 组件调 `/supplier/settlement`
+      {
+        path: 'supplier/settlement',
+        name: 'SupplierSettlement',
+        component: () => import('@/views/supplier/settlement.vue'),
+      },
 
       // 商家端 P23 / P24 / P26（占位 · 待后续批次实装）
       {

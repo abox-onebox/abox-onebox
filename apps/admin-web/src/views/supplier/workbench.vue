@@ -147,7 +147,7 @@ onMounted(load);
           </el-tag>
         </div>
         <div class="dish-meta">
-          分账单价 {{ money(d.unitPriceFen) }} · 应出 <strong>{{ d.planQuantity }}</strong> 份 ·
+          采购单价 {{ money(d.unitPriceFen) }} · 应出 <strong>{{ d.planQuantity }}</strong> 份 ·
           已确认 <strong>{{ d.confirmedQuantity }}</strong> 份
         </div>
       </div>

@@ -228,10 +228,10 @@
         </div>
 
         <div v-if="detail.recentShares.length" class="sub-block">
-          <div class="sub-block__title">近 30 条分账流水（负行为退款冲销）</div>
+          <div class="sub-block__title">近 30 条应付流水（负行为「应付单算错」的纠错冲销）</div>
           <el-table :data="detail.recentShares" size="small" max-height="260">
             <el-table-column prop="mealDate" label="出餐日" width="110" />
-            <el-table-column prop="shareNo" label="分账单号" min-width="150" />
+            <el-table-column prop="shareNo" label="应付单号" min-width="150" />
             <el-table-column prop="quantity" label="份数" width="80" align="right" />
             <el-table-column label="单价" width="100" align="right">
               <template #default="{ row }">{{ fenToCny(asShare(row).unitPriceFen) }}</template>

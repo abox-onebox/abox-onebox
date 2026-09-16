@@ -504,9 +504,9 @@ async function submitRefund(): Promise<void> {
       `退款单 ${res.refundNo}\n` +
         `微信原路退 ${fenToCny(res.wxRefundedFen)} · 余额退回 ${fenToCny(res.balanceRefundedFen)}\n` +
         `佣金冲销 ${fenToCny(res.reversal.commissionReversedFen)}` +
-        (res.reversal.supplierShareMode === 'not_generated'
-          ? '（供应商应付尚未生成，跑批按有效订单口径自动排除）'
-          : '') +
+        // 自营口径（2026-09-16）：退款**不冲减**供应商采购应付（半成品出餐日已交付）。
+        // 这句话必须显式出现 —— 操作员看到应付数字没变时，要能分辨是设计而非漏算。
+        '\n供应商采购应付：不冲减（半成品已交付，退款属自身经营风险）' +
         notes,
       '退款已发起',
       { confirmButtonText: '知道了' },

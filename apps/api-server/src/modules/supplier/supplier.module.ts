@@ -11,6 +11,7 @@ import {
   SupplierDishCenterDaily,
   SupplierDishDaily,
 } from '../../database/entities/supplier.entity';
+import { FinanceModule } from '../finance/finance.module';
 import { SupplierAdminController } from './supplier-admin.controller';
 import { SupplierAdminService } from './supplier-admin.service';
 import { DishAdminController } from './dish/dish-admin.controller';
@@ -34,6 +35,10 @@ import { SupplierService } from './supplier.service';
  */
 @Module({
   imports: [
+    // M3-9：供应商端结算自查（S9）复用财务侧的 `SupplierShareService`。
+    // 单向依赖，无循环（`FinanceModule` 不反向依赖本模块）—— 好处是应付行的
+    // 结构与状态文案**只有一份实现**，不会出现「运营看到的」与「供应商看到的」不一致。
+    FinanceModule,
     TypeOrmModule.forFeature([
       Supplier,
       Dish,

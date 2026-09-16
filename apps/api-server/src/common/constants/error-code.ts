@@ -182,6 +182,22 @@ export enum ErrorCode {
    * 会显示「已到齐」而实物没到 —— 打包线在错误的时点开动。
    */
   COOK_CONFIRM_CENTER_MISMATCH = 50011,
+  /**
+   * 扩展（M3-9）：应付单不存在，或当前状态不允许该操作（付款登记 / 纠错冲销）
+   *
+   * 与 50006/50007 同一形态：「查得到但动不了」与「压根不存在」合流一个码
+   * （对操作员是同一件事 —— 这条单现在动不了）。
+   * 付款登记**只接受 `pending`**：已付款的单再登记一次就是**重复出款**，
+   * 钱转出去就追不回来，故 fail-closed。
+   */
+  SUPPLIER_SHARE_NOT_PAYABLE = 50012,
+  /** 扩展（M3-9）：付款登记缺银行回单号（`paymentVoucherNo` 必填 —— 它是付款完成的唯一凭证） */
+  PAYMENT_VOUCHER_REQUIRED = 50013,
+  // 注（M3-9）：**「出餐确认未完成 → 不出单」刻意不设错误码**。
+  //   它不是一次失败，而是「这天还缺输入」的常态待办：转人工进
+  //   「未出单异常清单」（`GET /admin/supplier-shares/exceptions?date=`），逐条给原因。
+  //   做成错误码的话，运营只会看到「出单失败」，看不到「哪几家没确认」——
+  //   而那恰恰是他唯一能执行的线索。原预留号位 `50014` 未使用，**已释放**。
 
   /** ---- 6xxxx 主数据（办公楼 / 楼群）---- */
   /** 扩展（M3-7）：办公楼不存在（D13/D14/D15 目标 id 非法或已软删） */
@@ -269,6 +285,8 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.COOK_CONFIRM_OVERDUE]: '已过出餐确认截止时间（09:30），请联系运营线下处理',
   [ErrorCode.PRODUCE_PLAN_NOT_FOUND]: '当日无该菜品生产计划',
   [ErrorCode.COOK_CONFIRM_CENTER_MISMATCH]: '集散中心不在该菜品的配送范围',
+  [ErrorCode.SUPPLIER_SHARE_NOT_PAYABLE]: '应付单不存在或当前状态不可操作',
+  [ErrorCode.PAYMENT_VOUCHER_REQUIRED]: '请填写银行回单号（付款完成的唯一凭证）',
   [ErrorCode.BUILDING_NOT_FOUND]: '办公楼不存在',
   [ErrorCode.BUILDING_GROUP_NOT_FOUND]: '楼群不存在',
   [ErrorCode.BUILDING_GROUP_NOT_EMPTY]: '楼群下仍有办公楼，请先移出成员楼',

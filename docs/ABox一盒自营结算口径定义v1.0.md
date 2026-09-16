@@ -99,9 +99,16 @@
 | 元素 | 来源 | 落库字段 |
 | --- | --- | --- |
 | 实收量 | `ab_supplier_dish_daily.actual_quantity` | `ab_supplier_share.quantity` |
-| 采购单价 | `ab_dish.cost_price`（逐菜逐供应商协商） | `ab_supplier_share.unit_price` |
+| 采购单价 | ⭐ **`ab_supplier_dish_daily.unit_price`**（出餐计划生成时**冻结**的协商价快照）；该值为空时才回落到 `ab_dish.cost_price` | `ab_supplier_share.unit_price` |
 | 出餐日 | `produce_date` | `ab_supplier_share.meal_date` |
 | 应付生成日 | 跑批执行日（T+1） | `ab_supplier_share.share_date` |
+
+> ⭐ **单价取「冻结快照」而非出单时刻的 `ab_dish.cost_price`**（本文档 §4.1 初版的写法已按此修正）：
+> 出餐计划一旦生成即**冻结**（M3-8 的核心纪律），计划里的 `unit_price` 就是当日对供应商的
+> **承诺价**。若事后有人改了菜品采购价、结算时按新价付，就会出现「T 日按 ¥7.50 交货、
+> 结算按 ¥8.00 付」—— 供应商对账时必然拒绝。**谁被冻结，就按谁结算。**
+> 实现见 `modules/finance/supplier-share.service.ts` 的 `unitPriceOf()`；e2e §21 用
+> 「夹具价 ≠ 菜品成本价」的方式断言了这一点。
 
 **实收量的定义**（沿用 M3-8 S2 语义）：供应商在出餐确认时申报的实送份数；**未申报则等于计划量**（视为足额送达）。
 → 因此「不申报」= 默认足额，「申报短送」= 少付，供应商有义务主动申报短送。
@@ -218,20 +225,30 @@
 
 ---
 
-## 九、S9 应付结算接口口径预告（供 M3-9 落地）
+## 九、S9 应付结算接口口径（**已实装** · 2026-09-16 M3-9）
+
+> 本节由「开工前预告」转为**实装对照**：路径与入参与预告一致者直接采用，**不一致者在此登记偏离与实际口径**。
 
 | 用途 | 方法与路径 | 要点 |
 | --- | --- | --- |
-| 应付单列表 | `GET /admin/supplier-shares?date=&supplierId=&status=` | 分页；金额出参一律整数分（`Fen`） |
-| 生成应付 | `POST /admin/supplier-shares/generate`（或跑批 `supplier-share.task`，T+1 02:00，**只生成不拨款**） | 幂等；fail-closed 项进异常清单 |
-| 付款登记 | `POST /admin/supplier-shares/{id}/payment` | `paymentVoucherNo` 必填 + `invoiceNo` 可选 → `status=success` |
-| 未出单异常清单 | `GET /admin/supplier-shares/exceptions?date=` | 列 `reason`（未完成确认 / 资质异常），人工处理入口 |
-| 供应商自查 | `GET /supplier/settlement?date=` | **只读自己的**；由 token 内 `supplierId` 收窄，**不支持传入 `supplierId`** |
+| 应付单列表 | `GET /admin/supplier-shares?date=&supplierId=&status=&keyword=&page=` | 分页；金额出参一律整数分（`Fen`）；`summary` 按**同一过滤条件的全量**统计（不受分页影响），并按 `pending` / `paid` 拆分 |
+| 生成应付 | `POST /admin/supplier-shares/generate` —— **或**跑批 `supplier-share.task`（T+1 02:00，**只生成不拨款**），两者**共用同一执行口** | 幂等走**软层**（同键已有有效 `normal` 行即跳过）；fail-closed 项进异常清单；`created[]` 回填 `id`（运营要能直接对它登记付款） |
+| 付款登记 | `POST /admin/supplier-shares/{id}/payment` | `paymentVoucherNo` 必填（缺 → `50013`）+ `invoiceNo` 可选 → `status=success`；**仅 `pending` 可登记**（否则 `50012`）；同一回单号不得用于两笔 |
+| 未出单异常清单 | `GET /admin/supplier-shares/exceptions?date=`（`date` **必填**） | 列 `reason`：`not_started` / `incomplete` / `actual_missing` / `license_invalid` / `zero_quantity`；已出单的行会被过滤 |
+| 供应商自查 | `GET /supplier/settlement?date=` | **只读自己的**；由 token 内 `supplierId` 收窄，**不支持传入 `supplierId`**；出参含 `pendingAmountFen`（该日）与 `pendingTotalAmountFen`（**不限日期**合计） |
 
-新错误码（预留号段 5xxxx）：
-- `50012` 应付单不存在或状态不允许操作
-- `50013` 付款登记缺回单号
-- `50014` 该日出餐确认未完成，无法出单
+**实施期修正（与预告的偏离）**
+
+| # | 项 | 预告 | 实装 | 为什么 |
+| --- | --- | --- | --- | --- |
+| 1 | 出单价来源 | 未明确（§4.1 初稿写「`ab_dish.cost_price`」） | **`ab_supplier_dish_daily.unit_price` 冻结快照优先**，为空才回落 `ab_dish.cost_price` | 出餐计划生成时已冻结协商价；若按出单时刻的成本价付，会出现「T 日按旧价交货、结算按新价付」 |
+| 2 | 幂等实现 | 「键冲突不重复出单」（原设想 DB 唯一索引） | **软层判定**，不建唯一索引 | 本表还要容纳 `type='reversal'` 负行，同键正负两行是**合法冲销** —— 唯一索引会误伤它 |
+| 3 | `50014` | 预留「该日出餐确认未完成，无法出单」 | **取消（号位释放）** | 该情形**不是一次失败**，而是「这天还缺输入」的常态待办：转人工进异常清单，逐条给原因。做成错误码只会让运营看到「出单失败」却看不到「哪几家没确认」——而那才是他唯一能执行的线索 |
+| 4 | 管理端路径 | `/admin/finance/supplier-shares` | **`/admin/supplier-shares`** | 资源式挂模块根，与 `/admin/suppliers` 一致；**前缀仍是 `/admin/*`，鉴权依据不变** |
+
+**新错误码（号段 5xxxx · 已回写《接口规范》§九）**：
+- `50012` 应付单不存在或当前状态不可操作（含已付款再登记 = 重复出款）
+- `50013` 付款登记缺银行回单号
 
 ---
 
@@ -239,3 +256,4 @@
 
 1. 2026-09-16 ①：本文建立 —— 4 条裁定 + 2 条不变量；S9 出单规则与 fail-closed 纪律（§4.3 第 2 条为代定，可推翻）。
 2. 待办：M3-9 开工前先执行 §八 第 1 项（M3-3 退款冲减回退）；M4 前执行 §6.2 数据模型重构。
+3. 2026-09-16 ②（**M3-9 落地**）：§九 转为**实装对照**并登记 4 处偏离（冻结价优先 / 幂等走软层 / `50014` 取消 / 管理端路径）；§八 第 1 项（退款冲减回退）✅ 已完成；§八 第 7 项（种子 `settlement.*` 文案）✅ 已完成；**仍待办**：§6.2 `ab_distribution_center` 数据模型重构（**M4 前置**）、§八 第 4 项 `finance.entity.ts` 的结构级重构（注释本批已同步）。

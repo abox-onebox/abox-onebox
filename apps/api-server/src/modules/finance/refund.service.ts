@@ -293,7 +293,8 @@ export class RefundService {
     this.logger.warn(
       `后台强制退款：操作人#${operatorId} 订单 ${orderNo} 退款单 ${result.refund.refundNo} ` +
         `合计 ¥${money(refundableFen / 100)}（微信 ¥${money(result.wxFen / 100)} + 余额 ¥${money(result.balanceFen / 100)}）` +
-        ` 佣金冲销 ¥${money(result.reversal.commissionReversedFen / 100)}`,
+        ` 佣金冲销 ¥${money(result.reversal.commissionReversedFen / 100)}` +
+        ' 供应商应付=不冲减（自营口径）',
     );
 
     return {

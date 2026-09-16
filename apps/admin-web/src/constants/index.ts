@@ -16,7 +16,7 @@ export const COMMISSION_RATE = {
 export const SETTLEMENT = {
   /** 供应商供价合计（与各供应商**逐菜协商**） */
   supplierTotal: 14.0,
-  /** 集散 / 场地费（集散中心**复用合作供应商场地 → 默认 0**） */
+  /** ABox 自有持证场所摊销（自营口径 2026-09-16：不再「复用供应商场地」；默认 0 仅表示未登记） */
   siteFee: 0.0,
   /** 打包人工（雇佣**兼职**打包） */
   packingLaborFee: 0.0,
@@ -109,7 +109,9 @@ export const SUPPLIER_NAV = [
     page: 'P24 / P26',
     module: 'M22-02 · M24',
   },
-  { path: '/finance/supplier-share', title: '应付结算明细', page: 'P25', module: 'M23-01/02' },
+  // ⚠️ M3-9：`/finance/supplier-share` 是**后台财务页**（调 `/admin/supplier-shares`），
+  //    供应商进去只会拿 10003 —— 故供应商自己的结算页另起 `/supplier/settlement`。
+  { path: '/supplier/settlement', title: '应付结算明细', page: 'P25', module: 'M23-01/02' },
   // ⚠️ 保留通用概览作为兜底落点（登录后默认路径不受菜单调整影响）。
   //    `P21/P22` 原先借用 `/dashboard`、`/order/list` 顶替，M3-8 已有真实页面，
   //    `/order/list`（订单中心）不再给供应商角色 —— 供应商不需要看全量订单。

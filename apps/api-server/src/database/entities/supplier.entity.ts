@@ -93,7 +93,7 @@ export class Supplier {
     precision: 5,
     scale: 4,
     default: 0,
-    comment: '⚠️ 废弃（C9 后分账按菜品成本单价），仅为兼容历史数据，新逻辑不得读取',
+    comment: '⚠️ 废弃（C9 后按菜品协商采购价），仅为兼容历史数据，新逻辑不得读取',
   })
   shareRate!: string;
 
@@ -245,7 +245,7 @@ export class SupplierDishDaily {
     transformer: moneyTransformer,
     precision: 8,
     scale: 2,
-    comment: '分账单价',
+    comment: '协商采购价（逐菜议定）',
   })
   unitPrice!: string;
 

@@ -1,29 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { EntityManager, In, Not } from 'typeorm';
-
-import { SupplierShareStatus } from '@abox/shared-types';
+import { EntityManager } from 'typeorm';
 
 import { money, round2, toFen } from '../../common/utils/money';
-import { todayBj } from '../../common/utils/time';
-import {
-  Balance,
-  BalanceLog,
-  Commission,
-  SupplierShare,
-} from '../../database/entities/finance.entity';
+import { Balance, BalanceLog, Commission } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
-import { SetMealItem } from '../../database/entities/meal.entity';
 import { Order, Refund } from '../../database/entities/order.entity';
 
 /**
- * 反向结算服务（C9 / C6 第三段）
+ * 反向结算服务（C6 第三段 · **自营口径 2026-09-16 修订**）
  *
  * 落点：`modules/finance/reversal.service`（《开发里程碑计划 v1.0》3.4）
  *
  * ## 为什么单独成服务
  * 「退款」这件事有两个完全不同的部分：
  *   ① **钱怎么退出去** —— 微信原路退（`WxPayProvider.refund`），属支付通道；
- *   ② **账怎么改回来** —— 佣金要冲销、供应商应付要冲减、余额抵扣要退回，属账务。
+ *   ② **账怎么改回来** —— 佣金要冲销、余额抵扣要退回，属账务。
  * 二者失败模式不同（② 不能因为 ① 的通道抖动就整段回滚），调用点却相同
  * （D11 后台强制退款、D41 退款审批通过）。故拆开：通道在 `RefundService`，
  * 账务在本服务。
@@ -33,23 +24,19 @@ import { Order, Refund } from '../../database/entities/order.entity';
  *    不把原 `normal` 行的金额改成 0 —— 否则佣金明细的「发生额」就永久失真了。
  *    唯一的字段改写是原行 `status → cancelled`，表示「该笔已被冲销」。
  * 2. **平台毛利留存**：毛利是**结果值**（售价 − 成本 − 佣金），退款只回退
- *    成本与佣金，从不「退毛利」—— 因为它从来没有被单独记过账。
- * 3. **应付未生成的场景不是异常**：T+1 02:00 才跑应付（§3.9），而退款多发生在
- *    T 日当天。此时无应付可冲，返回 `not_generated` 即可 —— 后续跑批按
- *    「有效订单」口径汇总，已退款单自然不在其中。**不要造一条空冲销行**。
+ *    佣金与用户余额，从不「退毛利」—— 因为它从来没有被单独记过账。
+ * 3. ⭐ **供应商采购应付不参与退款**（自营口径裁定 1，取代旧第 3 条）：
+ *    路线裁定为「单主体自营 + 半成品供应链」后，应付基数是**实收量**
+ *    （供应商实际交付的半成品），**与用户是否卖出无关**。半成品在**出餐日当日
+ *    已交付并投入使用**，退款发生在交付之后 → **钱照付**，退款属 ABox 自身
+ *    经营风险（极端情形下该单毛利为负，属正常经营承担，不是系统缺陷）。
+ *    `ab_supplier_share` 的 `type='reversal'` 保留但**改义**为「应付单生成后
+ *    发现算错」的**纠错冲销**（运营主动动作），不再由退款触发。
  *
- * ## ⚠️🚧 待回退项（自营口径 2026-09-16 · **M3-9 开工前置**）
- * 路线裁定为「单主体自营 + 半成品供应链」后，上面第 3 条与本节
- * `reverseSupplierShares()` 的**前提已不成立**：
- *   - 旧前提「应付按 **有效订单**汇总」是**分账**语境（供应商按用户卖出的份数分成）；
- *     自营下应付基数是**实收量**（供应商实际交付的半成品），与用户是否退款无关。
- *   - 半成品在**出餐日当日已交付并投入使用**，退款发生在交付之后 →
- *     ⭐ **用户退款不得冲减供应商应付**（钱照付）。
- *   - `type='reversal'` 保留但**改义**为「应付单生成后发现算错」的**纠错冲销**，
- *     不再由退款触发（纠错是运营主动动作，不是退款副作用）。
- * **不动部分**：佣金冲销（`ab_commission` 写负行 + 原行 `status='cancelled'`）与
- * 用户余额回退**保持原样** —— 那是 ABox ↔ 团长/用户 的关系，与供应商无关。
- * 详见《ABox一盒自营结算口径定义v1.0.md》§5。
+ * ## 修订留痕（2026-09-16 · M3-9 开工前置）
+ * 本服务原 `reverseSupplierShares()` 的旧前提「应付按 **有效订单** 汇总」是**分账**
+ * 语境，自营下不成立，已整段移除。对账口径见《ABox一盒自营结算口径定义v1.0.md》
+ * §5.1 / §5.3；被移除的三态（`not_generated` / `reduced` / `offset`）不再产生。
  */
 @Injectable()
 export class ReversalService {
@@ -75,21 +62,23 @@ export class ReversalService {
     // ② 佣金反向冲销（写 reversal 负行 + 扣减团长余额）
     const commission = await this.reverseCommission(m, order, refund, notes);
 
-    // ③ 供应商 / 集散应付冲减
-    const share = await this.reverseSupplierShares(m, order, refund, notes);
+    // ③ 供应商采购应付：**不冲减**（自营口径裁定 1）
+    //    这条说明刻意进 notes 而不是静默 —— 「退款后应付分文未动」是**反直觉**的，
+    //    操作员看到应付数字没变，必须能立刻分辨这是设计而非漏算。
+    notes.push(SUPPLIER_SHARE_NOT_APPLICABLE_NOTE);
 
     this.logger.log(
       `反向结算完成 refundNo=${refund.refundNo} orderNo=${order.orderNo} ` +
         `佣金冲销=${commission.reversedFen}分 余额退回=${balanceRefundedFen}分 ` +
-        `应付调整=${share.count}行(${share.mode})`,
+        `供应商应付=不冲减（自营口径）`,
     );
 
     return {
       balanceRefundedFen,
       commissionReversedFen: commission.reversedFen,
       commissionReversedQuantity: commission.quantity,
-      supplierShareAdjusted: share.count,
-      supplierShareMode: share.mode,
+      supplierShareAdjusted: 0,
+      supplierShareMode: 'not_applicable',
       notes,
     };
   }
@@ -245,115 +234,20 @@ export class ReversalService {
     //    否则每个消费点都要自己 `Math.abs`，迟早漏一个、把负数当正数求和。
     return { reversedFen: toFen(Math.abs(amountYuan)), quantity };
   }
-
-  // ==========================================================================
-  // ③ 供应商 / 集散应付冲减
-  // ==========================================================================
-
-  /**
-   * 供应商应付冲减（C9「原记录不得改写」+「已付款走反向流水」）
-   *
-   * 匹配粒度：**出餐日 × 菜品**。`ab_supplier_share` 不按订单拆行
-   * （一个出餐日一道菜一条汇总行），故退款时按「该订单份数 × 该菜结算单价」
-   * 从对应行里扣减份数与金额 —— 这是我们能还原出的最细粒度。
-   *
-   * 三种结果：
-   *   · `not_generated` —— 应付尚未生成（T+1 02:00 才跑批，退款多发生在 T 日）。
-   *                        后续跑批按「有效订单」汇总，已退款单自然不在其中，
-   *                        **因此无需补冲销行**。
-   *   · `reduced`       —— 命中未付款行，直接扣减（扣到 0 则置 `reversed`）。
-   *   · `offset`        —— 命中已付款行（`success`），写反向流水挂到**下期**抵扣，
-   *                        原行不动（钱已经转出去了，改写它等于篡改已发生的付款）。
-   */
-  private async reverseSupplierShares(
-    m: EntityManager,
-    order: Order,
-    refund: Refund,
-    notes: string[],
-  ): Promise<{ count: number; mode: 'not_generated' | 'reduced' | 'offset' }> {
-    const items = await m.find(SetMealItem, { where: { setMealId: Number(order.setMealId) } });
-    const dishIds = items.map((i) => Number(i.dishId));
-    if (!dishIds.length) {
-      notes.push('套餐无菜品明细，无法定位应付行');
-      return { count: 0, mode: 'not_generated' };
-    }
-
-    const shares = await m.find(SupplierShare, {
-      where: {
-        mealDate: order.mealDate,
-        dishId: In(dishIds),
-        type: 'normal',
-        status: Not(SupplierShareStatus.REVERSED),
-      },
-    });
-    if (!shares.length) {
-      notes.push(
-        `出餐日 ${order.mealDate} 尚未生成供应商应付（T+1 02:00 跑批），` +
-          '跑批按有效订单口径汇总，已退款单自然排除',
-      );
-      return { count: 0, mode: 'not_generated' };
-    }
-
-    const perDishQty = new Map<number, number>();
-    for (const it of items) {
-      // 同一道菜只应出现一次（D7 已拦），出现两次也只按一次计
-      perDishQty.set(Number(it.dishId), Number(order.quantity));
-    }
-
-    let mode: 'reduced' | 'offset' = 'reduced';
-    let count = 0;
-
-    for (const row of shares) {
-      const qty = perDishQty.get(Number(row.dishId)) ?? 0;
-      if (qty <= 0) continue;
-      const cutYuan = round2(qty * Number(row.unitPrice));
-      if (cutYuan <= 0) continue;
-
-      if (row.status === SupplierShareStatus.SUCCESS) {
-        // 已付款：写反向流水挂下期抵扣，原行不动（C9）
-        mode = 'offset';
-        await m.save(
-          m.create(SupplierShare, {
-            shareNo: `RV${refund.refundNo.slice(-12)}${String(count).padStart(2, '0')}`,
-            shareDate: todayBj(), // 冲减登记日 → 下期结算抵扣
-            mealDate: order.mealDate,
-            payeeType: row.payeeType,
-            payeeId: Number(row.payeeId),
-            dishId: Number(row.dishId),
-            quantity: -qty,
-            unitPrice: row.unitPrice,
-            amount: money(-cutYuan),
-            type: 'reversal',
-            channel: row.channel,
-            status: SupplierShareStatus.PENDING,
-            originId: Number(row.id),
-            failReason: `订单 ${order.orderNo} 退款冲减（原应付已付款）`,
-          }),
-        );
-        count += 1;
-        continue;
-      }
-
-      // 未付款：直接扣减（份数与金额同步扣，扣空则置 reversed）
-      const leftQty = Number(row.quantity) - qty;
-      const leftYuan = round2(Number(row.amount) - cutYuan);
-      row.quantity = Math.max(0, leftQty);
-      row.amount = money(Math.max(0, leftYuan));
-      if (leftQty <= 0) {
-        row.status = SupplierShareStatus.REVERSED;
-        row.failReason = `订单 ${order.orderNo} 退款冲减后无余额`;
-      }
-      await m.save(row);
-      count += 1;
-    }
-
-    if (count === 0) {
-      notes.push('应付行存在但无匹配菜品，未做冲减');
-      return { count: 0, mode: 'not_generated' };
-    }
-    return { count, mode };
-  }
 }
+
+/** 「退款不动供应商应付」的固定说明（进 `ReversalResult.notes`，供端上原样展示） */
+export const SUPPLIER_SHARE_NOT_APPLICABLE_NOTE =
+  '自营口径（2026-09-16 裁定）：采购应付按**实收量**出单，与用户退款无关 —— 半成品在出餐日已交付，本次退款**不冲减**供应商应付';
+
+/**
+ * 退款对「供应商应付」的影响方式
+ *
+ * 自营口径下只有一个取值：**不适用**。保留该字段（而非从契约里删掉）的原因是
+ * 它是一条**可断言的事实**：退款接口的出参里显式写着「应付分文未动」，
+ * 比「契约里没有这个字段」更能防止将来有人把冲减逻辑悄悄加回来。
+ */
+export type SupplierShareAdjustMode = 'not_applicable';
 
 /** 一次退款带来的账务变化汇总（写进 D11/D41 的响应与操作日志） */
 export interface ReversalResult {
@@ -363,10 +257,10 @@ export interface ReversalResult {
   commissionReversedFen: number;
   /** 佣金冲销份数（负数） */
   commissionReversedQuantity: number;
-  /** 被调整的应付行数 */
+  /** 被调整的应付行数 —— 自营口径下**恒为 0**（退款不冲减采购应付） */
   supplierShareAdjusted: number;
-  /** 应付处理方式（见方法注释） */
-  supplierShareMode: 'not_generated' | 'reduced' | 'offset';
-  /** 需要人工留意的说明（余额扣成负数、应付未生成等） */
+  /** 应付调整方式 —— 自营口径下**恒为 `not_applicable`** */
+  supplierShareMode: SupplierShareAdjustMode;
+  /** 需要人工留意的说明（余额扣成负数、应付不冲减的固定说明等） */
   notes: string[];
 }

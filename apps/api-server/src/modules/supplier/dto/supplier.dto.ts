@@ -46,6 +46,19 @@ export class PackingTasksQueryDto {
 }
 
 /**
+ * S9 · 应付结算明细自查（P25 · M3-9）
+ *
+ * `date` = **出餐日**（不是应付生成日）。缺省取今天 ——
+ * 但要注意应付单是 **T+1 凌晨**按前一日实收量生成的，所以「今天」常常还没有单，
+ * 属正常（端上走空态并说明时点，别让供应商以为漏算了）。
+ */
+export class SupplierSettlementQueryDto {
+  @IsOptional()
+  @Matches(DATE_RE, { message: 'date 必须是 YYYY-MM-DD' })
+  date?: string;
+}
+
+/**
  * S2 · 单项出餐确认
  *
  * 粒度 = (菜, 集散中心)：供应商把「某道菜送到某个集散中心」这件事逐项确认。

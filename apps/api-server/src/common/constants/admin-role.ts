@@ -78,7 +78,10 @@ export const SUPPLIER_MENU_KEYS = [
   '/supplier/packing',
   '/supplier/dishes',
   '/supplier/edit',
-  '/finance/supplier-share',
+  // ⚠️ M3-9：原先借用的 `/finance/supplier-share` 是**后台财务页**（组件调
+  // `/admin/supplier-shares`），供应商点进去只会拿 10003 —— 页面直接坏掉。
+  // 供应商自己的结算页是 `/supplier/settlement`（调 `/supplier/settlement`）。
+  '/supplier/settlement',
 ] as const;
 
 /** 角色 → 菜单 key */

@@ -122,7 +122,7 @@ export class Commission {
  * ab_supplier_share 供应商**采购应付**结算流水
  *   C9（2026-09-15 修订）—— 成本项**可配置、不写死**：
  *     · 供应商供价 —— 与各供应商**逐菜协商**（成交价落库）
- *     · 集散/场地费 —— 集散中心**复用合作供应商场地 → 默认 0**（按实际登记）
+ *     · 场所摊销 —— ABox **自有持证场所**（自营口径 2026-09-16；默认 0 仅表示未登记）
  *     · 打包人工 / 配送费 —— 由**平台**承担（雇佣兼职打包 + 安排货拉拉送货）
  *     · 平台毛利 = 售价 − 成本合计 − 佣金（**结果值**，不预设）
  *   退款走 type='reversal' 反向冲减
@@ -147,7 +147,7 @@ export class SupplierShare {
   id!: number;
 
   @Index('uk_share_no', { unique: true })
-  @Column({ name: 'share_no', type: 'varchar', length: 32, comment: '分账单号' })
+  @Column({ name: 'share_no', type: 'varchar', length: 32, comment: '应付单号' })
   shareNo!: string;
 
   @Index('idx_share_status')
@@ -179,7 +179,7 @@ export class SupplierShare {
     type: 'bigint',
     transformer: bigintTransformer,
     nullable: true,
-    comment: '菜品（供应商分账按菜品计）',
+    comment: '菜品（采购应付按菜品逐项计）',
   })
   dishId?: number | null;
 
@@ -201,7 +201,7 @@ export class SupplierShare {
     transformer: moneyTransformer,
     precision: 12,
     scale: 2,
-    comment: '分账金额（正=分账，负=反向冲销）',
+    comment: '应付金额（正=应付，负=纠错冲销）',
   })
   amount!: string;
 
@@ -217,7 +217,7 @@ export class SupplierShare {
     type: 'varchar',
     length: 16,
     default: 'manual',
-    comment: 'manual人工对公转账（当前唯一渠道 · C11）/ wxpay微信分账（二期预留）',
+    comment: 'manual人工对公转账（当前唯一渠道 · C10/C11）/ wxpay 预留（自营下不适用）',
   })
   channel!: string;
 
@@ -267,7 +267,7 @@ export class SupplierShare {
     type: 'bigint',
     transformer: bigintTransformer,
     nullable: true,
-    comment: '反向冲销时指向原分账记录',
+    comment: '纠错冲销时指向原应付行',
   })
   originId?: number | null;
 
@@ -405,7 +405,7 @@ export class BalanceLog {
 /**
  * ab_distribution_center 集散中心配置（C4 · 表驱动，默认 4 个，数量可配置）
  * 依据：《ER v2.1》§3.7
- * ⚠️ C9 修订（2026-09-15）：集散中心**复用合作供应商场地 → 场地费默认 0**；
+ * ⚠️ C9 修订（2026-09-15）→ **自营口径（2026-09-16）**：集散场所属 ABox 自有持证场所，场地成本按摊销计入自身成本，**不再向供应商支付场地费**；
  *    打包改由平台雇佣兼职承担（平台成本项），故 riceFee / packFee 默认均为 0，按实际登记。
  *
  * ⚠️🚧 【自营口径 2026-09-16 · 本类语义待重构，**M4 前置项**，勿在本批擅自改写】
@@ -433,7 +433,7 @@ export class DistributionCenter {
   })
   supplierId!: number;
 
-  @Column({ type: 'varchar', length: 256, comment: '场地地址（集散中心复用合作供应商场地）' })
+  @Column({ type: 'varchar', length: 256, comment: '场地地址（ABox 自有持证场所）' })
   address!: string;
 
   @Column({ name: 'contact_name', type: 'varchar', length: 32, nullable: true })

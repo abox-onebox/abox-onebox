@@ -32,7 +32,8 @@
  *   · D10 `POST /admin/orders/manual-adjust` —— **目标值**语义（幂等不翻倍）/ 30002 / 30003 / 30014 /
  *                                            跨楼群 30015 / 原因 10001 / 自动写日志且 targetId=订单号
  *   · D11 `POST /admin/orders/:orderNo/force-refund` —— 40011 防误操作 / 30003 / 40008 幂等 /
- *                                            C9 反向冲销（佣金负行 + 原行 cancelled + 余额扣减）/ 应付三态
+ *                                            C9 反向冲销（佣金负行 + 原行 cancelled + 余额扣减）/
+ *                                            **应付不冲减**（自营口径 · 夹具行逐项未变）
  *   · D12 `GET  /admin/orders/export`      —— 表头 + 二维数组 / **完整手机号** / 强制留痕（含 IP）
  *   · 权限：finance 可读 · viewer 10003 · 小程序 token 打 `/admin/orders` → 10003
  *
@@ -177,9 +178,23 @@ function inOrderWindowBj() {
   return h >= 14 && h < 23;
 }
 
+/**
+ * 夹具专用连接（**必须带 `busy_timeout`**）
+ *
+ * ⚠️ SQLite 的 `busy_timeout` 默认是 0：只要**服务端（TypeORM）正持有写事务**，
+ *    夹具这一侧的读/写就会立刻抛 `database is locked`，把一次偶发撞车放大成
+ *    「整节异常中断」——而失败点与被测行为毫无关系（典型的环境型假红）。
+ *    夹具事务都是毫秒级的，等一会儿即可，故统一设 5s。
+ */
+function fixtureDb() {
+  const db = new DatabaseSync(DB_PATH);
+  db.exec('PRAGMA busy_timeout = 5000');
+  return db;
+}
+
 function readDb(sql, params = []) {
   if (!existsSync(DB_PATH)) return null;
-  const db = new DatabaseSync(DB_PATH);
+  const db = fixtureDb();
   try {
     return db.prepare(sql).get(...params) ?? null;
   } finally {
@@ -190,7 +205,7 @@ function readDb(sql, params = []) {
 /** 读多行（`readDb` 的复数版） */
 function readRows(sql, params = []) {
   if (!existsSync(DB_PATH)) return [];
-  const db = new DatabaseSync(DB_PATH);
+  const db = fixtureDb();
   try {
     return db.prepare(sql).all(...params);
   } finally {
@@ -210,7 +225,7 @@ function readRows(sql, params = []) {
  */
 function writeDb(sql, params = []) {
   if (!existsSync(DB_PATH)) return 0;
-  const db = new DatabaseSync(DB_PATH);
+  const db = fixtureDb();
   try {
     return db.prepare(sql).run(...params).changes ?? 0;
   } finally {
@@ -355,14 +370,18 @@ async function main() {
     );
     const menus = sup.account?.menus ?? [];
     assert(
-      menus.length === 5 && menus.includes('/order/list') && menus.includes('/supplier/dishes'),
-      'A2 供应商 menus 仅 P21–P26 五项（不含运营菜单）',
+      menus.length === 7 &&
+        menus.includes('/supplier/settlement') &&
+        menus.includes('/supplier/dishes') &&
+        !menus.includes('/order/list'),
+      'A2 供应商 menus 共 7 项（P21–P26 + 概览 + 自有结算页；M3-8 起不再借用运营订单页，M3-9 起结算页为 `/supplier/settlement`）',
       `menus=${JSON.stringify(menus)}`,
     );
     assert(
-      !menus.includes('/meal/matrix') && !menus.includes('/system/config') && !menus.includes('*'),
-      'A2 供应商 menus **不含**任何运营菜单，也不含通配符（通配会让前端放行全量）',
-      `hasMeal=${menus.includes('/meal/matrix')}`,
+      menus.every((m) => m === '/dashboard' || m.startsWith('/supplier/')) &&
+        !menus.includes('*'),
+      'A2 供应商 menus **每一项**都落在 `/dashboard` 或 `/supplier/*` 内，且不含通配符 —— 这比「恰好 N 项」耐久：将来加减 P 页不用改断言，而混入 `/finance/*`、`/system/*` 会立刻撞红',
+      `menus=${JSON.stringify(menus)}`,
     );
 
     // 越权：直接用供应商 token 打运营接口
@@ -720,10 +739,14 @@ async function main() {
     'D54 角色矩阵返回 6 个内置角色（super_admin/admin/operator/finance/viewer/supplier）',
     `count=${roleList.length}`,
   );
+  const supplierMenus = roleList.find((r) => r.role === 'supplier')?.menus ?? [];
   assert(
     roleList.find((r) => r.role === 'super_admin')?.menus?.includes('*') &&
-      roleList.find((r) => r.role === 'supplier')?.menus?.length === 5,
-    'D54 矩阵内容正确（超管通配；供应商 5 项）',
+      supplierMenus.length === 7 &&
+      supplierMenus.includes('/supplier/settlement') &&
+      supplierMenus.every((m) => m === '/dashboard' || m.startsWith('/supplier/')),
+    'D54 矩阵内容正确（超管通配；供应商 7 项，且每一项都在 `/supplier/*` 内 —— 角色矩阵与前端 `SUPPLIER_NAV` 必须逐项对齐）',
+    `supplierMenus=${JSON.stringify(supplierMenus)}`,
   );
   assert(
     roleList.every((r) => r.isSystem === true) && !!roles.body?.data?.note,
@@ -1799,6 +1822,20 @@ async function main() {
       `commissionFen=${confirmB.body?.data?.commissionFen} rate=${confirmB.body?.data?.rate}`,
     );
 
+    // 自营口径夹具（2026-09-16 裁定 1）：先造一条**该出餐日该菜品**的应付行，退款后再验它是否被动过。
+    // 旧口径下这一步会被扣减至 0 并置 `reversed`，故这条夹具正是**新旧口径的判别器**
+    // —— 若将来有人把冲减逻辑加回来，这条断言会立刻撞红，而不是静默通过。
+    // ⚠️ 直写 SQL 而非调 S9 接口：S9 出单在 §21 单独验收，此处只做「退款副作用」的因果对照。
+    const shareNoB = `E2ESK${stamp}B`;
+    const dishOfB = readDb(
+      'SELECT dish_id FROM ab_set_meal_item WHERE set_meal_id = (SELECT set_meal_id FROM ab_order WHERE order_no = ?) LIMIT 1',
+      [noB],
+    );
+    writeDb(
+      "INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, dish_id, quantity, unit_price, amount, type, channel, status) VALUES (?, ?, ?, 'supplier', 1, ?, 100, '7.50', '750.00', 'normal', 'manual', 'pending')",
+      [shareNoB, bjToday(), bjToday(), Number(dishOfB?.dish_id)],
+    );
+
     const balBefore = readDb('SELECT balance FROM ab_balance WHERE user_id = 1001');
     const rf = await call('POST', `/admin/orders/${noB}/force-refund`, {
       token: adminToken,
@@ -1842,12 +1879,39 @@ async function main() {
       'D11 佣金冲销同步扣减团长余额（余额**允许为负** —— 已提现就形成欠款由后续佣金抵扣，硬拦会把退款卡死）',
       `${balBefore?.balance} → ${balAfter?.balance}`,
     );
+
+    // ------------------------------------------------ 自营口径：退款不动供应商应付
+    const shareAfterRefund = readDb(
+      'SELECT quantity, unit_price, amount, status, type FROM ab_supplier_share WHERE share_no = ?',
+      [shareNoB],
+    );
+    // ⚠️ 金额用**数值分**比较，不比字符串：`amount` / `unit_price` 是 decimal 列，
+    //    SQLite 走 NUMERIC 亲和性 —— 写进去的 `'750.00'` 读回来是 `750`，
+    //    字符串比较会得到一条与业务无关的假红。
+    const fenOf = (v) => Math.round(Number(v ?? 0) * 100);
     assert(
-      ['not_generated', 'reduced', 'offset'].includes(String(rfD?.reversal?.supplierShareMode)) &&
-        Array.isArray(rfD?.reversal?.notes) &&
-        (rfD?.reversal?.supplierShareMode !== 'not_generated' ||
-          rfD?.reversal?.supplierShareAdjusted === 0),
-      'D11 应付冲减三态明确（未生成 / 已扣减 / 已付款挂下期抵扣）；未生成时**不造空冲销行**',
+      Number(shareAfterRefund?.quantity) === 100 &&
+        fenOf(shareAfterRefund?.amount) === 75000 &&
+        fenOf(shareAfterRefund?.unit_price) === 750 &&
+        shareAfterRefund?.status === 'pending' &&
+        shareAfterRefund?.type === 'normal',
+      '自营口径（2026-09-16 裁定 1）：用户退款**不冲减**供应商采购应付 —— 半成品在出餐日已交付，钱照付；该行份数/金额/状态**逐项未变**（旧口径下这里会被扣减至 0 并置 reversed）',
+      `quantity=${shareAfterRefund?.quantity} amount=${fenOf(shareAfterRefund?.amount)}分 status=${shareAfterRefund?.status}`,
+    );
+    const shareReversalRows = readRows(
+      "SELECT id FROM ab_supplier_share WHERE type = 'reversal' AND meal_date = ?",
+      [bjToday()],
+    );
+    assert(
+      shareReversalRows.length === 0,
+      '退款**不产生**任何应付冲销行（`type=reversal` 改义为「应付单生成后发现算错」的纠错冲销，不再由退款触发）',
+      `rows=${shareReversalRows.length}`,
+    );
+    assert(
+      rfD?.reversal?.supplierShareMode === 'not_applicable' &&
+        rfD?.reversal?.supplierShareAdjusted === 0 &&
+        Array.isArray(rfD?.reversal?.notes),
+      'D11 出参**显式声明**「应付未调整」（`not_applicable` + 0 行）—— 保留该字段而非删掉，就是为了让「应付分文未动」变成一条可断言的事实',
       `mode=${rfD?.reversal?.supplierShareMode} rows=${rfD?.reversal?.supplierShareAdjusted} notes=${JSON.stringify(rfD?.reversal?.notes)}`,
     );
 
@@ -2224,10 +2288,9 @@ async function main() {
       `reversed=${ap1?.reversal?.commissionReversedFen}`,
     );
     assert(
-      ['not_generated', 'reduced', 'offset'].includes(String(ap1?.reversal?.supplierShareMode)) &&
-        (ap1?.reversal?.supplierShareMode !== 'not_generated' ||
-          ap1?.reversal?.supplierShareAdjusted === 0),
-      'D41 应付冲减三态明确；未生成时不造空冲销行（与 D11 同口径）',
+      ap1?.reversal?.supplierShareMode === 'not_applicable' &&
+        ap1?.reversal?.supplierShareAdjusted === 0,
+      'D41 与 D11 **同口径**（唯一执行口 = ReversalService）：不论走审批通过还是后台强制，退款**都不冲减**供应商采购应付',
       `mode=${ap1?.reversal?.supplierShareMode} rows=${ap1?.reversal?.supplierShareAdjusted}`,
     );
 
@@ -5046,6 +5109,474 @@ async function main() {
       withSupplierId.body?.code === 10001,
       'S2 请求体带 `supplierId` → 10001（**主体由 token 决定**，收下这个字段就等于允许「A 供应商改 B 的计划」）',
       `code=${withSupplierId.body?.code}`,
+    );
+  }
+
+  // ==========================================================================
+  // §21 M3-9 应付结算 S9（采购应付出单 / 付款登记 / 未出单异常 / 供应商自查）
+  // ==========================================================================
+  //
+  // 口径：《ABox一盒自营结算口径定义v1.0.md》
+  //   · 计费基数 = **实收量**（`actual_quantity`，未申报 = 计划量）→ **短送即少付**
+  //   · 应付对象**只剩供应商**（`payee_type=distribution_center` 已冻结）
+  //   · ⭐ 用户退款**不冲减**应付（已在 §15 D11 断言，本节不重复）
+  //   · fail-closed：该菜出餐确认未完成 / 资质异常 → 不出单，进「未出单异常清单」
+  //
+  // ⚠️ **本节不依赖下单窗口**（与 §18/§19/§20 同纪律），夹具**全部自造**：
+  //    出餐日取「今天 + 90 天」（刻意远离 §20 的 +60 天，两者互不污染），
+  //    并在节首 `DELETE` 该日的生产计划与应付行 —— **保证可重复跑**。
+  {
+    const S9D = addDaysStr(bjToday(), 90);
+    const supAId = 1; // 三味屋（种子 · 资质已核验 · canServe=true）
+    const supBId = 2; // 四季鲜蔬
+    const dishRows = readRows('SELECT id FROM ab_dish ORDER BY id LIMIT 2');
+    const dish1 = Number(dishRows[0]?.id ?? 1);
+    const dish2 = Number(dishRows[1]?.id ?? dish1);
+
+    /** 生产计划父行夹具（S9 只读父行的实收量，不读分中心明细） */
+    const DAILY_INSERT =
+      'INSERT INTO ab_supplier_dish_daily (supplier_id, dish_id, produce_date, plan_quantity, actual_quantity, unit_price, status) VALUES (?, ?, ?, ?, ?, ?, ?)';
+
+    // 幂等清理：删掉本日出餐计划与应付行（两处都要删 —— 只删计划的话，
+    // 上一次跑留下的应付行会让幂等闸门一直跳过，断言永远看不到 created）。
+    // ⚠️ 应付行还要多删 S9D-1：I 段会**自造**一条「另一出餐日」的 pending 行，
+    //    用来证明供应商端的待付合计**跨日期**（不删的话重跑会累加，合计断言必红）。
+    writeDb('DELETE FROM ab_supplier_dish_daily WHERE produce_date = ?', [S9D]);
+    writeDb('DELETE FROM ab_supplier_share WHERE meal_date IN (?, ?)', [S9D, addDaysStr(S9D, -1)]);
+
+    // ---------------------------------------------------------- A. 空日基线
+    const genEmpty = await call('POST', '/admin/supplier-shares/generate', {
+      token: adminToken,
+      body: { date: S9D },
+    });
+    assert(
+      genEmpty.body?.code === 0 && genEmpty.body?.data?.summary?.createdCount === 0,
+      'S9 空日（无生产计划）→ 出单 0 条且不报错（「这天没有要付的」是正常状态，不该走报错分支）',
+      `code=${genEmpty.body?.code} created=${genEmpty.body?.data?.summary?.createdCount}`,
+    );
+
+    // ---------------------------------------------------------- B. 夹具：三条父行，三种情形
+    //  ① supA/dish1：done + 实收 96（计划 100）→ **应出单，且按 96 计**
+    //  ② supB/dish1：cooking（部分中心已确认）→ **fail-closed 不出单**
+    //  ③ supB/dish2：done 但实收 0 → **不出单**（没有采购事实）
+    //  ⚠️ 夹具单价刻意取 ¥9.90 —— 与菜品当前成本价不同，用来证明出单取的是
+    //     「出餐计划生成时**冻结**的价」，而不是出单时刻的 `ab_dish.cost_price`。
+    const FROZEN = '9.90';
+    writeDb(DAILY_INSERT, [supAId, dish1, S9D, 100, 96, FROZEN, 'done']);
+    writeDb(DAILY_INSERT, [supBId, dish1, S9D, 80, null, FROZEN, 'cooking']);
+    writeDb(DAILY_INSERT, [supBId, dish2, S9D, 0, 0, FROZEN, 'done']);
+
+    const dishCost = readDb('SELECT cost_price FROM ab_dish WHERE id = ?', [dish1]);
+    assert(
+      Math.round(Number(dishCost?.cost_price) * 100) !== 990,
+      'S9 前置：夹具单价 ¥9.90 ≠ 菜品当前成本价（否则「冻结价优先」这条断言就验证不到任何东西）',
+      `cost_price=${dishCost?.cost_price}`,
+    );
+
+    // ---------------------------------------------------------- C. 出单
+    const gen1 = await call('POST', '/admin/supplier-shares/generate', {
+      token: adminToken,
+      body: { date: S9D },
+    });
+    const gen1D = gen1.body?.data;
+    const createdA = (gen1D?.created ?? []).find(
+      (r) => r.supplierId === supAId && r.dishId === dish1,
+    );
+    assert(
+      gen1.body?.code === 0 && gen1D?.summary?.createdCount === 1 && !!createdA,
+      'S9 出单：3 条生产计划里**只有 1 条可出**（另两条分别因「未确认完成」「实收 0」被拦）',
+      `created=${gen1D?.summary?.createdCount} exceptions=${gen1D?.summary?.exceptionCount}`,
+    );
+    assert(
+      createdA?.quantity === 96 && createdA?.planQuantity === 100 && createdA?.amountFen === 95040,
+      '⭐ 计费基数 = **实收量**（96 份 × ¥9.90 = ¥950.40），**不是计划量**（100 份）—— 自营采购是「交多少付多少」，短送自动少付，无需人工对账',
+      `qty=${createdA?.quantity} plan=${createdA?.planQuantity} amountFen=${createdA?.amountFen}`,
+    );
+    assert(
+      createdA?.unitPriceFen === 990,
+      '单价取**出餐计划生成时冻结的快照**（夹具 ¥9.90 ≠ 菜品当前成本价）—— 否则会出现「T 日按旧价交货、结算按新价付」，供应商对账必然拒绝',
+      `unitPriceFen=${createdA?.unitPriceFen} cost=${dishCost?.cost_price}`,
+    );
+    assert(
+      !!createdA?.id,
+      'S9 出单出参回填 `id` —— 运营拿到 created 要能**直接对某条登记付款**，只给单号等于让人再去列表里搜一遍',
+      `id=${createdA?.id} shareNo=${createdA?.shareNo}`,
+    );
+
+    const shareRow = readDb(
+      'SELECT payee_type, type, channel, status, quantity, unit_price, amount FROM ab_supplier_share WHERE share_no = ?',
+      [createdA?.shareNo],
+    );
+    assert(
+      shareRow?.payee_type === 'supplier' &&
+        shareRow?.type === 'normal' &&
+        shareRow?.channel === 'manual' &&
+        shareRow?.status === 'pending',
+      'S9 落库口径：`payee_type=supplier`（distribution_center 已冻结）· `type=normal` · `channel=manual`（人工对公转账，**不接支付通道**）· `status=pending`',
+      JSON.stringify(shareRow),
+    );
+
+    // ---------------------------------------------------------- D. 幂等
+    const gen2 = await call('POST', '/admin/supplier-shares/generate', {
+      token: adminToken,
+      body: { date: S9D },
+    });
+    assert(
+      gen2.body?.code === 0 &&
+        gen2.body?.data?.summary?.createdCount === 0 &&
+        gen2.body?.data?.summary?.skippedCount === 1,
+      'S9 幂等：同一（供应商 · 菜品 · 出餐日）重跑 → 新增 0 / 跳过 1（运营补跑不会重复出单，财务不会付两遍）',
+      `created=${gen2.body?.data?.summary?.createdCount} skipped=${gen2.body?.data?.summary?.skippedCount}`,
+    );
+
+    // ---------------------------------------------------------- E. 未出单异常清单
+    const exc = await call('GET', `/admin/supplier-shares/exceptions?date=${S9D}`, { token: adminToken });
+    const excList = exc.body?.data?.list ?? [];
+    assert(
+      exc.body?.code === 0 &&
+        excList.some((e) => e.reason === 'incomplete' && e.supplierId === supBId && e.dishId === dish1) &&
+        excList.some((e) => e.reason === 'zero_quantity' && e.supplierId === supBId && e.dishId === dish2),
+      'S9 未出单异常清单逐条给出**原因**（未确认完成 / 实收 0）—— 运营点完按钮最想知道的是「哪些单没出来、为什么」',
+      `count=${excList.length} reasons=${JSON.stringify(excList.map((e) => `${e.supplierId}:${e.reason}`))}`,
+    );
+    assert(
+      excList.every((e) => !!e.reasonText) && !!exc.body?.data?.summary?.byReason,
+      'S9 异常项带**人话说明**（reasonText）+ 按原因计数（byReason）—— 只给 `incomplete` 这种机器码，运营没法处理',
+      `byReason=${JSON.stringify(exc.body?.data?.summary?.byReason)}`,
+    );
+    assert(
+      !excList.some((e) => e.supplierId === supAId),
+      'S9 异常清单**过滤掉已出单的行** —— 「先 fail-closed → 补确认 → 重跑出单」是**正常路径**，残留会让运营反复做无用功',
+      `containsA=${excList.some((e) => e.supplierId === supAId)}`,
+    );
+    assert(
+      !excList.some((e) => e.reason === 'license_invalid'),
+      'S9 资质正常的供应商不进异常清单（三味屋/四季鲜蔬种子已核验通过）—— 闸门只在真异常时才拦',
+      `reasons=${JSON.stringify([...new Set(excList.map((e) => e.reason))])}`,
+    );
+
+    // ---------------------------------------------------------- F. 资质闸门 + 补齐后重跑
+    const supBAuditBefore = readDb('SELECT audit_status FROM ab_supplier WHERE id = ?', [supBId]);
+    writeDb("UPDATE ab_supplier SET audit_status = 'pending' WHERE id = ?", [supBId]);
+    // 把 supB/dish1 补成「已确认完成 · 实收 80」→ 若非资质问题，它本该能出单
+    writeDb(
+      "UPDATE ab_supplier_dish_daily SET status = 'done', actual_quantity = 80 WHERE supplier_id = ? AND dish_id = ? AND produce_date = ?",
+      [supBId, dish1, S9D],
+    );
+    const excLic = await call('GET', `/admin/supplier-shares/exceptions?date=${S9D}`, { token: adminToken });
+    assert(
+      (excLic.body?.data?.list ?? []).some(
+        (e) => e.reason === 'license_invalid' && e.supplierId === supBId && e.dishId === dish1,
+      ),
+      'S9 资质闸门：供应商资质未通过核验 → **不出单**（资质未核验期间的供货不进结算，与 S2 的 50001 同判据）',
+      `reasons=${JSON.stringify((excLic.body?.data?.list ?? []).map((e) => `${e.supplierId}:${e.reason}`))}`,
+    );
+
+    // 恢复资质 → 补齐的输入已就位 → 重跑应能补出（fail-closed 是「等一等」不是「永久拒绝」）
+    writeDb('UPDATE ab_supplier SET audit_status = ? WHERE id = ?', [
+      supBAuditBefore?.audit_status ?? 'approved',
+      supBId,
+    ]);
+    const gen3 = await call('POST', '/admin/supplier-shares/generate', {
+      token: adminToken,
+      body: { date: S9D },
+    });
+    const createdB = (gen3.body?.data?.created ?? []).find((r) => r.supplierId === supBId);
+    assert(
+      gen3.body?.code === 0 && createdB?.quantity === 80 && createdB?.amountFen === 79200,
+      'S9 补齐后重跑**能补出**先前被拦的单（80 份 × ¥9.90 = ¥792.00）—— fail-closed 的出路是「补输入再跑」，不是人工绕过',
+      `created=${JSON.stringify((gen3.body?.data?.created ?? []).map((r) => `${r.supplierId}:${r.quantity}`))}`,
+    );
+
+    // ---------------------------------------------------------- G. 付款登记
+    const badIdPay = await call('POST', '/admin/supplier-shares/99999999/payment', {
+      token: adminToken,
+      body: { paymentVoucherNo: 'E2E-BAD-0001' },
+    });
+    assert(
+      badIdPay.body?.code === 50012,
+      'S9 付款登记：应付单不存在 → 50012（不存在的单不能「付」）',
+      `code=${badIdPay.body?.code}`,
+    );
+    const noVoucher = await call('POST', `/admin/supplier-shares/${createdA?.id}/payment`, {
+      token: adminToken,
+      body: {},
+    });
+    assert(
+      noVoucher.body?.code === 10001,
+      'S9 付款登记**缺银行回单号** → 10001（入参层就拦 —— 回单号是「这笔钱确实付了」的唯一凭证）',
+      `code=${noVoucher.body?.code}`,
+    );
+
+    const voucher = `E2E${stamp}-V1`;
+    const pay1 = await call('POST', `/admin/supplier-shares/${createdA?.id}/payment`, {
+      token: adminToken,
+      body: { paymentVoucherNo: voucher, invoiceNo: `INV${stamp}` },
+    });
+    assert(
+      pay1.body?.code === 0 &&
+        pay1.body?.data?.status === 'success' &&
+        pay1.body?.data?.paymentVoucherNo === voucher &&
+        !!pay1.body?.data?.paidAt,
+      'S9 付款登记成功 → `status=success` + 回单号/发票号/付款时刻写实（C10：系统**只记账**，不发起任何通道付款）',
+      `status=${pay1.body?.data?.status} voucher=${pay1.body?.data?.paymentVoucherNo} paidAt=${pay1.body?.data?.paidAt}`,
+    );
+    assert(
+      pay1.body?.data?.canRegisterPayment === false && !!pay1.body?.data?.blockReason,
+      'S9 已付款的行下发 `canRegisterPayment=false` + `blockReason`（按钮口径唯一在服务端，端上不自算）',
+      `blockReason=${pay1.body?.data?.blockReason}`,
+    );
+
+    const payAgain = await call('POST', `/admin/supplier-shares/${createdA?.id}/payment`, {
+      token: adminToken,
+      body: { paymentVoucherNo: 'E2E-SECOND' },
+    });
+    assert(
+      payAgain.body?.code === 50012,
+      'S9 已付款再登记 → 50012（重复登记就是**重复出款**，钱转出去追不回来 —— fail-closed）',
+      `code=${payAgain.body?.code} msg=${String(payAgain.body?.message ?? '').slice(0, 40)}…`,
+    );
+
+    const dupVoucher = await call('POST', `/admin/supplier-shares/${createdB?.id}/payment`, {
+      token: adminToken,
+      body: { paymentVoucherNo: voucher },
+    });
+    assert(
+      dupVoucher.body?.code === 10001,
+      'S9 同一银行回单号用于两笔应付 → 10001（一个回单只能对应一笔付款，否则两笔支出挂同一凭证，对账时分不清哪笔真付了）',
+      `code=${dupVoucher.body?.code}`,
+    );
+
+    // ---------------------------------------------------------- H. 列表 / 汇总
+    const s9List = await call('GET', `/admin/supplier-shares?date=${S9D}&pageSize=100`, {
+      token: adminToken,
+    });
+    const s9Rows = s9List.body?.data?.list ?? [];
+    const s9Sum = s9List.body?.data?.summary ?? {};
+    assert(
+      s9List.body?.code === 0 && s9Rows.length === 2,
+      'S9 列表按出餐日过滤（2 条：三味屋 96 份 + 四季鲜蔬 80 份 —— 实收 0 的那条不出单）',
+      `rows=${s9Rows.length} total=${s9List.body?.data?.total}`,
+    );
+    assert(
+      s9Sum.amountFen === 174240 &&
+        s9Sum.pendingAmountFen === 79200 &&
+        s9Sum.paidAmountFen === 95040 &&
+        s9Sum.pendingCount === 1 &&
+        s9Sum.paidCount === 1,
+      'S9 汇总按**同一过滤条件的全量**统计并按状态拆分（合计 ¥1,742.40 = 待付 ¥792.00 + 已付 ¥950.40）—— 否则页面会把「本页合计」当成「全部合计」',
+      `all=${s9Sum.amountFen} pending=${s9Sum.pendingAmountFen} paid=${s9Sum.paidAmountFen}`,
+    );
+    assert(
+      s9Rows.every(
+        (r) =>
+          Number.isInteger(r.amountFen) &&
+          Number.isInteger(r.unitPriceFen) &&
+          r.amountFen > 0 &&
+          r.totalAmountFen === undefined &&
+          r.platformGrossProfitFen === undefined,
+      ),
+      'S9 金额一律**整数分**（`Fen` 结尾），且**不含**售价/佣金/毛利字段 —— 应付单只有采购口径（不变量 I1 在**数据结构层面**成立，不靠前端隐藏）',
+      `sample=${JSON.stringify({ qty: s9Rows[0]?.quantity, unitPriceFen: s9Rows[0]?.unitPriceFen, amountFen: s9Rows[0]?.amountFen })}`,
+    );
+    assert(
+      Array.isArray(s9List.body?.data?.statusOptions) &&
+        s9List.body?.data?.statusOptions?.length === 4,
+      'S9 状态枚举由服务端下发（端上不维护第二份文案，避免漂移）',
+      `options=${JSON.stringify(s9List.body?.data?.statusOptions)}`,
+    );
+
+    const kwHit = await call(
+      'GET',
+      `/admin/supplier-shares?keyword=${encodeURIComponent(voucher)}`,
+      { token: adminToken },
+    );
+    assert(
+      kwHit.body?.code === 0 &&
+        (kwHit.body?.data?.list ?? []).length === 1 &&
+        kwHit.body?.data?.list?.[0]?.paymentVoucherNo === voucher,
+      'S9 关键词命中**银行回单号**（财务对账最常用的入口：拿着回单找单子）',
+      `rows=${(kwHit.body?.data?.list ?? []).length}`,
+    );
+
+    const s9All = await call('GET', '/admin/supplier-shares?pageSize=100', { token: adminToken });
+    assert(
+      (s9All.body?.data?.list ?? []).every((r) => r.payeeType === 'supplier'),
+      'S9 `payee_type=distribution_center` 已**冻结**：历史行仍可读（§18 直插过一条集散中心应付），但不出现在供应商列表里 —— 自营下加工场所属 ABox，付场地费给自己没有财务意义',
+      `types=${JSON.stringify([...new Set((s9All.body?.data?.list ?? []).map((r) => r.payeeType))])}`,
+    );
+
+    // ---------------------------------------------------------- I. 供应商端自查（P25）
+    const supS9 = await adminLogin('sanweiwu', 'supplier123');
+    const self = await call('GET', `/supplier/settlement?date=${S9D}`, { token: supS9.token });
+    const selfD = self.body?.data;
+    assert(
+      self.body?.code === 0 &&
+        (selfD?.list ?? []).length === 1 &&
+        selfD?.list?.[0]?.quantity === 96 &&
+        selfD?.supplier?.id === supAId,
+      'S9 供应商自查只看得到**自己的**行（三味屋 96 份）—— 数据范围由 token 内的 `supplierId` 收窄，请求体不收该字段',
+      `rows=${(selfD?.list ?? []).length} supplierId=${selfD?.supplier?.id}`,
+    );
+    const FORBIDDEN_KEYS = [
+      'totalAmountFen',
+      'payAmountFen',
+      'commissionFen',
+      'commissionRate',
+      'grossProfitFen',
+      'platformGrossProfitFen',
+      'siteFeeFen',
+      'packingLaborFeeFen',
+      'deliveryFeeFen',
+      'salePriceFen',
+      'costTotalFen',
+    ];
+    const selfKeys = JSON.stringify(Object.keys(selfD?.list?.[0] ?? {}));
+    const leaked = FORBIDDEN_KEYS.filter((k) => selfKeys.includes(k));
+    assert(
+      leaked.length === 0,
+      '⭐ 不变量 I1：供应商端出参**不含**终端售价 ¥25.80 / 佣金 / 毛利 / 成本项 —— B2B 采购关系下供应商只该知道「我的协商价 × 我的交付量」；让人看见整条利润结构，下一轮谈价就没有筹码了',
+      `keys=${selfKeys} leaked=${JSON.stringify(leaked)}`,
+    );
+    // ⭐ 跨日期待付合计：**自造**一条不同出餐日的 pending 行（¥50.00）做增量对照。
+    //    刻意不写死金额 —— 本节的数一旦写死，就会被别的章节的夹具变动连带撞红；
+    //    也刻意不依赖别处留下的数据（§21 的纪律是「夹具全部自造」）。
+    //    同日那条 ¥950.40 已付款 → 当日待付 = 0，而跨日期合计必须 +¥50.00：
+    //    两个数**不相等**才证明「合计没有被日期过滤」。
+    const CROSS_DAY = addDaysStr(S9D, -1);
+    writeDb(
+      "INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, dish_id, quantity, unit_price, amount, type, channel, status) VALUES (?, ?, ?, 'supplier', ?, ?, 10, '5.00', '50.00', 'normal', 'manual', 'pending')",
+      [`E2ESK${stamp}CROSS`, CROSS_DAY, CROSS_DAY, supAId, dish1],
+    );
+    const dbPending = readDb(
+      "SELECT COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS cnt FROM ab_supplier_share WHERE payee_type = 'supplier' AND type = 'normal' AND payee_id = ? AND status = 'pending'",
+      [supAId],
+    );
+    const selfSum = (await call('GET', `/supplier/settlement?date=${S9D}`, { token: supS9.token }))
+      .body?.data?.summary;
+    assert(
+      selfD?.summary?.empty === false &&
+        selfSum?.pendingTotalAmountFen === (selfD?.summary?.pendingTotalAmountFen ?? 0) + 5000 &&
+        selfSum?.pendingTotalRowCount === (selfD?.summary?.pendingTotalRowCount ?? 0) + 1 &&
+        selfSum?.pendingTotalAmountFen === Math.round(Number(dbPending?.amount ?? 0) * 100) &&
+        selfSum?.pendingTotalRowCount === Number(dbPending?.cnt ?? 0) &&
+        selfSum?.pendingAmountFen === 0,
+      'S9 汇总给出**跨日期的待付合计**：补一条「另一出餐日」的待付行后合计 +¥50.00，而当日待付仍为 0 —— 供应商真正关心的是「平台还欠我多少」，不是「某一天多少钱」（写死金额的断言会被别处夹具牵连，故此处以**增量 + 库内对照**双口径验证）',
+      `before=${selfD?.summary?.pendingTotalAmountFen} after=${selfSum?.pendingTotalAmountFen} 当日=${selfSum?.pendingAmountFen} 库内=${Math.round(Number(dbPending?.amount ?? 0) * 100)}(${dbPending?.cnt}行)`,
+    );
+    const selfOther = await call(
+      'GET',
+      `/supplier/settlement?date=${addDaysStr(S9D, 1)}`,
+      { token: supS9.token },
+    );
+    assert(
+      selfOther.body?.code === 0 && selfOther.body?.data?.summary?.empty === true,
+      'S9 无单日 → `empty=true` + 空列表（HTTP 200）—— 「今天还没出单」是正常状态（应付 T+1 凌晨才出），端上给空态说明而非报错',
+      `empty=${selfOther.body?.data?.summary?.empty}`,
+    );
+
+    // ---------------------------------------------------------- J. 主体隔离 + 两级权限
+    const guestS9 = await userLogin(`e2e_s9_${stamp}`);
+    const centOnShares = await call('GET', '/admin/supplier-shares', { token: guestS9.token });
+    assert(
+      centOnShares.body?.code === 10003,
+      '双主体隔离：小程序 token 打 /admin/supplier-shares → 10003（C 端与后台 id 各自自增，不隔离即静默越权）',
+      `code=${centOnShares.body?.code}`,
+    );
+    const supOnShares = await call('GET', '/admin/supplier-shares', { token: supS9.token });
+    assert(
+      supOnShares.body?.code === 10003,
+      '双主体隔离：供应商 token 打 /admin/* → 10003（后台与供应商是两套账号体系）',
+      `code=${supOnShares.body?.code}`,
+    );
+    const adminOnSelf = await call('GET', `/supplier/settlement?date=${S9D}`, {
+      token: adminToken,
+    });
+    assert(
+      adminOnSelf.body?.code === 10003,
+      '双主体隔离：运营 token 打 /supplier/settlement → 10003（供应商端点只对 role=supplier 开放）',
+      `code=${adminOnSelf.body?.code}`,
+    );
+
+    const s9OpUser = `e2e_s9op_${stamp}`;
+    const s9ViewUser = `e2e_s9view_${stamp}`;
+    await call('POST', '/admin/system/accounts', {
+      token: adminToken,
+      body: { username: s9OpUser, password: PWD, role: 'operator', realName: 'e2e 应付运营' },
+    });
+    await call('POST', '/admin/system/accounts', {
+      token: adminToken,
+      body: { username: s9ViewUser, password: PWD, role: 'viewer', realName: 'e2e 应付只读' },
+    });
+    const s9OpToken = (await adminLogin(s9OpUser, PWD)).token;
+    const s9ViewToken = (await adminLogin(s9ViewUser, PWD)).token;
+    const s9FinToken = (await adminLogin('finance', 'finance123')).token;
+
+    const opReadShares = await call('GET', `/admin/supplier-shares?date=${S9D}`, {
+      token: s9OpToken,
+    });
+    assert(
+      opReadShares.body?.code === 0,
+      '两级白名单：`operator` 能**读**应付单（运营要跟进「为什么没出单」，菜单不该是「看得见点不开」）',
+      `code=${opReadShares.body?.code} rows=${(opReadShares.body?.data?.list ?? []).length}`,
+    );
+    const opGenShares = await call('POST', '/admin/supplier-shares/generate', {
+      token: s9OpToken,
+      body: { date: S9D },
+    });
+    assert(
+      opGenShares.body?.code === 10003,
+      '两级白名单：`operator` **不能出单** → 10003（决定「欠供应商多少」是资金动作，方法级收窄到 admin/finance）',
+      `code=${opGenShares.body?.code}`,
+    );
+    const opPayShares = await call('POST', `/admin/supplier-shares/${createdB?.id}/payment`, {
+      token: s9OpToken,
+      body: { paymentVoucherNo: 'E2E-NOPE-0001' },
+    });
+    assert(
+      opPayShares.body?.code === 10003,
+      '两级白名单：`operator` **不能登记付款** → 10003（决定「钱付了没有」同样是资金动作）',
+      `code=${opPayShares.body?.code}`,
+    );
+    const viewReadShares = await call('GET', '/admin/supplier-shares', { token: s9ViewToken });
+    assert(
+      viewReadShares.body?.code === 10003,
+      '权限：`viewer`（只读观察者）两级都进不来 → 10003',
+      `code=${viewReadShares.body?.code}`,
+    );
+    const finGenShares = await call('POST', '/admin/supplier-shares/generate', {
+      token: s9FinToken,
+      body: { date: S9D },
+    });
+    assert(
+      finGenShares.body?.code === 0 && finGenShares.body?.data?.summary?.createdCount === 0,
+      '权限：`finance` 有出单权限（拿到业务层结果 created=0 而非 10003）—— 此时该出的都已出，幂等闸门返回 0',
+      `code=${finGenShares.body?.code} created=${finGenShares.body?.data?.summary?.createdCount}`,
+    );
+
+    // ---------------------------------------------------------- K. 入参纪律
+    const s9BadDate = await call('POST', '/admin/supplier-shares/generate', {
+      token: adminToken,
+      body: { date: '2026/09/16' },
+    });
+    assert(
+      s9BadDate.body?.code === 10001,
+      'S9 日期格式非法 → 10001（服务端不猜日期）',
+      `code=${s9BadDate.body?.code}`,
+    );
+    const s9NoDate = await call('GET', '/admin/supplier-shares/exceptions', { token: adminToken });
+    assert(
+      s9NoDate.body?.code === 10001,
+      'S9 异常清单 **date 必填** → 10001（不给日期等于问「历史上所有没出单的原因」，那不是一份可执行的清单）',
+      `code=${s9NoDate.body?.code}`,
+    );
+    const s9BadStatus = await call('GET', '/admin/supplier-shares?status=paid', {
+      token: adminToken,
+    });
+    assert(
+      s9BadStatus.body?.code === 10001,
+      'S9 状态过滤值域收口 → 10001（`paid` 不是本表状态；用错值静默返回空列表会让人以为「今天没单」）',
+      `code=${s9BadStatus.body?.code}`,
     );
   }
 

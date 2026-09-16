@@ -1,6 +1,6 @@
 <template>
   <div class="page-container">
-    <h2 class="page-container__title">集散中心配置（C4 · 复用合作供应商场地）</h2>
+    <h2 class="page-container__title">集散中心配置（C4 · ABox 自有持证场所）</h2>
     <p class="page-container__meta">
       原型 P33 · 模块 M34-05 · 接口：D29 名录 / D30 新增 / D31 编辑 / D32 停用软删 · 路径
       <code>/admin/distribution-centers</code> · 数据源 <code>ab_distribution_center</code>
@@ -276,7 +276,8 @@
             />
           </el-select>
           <p class="field-hint">
-            C4：集散复用合作供应商场地 —— 场地归属决定这笔费用记在哪个主体名下。
+            C4：集散场所属 ABox 自有（持证加工场所）—— 场地成本按「场所摊销」计入 ABox
+            自身成本，不再向供应商支付场地费。
           </p>
         </el-form-item>
 

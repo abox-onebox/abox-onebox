@@ -169,7 +169,10 @@ export class RefundAdminService {
         `微信原路退 ¥${money(result.wxRefundedFen / 100)}`,
         `余额抵扣退回 ¥${money(result.balanceRefundedFen / 100)}`,
         `佣金冲销 ¥${money(result.reversal.commissionReversedFen / 100)}`,
-        `应付调整 ${result.reversal.supplierShareAdjusted} 行（${result.reversal.supplierShareMode}）`,
+        // 自营口径（2026-09-16）：采购应付按实收量出单，**退款不冲减**。
+        // 这里刻意写死一句话而非拼 `supplierShareAdjusted`/`Mode`
+        // ——「应付 0 行（not_applicable）」是给机器看的，操作员需要的是人话。
+        '供应商采购应付：不冲减（自营口径 · 半成品出餐日已交付）',
       ],
     };
   }
