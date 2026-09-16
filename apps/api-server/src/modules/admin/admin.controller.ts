@@ -15,6 +15,7 @@ import { CurrentAdmin, Roles } from '../../common/decorators/auth.decorator';
 import { OperationLog } from '../../common/decorators/operation-log.decorator';
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { AdminUserService } from './admin-user/admin-user.service';
+import { ConfigService } from './config/config.service';
 import { AdminRoleService } from './role/role.service';
 import { OperationLogService } from './operation-log/operation-log.service';
 import {
@@ -23,6 +24,7 @@ import {
   OperationLogQueryDto,
   UpdateAdminUserDto,
 } from './dto/admin.dto';
+import { UpdateConfigsDto } from './dto/config.dto';
 
 /**
  * 后台 · 系统管理（D51–D56）· 见《接口规范 v1.0》§6.7
@@ -41,6 +43,7 @@ export class AdminController {
     private readonly adminUserService: AdminUserService,
     private readonly adminRoleService: AdminRoleService,
     private readonly operationLogService: OperationLogService,
+    private readonly configService: ConfigService,
   ) {}
 
   // ------------------------------------------------------------ D51–D53 账号
@@ -98,5 +101,32 @@ export class AdminController {
   @ApiOperation({ summary: 'D56 操作日志（按操作人 / 模块 / 北京时间日期过滤）' })
   listLogs(@Query() q: OperationLogQueryDto) {
     return this.operationLogService.list(q);
+  }
+
+  // ------------------------------------------------------------ D57–D58 系统配置
+
+  @Get('configs')
+  @ApiOperation({
+    summary: 'D57 参数配置清单（按分组返回，含「是否已接线」如实标注）',
+    description:
+      '值已归一为展示口径（佣金费率为百分数，如 8 表示 8%）。' +
+      '每条附 editable / wiring / consumedBy —— `wiring=unwired` 的项**改了不生效**，' +
+      '页面据此置为只读并说明原因。',
+  })
+  listConfigs() {
+    return this.configService.list();
+  }
+
+  @Put('configs')
+  @OperationLog({ module: 'system', action: '更新系统配置' })
+  @ApiOperation({
+    summary: 'D58 批量更新配置（整批原子 + 白名单 + 即时生效）',
+    description:
+      '① 不在可管理清单内的键直接拒绝（不静默忽略）；② 任一项校验失败则**整批不写入**；' +
+      '③ 写入后**同步刷新**配置缓存（不等 60s TTL），避免「页面已改、业务按旧值跑」。' +
+      '出参回带 `changed[]`（前 → 后）供前端二次确认后展示。',
+  })
+  updateConfigs(@Body() dto: UpdateConfigsDto, @CurrentAdmin('sub') operatorId: number) {
+    return this.configService.update(dto, operatorId);
   }
 }

@@ -18,7 +18,7 @@
 | 协议 | HTTPS / JSON（`Content-Type: application/json; charset=utf-8`） |
 | 风格 | RESTful + 资源化路径；动词仅用于不可资源化的动作（`/cancel`、`/approve`、`/retry`） |
 | 文档产物 | Swagger 自动生成于 `/api/docs`（由 NestJS 装饰器产出，本文件为其人工契约前提） |
-| 最近修订 | 2026-09-16 · ① **M3-1 后台鉴权基座**：A1–A6 重写（双主体隔离 / 登录失败锁定 / 令牌吊销 / 无状态登出 / 查库求证）+ D51–D56 口径 + 错误码 20009·20010；② **M3-2 套餐编排**：D1–D7 实现口径表 + 两个扩展选择器（`/admin/meal/dishes`、`/admin/meal/distribution-centers`）+ 错误码 30011·30012·30013；③ **M3-3 订单中心**：D8–D12 实现口径表 + C9 反向结算 + `executeRefund` 唯一执行口 + 错误码 30014·30015·40009–40011；④ **M3-4 退款审批（C6 三段式收口）**：D40–D42 实现口径表 + `ab_refund.order_status_before` + 错误码 40012·40013·40014；⑤ **M3-5 后台团长管理**：§6.3 补 D19–D22 实现口径表（26 项）+ 错误码 20011·20012·20013（**零 DDL 变更**）；⑥ **M3-6 后台供应商管理 + 集散**：§6.4 补 D23–D32 实现口径表（34 项）+ 扩展接口登记（`filter-options` / 详情 / 外卖链接 / 菜品库）+ `ab_supplier` 7 新列 + 错误码 50003·50005·50006·50007·50008；⑦ **M3-7 后台办公楼与楼群（P37 五视图）**：§6.3 补 D13–D18 实现口径表（27 项）+ 扩展接口登记（`filter-options` / `overview` / `delivery-map` / 详情）+ `ab_building` 增 `population` 列 + **状态三态修订**（`BuildingStatus` 1/2/3）+ `DistributionGap` 覆盖缺口三因 + 错误码 60001–60005（新号段 `6xxxx 主数据`）；⑧ **M3-8 供应商端出餐确认（S1–S3 · 原型 P21/P22）**：§五 补 S1–S3 实现口径表（派生落库 / 09:30 deadline 语义 / 按集散中心逐项确认 + 幂等 / S3 闸门与路线派生 / 不返回距离时长）+ 新表 `ab_supplier_dish_center_daily`（25→26 张）+ 错误码 50009·50010·50011；⑨ **结算口径改自营（2026-09-16 路线二次裁定）**：S9 应付结算口径**整表重写**（性质=半成品采购应付 / 计费基数=**实收量** / 应付对象仅供应商 / 场地费-打包-配送转为 ABox 自身成本不出付款单 / fail-closed 出单 + 未出单异常清单 / ⭐ **用户退款不冲减供应商应付**）+ 退款冲销段旧口径**作废标注**（`reverseSupplierShares` 待回退，列为 M3-9 开工前置）+ 错误码预留 50012·50013·50014 —— 详见《ABox一盒自营结算口径定义v1.0.md》；⑩ **M3-9 应付结算 S9 落地（自营口径首次实装 · 零 DDL）**：§五 补 S9 供应商端结算自查实现口径 + §6.5 补 D36/D37 实现口径表（出单 / 列表 / 付款登记 / 未出单异常清单）+ **回退 M3-3 `reverseSupplierShares`**（退款**不再**冲减供应商应付；出参显式声明 `supplierShareAdjusted=0` + `supplierShareMode='not_applicable'`）+ 落点登记（`/admin/supplier-shares` · `/supplier/settlement`）+ 错误码 50012·50013（**50014 未使用，号位已释放**）+ e2e `§21` 新增 41 条断言 |
+| 最近修订 | 2026-09-16 · ① **M3-1 后台鉴权基座**：A1–A6 重写（双主体隔离 / 登录失败锁定 / 令牌吊销 / 无状态登出 / 查库求证）+ D51–D56 口径 + 错误码 20009·20010；② **M3-2 套餐编排**：D1–D7 实现口径表 + 两个扩展选择器（`/admin/meal/dishes`、`/admin/meal/distribution-centers`）+ 错误码 30011·30012·30013；③ **M3-3 订单中心**：D8–D12 实现口径表 + C9 反向结算 + `executeRefund` 唯一执行口 + 错误码 30014·30015·40009–40011；④ **M3-4 退款审批（C6 三段式收口）**：D40–D42 实现口径表 + `ab_refund.order_status_before` + 错误码 40012·40013·40014；⑤ **M3-5 后台团长管理**：§6.3 补 D19–D22 实现口径表（26 项）+ 错误码 20011·20012·20013（**零 DDL 变更**）；⑥ **M3-6 后台供应商管理 + 集散**：§6.4 补 D23–D32 实现口径表（34 项）+ 扩展接口登记（`filter-options` / 详情 / 外卖链接 / 菜品库）+ `ab_supplier` 7 新列 + 错误码 50003·50005·50006·50007·50008；⑦ **M3-7 后台办公楼与楼群（P37 五视图）**：§6.3 补 D13–D18 实现口径表（27 项）+ 扩展接口登记（`filter-options` / `overview` / `delivery-map` / 详情）+ `ab_building` 增 `population` 列 + **状态三态修订**（`BuildingStatus` 1/2/3）+ `DistributionGap` 覆盖缺口三因 + 错误码 60001–60005（新号段 `6xxxx 主数据`）；⑧ **M3-8 供应商端出餐确认（S1–S3 · 原型 P21/P22）**：§五 补 S1–S3 实现口径表（派生落库 / 09:30 deadline 语义 / 按集散中心逐项确认 + 幂等 / S3 闸门与路线派生 / 不返回距离时长）+ 新表 `ab_supplier_dish_center_daily`（25→26 张）+ 错误码 50009·50010·50011；⑨ **结算口径改自营（2026-09-16 路线二次裁定）**：S9 应付结算口径**整表重写**（性质=半成品采购应付 / 计费基数=**实收量** / 应付对象仅供应商 / 场地费-打包-配送转为 ABox 自身成本不出付款单 / fail-closed 出单 + 未出单异常清单 / ⭐ **用户退款不冲减供应商应付**）+ 退款冲销段旧口径**作废标注**（`reverseSupplierShares` 待回退，列为 M3-9 开工前置）+ 错误码预留 50012·50013·50014 —— 详见《ABox一盒自营结算口径定义v1.0.md》；⑩ **M3-9 应付结算 S9 落地（自营口径首次实装 · 零 DDL）**：§五 补 S9 供应商端结算自查实现口径 + §6.5 补 D36/D37 实现口径表（出单 / 列表 / 付款登记 / 未出单异常清单）+ **回退 M3-3 `reverseSupplierShares`**（退款**不再**冲减供应商应付；出参显式声明 `supplierShareAdjusted=0` + `supplierShareMode='not_applicable'`）+ 落点登记（`/admin/supplier-shares` · `/supplier/settlement`）+ 错误码 50012·50013（**50014 未使用，号位已释放**）+ e2e `§21` 新增 41 条断言；⑪ **M3-10 系统配置（P36 · D57–D58 · 零 DDL）**：§6.7 补 D57/D58 实现口径表 + ⭐ **「接线状态」如实标注** —— 排查出 **9 项键「种子里配了、但服务端代码从不读取」**（时间类配置被 `@Cron()` 硬编码架空、`distribution_center.*` 已改表驱动），页面**只读展示 + 注明原因**，不给「改了不生效」的输入框；+ 配置白名单（未知键拒绝而非静默忽略）/ 整批原子 / percent **百分数↔比率单点换算** / 写完 `invalidate()` **同步刷新缓存** + e2e `§22` 新增 35 条断言 |
 
 ---
 
@@ -974,7 +974,7 @@ approve
 
 ### 6.7 系统管理（M37）
 
-> **实现状态**：`D51–D56` 已实装（M3-1 基座批次）；`D57–D60` 待**后续批次（系统配置）**。
+> **实现状态**：`D51–D56` 已实装（M3-1 基座批次）；**`D57–D58` 已实装（M3-10）**；`D59–D60` 待后续批次。
 > 落点：`apps/api-server/src/modules/admin/` · 页面：`apps/admin-web/src/views/system/`。
 
 | # | 方法 | 路径 | 说明 |
@@ -1004,6 +1004,31 @@ approve
 | D55 | **一期明确不支持**（`10001` + 可行路径指引）。角色菜单定义在服务端代码 `common/constants/admin-role.ts`；改权限请走 D53 改账号角色。**刻意不返回「保存成功」** —— 权限改了却不生效比明确不支持危险得多 |
 | D56 过滤 | `operatorId` / `module` / `date`（**按北京时间自然日**，服务端换算 `[d 00:00+08, d+1 00:00+08)`）。出参附 `operators[]` 供筛选器直接用 |
 | D56 写入 | 由全局 `OperationLogInterceptor` 按 `@OperationLog({module,action})` 元数据落库：**写操作才记**（GET 不标）；**失败的请求也记**（`responseData.error.code`，审计要回答「谁试图做了什么但被拒」）；请求体内 `password`/`token` 等自动脱敏为 `[redacted]`；**写库失败仅 WARN，不影响业务** |
+
+**M3-10 实现口径（D57–D58 · 零 DDL）**
+
+> 落点：`apps/api-server/src/modules/admin/config/config.specs.ts`（**规格清单 = 唯一真相**）· `config.service.ts` · `dto/config.dto.ts`；
+> 页面 `apps/admin-web/src/views/system/config.vue`（P36，**路由与菜单为脚手架预留，本批次无需改动**）；
+> 验收 `scripts/e2e-m3.mjs` **§22**（35 条断言 · **不依赖下单窗口**）。
+
+| 项 | 口径 |
+| --- | --- |
+| ⭐ 唯一真相 `CONFIG_SPECS` | **一份声明**同时驱动 D57 的分组/标签/说明、D58 的白名单与取值范围、前端的控件类型。若把中文标签写前端、校验规则写 DTO、可写判定藏服务方法，同一个键就有三份互相漂移的定义（本项目头号顽疾「两个真相」） |
+| ⭐ `wiring` 接线状态（本批次核心产出） | 排查发现 **9 项键「种子里配了、服务端代码从不读取」**：`set_meal.publish_time` / `cutoff_time` / `delivery_arrival_time`、`commission.auto_confirm_time` / `settle_hour` —— 实际调度**硬编码在 `@Cron()` 装饰器**里（NestJS 的 cron 是静态元数据，不读配置）；`distribution_center.default_count` / `rice_fee` / `pack_fee`、`supplier.settle_cycle` —— 口径已改由表驱动或代码常量确定。**一律如实标注 + 置为只读 + 给出具体原因**（`unwiredReason` 要点名是哪个 task），而不是给一个「看起来能改、改完没反应」的输入框。另 **2 项为策略标识**（`settlement.supplier_purchase_price` = `negotiated`、`settlement.gross_profit_policy` = `residual`）—— 存的是策略名，塞个金额进去就把口径记录污染了 |
+| 白名单 | 不在 `CONFIG_SPECS` 内的键 → **10001**（**不是静默忽略**）。`ab_config` 是通用键值表，放开「任意 key 都能改」等于开了改内部状态的后门；静默忽略更糟 —— 运营以为改了，实际什么都没发生。**未接线项与策略标识也一律拒写**（而非「写了但不生效」，那等于给假承诺） |
+| 整批原子 | 任一项不合法 → **整批不写入**（同事务，不做部分写入）。部分成功会让「二次确认」失去意义：确认了 5 项、只生效 3 项，且看不出是哪 3 项 |
+| ⭐ percent 单点换算 | 入参与出参**都是百分数**（`8` = 8%），库内存比率（`0.0800`）。换算只此一处（`normalizeForStore`）—— 若分散实现，迟早有某条路径把 `8` 直接写进费率列，**佣金算错 100 倍**。e2e 用「写 `8.5` → 库内必须是 `0.0850`」钉住 |
+| 数值格式前置校验 | `Number('')` 与 `Number(' ')` 都是 `0` —— **必须**先过 `/^-?\d+(\.\d+)?$/`，否则运营清空金额输入框会被**静默存成 `0.00`**；对成本项而言就是「悄悄变回未登记」，且没有任何报错 |
+| ⭐ 写完同步刷新缓存 | `BizConfigService` 有 60s 进程内缓存 → D58 写完**必须**调 `invalidate()`。等 TTL 就会出现「配置页显示已改、业务仍按旧值跑」。e2e 用「写 `site_fee` 后**立刻**重读 D57」把它钉住（D57 的 `meta` 刻意走缓存路径，否则这条断言验证不到任何东西） |
+| 库中缺失的键 | `order.pay_timeout_minutes` / `settlement.supplier_total_default` **不在种子数据里**，靠 `getNumber(key, fallback)` 兜底运行。D57 显示 `valueSource='fallback'` + 兜底值（空白会让运营以为「配置丢了」，而系统其实正按该值在跑）；D58 首次调整时 **INSERT** 新行（`UPDATE` 不到就当失败 = 这个值永远改不了） |
+| 履约成本登记判据 | 自营下场所摊销 / 打包人工 / 配送费都是**真实成本**，`0` 只可能表示「未登记」→ 判据 `isCostRegistered()` = `值 > 0`。实现只有 `shared-utils` 一份，**D57 配置页与 D47 数据看板共用** —— 两处各自实现必然出现「配置页说已登记、看板说未登记」 |
+| D57 数据来源 | `groups[]` 明细**直读** `ab_config`（需要 `updatedAt` / `createdAt` 等表字段）；`meta.settlementCost` 走 `BizConfigService.settlementCostState()`（**经缓存**）。后者正是「写完即时生效」可被 e2e 验证的原因 |
+| D58 出参 | `changed[]` 给出**变更前 → 变更后**（前端二次确认弹窗要能列 diff，而不是只说「保存成功」）+ `unchanged[]`（提交相同值时**不写库**、不产生假变更记录）；`effectiveAt` 回带生效时刻 |
+| 前端二次确认 | D58 要求的「二次确认」落在**前端**：提交前弹窗逐项列出「前 → 后」。弹窗内容用 **VNode** 而非拼 HTML 字符串 —— 配置值里可能含尖括号，拼 HTML 等于把运营输入当代码渲染 |
+| 权限 | 类级沿用 `@Roles('super_admin','admin')`。**刻意不收窄到只放超管**：`admin` 本就能改供应商结算账户（D28），改系统配置不构成新的权限升级。`finance` / `operator` / `viewer` / `supplier` 一律 `10003` |
+| 操作日志 | `@OperationLog({ module:'system', action:'更新系统配置' })` —— 改了全局口径必须能回答「谁在什么时候改的」 |
+| 未接线项为何不顺手接上 | ⚠️ **不在本批次把配置接到调度上**：`@Cron()` 是静态元数据，动态化需改用 `SchedulerRegistry` 或 `@Interval` + 运行期判断，会动到**下单窗口**（e2e 全量依赖 14:00–23:00 时间窗），属独立验收项。混在本批次只会让「配置页做完了」掩盖「调度还没接线」→ **已登记为独立待办（见《缺陷与陷阱》#49）** |
+| 错误码 | **无新增**（复用 `10001`）；`data.fields` 回带逐条中文问题描述（如「『套餐默认售价』不能小于 0.01 元（当前 0）」） |
 
 ---
 
@@ -1043,9 +1068,9 @@ approve
 | P30/P31 | 订单中心/详情 | M32 | D8–D12 | `ab_order`、`ab_operation_log` |
 | P32 | 团长管理 | M33 | D19–D22 | `ab_team_leader`、`ab_leader_invite` |
 | P33 | 供应商管理 | M34 | D23–D32 | `ab_supplier`、`ab_distribution_center` |
-| P34 | 财务结算 | M35 | D33–D46 | `ab_commission`、`ab_supplier_share`、`ab_refund` |
-| P35 | 数据看板 | M36 | D47–D50 | 聚合查询 |
-| P36 | 系统配置 | M37 | D51–D60 | `ab_admin_user`、`ab_operation_log`、`ab_config`、`ab_message` |
+| P34 | 财务结算 | M35 | D33–D46（**已实装** D36/D37 应付结算 · D40–D42 退款审批；**待落点** D33–D35 · D38–D39 · D43–D44） | `ab_commission`、`ab_supplier_share`、`ab_refund` |
+| P35 | 数据看板 | M36 | D47–D50（**待落点**） | 聚合查询 |
+| P36 | 系统配置 | M37 | D51–D58（**已实装**）· D59–D60（待落点） | `ab_admin_user`、`ab_operation_log`、`ab_config`、`ab_message` |
 | P37 | 办公楼管理 | M33 | D13–D18 | `ab_building`、`ab_building_group` |
 
 ---

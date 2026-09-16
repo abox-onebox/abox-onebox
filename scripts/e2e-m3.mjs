@@ -5581,6 +5581,346 @@ async function main() {
   }
 
   // ==========================================================================
+  // §22 M3-10 系统配置 D57–D58（后台 P36）
+  // ==========================================================================
+  //
+  // 口径唯一真相：`apps/api-server/src/modules/admin/config/config.specs.ts`
+  //   · D57 读：分组下发 + 值归一（percent 出参为**百分数**）+ **如实标注「未接线」**
+  //   · D58 写：白名单 · 整批原子 · **写完同步刷新配置缓存**
+  //
+  // ⚠️ 本节不依赖下单窗口（同 §18–§21 纪律）。
+  // ⚠️ 配置是**全局**的：本节写入的每一项都在节末**还原为原值** ——
+  //    否则「把费率改成 8.5」这类副作用会留给下一次重跑。
+  {
+    log('\n§22 M3-10 系统配置 D57–D58');
+
+    const cfgList = await call('GET', '/admin/system/configs', { token: adminToken });
+    const d57 = cfgList.body?.data;
+    const flatItems = (d57?.groups ?? []).flatMap((g) => g.items ?? []);
+    const cfg = Object.fromEntries(flatItems.map((i) => [i.key, i]));
+
+    assert(
+      cfgList.body?.code === 0 && (d57?.groups ?? []).length === 6,
+      'D57 按**分组**下发（价格 / 佣金 / 履约成本 / 交易规则 / 客服 / 未接线 共 6 组）',
+      `code=${cfgList.body?.code} groups=${d57?.groups?.length}`,
+    );
+    assert(
+      flatItems.length === d57?.meta?.wiringSummary?.total && flatItems.length === 30,
+      'D57 出参**自洽**：明细条数 = 汇总总数（分两处算必然出现「汇总 30 项、列表 29 项」）',
+      `items=${flatItems.length} total=${d57?.meta?.wiringSummary?.total}`,
+    );
+
+    // ---------------------------------------------------------- A. 「未接线」如实标注
+    const unwired = flatItems.filter((i) => i.wiring === 'unwired');
+    const policyItems = flatItems.filter((i) => i.wiring === 'policy');
+    assert(
+      unwired.length === 9 && unwired.every((i) => i.editable === false && !!i.unwiredReason),
+      '⭐ 9 项「配了但代码从不读取」的键**如实标注未接线**且不可写 —— 让运营改一个不生效的值，比不给他改更糟',
+      `unwired=${unwired.length} 缺原因=${unwired.filter((i) => !i.unwiredReason).length}`,
+    );
+    assert(
+      policyItems.length === 2 && policyItems.every((i) => i.editable === false),
+      'D57 两项**策略标识**（`negotiated` / `residual`）标为不可写 —— 它们记录的是策略名，塞个金额进去就把口径记录污染了',
+      `policy=${policyItems.length}（${policyItems.map((i) => i.key).join(', ')}）`,
+    );
+    assert(
+      !!cfg['set_meal.cutoff_time']?.unwiredReason?.includes('cutoff.task'),
+      '「未接线」原因要能回答**为什么改了没用**（截单时间配的是 23:59，实际调度在 `cutoff.task` 的 cron 里）',
+      `reason=${cfg['set_meal.cutoff_time']?.unwiredReason ?? '无'}`,
+    );
+
+    // ---------------------------------------------------------- B. 值归一
+    assert(
+      cfg['commission.rate.trainee']?.value === '8' && cfg['commission.rate.chief']?.value === '12',
+      '⭐ 佣金费率**出参为百分数**（`8` / `12`，库内是 `0.0800` / `0.1200`）—— 端上若拿到 0.08 让人填，极易填成 8（= 800%）',
+      `trainee=${cfg['commission.rate.trainee']?.value} chief=${cfg['commission.rate.chief']?.value}`,
+    );
+    assert(
+      cfg['set_meal.default_price']?.value === '25.80',
+      'D57 金额类保持两位小数原样（`25.80`）',
+      `v=${cfg['set_meal.default_price']?.value}`,
+    );
+
+    // ---------------------------------------------------------- C. 兜底值来源
+    assert(
+      cfg['order.pay_timeout_minutes']?.valueSource === 'fallback' &&
+        cfg['order.pay_timeout_minutes']?.value === '30',
+      '⭐ 库中**没有**的键要显示「取代码兜底值 30」而非空白 —— 空白会让运营以为「配置丢了」，而系统其实正按 30 在跑',
+      `source=${cfg['order.pay_timeout_minutes']?.valueSource} value=${cfg['order.pay_timeout_minutes']?.value}`,
+    );
+    assert(
+      flatItems.every((i) => !!i.consumedBy),
+      'D57 每项都给出 `consumedBy`（改了谁受影响）—— 这是运营改配置前最需要知道的事',
+      `缺 consumedBy 的项=${flatItems.filter((i) => !i.consumedBy).length}`,
+    );
+
+    // ---------------------------------------------------------- D. 履约成本未登记
+    const costMeta = d57?.meta?.settlementCost;
+    assert(
+      costMeta?.allRegistered === false && (costMeta?.missingLabels ?? []).length === 3,
+      '⭐ 三项履约成本均未登记（值 0）→ `allRegistered=false` 且列出三项中文名',
+      `missing=${costMeta?.missingLabels?.join('/')}`,
+    );
+    assert(
+      typeof costMeta?.warning === 'string' && costMeta.warning.includes('上限值'),
+      '⭐ 未登记时必须提示「经营毛利只是**上限值**、会被系统性高估」（D47 看板复用同一句，两处口径不分家）',
+      `warning=${costMeta?.warning ? '有' : '无'}`,
+    );
+
+    // ---------------------------------------------------------- E. 写入纪律
+    const unknownKey = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: 'not.exist.key', value: '1' }] },
+    });
+    assert(
+      unknownKey.body?.code === 10001,
+      '⭐ D58 **白名单**：未知键 → 10001（静默忽略更糟 —— 运营以为改了，实际什么都没发生）',
+      `code=${unknownKey.body?.code}`,
+    );
+
+    const unwiredWrite = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: 'set_meal.cutoff_time', value: '23:30' }] },
+    });
+    assert(
+      unwiredWrite.body?.code === 10001,
+      '⭐ 未接线项**拒绝写入**（而非「写了但不生效」）—— 后者等于给假承诺',
+      `code=${unwiredWrite.body?.code}`,
+    );
+
+    const policyWrite = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: 'settlement.gross_profit_policy', value: 'fixed' }] },
+    });
+    assert(
+      policyWrite.body?.code === 10001,
+      'D58 策略标识不可写 → 10001',
+      `code=${policyWrite.body?.code}`,
+    );
+
+    const emptyItems = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [] },
+    });
+    assert(
+      emptyItems.body?.code === 10001,
+      'D58 空 items → 10001（「什么都不改」不该走成功分支，否则日志里全是无意义记录）',
+      `code=${emptyItems.body?.code}`,
+    );
+
+    const blankMoney = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: 'settlement.site_fee', value: '' }] },
+    });
+    assert(
+      blankMoney.body?.code === 10001,
+      '⭐ 清空金额输入 → 10001（`Number("")` 是 0，若不拦会被**静默存成 0.00** —— 对成本项就是「悄悄变回未登记」且毫无提示）',
+      `code=${blankMoney.body?.code}`,
+    );
+
+    const outOfRange = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: 'set_meal.default_price', value: '0' }] },
+    });
+    assert(
+      outOfRange.body?.code === 10001,
+      'D58 超范围取值 → 10001（售价不得为 0）',
+      `code=${outOfRange.body?.code}`,
+    );
+
+    const badEnum = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: 'commission.payout_channel', value: 'WECHAT_TRANSFER' }] },
+    });
+    assert(
+      badEnum.body?.code === 10001,
+      'D58 枚举取值收口 → 10001（`WECHAT_TRANSFER` 是预留值；放行会让出款走进没有实现的分支）',
+      `code=${badEnum.body?.code}`,
+    );
+
+    // ⭐ 整批原子：1 合法 + 1 非法 → 合法的那项**也不得写入**
+    const siteFeeBefore = readDb(
+      "SELECT config_value FROM ab_config WHERE config_key = 'settlement.site_fee'",
+    )?.config_value;
+    const mixed = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: {
+        items: [
+          { key: 'settlement.site_fee', value: '1.50' },
+          { key: 'not.exist.key', value: '1' },
+        ],
+      },
+    });
+    const siteFeeAfterMixed = readDb(
+      "SELECT config_value FROM ab_config WHERE config_key = 'settlement.site_fee'",
+    )?.config_value;
+    assert(
+      mixed.body?.code === 10001 && siteFeeAfterMixed === siteFeeBefore,
+      '⭐ D58 **整批原子**：一批里有一项不合法 → 整批不写入（部分成功会让「二次确认」失去意义：确认 5 项、只生效 3 项且看不出是哪 3 项）',
+      `code=${mixed.body?.code} before=${siteFeeBefore} after=${siteFeeAfterMixed}`,
+    );
+
+    // ---------------------------------------------------------- F. 成功写入 + 即时生效
+    const writeOk = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: {
+        items: [
+          { key: 'settlement.site_fee', value: '1.50' },
+          { key: 'service.hours', value: '工作日 8:30 – 19:00' },
+        ],
+      },
+    });
+    assert(
+      writeOk.body?.code === 0 && (writeOk.body?.data?.changed ?? []).length === 2,
+      'D58 合法更新 → 成功并回带 `changed[]`（供前端二次确认后展示「改了什么」）',
+      `code=${writeOk.body?.code} changed=${(writeOk.body?.data?.changed ?? []).length}`,
+    );
+    const siteFeeChange = (writeOk.body?.data?.changed ?? []).find(
+      (c) => c.key === 'settlement.site_fee',
+    );
+    assert(
+      siteFeeChange?.before === '0.00' && siteFeeChange?.after === '1.50',
+      'D58 `changed` 给出**变更前 → 变更后**（前端弹窗要能列 diff，而不是只说「保存成功」）',
+      `before=${siteFeeChange?.before} after=${siteFeeChange?.after}`,
+    );
+
+    const siteFeeRow = readDb(
+      "SELECT config_value FROM ab_config WHERE config_key = 'settlement.site_fee'",
+    );
+    assert(
+      siteFeeRow?.config_value === '1.50',
+      'D58 money 类型按两位小数落库（`1.50`）',
+      `db=${siteFeeRow?.config_value}`,
+    );
+
+    // ⭐ 立刻重读 D57：meta 走 `BizConfigService` 的**进程内缓存**
+    const cfgReload = await call('GET', '/admin/system/configs', { token: adminToken });
+    const costAfter = cfgReload.body?.data?.meta?.settlementCost;
+    assert(
+      costAfter?.registered?.siteFee === true && costAfter?.allRegistered === false,
+      '⭐⭐ **写入后即时生效**：D57 的 meta 走配置缓存，若 D58 不同步 `invalidate()`，这里会读到旧的「未登记」—— 这正是「配置页已改、业务按旧值跑」的成因',
+      `registered=${JSON.stringify(costAfter?.registered)}`,
+    );
+    assert(
+      costAfter?.total === 1.5,
+      '成本登记合计随写入变化（1.50 + 0 + 0）',
+      `total=${costAfter?.total}`,
+    );
+
+    // ---------------------------------------------------------- G. percent 换算（防 100 倍错误）
+    const rateWrite = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: 'commission.rate.trainee', value: '8.5' }] },
+    });
+    const rateRow = readDb(
+      "SELECT config_value FROM ab_config WHERE config_key = 'commission.rate.trainee'",
+    );
+    assert(
+      rateWrite.body?.code === 0 && rateRow?.config_value === '0.0850',
+      '⭐⭐ 费率**入参百分数 → 库内比率**（`8.5` → `0.0850`）且只此一处换算 —— 若把 8.5 直接写进费率列，佣金会算错 100 倍',
+      `db=${rateRow?.config_value}`,
+    );
+    const rateReload = await call('GET', '/admin/system/configs', { token: adminToken });
+    const rateItem = (rateReload.body?.data?.groups ?? [])
+      .flatMap((g) => g.items ?? [])
+      .find((i) => i.key === 'commission.rate.trainee');
+    assert(
+      rateItem?.value === '8.5',
+      'percent 回读仍是百分数（`8.5`）—— 出参与入参同一口径，端上不做换算',
+      `value=${rateItem?.value}`,
+    );
+
+    // ---------------------------------------------------------- H. 幂等
+    const noop = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: 'service.hours', value: '工作日 8:30 – 19:00' }] },
+    });
+    assert(
+      noop.body?.code === 0 &&
+        (noop.body?.data?.changed ?? []).length === 0 &&
+        (noop.body?.data?.unchanged ?? []).length === 1,
+      'D58 幂等：提交相同值 → `changed=[]` + `unchanged` 列出该项（不写库、不产生假变更记录）',
+      `changed=${(noop.body?.data?.changed ?? []).length} unchanged=${(noop.body?.data?.unchanged ?? []).length}`,
+    );
+
+    // ---------------------------------------------------------- I. 库中缺失的键 → 新建
+    const insertMissing = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: 'order.pay_timeout_minutes', value: '45' }] },
+    });
+    const timeoutRow = readDb(
+      "SELECT config_value FROM ab_config WHERE config_key = 'order.pay_timeout_minutes'",
+    );
+    assert(
+      insertMissing.body?.code === 0 && timeoutRow?.config_value === '45',
+      '⭐ 种子缺失的键首次被调整时**新建记录**（`UPDATE` 不到就当失败，会让运营永远改不了这个值）',
+      `code=${insertMissing.body?.code} db=${timeoutRow?.config_value}`,
+    );
+
+    // ---------------------------------------------------------- J. 审计
+    const cfgLog = await waitDb(
+      "SELECT action FROM ab_operation_log WHERE module = 'system' AND action = '更新系统配置' ORDER BY id DESC LIMIT 1",
+      [],
+      (r) => !!r,
+      { timeout: 4000 },
+    );
+    assert(
+      !!cfgLog,
+      'D58 由 `@OperationLog()` 落 `ab_operation_log`（改了全局口径必须能回答「谁在什么时候改的」）',
+      `action=${cfgLog?.action ?? '未落库'}`,
+    );
+
+    // ---------------------------------------------------------- K. 权限与主体隔离
+    const finCfgToken = (await adminLogin('finance', 'finance123')).token;
+    const finOnCfg = await call('GET', '/admin/system/configs', { token: finCfgToken });
+    assert(
+      finOnCfg.body?.code === 10003,
+      'D57 `finance` 越权 → 10003（系统配置是全局资金口径，类级白名单只放 super_admin / admin）',
+      `code=${finOnCfg.body?.code}`,
+    );
+    const finCfgWrite = await call('PUT', '/admin/system/configs', {
+      token: finCfgToken,
+      body: { items: [{ key: 'service.hours', value: 'x' }] },
+    });
+    assert(
+      finCfgWrite.body?.code === 10003,
+      'D58 越权写 → 10003（守卫挡在业务层之前，不是「执行了再回滚」）',
+      `code=${finCfgWrite.body?.code}`,
+    );
+    const cfgNoToken = await call('GET', '/admin/system/configs');
+    assert(cfgNoToken.body?.code === 10002, 'D57 未登录 → 10002', `code=${cfgNoToken.body?.code}`);
+
+    // ---------------------------------------------------------- L. 还原（配置是全局的）
+    const restore = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: {
+        items: [
+          { key: 'settlement.site_fee', value: siteFeeBefore ?? '0.00' },
+          { key: 'service.hours', value: '工作日 9:00 – 18:00' },
+          { key: 'commission.rate.trainee', value: '8' },
+        ],
+      },
+    });
+    writeDb("DELETE FROM ab_config WHERE config_key = 'order.pay_timeout_minutes'");
+    assert(
+      restore.body?.code === 0,
+      'D58 夹具还原（把本节改动的配置写回原值）—— 配置是**全局**的，不还原会把副作用留给后续重跑',
+      `code=${restore.body?.code} restored=${(restore.body?.data?.changed ?? []).length}`,
+    );
+    assert(
+      !readDb("SELECT id FROM ab_config WHERE config_key = 'order.pay_timeout_minutes'"),
+      'D58 还原：本节新建的兜底键已删除（回到「种子里没有」的初始状态）',
+      '',
+    );
+    assert(
+      readDb("SELECT config_value FROM ab_config WHERE config_key = 'commission.rate.trainee'")
+        ?.config_value === '0.0800',
+      'D58 还原校验：费率回到 `0.0800`（本节的百分数换算不能把原值改坏）',
+      `db=${readDb("SELECT config_value FROM ab_config WHERE config_key = 'commission.rate.trainee'")?.config_value}`,
+    );
+  }
+
+  // ==========================================================================
   // 汇总
   // ==========================================================================
   await stopApiServer(server, PORT);

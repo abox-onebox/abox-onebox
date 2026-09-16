@@ -117,3 +117,103 @@ export function fetchAdminRoles(): Promise<{ list: AdminRoleRow[]; note: string 
 export function fetchOperationLogs(params: OperationLogQuery): Promise<OperationLogPage> {
   return http.get<OperationLogPage>('/admin/system/logs', params);
 }
+
+/* ------------------------------------------------------------------ *
+ * D57 / D58 系统配置（M3-10）
+ *
+ * ⚠️ 本页**不维护第二份配置文案**：标签 / 说明 / 取值范围 / 「是否可改」
+ *    全部由 D57 下发（服务端 `config.specs.ts` 是唯一真相）。
+ *    前端只负责按 `valueType` 选控件、按 `editable` 置灰。
+ * ------------------------------------------------------------------ */
+
+/** 值的语义类型 —— 决定用哪种控件 */
+export type ConfigValueType = 'money' | 'percent' | 'int' | 'text' | 'time' | 'enum' | 'policy';
+
+/** 接线状态：`live` 改了生效 / `unwired` 改了不生效 / `policy` 策略标识 */
+export type ConfigWiring = 'live' | 'unwired' | 'policy';
+
+export interface ConfigItemView {
+  key: string;
+  label: string;
+  /** 展示值（`percent` 已是百分数，如 `8` 表示 8%） */
+  value: string;
+  valueType: ConfigValueType;
+  impact: string;
+  wiring: ConfigWiring;
+  editable: boolean;
+  description: string;
+  /** 谁在消费这个值 —— 回答「改了谁会变」 */
+  consumedBy: string;
+  unit?: string;
+  min?: number;
+  max?: number;
+  maxLength?: number;
+  options?: Array<{ value: string; label: string }>;
+  /** 仅成本项：是否已登记（`false` = 值为 0，只表示「没填」） */
+  registered?: boolean;
+  /** `wiring='unwired'` 时：为什么改了不生效 */
+  unwiredReason?: string;
+  /** `db` 库内已登记 / `fallback` 库中无此行、当前走代码兜底值 */
+  valueSource: 'db' | 'fallback';
+  untouched: boolean;
+  updatedAt: string | null;
+}
+
+export interface ConfigGroupView {
+  group: string;
+  label: string;
+  description: string;
+  items: ConfigItemView[];
+}
+
+/** 履约成本登记状态（与 D47 数据看板共用同一判据） */
+export interface SettlementCostMeta {
+  allRegistered: boolean;
+  registered: Record<string, boolean>;
+  missingKeys: string[];
+  missingLabels: string[];
+  total: number;
+  /** 未登记时的统一提示（已登记为 `null`） */
+  warning: string | null;
+}
+
+export interface ConfigListView {
+  groups: ConfigGroupView[];
+  meta: {
+    settlementCost: SettlementCostMeta;
+    cacheTtlSeconds: number;
+    wiringSummary: { total: number; live: number; unwired: number; policy: number };
+    note: string;
+  };
+}
+
+/** D58 单项变更（前 → 后） */
+export interface ConfigChange {
+  key: string;
+  label: string;
+  before: string;
+  after: string;
+}
+
+export interface ConfigUpdateResult {
+  changed: ConfigChange[];
+  unchanged: Array<{ key: string; label: string; value: string }>;
+  effectiveAt: string | null;
+  note: string;
+}
+
+/** D57 系统配置清单 */
+export function fetchSystemConfigs(): Promise<ConfigListView> {
+  return http.get<ConfigListView>('/admin/system/configs');
+}
+
+/**
+ * D58 批量更新配置（整批原子）
+ *
+ * ⚠️ 服务端要求 `value` 为字符串；`percent` 类型传**百分数**（`8` = 8%）。
+ */
+export function updateSystemConfigs(
+  items: Array<{ key: string; value: string }>,
+): Promise<ConfigUpdateResult> {
+  return http.put<ConfigUpdateResult>('/admin/system/configs', { items });
+}

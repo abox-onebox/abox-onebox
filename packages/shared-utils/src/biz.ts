@@ -116,6 +116,106 @@ export function calcSettlement(
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * C9 履约成本「是否已登记」判据（自营口径 2026-09-16）
+ *
+ * ⭐ 为什么需要一列「是否已登记」：
+ *   自营口径下场所摊销 / 打包人工 / 配送费**都是 ABox 的真实成本**，
+ *   `0.00` 只可能表示「运营还没填」。但配置表里存的就是 `0.00` ——
+ *   单看数字无法区分「成本真的是 0」和「忘了填」。
+ *   经营毛利（D47）必须据此判断自己给的是**真实值**还是**上限值**，
+ *   否则运营会拿一个被系统性高估的毛利去做决策。
+ *
+ * ⚠️ 判据只有这一份实现：D57 系统配置页的「未登记」标记与
+ *    D47 数据看板的「毛利为上限值」提示**共用本函数** —— 两处各自实现，
+ *    必然出现「配置页说已登记、看板说未登记」这种自相矛盾。
+ * ------------------------------------------------------------------ */
+
+/** 单份履约成本项 ↔ `ab_config` 配置键 */
+export const SETTLEMENT_COST_CONFIG_KEYS = {
+  siteFee: 'settlement.site_fee',
+  packingLaborFee: 'settlement.packing_labor_fee',
+  deliveryFee: 'settlement.delivery_fee',
+} as const;
+
+/** 履约成本项中文名（端上直接展示，不再各写一份） */
+export const SETTLEMENT_COST_LABELS = {
+  siteFee: '场所摊销',
+  packingLaborFee: '打包人工',
+  deliveryFee: '配送费',
+} as const;
+
+/** 需要登记的履约成本项（**不含**供应商供价 —— 那是逐菜协商价，不在这三项里） */
+export type SettlementCostKey = keyof typeof SETTLEMENT_COST_CONFIG_KEYS;
+
+export const SETTLEMENT_COST_KEYS: SettlementCostKey[] = [
+  'siteFee',
+  'packingLaborFee',
+  'deliveryFee',
+];
+
+export interface SettlementCostRegistration {
+  /** 三项是否全部已登记 */
+  allRegistered: boolean;
+  /** 逐项登记状态 */
+  registered: Record<SettlementCostKey, boolean>;
+  /** 未登记的项（键名，供程序分支） */
+  missingKeys: SettlementCostKey[];
+  /** 未登记的项（中文名，**可直接展示**） */
+  missingLabels: string[];
+  /** 三项合计（元/份）—— 未登记的项按 0 计入，故该值同样是**下限** */
+  total: number;
+}
+
+/**
+ * 单个成本值是否「已登记」
+ *
+ * 判据：`> 0`。自营下三项成本不可能为零（场地要摊销、打包要付工钱、送货要付运费），
+ * 所以 `0` / 空 / 非数字一律视为**未登记**。
+ */
+export function isCostRegistered(value: unknown): boolean {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0;
+}
+
+/** 汇总三项履约成本的登记状态（D57 配置页 / D47 看板共用） */
+export function summarizeCostRegistration(
+  items: Partial<Record<SettlementCostKey, number>>,
+): SettlementCostRegistration {
+  const registered = {} as Record<SettlementCostKey, boolean>;
+  const missingKeys: SettlementCostKey[] = [];
+  const missingLabels: string[] = [];
+  let total = 0;
+
+  for (const key of SETTLEMENT_COST_KEYS) {
+    const value = items[key] ?? 0;
+    const ok = isCostRegistered(value);
+    registered[key] = ok;
+    if (!ok) {
+      missingKeys.push(key);
+      missingLabels.push(SETTLEMENT_COST_LABELS[key]);
+    }
+    if (Number.isFinite(value)) total += value;
+  }
+
+  return {
+    allRegistered: missingKeys.length === 0,
+    registered,
+    missingKeys,
+    missingLabels,
+    total: Number(total.toFixed(2)),
+  };
+}
+
+/** 未登记时的统一提示（配置页与看板用同一句话，避免两处口径打架） */
+export function costRegistrationWarning(missingLabels: string[]): string {
+  const names = missingLabels.join(' / ');
+  return (
+    `履约成本「${names}」尚未登记（当前按 0 计），因此经营毛利只是**上限值**，` +
+    `会被系统性高估。请到「系统配置 → 履约成本」填写真实值。`
+  );
+}
+
 /**
  * 单份结算「等式闭合」校验。
  * 售价 = 供应商供价 + 场地费 + 打包人工 + 配送费 + 佣金 + 毛利 —— 恒应闭合。

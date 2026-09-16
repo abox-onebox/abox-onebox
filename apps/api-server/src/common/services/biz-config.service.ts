@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 
 import { BIZ, SETTLEMENT_DEFAULTS, SettlementCostItems } from '@abox/shared-utils';
+import type { SettlementCostRegistration } from '@abox/shared-utils';
+import { summarizeCostRegistration } from '@abox/shared-utils';
 
 import { SysConfig } from '../../database/entities/system.entity';
 
@@ -176,6 +178,26 @@ export class BizConfigService {
       packingLaborFee,
       deliveryFee,
     };
+  }
+
+  /**
+   * C9 履约成本「当前值 + 登记状态」（D57 系统配置页 / D47 数据看板**共用**）
+   *
+   * ⚠️ 与 {@link settlementCostItems} 的区别：本方法额外给出「哪几项还没登记」，
+   *    并**刻意走进程内缓存** —— 于是 D58 写完调 `invalidate()` 之后，
+   *    D57 / D47 立刻能读到新值。「配置改了但业务还是旧数」这类缺陷
+   *    会在 e2e 里当场暴露，而不是等 60 秒 TTL 自愈后查不出原因。
+   *
+   * ⚠️ 「是否已登记」的判据只有 `summarizeCostRegistration()` 一份实现：
+   *    配置页的「未登记」标记与看板的「毛利为上限值」提示必须同源，
+   *    否则会出现「配置页说已登记、看板说未登记」这种自相矛盾。
+   */
+  async settlementCostState(): Promise<{
+    items: SettlementCostItems;
+    registration: SettlementCostRegistration;
+  }> {
+    const items = await this.settlementCostItems();
+    return { items, registration: summarizeCostRegistration(items) };
   }
 
   /** 驱动开关快照（用于健康检查 / 运维面板） */
