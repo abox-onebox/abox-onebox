@@ -578,7 +578,7 @@ PARTITION BY RANGE (TO_DAYS(`created_at`)) (
 | `ab_dish` | 不变 |
 | `ab_payment_log` | 不变 |
 | `ab_commission` | 不变（流水表；佣金比例由 4 级阶梯 8/9/10/12% 配置驱动 · C2） |
-| `ab_supplier_share` | 不变（分账流水） |
+| `ab_supplier_share` | 不变（⚠️ 2026-09-16 自营口径：语义已从「分账流水」改为「**半成品采购应付流水**」，**零 DDL**；`payee_type` 恒 `supplier`，`distribution_center` 冻结） |
 | `ab_admin_user` | **+`supplier_id`**（供应商后台账号绑定 `ab_supplier.id`；NULL = 运营账号）· 见下方 §5.1 |
 | `ab_operation_log` | **+`snapshot`**（JSON，操作者/角色/时刻，审计回放）· 见下方 §5.1 |
 | `ab_config` | 不变 |
@@ -617,6 +617,11 @@ ALTER TABLE `ab_operation_log`
 
 > M3-3（订单中心 D8–D12）没有新增表、也没有新增列 —— 反向结算全部**落回既有列**。
 > 这里把它写清楚，是因为「退款要改哪些表」散在代码里最容易漏掉一张。
+>
+> ⚠️🚧 **2026-09-16 自营口径修订**：下表中 **`ab_supplier_share` 一行已作废**（退款不再冲减供应商应付）——
+> 半成品在出餐日当日已交付并投入使用，退款发生在交付之后，与供应商无关。
+> `reverseSupplierShares()` 待回退，列为 **M3-9 开工前置项**。详见 《ABox一盒自营结算口径定义v1.0.md》 §5。
+> 其余各行（`ab_refund` / `ab_order` / `ab_commission` / `ab_balance`）**不受影响**。
 
 | 表 | 写什么 | 口径 |
 | --- | --- | --- |
@@ -624,7 +629,7 @@ ALTER TABLE `ab_operation_log`
 | `ab_order` | `status='refunded'` · `cancelled_at=now` | 退款是**终态**；`cancelled_at` 复用为「异常区时间线」的发生时间 |
 | `ab_commission` | **新增一行** `type='reversal'`（`amount` / `quantity` **取负**）+ 原 `normal` 行 `status='cancelled'` | **C9：原记录不得改写**。金额改成 0 会让佣金明细的「发生额」永久失真 |
 | `ab_balance` / `ab_balance_log` | 余额退回（`type='refund'`,`direction=+1`）/ 佣金冲销（`direction=−1`） | 余额**允许被扣成负数**：佣金已提现就形成欠款，由后续佣金抵扣；硬拦会把退款卡死 |
-| `ab_supplier_share` | 未付款行 → 直接扣减（扣空置 `status='reversed'`）；已付款行 → **写反向流水**（`type='reversal'`，`origin_id` 指向原行）挂**下期**抵扣 | 已付款行**不得改写**（钱已转出，改写等于篡改已发生的付款）。未生成应付时（`mode='not_generated'`）**不造空冲销行** —— 跑批按「有效订单」汇总，已退款单自然不在其中 |
+| ~~`ab_supplier_share`~~ | ⛔ **已作废（2026-09-16 自营口径）** —— 原文：「未付款行 → 直接扣减（扣空置 `status='reversed'`）；已付款行 → 写反向流水（`type='reversal'`）挂下期抵扣」 | 作废理由：该口径成立的前提是「供应商按用户卖出的份数**分账**」。自营下应付基数是**实收量**，半成品已交付 → **退款不冲减供应商应付**。`type='reversal'` 改义为「应付单算错」的**纠错冲销** |
 
 **关键字段速查**
 
@@ -633,7 +638,7 @@ ALTER TABLE `ab_operation_log`
 | `ab_refund.amount` | **用户实际付出去的钱** = `total_amount − discount_amount`（＝微信实付 + 余额抵扣）。**不是** `pay_amount` |
 | `ab_refund.auditor_id` | 后台强制退款时 = 操作人（「自己批准自己」）；D41 审批时 = 真实审批人 |
 | `ab_refund.order_status_before` | **申请前的订单状态** —— D42 驳回时订单要回到哪里的**唯一依据**。见 §5.3 |
-| `ab_supplier_share.type` | `normal` / `reversal`；`reversal` 行的 `share_date` = **冲减登记日**（决定进哪一期的结算单） |
+| `ab_supplier_share.type` | `normal` 正常采购 / `reversal` **纠错冲销**（⚠️ 2026-09-16 自营口径改义：**不再由退款触发**，仅用于「应付单生成后发现算错」，由运营主动发起）；`reversal` 行的 `share_date` = **冲减登记日**（决定进哪一期的结算单） |
 | `ab_supplier_share.origin_id` | 反向流水指向的原行 id（对账时用于回溯） |
 
 ### 5.3 M3-4 新增列：`ab_refund.order_status_before`（**有 DDL 变更**）

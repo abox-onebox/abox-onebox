@@ -119,7 +119,7 @@ export class Commission {
 }
 
 /**
- * ab_supplier_share 供应商 / 集散中心应付结算流水
+ * ab_supplier_share 供应商**采购应付**结算流水
  *   C9（2026-09-15 修订）—— 成本项**可配置、不写死**：
  *     · 供应商供价 —— 与各供应商**逐菜协商**（成交价落库）
  *     · 集散/场地费 —— 集散中心**复用合作供应商场地 → 默认 0**（按实际登记）
@@ -128,6 +128,18 @@ export class Commission {
  *   退款走 type='reversal' 反向冲减
  *   C11 —— 只记录**应付**，实际付款由财务人工对公转账日结，channel 恒为 manual
  * 依据：《表结构评审意见 v1.0》P0-6
+ *
+ * ⚠️ 【自营口径 2026-09-16 · 详见《ABox一盒自营结算口径定义v1.0.md》】
+ *   本表语义从「分账流水」改为「**半成品采购应付**」：
+ *   - **payee_type 恒 `supplier`**；`distribution_center` **冻结**（历史可读，新单不再产生 ——
+ *     加工场所属 ABox 自己，付场地费给自己无财务意义）
+ *   - **quantity = 实收量**（`ab_supplier_dish_daily.actual_quantity`），**不是订单销量**；
+ *     `unit_price` = 逐菜协商采购价；`amount` = quantity × unit_price
+ *   - `invoice_no` 重要性上升（自营下是税前扣除凭证）
+ *   - ⭐ **用户退款不再冲减本表**（半成品在出餐日已交付）—— `type='reversal'` 改义为
+ *     「应付单生成后发现算错」的**纠错冲销**，不再由退款触发。
+ *     该改动需同步回退 `modules/finance/reversal.service.ts` 的 `reverseSupplierShares`
+ *     （M3-9 前置项）。
  */
 @Entity('ab_supplier_share')
 export class SupplierShare {
@@ -395,6 +407,14 @@ export class BalanceLog {
  * 依据：《ER v2.1》§3.7
  * ⚠️ C9 修订（2026-09-15）：集散中心**复用合作供应商场地 → 场地费默认 0**；
  *    打包改由平台雇佣兼职承担（平台成本项），故 riceFee / packFee 默认均为 0，按实际登记。
+ *
+ * ⚠️🚧 【自营口径 2026-09-16 · 本类语义待重构，**M4 前置项**，勿在本批擅自改写】
+ *   自营下「加工/集散场所属 ABox 自己」，故：
+ *   - `supplierId`（NOT NULL · 「集散中心 = 某供应商」）**语义失效** → 应可空或改指自有场所；
+ *     但 M3-6 / M3-8 已按**现契约**实现并通过验收，改动会牵动已验收读端，故统一在 M4 前重构。
+ *   - 本表**不再是应付对象**（`ab_supplier_share.payee_type='distribution_center'` 已冻结）；
+ *     `riceFee` / `packFee` 科目保留，仅作成本登记。
+ *   - 场地必须是 **ABox 自有持证场所**（证照地址 = 线上店铺地址 = 实际出餐地址）。
  */
 @Entity('ab_distribution_center')
 export class DistributionCenter {

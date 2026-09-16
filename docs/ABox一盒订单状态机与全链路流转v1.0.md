@@ -33,7 +33,7 @@
 | `cancelled` | 已取消 | 截单前取消 / 超时未支付 | ✅ |
 | `refund_applying` | 退款申请中 | 团长代退申请已提交，待平台审批 | — |
 | `refunding` | 退款中 | 审批通过，微信退款处理中 | — |
-| `refunded` | 已退款 | 退款到账 + 反向分账完成 | ✅ |
+| `refunded` | 已退款 | 退款到账 + 反向结算完成（佣金冲销 + 余额回退；⚠️ 2026-09-16 自营口径：**不冲减供应商应付**） | ✅ |
 
 ### 1.2 三视角状态映射
 
@@ -70,9 +70,9 @@
 | T9 | `delivering` | `delivered` | 运营 | 11:30 送达办公楼 | 写 `ab_delivery_record.arrived_at`；**订阅消息：取餐通知（团长）** |
 | T10 | `delivered` | `completed` | 团长 | 手动确认收货并分发（幂等） | 写 `ab_commission`（按团长等级）；余额账户入账 |
 | T11 | `delivered` | `completed` | 系统 | **T 日 14:00** 自动确认兜底 | 同上（批量，`auto-confirm.task`） |
-| T12 | `cut_off`/`cooked`/`delivering`/`delivered`/`completed` | `refund_applying` | 团长 | **代退申请**（C6 第一段） | 写 `ab_refund`（`status='applying'`）；**不退款、不回退分账**；通知客服 |
+| T12 | `cut_off`/`cooked`/`delivering`/`delivered`/`completed` | `refund_applying` | 团长 | **代退申请**（C6 第一段） | 写 `ab_refund`（`status='applying'`）；**不退款、不回退账务**；通知客服 |
 | T13 | `refund_applying` | `refunding` | 运营 | **后台审批通过**（C6 第二段） | 调微信退款 API → 写 `ab_refund.status='refunding'` |
-| T14 | `refunding` | `refunded` | 系统 | 微信退款回调成功 | **反向分账**（见 §5.3）；扣减佣金；**订阅消息：退款结果（必推）** |
+| T14 | `refunding` | `refunded` | 系统 | 微信退款回调成功 | **反向结算**（见 §5.3）；扣减佣金；**订阅消息：退款结果（必推）** |
 | T15 | `refund_applying` | （回原状态） | 运营 | **后台驳回** | `ab_refund.status='rejected'`；**订阅消息：驳回原因** |
 | T16 | 任意非终态 | `cancelled` | 运营 | 强制退款（M32-05） | 同上 T4；**必须写 `ab_operation_log`** |
 
@@ -151,7 +151,7 @@ T+1 04:00  ┃ reconciliation.task       与微信支付每日对账
 ┌─ 第二段 · 团长代退申请（L7）──────────────────────────────┐
 │ POST /orders/{no}/refund-apply  { reasonType, reason }      │
 │  → ab_refund：status='applying'，order.status='refund_applying'│
-│  → ⚠️ 此时【不退款、不回退分账】，仅登记                      │
+│  → ⚠️ 此时【不退款、不回退账务】，仅登记                      │
 │  → 通知运营后台（待审批队列 D40）                             │
 └────────────────────────────────────────────────────────────┘
                         ↓
@@ -160,7 +160,7 @@ T+1 04:00  ┃ reconciliation.task       与微信支付每日对账
 │   ① 调微信退款 API（原路退用户）                            │
 │   ② ab_refund：applying → approved → refunding              │
 │   ③ 回调成功 → refunded                                     │
-│   ④ 反向分账（见 §5.3）                                     │
+│   ④ 反向结算（见 §5.3）                                     │
 │   ⑤ 若订单已 completed → 冲销 ab_commission（写反向流水）    │
 │   ⑥ 推送微信订阅消息（退款结果，**必推**）                   │
 │ 驳回 D42：                                                  │
@@ -177,7 +177,7 @@ T+1 04:00  ┃ reconciliation.task       与微信支付每日对账
 | 用户重复申请 | `40008`（`(order_id, status in applying/approved/refunding)` 唯一） |
 | 截单前用户自助退 | 走 T4，**不经**团长与审批 |
 | 强制退款（运营） | 走 D11，跳审批直接执行，**必写操作日志 + 原因** |
-| 已出餐后退款 | 允许（如品质问题），分账按 §5.3 回退 |
+| 已出餐后退款 | 允许（如品质问题），佣金与余额按 §5.3 回退（⚠️ 2026-09-16 自营口径：**供应商应付不回退**） |
 | 部分退款 | **MVP 不支持**（按整单退），二期扩展 |
 | 退款到账时长 | 微信侧 1–3 个工作日；系统状态即时置 `refunded`，文案注明到账时间 |
 
