@@ -7116,12 +7116,506 @@ async function main() {
     );
   }
 
+  // §25 M3-13 财务端点 D33–D35（后台 P34 · 模块 M35）
+  //
+  // ⚠️ 本节不依赖下单窗口（同 §18–§24 纪律）：订单与佣金夹具一律直插
+  //    `ab_order` / `ab_commission`。
+  //
+  // 本节钉死五条**不变量**（都是「以后改坏了会立刻红」的那种）：
+  //   ① D33 的收入/成本/毛利与 D47 看板**逐项相等**（同一服务端函数）—— 两页数字不一致
+  //      是运营最先发现、也最致命的信任问题
+  //   ② D33 逐日分项之和 === 区间总额（同一份数据的两种切法，互为正反面）
+  //   ③ 余额 / 冻结 / 待入账佣金是**时点量**：换 `range` 不应变化
+  //   ④ D34 行内等级/费率是**结算快照**（C2），不是团长当前值
+  //   ⑤ D35 真入账：余额增 + 流水落痕 + `total_orders` 不动 + 幂等 + 无归属不猜
+  {
+    log('\n§25 M3-13 财务端点 D33–D35');
+
+    const D0 = bjToday();
+    const D1 = addDaysStr(D0, -1);
+    const PREFIX25 = `E2E25${stamp}`;
+    const FIN25 = '/admin/finance';
+
+    // ---------------------------------------------------------- A. 夹具
+    const l25 = readDb(
+      'SELECT id, user_id, level, total_commission, total_orders, last_order_at FROM ab_team_leader ORDER BY id LIMIT 1',
+    );
+    const b25 = readDb(
+      'SELECT id, building_group_id FROM ab_building WHERE building_group_id IS NOT NULL ORDER BY id LIMIT 1',
+    );
+    const m25 = readDb('SELECT id FROM ab_set_meal ORDER BY id LIMIT 1');
+    const a25 = readDb('SELECT id FROM ab_meal_assignment ORDER BY id LIMIT 1');
+    const u25 = readDb('SELECT id FROM ab_user ORDER BY id LIMIT 1');
+    const ready25 = !!l25 && !!b25 && !!m25 && !!a25 && !!u25;
+
+    assert(
+      ready25,
+      '§25 前置：财务夹具原料齐备（1 团长 / 1 有楼群的楼 / 1 套餐 / 1 分配行 / 1 用户）',
+      `leader=${!!l25} building=${!!b25} meal=${!!m25} assign=${!!a25} user=${!!u25}`,
+    );
+
+    if (ready25) {
+      const uid25 = Number(l25.user_id);
+      const balBefore = readDb('SELECT balance, total_in FROM ab_balance WHERE user_id = ?', [
+        uid25,
+      ]);
+      const lBefore = readDb(
+        'SELECT total_commission, total_orders, last_order_at FROM ab_team_leader WHERE id = ?',
+        [Number(l25.id)],
+      );
+
+      const INS_O25 =
+        'INSERT INTO ab_order (order_no, user_id, team_leader_id, building_id, building_group_id, set_meal_id, assignment_id, meal_date, quantity, unit_price, total_amount, balance_used, discount_amount, pay_amount, status, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, 0, ?, ?, 0, ?, ?)';
+      const INS_C25 =
+        'INSERT INTO ab_commission (order_id, order_no, team_leader_id, leader_level, rate, base_amount, quantity, amount, type, status, settled_at, meal_date, payout_channel, payout_batch_no, tax_withheld_amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, ?)';
+
+      const mkOrder25 = (no) =>
+        writeDb(INS_O25, [
+          no,
+          uid25,
+          Number(l25.id),
+          Number(b25.id),
+          Number(b25.building_group_id),
+          Number(m25.id),
+          Number(a25.id),
+          D0,
+          '25.80',
+          '25.80',
+          '25.80',
+          'completed',
+          `${D0} 12:00:00`,
+          `${D0} 12:00:00`,
+        ]);
+
+      // 三条 pending 佣金：**同一团长、三个不同等级/费率快照** ——
+      // 这正是「行内展示的是快照而非团长当前值」的证据（一个团长只有一个当前等级）。
+      const credit25 = [
+        { lv: 'trainee', rate: '0.0800', amount: '2.06' },
+        { lv: 'formal', rate: '0.0900', amount: '2.32' },
+        { lv: 'chief', rate: '0.1200', amount: '3.10' },
+      ];
+      for (let i = 0; i < credit25.length; i += 1) {
+        const no = `${PREFIX25}C${i + 1}`;
+        mkOrder25(no);
+        const oid = Number(readDb('SELECT id FROM ab_order WHERE order_no = ?', [no])?.id ?? 0);
+        const c = credit25[i];
+        writeDb(INS_C25, [
+          oid,
+          no,
+          Number(l25.id),
+          c.lv,
+          c.rate,
+          '25.80',
+          c.amount,
+          'normal',
+          'pending',
+          D0,
+          'FLEX_MANUAL',
+          '0.00',
+          `${D0} 12:00:00`,
+          `${D0} 12:00:00`,
+        ]);
+      }
+      // 第四条：团长档案**不存在** → D35 必须跳过并说明原因（不猜、不静默丢弃）
+      writeDb(INS_C25, [
+        999000001,
+        `${PREFIX25}CX`,
+        999999,
+        'trainee',
+        '0.0800',
+        '25.80',
+        '2.06',
+        'normal',
+        'pending',
+        D0,
+        'FLEX_MANUAL',
+        '0.00',
+        `${D0} 12:00:00`,
+        `${D0} 12:00:00`,
+      ]);
+
+      // 库内 oracle：pending 全量 / 其中有归属的那部分（D35 出参必须与它能对上）
+      const pendingOra = readDb(
+        "SELECT COUNT(*) AS c, COALESCE(SUM(CAST(ROUND(amount * 100) AS INTEGER)), 0) AS s FROM ab_commission WHERE status = 'pending' AND meal_date = ?",
+        [D0],
+      );
+      const pendingOraMine = readDb(
+        "SELECT COUNT(*) AS c, COALESCE(SUM(CAST(ROUND(amount * 100) AS INTEGER)), 0) AS s FROM ab_commission WHERE status = 'pending' AND meal_date = ? AND team_leader_id = ?",
+        [D0, Number(l25.id)],
+      );
+      assert(
+        Number(pendingOra?.c ?? 0) >= 4,
+        '§25 夹具：4 条 pending 佣金已入库（3 条有归属 + 1 条团长档案不存在）',
+        `pending=${pendingOra?.c} sum=${pendingOra?.s}`,
+      );
+
+      // 权限矩阵用的账号（固定名 —— 每天重跑只累积 2 个，不再翻倍）
+      const ok25Op = 'e2e_s25op';
+      const ok25View = 'e2e_s25view';
+      await call('POST', '/admin/system/accounts', {
+        token: adminToken,
+        body: { username: ok25Op, password: PWD, role: 'operator', realName: 'e2e 财务运营' },
+      });
+      await call('POST', '/admin/system/accounts', {
+        token: adminToken,
+        body: { username: ok25View, password: PWD, role: 'viewer', realName: 'e2e 财务只读' },
+      });
+      const t25Op = (await adminLogin(ok25Op, PWD)).token;
+      const t25View = (await adminLogin(ok25View, PWD)).token;
+      const t25Fin = (await adminLogin('finance', 'finance123')).token;
+
+      // ---------------------------------------------------------- B. D33 资金总览
+      const ov7 = await call('GET', `${FIN25}/overview?range=7d`, { token: adminToken });
+      const ov7d = ov7.body?.data;
+      assert(
+        ov7.body?.code === 0 &&
+          ov7d?.range?.range === '7d' &&
+          typeof ov7d?.income?.gmvFen === 'number' &&
+          typeof ov7d?.expense?.purchaseFen === 'number' &&
+          typeof ov7d?.payable?.unpaidFen === 'number' &&
+          typeof ov7d?.liability?.balanceFen === 'number' &&
+          typeof ov7d?.profit?.grossProfitFen === 'number' &&
+          Array.isArray(ov7d?.daily) &&
+          Array.isArray(ov7d?.warnings) &&
+          !!ov7d?.note,
+        'D33 出参结构齐备（range / income / expense / payable / liability / profit / daily / warnings / note）',
+        `code=${ov7.body?.code}`,
+      );
+
+      const dash7 = (await call('GET', '/admin/stats/dashboard?range=7d', { token: adminToken }))
+        .body?.data;
+      assert(
+        ov7d?.income?.gmvFen === dash7?.metrics?.gmvFen &&
+          ov7d?.income?.orderCount === dash7?.metrics?.orderCount &&
+          ov7d?.expense?.commissionFen === dash7?.metrics?.commissionFen &&
+          ov7d?.expense?.purchaseFen === dash7?.metrics?.purchaseFen &&
+          ov7d?.profit?.grossProfitFen === dash7?.metrics?.grossProfitFen,
+        '⭐⭐ D33 的收入/成本/毛利与 D47 看板**逐项相等**（同一服务端函数）—— 两页各算一套，迟早出现「财务页 ¥4,798、看板 ¥4,301」，而运营从此不再信任任何一个数',
+        `gmv ${ov7d?.income?.gmvFen}/${dash7?.metrics?.gmvFen} · commission ${ov7d?.expense?.commissionFen}/${dash7?.metrics?.commissionFen} · purchase ${ov7d?.expense?.purchaseFen}/${dash7?.metrics?.purchaseFen}`,
+      );
+
+      const sumDaily = (k) => (ov7d?.daily ?? []).reduce((acc, r) => acc + Number(r[k] ?? 0), 0);
+      assert(
+        sumDaily('gmvFen') === ov7d?.income?.gmvFen &&
+          sumDaily('commissionFen') === ov7d?.expense?.commissionFen &&
+          sumDaily('purchaseFen') === ov7d?.expense?.purchaseFen,
+        '⭐ D33 逐日分项之和 === 区间总额（同一份数据的两种切法）—— 分项与总额各算一套，就是「加不起来」的经典来源',
+        `gmv ${sumDaily('gmvFen')}/${ov7d?.income?.gmvFen} · commission ${sumDaily('commissionFen')}/${ov7d?.expense?.commissionFen} · purchase ${sumDaily('purchaseFen')}/${ov7d?.expense?.purchaseFen}`,
+      );
+
+      assert(
+        (ov7d?.daily ?? []).length === ov7d?.range?.days,
+        'D33 `daily` 与区间**等长**（无单日补 0 —— 端上不必自己补齐空洞，图表不会断档）',
+        `daily=${ov7d?.daily?.length} days=${ov7d?.range?.days}`,
+      );
+
+      const ov30 = (await call('GET', `${FIN25}/overview?range=30d`, { token: adminToken })).body
+        ?.data;
+      assert(
+        ov30?.liability?.balanceFen === ov7d?.liability?.balanceFen &&
+          ov30?.liability?.frozenFen === ov7d?.liability?.frozenFen &&
+          !!ov30?.liability?.asOf,
+        '⭐⭐ 余额 / 冻结 / 待入账佣金是**时点量**：`range` 从 7d 换到 30d 完全不变。把时点量算成区间量，会让运营把「平台此刻欠用户多少钱」读成「本期新增负债」',
+        `7d=${ov7d?.liability?.balanceFen} 30d=${ov30?.liability?.balanceFen} asOf=${ov30?.liability?.asOf}`,
+      );
+
+      const ovAnchor = (
+        await call('GET', `${FIN25}/overview?range=7d&date=${D1}`, { token: adminToken })
+      ).body?.data;
+      assert(
+        ovAnchor?.range?.endDate === D1 && ovAnchor?.range?.startDate === addDaysStr(D1, -6),
+        'D33 `date` 是区间**终点锚点**（起止仍由 `range` 推导，不是自由起止）：期末对账要看已经过完的那一天',
+        `end=${ovAnchor?.range?.endDate} start=${ovAnchor?.range?.startDate}`,
+      );
+
+      assert(
+        (await call('GET', `${FIN25}/overview?range=90d`, { token: adminToken })).body?.code ===
+          10001,
+        'D33 非法 `range` → 10001（**不静默回落到默认档** —— 静默回落会让运营以为看的是 90 天）',
+        '',
+      );
+
+      // ---------------------------------------------------------- C. D34 佣金明细
+      const cmAll = (
+        await call('GET', `${FIN25}/commissions?date=${D0}&pageSize=100`, { token: adminToken })
+      ).body?.data;
+      assert(
+        cmAll?.summary?.count === cmAll?.total &&
+          (cmAll?.list ?? []).length > 0 &&
+          typeof cmAll?.date === 'string',
+        'D34 `summary` 与分页 `total` 同源（同一过滤条件的全量）—— 分页里的合计是「本页合计」，运营会拿它对账',
+        `summary=${cmAll?.summary?.count} total=${cmAll?.total}`,
+      );
+
+      const cmP1 = (
+        await call('GET', `${FIN25}/commissions?date=${D0}&page=1&pageSize=1`, {
+          token: adminToken,
+        })
+      ).body?.data;
+      assert(
+        cmP1?.summary?.count === cmAll?.summary?.count &&
+          cmP1?.summary?.netFen === cmAll?.summary?.netFen &&
+          (cmP1?.list ?? []).length === 1,
+        '⭐ D34 汇总**不受分页影响**（pageSize=1 时合计不变）：翻页跳 KPI 是列表页最常见的低级错觉',
+        `count ${cmP1?.summary?.count}/${cmAll?.summary?.count} net ${cmP1?.summary?.netFen}/${cmAll?.summary?.netFen}`,
+      );
+
+      const byLevelSum = (cmAll?.summary?.byLevel ?? []).reduce(
+        (acc, r) => acc + Number(r.amountFen ?? 0),
+        0,
+      );
+      assert(
+        byLevelSum === cmAll?.summary?.netFen && (cmAll?.summary?.byLevel ?? []).length >= 1,
+        'D34 按等级拆分之和 === 佣金净额（同源可复算）',
+        `byLevel=${byLevelSum} net=${cmAll?.summary?.netFen}`,
+      );
+
+      const myNos = credit25.map((_, i) => `${PREFIX25}C${i + 1}`);
+      const myRows = (cmAll?.list ?? []).filter((r) => myNos.includes(r.orderNo));
+      assert(
+        myRows.length === 3 &&
+          new Set(myRows.map((r) => r.leaderId)).size === 1 &&
+          new Set(myRows.map((r) => r.leaderLevel)).size === 3 &&
+          new Set(myRows.map((r) => r.rate)).size === 3,
+        '⭐⭐ D34 行内 `leaderLevel` / `rate` 是**结算快照**（C2）：**同一个团长**的三条佣金分别显示见习 8% / 正式 9% / 首席 12% —— 一个团长只有一个当前等级，故这不可能是「当前值」',
+        `levels=${myRows.map((r) => r.leaderLevel).join('/')} rates=${myRows.map((r) => r.rate).join('/')}`,
+      );
+
+      const cmPending = (
+        await call('GET', `${FIN25}/commissions?date=${D0}&status=pending&pageSize=100`, {
+          token: adminToken,
+        })
+      ).body?.data;
+      assert(
+        (cmPending?.list ?? []).length > 0 &&
+          (cmPending?.list ?? []).every((r) => r.status === 'pending') &&
+          Number(cmPending?.summary?.count ?? 0) >= 4,
+        'D34 `status` 过滤（M3-13 登记的扩展入参）生效：待入账 = 4 条（含 1 条无归属）',
+        `count=${cmPending?.summary?.count}`,
+      );
+
+      const cmKw = (
+        await call('GET', `${FIN25}/commissions?date=${D0}&keyword=${PREFIX25}`, {
+          token: adminToken,
+        })
+      ).body?.data;
+      assert(
+        (cmKw?.list ?? []).length >= 3 &&
+          (cmKw?.list ?? []).every((r) => r.orderNo.includes(PREFIX25)),
+        'D34 `keyword` 命中订单号（对账时按单号定位的常用入口）',
+        `count=${cmKw?.list?.length}`,
+      );
+
+      const cmLeader = (
+        await call('GET', `${FIN25}/commissions?date=${D0}&leaderId=${Number(l25.id)}&pageSize=100`, {
+          token: adminToken,
+        })
+      ).body?.data;
+      assert(
+        (cmLeader?.list ?? []).length > 0 &&
+          (cmLeader?.list ?? []).every((r) => r.leaderId === Number(l25.id)),
+        'D34 `leaderId` 过滤生效',
+        `count=${cmLeader?.list?.length}`,
+      );
+
+      assert(
+        (await call('GET', `${FIN25}/commissions?date=${D0}&status=bad`, { token: adminToken }))
+          .body?.code === 10001,
+        'D34 非法 `status` → 10001（枚举白名单，不静默忽略成「全部」）',
+        '',
+      );
+
+      // ---------------------------------------------------------- D. D35 佣金入账
+      assert(
+        (
+          await call('POST', `${FIN25}/commissions/settle`, {
+            token: t25Op,
+            body: { date: D0 },
+          })
+        ).body?.code === 10003,
+        'D35 `operator` → 10003（**两级白名单**：运营要能看资金与佣金，但「把钱记进团长余额」是资金动作，不该由运营专员拍板 —— 同 D41）',
+        '',
+      );
+      assert(
+        (await call('GET', `${FIN25}/commissions?date=${D0}`, { token: t25Op })).body?.code === 0,
+        '⭐ 同一控制器内：`operator` 的 GET → 0、POST settle → 10003 —— 白名单按**方法**收窄，不是一刀切把人挡在门外',
+        '',
+      );
+
+      const settle1 = (
+        await call('POST', `${FIN25}/commissions/settle`, {
+          token: adminToken,
+          body: { date: D0 },
+        })
+      ).body;
+      const s1 = settle1?.data;
+      assert(
+        settle1?.code === 0 &&
+          s1?.scanned === Number(pendingOra?.c ?? -1) &&
+          s1?.settled === Number(pendingOraMine?.c ?? -1) &&
+          s1?.skipped === 1,
+        'D35 扫描全量、只入账有归属的：`scanned` = 库里 pending 条数、`settled` = 有归属条数、无归属那条进 `skipped`（**不猜、不静默丢弃**）',
+        `scanned=${s1?.scanned}/${pendingOra?.c} settled=${s1?.settled}/${pendingOraMine?.c} skipped=${s1?.skipped}`,
+      );
+      assert(
+        s1?.amountFen === Number(pendingOraMine?.s ?? -1) &&
+          s1?.quantity === Number(pendingOraMine?.c ?? -1),
+        'D35 入账金额 === **库内 oracle**（同口径 SQL 独立算一遍，不是拿接口自己的数当期望值）',
+        `api=${s1?.amountFen} oracle=${pendingOraMine?.s}`,
+      );
+      assert(
+        (s1?.skippedReasons ?? []).length === 1 && /不存在/.test(String(s1?.skippedReasons?.[0])),
+        'D35 跳过原因**下发给操作人**（`skippedReasons`）：脏数据不该只体现为一个数字',
+        `${s1?.skippedReasons?.[0] ?? '无'}`,
+      );
+
+      const fenOf = (v) => Math.round(Number(v ?? 0) * 100);
+      const balAfter = readDb('SELECT balance, total_in FROM ab_balance WHERE user_id = ?', [uid25]);
+      assert(
+        fenOf(balAfter?.balance) - fenOf(balBefore?.balance) === Number(s1?.amountFen ?? -1),
+        '⭐⭐ D35 **真入账**：`ab_balance.balance` 增量 === 出参 `amountFen`（不是「返回成功但钱没动」）',
+        `Δ=${fenOf(balAfter?.balance) - fenOf(balBefore?.balance)} api=${s1?.amountFen}`,
+      );
+
+      const logRows25 = readRows(
+        'SELECT related_id, type, balance_after FROM ab_balance_log WHERE related_id LIKE ? ORDER BY id',
+        [`${PREFIX25}C%`],
+      );
+      assert(
+        logRows25.length === Number(pendingOraMine?.c ?? -1) &&
+          logRows25.every((r) => r.type === 'commission') &&
+          Number(logRows25[logRows25.length - 1]?.balance_after ?? -1) ===
+            Number(balAfter?.balance ?? -2),
+        '⭐ D35 每笔落一条 `ab_balance_log`（含 `balance_after` 逐步落痕），末条余额 === 账户余额 —— 账本与快照可相互验算（与 L11 / L19 同源）',
+        `logs=${logRows25.length} lastAfter=${logRows25[logRows25.length - 1]?.balance_after} balance=${balAfter?.balance}`,
+      );
+
+      const lAfter = readDb(
+        'SELECT total_commission, total_orders, last_order_at FROM ab_team_leader WHERE id = ?',
+        [Number(l25.id)],
+      );
+      assert(
+        String(lAfter?.total_orders ?? '') === String(lBefore?.total_orders ?? '') &&
+          String(lAfter?.last_order_at ?? '') === String(lBefore?.last_order_at ?? '') &&
+          fenOf(lAfter?.total_commission) - fenOf(lBefore?.total_commission) ===
+            Number(s1?.amountFen ?? -1),
+        '⭐⭐ 补账**只改账、不改事实**：`total_commission` 增加，但 `total_orders` / `last_order_at` 一动不动 —— 补结算不是新下单，顺手刷活跃度会污染 C2 晋级审计（按 `month_orders`）',
+        `orders ${lBefore?.total_orders}→${lAfter?.total_orders} lastAtChanged=${String(lBefore?.last_order_at) !== String(lAfter?.last_order_at)}`,
+      );
+
+      const settle2 = (
+        await call('POST', `${FIN25}/commissions/settle`, {
+          token: adminToken,
+          body: { date: D0 },
+        })
+      ).body;
+      const balAfter2 = readDb('SELECT balance FROM ab_balance WHERE user_id = ?', [uid25]);
+      // 无归属的那条**仍停在 pending** —— 这正是「不猜、不静默丢弃」的可观测后果：
+      // 它不会被重复入账，也不会被悄悄改状态。故第二跑的 scanned 恒 = 1（不是 0），
+      // 而 settled 恒 = 0、余额一分未变。断言必须钉这个，而不是钉 scanned=0。
+      const orphanStillPending = readDb(
+        "SELECT COUNT(*) AS c FROM ab_commission WHERE status = 'pending' AND meal_date = ?",
+        [D0],
+      );
+      assert(
+        settle2?.code === 0 &&
+          settle2?.data?.settled === 0 &&
+          Number(settle2?.data?.amountFen ?? -1) === 0 &&
+          settle2?.data?.scanned === settle2?.data?.skipped &&
+          Number(orphanStillPending?.c ?? -1) === Number(settle2?.data?.scanned ?? -2) &&
+          fenOf(balAfter2?.balance) === fenOf(balAfter?.balance),
+        '⭐⭐ D35 **幂等**：重复执行 `settled=0` / 余额一分未变，且无归属那条**仍停在 `pending`**（剩下的 `scanned` 恰好等于 `skipped`）—— 跑批补跑可以放心重复点，脏数据既不重复入账也不被静默吞掉',
+        `scanned=${settle2?.data?.scanned} settled=${settle2?.data?.settled} 仍pending=${orphanStillPending?.c} Δbal=${fenOf(balAfter2?.balance) - fenOf(balAfter?.balance)}`,
+      );
+      assert(
+        !!settle2?.data?.note && /即时入账/.test(String(settle2.data.note)),
+        '⭐ D35 `note` **每次都下发**（不只在 0 条时）—— 它要说明「一期佣金在取餐确认时即时入账，故待入账常态为 0，这不是故障」，否则「点了按钮 0 条」一定被当成故障报上来',
+        `${String(settle2?.data?.note ?? '').slice(0, 36)}…`,
+      );
+
+      const settleFin = (
+        await call('POST', `${FIN25}/commissions/settle`, {
+          token: t25Fin,
+          body: { date: D0 },
+        })
+      ).body;
+      assert(
+        settleFin?.code === 0,
+        'D35 `finance` → 0（财务是资金动作的合法执行人；此时已无可入账的行 —— 唯一 pending 是无归属那条 → 空跑成功而非报错）',
+        `code=${settleFin?.code}`,
+      );
+
+      const d35Log = await waitDb(
+        "SELECT action FROM ab_operation_log WHERE module = 'finance' AND action = '佣金入账补跑' ORDER BY id DESC LIMIT 1",
+        [],
+        (r) => !!r,
+        { timeout: 4000 },
+      );
+      assert(
+        !!d35Log,
+        'D35 由 `@OperationLog()` 落 `ab_operation_log`（把佣金记进团长余额必须能回答「谁在什么时候补的」）',
+        `action=${d35Log?.action ?? '未落库'}`,
+      );
+
+      assert(
+        (await call('POST', `${FIN25}/commissions/settle`, { body: { date: D0 } })).body?.code ===
+          10002,
+        'D35 未登录 → 10002',
+        '',
+      );
+      assert(
+        (await call('GET', `${FIN25}/overview`, { token: t25View })).body?.code === 10003,
+        '⭐ D33 `viewer` → 10003 —— `admin-role.ts` 里 viewer 的菜单只有 4 个看板页（财务页不在其中）。白名单比菜单宽，就会造出「菜单看不到、接口却能调」',
+        '',
+      );
+      const sup25 = await adminLogin('sanweiwu', 'supplier123');
+      assert(
+        (await call('GET', `${FIN25}/overview`, { token: sup25.token })).body?.code === 10003,
+        '双主体隔离：供应商 token 打 `/admin/finance/*` → 10003',
+        '',
+      );
+
+      // ---------------------------------------------------------- E. 夹具还原
+      // ⚠️ 顺序：先删流水（它引用 orderNo），再删佣金与订单；最后把被 D35 真改过的
+      //    余额与团长统计快照**逐字段写回** —— 不还原就等于给下一次重跑「凭空多出一笔钱」。
+      writeDb('DELETE FROM ab_balance_log WHERE related_id LIKE ?', [`${PREFIX25}C%`]);
+      writeDb('DELETE FROM ab_commission WHERE order_no LIKE ?', [`${PREFIX25}%`]);
+      writeDb('DELETE FROM ab_order WHERE order_no LIKE ?', [`${PREFIX25}%`]);
+      writeDb(
+        'UPDATE ab_balance SET balance = ?, total_in = ?, version = version + 1 WHERE user_id = ?',
+        [String(balBefore?.balance ?? '0.00'), String(balBefore?.total_in ?? '0.00'), uid25],
+      );
+      writeDb(
+        'UPDATE ab_team_leader SET total_commission = ?, total_orders = ?, last_order_at = ? WHERE id = ?',
+        [
+          String(lBefore?.total_commission ?? '0.00'),
+          Number(lBefore?.total_orders ?? 0),
+          lBefore?.last_order_at ?? null,
+          Number(l25.id),
+        ],
+      );
+
+      const cleared25 = readDb(
+        'SELECT (SELECT COUNT(*) FROM ab_commission WHERE order_no LIKE ?) AS c, (SELECT COUNT(*) FROM ab_order WHERE order_no LIKE ?) AS o, (SELECT COUNT(*) FROM ab_balance_log WHERE related_id LIKE ?) AS l',
+        [`${PREFIX25}%`, `${PREFIX25}%`, `${PREFIX25}C%`],
+      );
+      assert(
+        Number(cleared25?.c ?? -1) === 0 &&
+          Number(cleared25?.o ?? -1) === 0 &&
+          Number(cleared25?.l ?? -1) === 0,
+        '§25 夹具还原：注入的订单 / 佣金 / 余额流水已清空，余额与团长统计快照已写回（D35 真改过余额，不还原会把「多出来的钱」留给下一次重跑）',
+        `commission=${cleared25?.c} order=${cleared25?.o} log=${cleared25?.l}`,
+      );
+    }
+  }
+
   // ==========================================================================
   // 汇总
   // ==========================================================================
   await stopApiServer(server, PORT);
 
   const failed = results.filter((x) => !x.pass);
+
   log('\n──────── 汇总 ────────');
   log(
     `通过 ${results.length - failed.length}/${results.length}` +

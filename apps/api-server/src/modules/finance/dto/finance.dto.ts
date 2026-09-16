@@ -14,6 +14,8 @@ import {
 
 import { REFUND_REASON_LABEL, RefundReasonType, ReceiveType } from '@abox/shared-types';
 
+import { STATS_DEFAULT_RANGE, STATS_RANGES } from '../../stats/stats.constants';
+
 /** 代退原因取值（与 shared-types 单一来源） */
 const REASON_TYPES: string[] = Object.values(RefundReasonType);
 const REASON_HINT = Object.values(RefundReasonType)
@@ -173,4 +175,120 @@ export class WithdrawApplyReqDto {
   @IsString()
   @MaxLength(32)
   receiveName?: string;
+}
+
+/* ========================================================================= *
+ * M3-13 后台财务（D33 资金总览 · D34 佣金结算明细 · D35 佣金入账）
+ * ========================================================================= */
+
+/** 佣金行状态取值（与 `ab_commission.status` 注释同源） */
+export const COMMISSION_STATUS_KEYS = ['pending', 'settled', 'cancelled'] as const;
+/** 佣金行类型取值：`normal` 正项 / `reversal` 退款冲销（负值） */
+export const COMMISSION_TYPE_KEYS = ['normal', 'reversal'] as const;
+
+const COMMISSION_STATUS_HINT = 'pending(待入账) / settled(已入账) / cancelled(已冲销)';
+
+/**
+ * D33 · 资金总览查询
+ *
+ * ⚠️ `range` 复用统计看板的 **`STATS_RANGES`**（today/7d/30d）—— 绝不另立一套
+ *    「日/周/月」区间语义：同一句话在两页指两个不同区间，是最难查的一类对不上账。
+ *    `date` 是区间**终点锚点**（缺省今日），供期末复核对已过完的区间。
+ */
+export class FinanceOverviewQueryDto {
+  @ApiPropertyOptional({
+    description: '统计区间（按**出餐日** mealDate 计算）：today 今日 / 7d 近 7 日 / 30d 近 30 日',
+    enum: STATS_RANGES,
+    default: STATS_DEFAULT_RANGE,
+    example: '7d',
+  })
+  @IsOptional()
+  @IsIn(STATS_RANGES as unknown as string[], { message: 'range 需为 today / 7d / 30d' })
+  range?: string;
+
+  @ApiPropertyOptional({
+    description: '区间终点锚点（出餐日 YYYY-MM-DD），缺省今日 —— 用于回看已过完的历史区间',
+    example: '2026-09-10',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date 需为 YYYY-MM-DD' })
+  date?: string;
+}
+
+/**
+ * D34 · 佣金结算明细查询（**跨团长** · 与 L10 团长自查明细区分）
+ *
+ * 接口规范原写 `date=&leaderId=&page=`；`status` / `type` / `keyword` 为 M3-13
+ * 登记的**扩展入参**（财务核对「哪些还没入账 / 哪些被冲销了」是高频动作，
+ * 没有过滤就只能翻页）。
+ *
+ * ⚠️ `date` 缺省 = **今日**（与 D33 的 `range` 不同：明细页是「一天一张表」的
+ *    工作习惯）。要看多天请逐日切换 —— 不让它变成第二个区间参数。
+ */
+export class AdminCommissionsQueryDto {
+  @ApiPropertyOptional({
+    description: '出餐日 YYYY-MM-DD（缺省今日）',
+    example: '2026-09-16',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date 需为 YYYY-MM-DD' })
+  date?: string;
+
+  @ApiPropertyOptional({ description: '按团长过滤（ab_team_leader.id）', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  leaderId?: number;
+
+  @ApiPropertyOptional({ description: `按状态过滤：${COMMISSION_STATUS_HINT}` })
+  @IsOptional()
+  @IsIn(COMMISSION_STATUS_KEYS as unknown as string[], {
+    message: `status 需为：${COMMISSION_STATUS_HINT}`,
+  })
+  status?: string;
+
+  @ApiPropertyOptional({ description: '按类型过滤：normal 正项 / reversal 冲销' })
+  @IsOptional()
+  @IsIn(COMMISSION_TYPE_KEYS as unknown as string[], { message: 'type 需为 normal 或 reversal' })
+  type?: string;
+
+  @ApiPropertyOptional({ description: '关键词：订单号 / 团长姓名', example: 'O2026091' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  keyword?: string;
+
+  @ApiPropertyOptional({ description: '页码，默认 1' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({ description: '每页条数，默认 20，上限 100' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number;
+}
+
+/**
+ * D35 · 佣金入账（手动触发 / 补跑）
+ *
+ * 入参只有「限定哪个出餐日」，**刻意不收金额也不收团长**：
+ * 入账金额一律以 `ab_commission` 的行为准（那是计佣时冻结的快照），
+ * 一旦允许传金额，就等于开了一个「手工往团长余额里加钱」的后门。
+ * `date` 缺省 = 全部待入账。
+ */
+export class AdminSettleCommissionsDto {
+  @ApiPropertyOptional({
+    description: '限定出餐日 YYYY-MM-DD；缺省 = 全部待入账（`status=pending`）',
+    example: '2026-09-16',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date 需为 YYYY-MM-DD' })
+  date?: string;
 }

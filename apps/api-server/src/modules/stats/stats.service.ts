@@ -210,10 +210,16 @@ export class StatsService {
    * 区间解析
    * ------------------------------------------------------------------ */
 
-  private resolveRange(range?: string): StatsRangeView {
+  /**
+   * 区间解析：`range` 定**长度**，`date`（可选）定**终点**。
+   *
+   * ⚠️ 端点缺省 = 今日 —— 看板看的是「正在长的今天」，这是运营最常看的一档；
+   *    财务期末复核对账时才传 `date` 把终点锚到已过完的那一天。
+   */
+  private resolveRange(range?: string, date?: string): StatsRangeView {
     const key = (range ?? STATS_DEFAULT_RANGE) as StatsRange;
     const days = STATS_RANGE_DAYS[key] ?? STATS_RANGE_DAYS[STATS_DEFAULT_RANGE];
-    const endDate = shiftBizDate(new Date(), 0);
+    const endDate = date?.trim() || shiftBizDate(new Date(), 0);
     return {
       range: key,
       label: STATS_RANGE_LABELS[key],
@@ -286,7 +292,7 @@ export class StatsService {
    * ------------------------------------------------------------------ */
 
   async dashboard(q: StatsQueryDto): Promise<StatsDashboardView> {
-    const range = this.resolveRange(q.range);
+    const range = this.resolveRange(q.range, q.date);
 
     const [allOrders, validOrders] = await Promise.all([
       this.loadAllOrdersInRange(range),
@@ -442,7 +448,7 @@ export class StatsService {
    * ------------------------------------------------------------------ */
 
   async buildingRank(q: StatsQueryDto): Promise<StatsBuildingRankView> {
-    const range = this.resolveRange(q.range);
+    const range = this.resolveRange(q.range, q.date);
     const validOrders = await this.loadValidOrdersInRange(range);
 
     const [groups, buildings] = await Promise.all([
@@ -512,7 +518,7 @@ export class StatsService {
    * ------------------------------------------------------------------ */
 
   async dishHeat(q: DishHeatQueryDto): Promise<StatsDishHeatView> {
-    const range = this.resolveRange(q.range);
+    const range = this.resolveRange(q.range, q.date);
     const topN = Math.min(q.topN ?? DISH_HEAT_DEFAULT_TOP_N, DISH_HEAT_MAX_TOP_N);
     const validOrders = await this.loadValidOrdersInRange(range);
 
@@ -600,7 +606,7 @@ export class StatsService {
    * ------------------------------------------------------------------ */
 
   async retention(q: StatsQueryDto): Promise<StatsRetentionView> {
-    const range = this.resolveRange(q.range);
+    const range = this.resolveRange(q.range, q.date);
 
     // 留存必须看**全历史**的订单日期：只看区间内，所有用户都会显得像「新客」
     const rows = await this.validOrderQb().select(['o.userId', 'o.mealDate']).getMany();

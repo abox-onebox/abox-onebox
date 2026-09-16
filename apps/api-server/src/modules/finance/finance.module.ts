@@ -14,8 +14,10 @@ import { Dish, Supplier, SupplierDishDaily } from '../../database/entities/suppl
 import { User } from '../../database/entities/user.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
 import { MessageModule } from '../message/message.module';
+import { StatsModule } from '../stats/stats.module';
 import { CommissionService } from './commission.service';
-import { FinanceController } from './finance.controller';
+import { FinanceAdminController } from './finance-admin.controller';
+import { FinanceService } from './finance.service';
 import { LeaderFinanceController } from './leader-finance.controller';
 import { RefundAdminController } from './refund-admin.controller';
 import { RefundAdminService } from './refund-admin.service';
@@ -38,7 +40,12 @@ import { WithdrawService } from './withdraw.service';
  *   · **M3-9 `SupplierShareService` —— S9 应付结算**（出单 / 列表 / 付款登记 / 未出单异常清单）
  *     + `SupplierShareAdminController`（`/admin/supplier-shares/*`）+ 跑批 `SupplierShareTask`
  *
- * 后台侧仍待写：D33–D39、D43–D46（财务总览、余额调整、对账、提现审批）。
+ *  · **M3-13 `FinanceService` —— D33 资金总览 / D34 佣金明细 / D35 佣金入账**：
+ *    `FinanceAdminController`（`/admin/finance/*`）。D33 的收入/成本/毛利**取 `StatsService`**
+ *    （与 D47 看板同函数），只补资金视角独有的应付状态、已退金额、余额负债、待入账佣金。
+ *
+ * 后台侧仍待写：D38–D39（余额账户与调整）、D43（微信对账）、D44（发票管理）。
+ *   提现审批 D45/D46 一期由 `WithdrawService` + 团长侧路由承载，后台审批页在 M4 补。
  *
  * ⚠️ 依赖方向：`OrderModule → FinanceModule`（取 Refund/Reversal），单向无循环。
  *    `OrderModule` 自身也持有 `Refund` 实体（历史原因：`RefundService` 曾住在
@@ -70,15 +77,20 @@ import { WithdrawService } from './withdraw.service';
     ]),
     // M3-12：退款成功后的「退款结果通知」投递口（必推项，见 message-template.specs）
     MessageModule,
+    // M3-13：D33 资金总览的**收入/成本/毛利口径**直接取看板服务（同一函数 = 不可能漂移）。
+    //   依赖方向 `FinanceModule → StatsModule` 单向：StatsModule 只依赖
+    //   DataSource 与 BizConfigService，不回指 Finance，无环。
+    StatsModule,
   ],
   controllers: [
-    FinanceController,
+    FinanceAdminController,
     LeaderFinanceController,
     RefundAdminController,
     SupplierShareAdminController,
   ],
   providers: [
     CommissionService,
+    FinanceService,
     WithdrawService,
     RefundService,
     ReversalService,
