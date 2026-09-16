@@ -92,7 +92,7 @@
 | 2 | 集散场地若在供应商处 | 与 §三 冲突（拿证主体不是 ABox）→ **集散/复热须落到 ABox 自有场所** |
 | 3 | 半成品供应商是否需持证 | 视其交付形态：**预包装/生制半成品** 与 **熟制半成品** 的证照要求不同，签约前逐家核实 |
 | 4 | 门头招牌 | 招牌名须含 **ABox 一盒**（≠「巡礼之年」），与网店名一致 |
-| 5 | 数据模型遗留冲突 | `ab_distribution_center.supplier_id`、主体 `type` 二态、`SUPPLIER_TYPE_CONFLICT`、应付结算语义 —— 登记为 **M4 前置重构项**（详见 `.workbuddy/memory/ref/资质与合规.md` §四） |
+| 5 | 数据模型遗留冲突 | ✅ **M4-0 已清零（2026-09-16）**：`ab_distribution_center.supplier_id` → **可空历史字段**；主体 `type` → **历史字段**；`SUPPLIER_TYPE_CONFLICT`(50008) **三处闸门拆除**（号位保留不用）+ **D27 路由删除**；应付结算语义 ✅ M3-9 已转采购应付。**另**：S3 打包任务整条迁运营后台（`GET /admin/packing-tasks` · P39）—— 原判据失效且数据面跨供应商（违反 I1）。详见 `.workbuddy/memory/ref/资质与合规.md` §四 · 《缺陷与陷阱》#58 |
 
 ---
 

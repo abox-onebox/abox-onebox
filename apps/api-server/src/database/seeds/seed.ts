@@ -16,7 +16,7 @@ import { MESSAGE_TEMPLATE_SPECS } from '../../modules/admin/template/message-tem
 /**
  * 种子数据（依据《种子数据清单 v1.0》）
  *
- * 覆盖：5 楼群 · 12 办公楼 · 5 示例团长 · 4 出餐供应商 + 6 备选 · 4 集散中心 ·
+ * 覆盖：5 楼群 · 12 办公楼 · 5 示例团长 · 4 已核验供货方 + 6 备选 · 4 加工场所 ·
  *       菜品库 · 7 套餐模板 · 全局配置 · 7 日内菜单/分配
  *
  * 纪律：
@@ -164,7 +164,9 @@ async function main(): Promise<void> {
     })),
   );
 
-  // ---------- 3. 供应商（4 出餐 + 6 备选） ----------
+  // ---------- 3. 供应商（4 家已核验 + 6 家备选 · 均为半成品供货方） ----------
+  // ⚠️ **自营口径（M4-0）**：不再写 `type` —— 自营下不存在「承担集散的供应商」，
+  //    「出餐型 / 集散型 / 混合型」三分法失效，供应商只有一种角色：半成品供货方。
   const supRepo = dataSource.getRepository(Supplier);
   await supRepo.clear();
   await supRepo.save([
@@ -172,7 +174,6 @@ async function main(): Promise<void> {
     {
       id: 1,
       name: '三味屋',
-      type: 'both',
       contactName: '王经理',
       contactPhone: '13900000001',
       category: '本帮菜',
@@ -187,7 +188,6 @@ async function main(): Promise<void> {
     {
       id: 2,
       name: '四季鲜蔬',
-      type: 'dish',
       contactName: '李经理',
       contactPhone: '13900000002',
       category: '时蔬',
@@ -200,7 +200,6 @@ async function main(): Promise<void> {
     {
       id: 3,
       name: '京味小馆',
-      type: 'dish',
       contactName: '赵经理',
       contactPhone: '13900000003',
       category: '京味',
@@ -213,7 +212,6 @@ async function main(): Promise<void> {
     {
       id: 4,
       name: '老李家',
-      type: 'dish',
       contactName: '孙经理',
       contactPhone: '13900000004',
       category: '汤品',
@@ -227,7 +225,6 @@ async function main(): Promise<void> {
     {
       id: 5,
       name: '老北京炸酱面',
-      type: 'dish',
       contactName: '—',
       contactPhone: '13900000005',
       category: '面食',
@@ -237,7 +234,6 @@ async function main(): Promise<void> {
     {
       id: 6,
       name: '川渝小炒',
-      type: 'dish',
       contactName: '—',
       contactPhone: '13900000006',
       category: '川菜',
@@ -247,7 +243,6 @@ async function main(): Promise<void> {
     {
       id: 7,
       name: '粤式烧腊',
-      type: 'dish',
       contactName: '—',
       contactPhone: '13900000007',
       category: '烧腊',
@@ -257,7 +252,6 @@ async function main(): Promise<void> {
     {
       id: 8,
       name: '江南私房菜',
-      type: 'dish',
       contactName: '—',
       contactPhone: '13900000008',
       category: '江浙菜',
@@ -267,7 +261,6 @@ async function main(): Promise<void> {
     {
       id: 9,
       name: '轻食沙拉工坊',
-      type: 'dish',
       contactName: '—',
       contactPhone: '13900000009',
       category: '轻食',
@@ -277,7 +270,6 @@ async function main(): Promise<void> {
     {
       id: 10,
       name: '西北面点',
-      type: 'dish',
       contactName: '—',
       contactPhone: '13900000010',
       category: '面点',
@@ -286,16 +278,18 @@ async function main(): Promise<void> {
     },
   ]);
 
-  // ---------- 4. 集散中心（4 · C4 表驱动） ----------
-  // ⚠️ C9 修订：集散中心**复用合作供应商场地 → 场地费默认 0**；
-  //    打包改由平台雇佣兼职承担（见配置 settlement.packing_labor_fee），故本处费用项默认 0，按实际登记。
+  // ---------- 4. 集散中心（4 · C4 表驱动 · = ABox 自有加工/出餐场所） ----------
+  // ⚠️ **自营口径（M4-0）**：集散中心即 **ABox 自有加工 / 出餐场所**，
+  //    **不归属任何合作供应商** → 不再写 `supplierId`（该列已停用为历史字段）。
+  //    `riceFee` / `packFee` 默认 0 的含义是「**未登记**」而非「免费」——
+  //    它们是 ABox 自身履约成本、不出付款单，未登记时经营毛利会被系统性高估。
+  //    场地必须是 ABox **自有持证场所**（证照地址 = 线上店铺地址 = 实际出餐地址）。
   const dcRepo = dataSource.getRepository(DistributionCenter);
   await dcRepo.clear();
   await dcRepo.save([
     {
       id: 1,
       name: '集散中心 1（国贸/建外）',
-      supplierId: 1,
       address: '朝阳区建国路 88 号',
       contactName: '王师傅',
       contactPhone: '13800000001',
@@ -307,7 +301,6 @@ async function main(): Promise<void> {
     {
       id: 2,
       name: '集散中心 2（银泰/建外）',
-      supplierId: 2,
       address: '朝阳区光华路 21 号',
       contactName: '刘师傅',
       contactPhone: '13800000002',
@@ -319,7 +312,6 @@ async function main(): Promise<void> {
     {
       id: 3,
       name: '集散中心 3（国贸/远洋）',
-      supplierId: 3,
       address: '朝阳区东三环中路 65 号',
       contactName: '赵师傅',
       contactPhone: '13800000003',
@@ -331,7 +323,6 @@ async function main(): Promise<void> {
     {
       id: 4,
       name: '集散中心 4（华贸组）',
-      supplierId: 4,
       address: '朝阳区四惠东',
       contactName: '钱师傅',
       contactPhone: '13800000004',

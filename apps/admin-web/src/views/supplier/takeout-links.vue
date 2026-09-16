@@ -39,7 +39,6 @@
       <!-- ─────────────── 供应商快照（避免改错对象） ─────────────── -->
       <div v-if="current" class="snapshot">
         <span class="strong">{{ current.name }}</span>
-        <el-tag size="small" type="info" effect="plain">{{ current.typeLabel }}</el-tag>
         <el-tag size="small" :type="auditTag(current.auditStatus)">{{
           current.auditStatusLabel
         }}</el-tag>

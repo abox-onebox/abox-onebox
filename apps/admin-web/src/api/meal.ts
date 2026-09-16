@@ -225,12 +225,15 @@ export function fetchDishOptions(params: { keyword?: string }): Promise<DishOpti
   return http.get<DishOptions>('/admin/meal/dishes', params);
 }
 
-/** 集散中心选择器（可选字段 —— 不选是合法状态，C9：集散复用供应商场地、场地费默认 ¥0） */
+/**
+ * 集散中心选择器（可选字段 —— 不选是合法状态）
+ *
+ * ⚠️ M4-0 起**不再下发 `supplierId` / `supplierName`**：集散中心 = **ABox 自有加工 /
+ *    出餐场所**，不归属任何合作供应商（`ab_distribution_center.supplier_id` 已停用）。
+ */
 export interface DistributionCenterOption {
   id: number;
   name: string;
-  supplierId: number;
-  supplierName: string | null;
   address: string | null;
   status: number;
 }
@@ -238,8 +241,9 @@ export interface DistributionCenterOption {
 export function fetchDistributionCenterOptions(): Promise<{
   list: DistributionCenterOption[];
   total: number;
+  note?: string;
 }> {
-  return http.get<{ list: DistributionCenterOption[]; total: number }>(
+  return http.get<{ list: DistributionCenterOption[]; total: number; note?: string }>(
     '/admin/meal/distribution-centers',
   );
 }

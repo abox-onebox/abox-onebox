@@ -8,7 +8,19 @@
  *    的落库值逐字一致 —— 枚举是**契约**，不是展示层装饰。
  */
 
-/** 供应商类型（`ab_supplier.type`） */
+/**
+ * 供应商类型（`ab_supplier.type`）
+ *
+ * ⚠️ **已停用（M4-0 · 自营口径 · 2026-09-16）—— 仅供读取历史数据时对照中文，不参与任何判定**
+ *
+ * 「出餐型 / 集散型 / 混合型」建立在「供应商入驻 + 供应商自己承担集散」之上；
+ * 单主体自营 + 半成品供应链后，供应商只有一种角色：**半成品供货方**。
+ * 与之相关的整条链路已下线：D27 设置类型端点删除、D24/D25 新建编辑不再收、
+ * D23 筛选与展示移除、`SUPPLIER_TYPE_CONFLICT`(50008) 三处闸门删除（号位保留）。
+ *
+ * 保留本枚举的唯一理由：`ab_supplier.type` 列里还躺着自营前的历史值，
+ * 排查老数据时需要一份「值 → 中文」的对照。**新代码不得再读它做判断。**
+ */
 export enum SupplierType {
   /** 出餐型：只做菜，不承担集散 */
   DISH = 'dish',
@@ -18,19 +30,16 @@ export enum SupplierType {
   BOTH = 'both',
 }
 
+/** ⚠️ 已停用（M4-0）· 仅供历史数据对照，见上方 `SupplierType` 注释 */
 export const SUPPLIER_TYPE_LABEL: Record<SupplierType, string> = {
   [SupplierType.DISH]: '出餐型',
   [SupplierType.DISTRIBUTE]: '集散型',
   [SupplierType.BOTH]: '混合型',
 };
 
-/** 类型下拉项（D23 筛选器 / D27 设置类型共用，避免两处写死顺序） */
-export const SUPPLIER_TYPE_OPTIONS = (Object.values(SupplierType) as SupplierType[]).map(
-  (value) => ({
-    value,
-    label: SUPPLIER_TYPE_LABEL[value],
-  }),
-);
+// ⚠️ M4-0 删除了 `SUPPLIER_TYPE_OPTIONS`（类型下拉项）：
+// 它没有任何消费方了，而留着一个「现成的类型选择器」最容易被人重新接回页面上 ——
+// 那时运营又会看到一个「选了三个值、选哪个都一样」的下拉。
 
 /**
  * 资质审核状态（`ab_supplier.audit_status` · D26 落点）

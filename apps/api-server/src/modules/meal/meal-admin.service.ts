@@ -708,22 +708,17 @@ export class MealAdminService {
    */
   async distributionCenterOptions() {
     const dcs = await this.dcRepo.find({ order: { id: 'ASC' } });
-    const supplierIds = [...new Set(dcs.map((d) => d.supplierId))];
-    const suppliers = supplierIds.length
-      ? await this.supplierRepo.find({ where: { id: In(supplierIds) } })
-      : [];
-    const supplierMap = new Map(suppliers.map((s) => [s.id, s]));
-
     return {
       list: dcs.map((d) => ({
         id: d.id,
         name: d.name,
-        supplierId: d.supplierId,
-        supplierName: supplierMap.get(d.supplierId)?.name ?? null,
         address: d.address ?? null,
         status: d.status,
       })),
       total: dcs.length,
+      // ⚠️ M4-0 起不再下发 `supplierId` / `supplierName`：加工场所（集散中心）属
+      //    **ABox 自有**，不归属任何合作供应商（`ab_distribution_center.supplier_id` 已停用）。
+      note: '集散中心 = **ABox 自有加工 / 出餐场所**（半成品在此热加工后打包），不归属供应商。',
     };
   }
 

@@ -4,7 +4,6 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   SUPPLIER_AUDIT_STATUS_LABEL,
   SUPPLIER_STATUS_LABEL,
-  SUPPLIER_TYPE_OPTIONS,
   SupplierAuditStatus,
   SupplierStatus,
 } from '@abox/shared-types';
@@ -19,7 +18,6 @@ import {
   PAYEE_TYPE_LABEL,
   PayeeType,
   SetSettleAccountDto,
-  SetSupplierTypeDto,
   SetTakeoutLinksDto,
   SupplierIdParamDto,
   UpdateSupplierDto,
@@ -40,9 +38,14 @@ import { SupplierAdminService } from './supplier-admin.service';
  * ⚠️ **两级白名单**（与 M3-4/M3-5 同一设计）：
  *    类级放 `operator` —— 运营要能看名录、跟进资质补办；
  *    D24–D28 与外卖链接**方法级收窄到 `super_admin`/`admin`** ——
- *    填供应商档案、审资质、定类型、改结算账户，都是「决定钱付给谁」的事。
+ *    填供应商档案、审资质、改结算账户，都是「决定钱付给谁」的事。
  *    `finance` 同样收窄掉（菜单矩阵 `admin-role.ts` 里财务本就没有 `/supplier/*`）：
  *    若 API 放行而菜单没有，就会出现「能调但进不去」的诡异状态。
+ *
+ * ⚠️ **M4-0（自营口径）：D27「设置类型」已下线** —— 自营下不存在「承担集散的供应商」，
+ *    「出餐型 / 集散型 / 混合型」三分法失效，端点整体删除而非返回固定值
+ *    （留一个「点了没区别」的按钮，运营会以为平台还在按类型分配职责）。
+ *    原 50008 闸门（本控制器 3 处 + D30/D31 那侧同一规则）随之删除，号位保留。
  */
 @ApiTags('后台·供应商管理')
 @ApiBearerAuth()
@@ -70,15 +73,15 @@ export class SupplierAdminController {
 
   @Get('filter-options')
   @ApiOperation({
-    summary: 'D23 附属 · 筛选器下拉（类型 / 审核状态 / 合作状态 / 付款方式）',
+    summary: 'D23 附属 · 筛选器下拉（审核状态 / 合作状态 / 付款方式）',
     description:
       '关键字补充：品类下拉由列表接口的 `categoryOptions` 动态下发（真实数据去重），' +
       '此处只回枚举类选择器。独立成接口而非复用 `/admin/meal/dishes`：' +
-      '后者供套餐编排选菜，语义是「有没有这道菜」，与「有哪些品类」不是一回事。',
+      '后者供套餐编排选菜，语义是「有没有这道菜」，与「有哪些品类」不是一回事。' +
+      '⚠️ M4-0 起**不再下发 `typeOptions`** —— 供应商类型已停用（自营下只有一种角色）。',
   })
   filterOptions() {
     return {
-      typeOptions: SUPPLIER_TYPE_OPTIONS,
       auditStatusOptions: Object.values(SupplierAuditStatus).map((v) => ({
         value: v,
         label: SUPPLIER_AUDIT_STATUS_LABEL[v],
@@ -96,10 +99,11 @@ export class SupplierAdminController {
 
   @Get(':id')
   @ApiOperation({
-    summary: 'D23 附属 · 供应商详情（档案 + 集散中心 + 菜品 + 分账 + 操作日志）',
+    summary: 'D23 附属 · 供应商详情（档案 + 菜品 + 应付 + 操作日志）',
     description:
       '含真实联系电话与脱敏后的银行账号。⚠️ 银行账号原文**任何后台接口都不回**，' +
-      '付款登记时由财务线下核对（服务端只存不回，避免日志/截图泄露）。',
+      '付款登记时由财务线下核对（服务端只存不回，避免日志/截图泄露）。' +
+      '⚠️ M4-0 起不再回 `distributionCenters` —— 加工场所属 ABox 自有，不挂在供应商名下。',
   })
   detail(@Param() p: SupplierIdParamDto) {
     return this.supplierAdmin.detail(p.id);
@@ -126,10 +130,10 @@ export class SupplierAdminController {
   @ApiOperation({
     summary: 'D25 编辑供应商（含启停）',
     description:
-      '部分更新，只改传了的字段。⚠️ 两个隐式副作用都会在出参回报：' +
-      '改 `type` 为 dish 但名下仍有集散中心 → 50008；' +
+      '部分更新，只改传了的字段。⚠️ 一个隐式副作用会在出参回报：' +
       '把 `licenseExpireAt` 改成过去 → **同步下架关联菜品**并回 `unpublishedDishCount`。' +
-      '本接口是供应商启停的**唯一入口**（D 系列没有单独的停用接口）。',
+      '本接口是供应商启停的**唯一入口**（D 系列没有单独的停用接口）。' +
+      '⚠️ M4-0 起不再收 `type`（供应商类型已停用，传上来即 10001）。',
   })
   update(@Param() p: SupplierIdParamDto, @Body() dto: UpdateSupplierDto) {
     return this.supplierAdmin.update(p.id, dto);
@@ -156,20 +160,13 @@ export class SupplierAdminController {
     return this.supplierAdmin.audit(p.id, dto, adminUserId);
   }
 
-  // ------------------------------------------------------------ D27 设置类型
-
-  @Put(':id/type')
-  @Roles('super_admin', 'admin')
-  @OperationLog({ module: 'supplier', action: '设置供应商类型', targetParam: 'id' })
-  @ApiOperation({
-    summary: 'D27 设置类型（出餐型 / 集散型 / 混合型）',
-    description:
-      '名下已有集散中心时不能降级为 `dish` → 50008（集散中心必须挂在能承担集散的主体下）。' +
-      '目标态重复操作 → 10001，不是幂等成功。',
-  })
-  setType(@Param() p: SupplierIdParamDto, @Body() dto: SetSupplierTypeDto) {
-    return this.supplierAdmin.setType(p.id, dto);
-  }
+  // ------------------------------------------------------------ D27 已下线
+  //
+  // `PUT /admin/suppliers/:id/type` **已随自营口径移除**（M4-0）：
+  // 自营下不存在「承担集散的供应商」，「出餐型 / 集散型 / 混合型」三分法失效
+  // （供应商只有一种角色：半成品供货方），`ab_supplier.type` 列保留为历史字段。
+  // 刻意**整条路由删掉**而不是「返回固定值 / 忽略入参」——
+  // 后者会让运营以为类型还在起作用，只是暂时改不了。
 
   // ------------------------------------------------------------ D28 结算账户
 

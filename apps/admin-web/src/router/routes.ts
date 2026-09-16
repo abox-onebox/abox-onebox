@@ -65,7 +65,7 @@ export const routes: RouteRecordRaw[] = [
       // ───────────────────────── 供应商相关（⚠️ 两角色共用本 SPA，路径必须分家） ─────────────────────────
       //
       // 平台端（role=admin/operator，P33 供应商管理 · M34）：list / form / dish-library /
-      //   distribution-center / takeout-links —— 组件调 `/admin/*`。
+      //   distribution-center / packing-center / takeout-links —— 组件调 `/admin/*`。
       // 商家端（role=supplier，P23/P24/P26 · M22/M24）：dishes / edit —— 将来组件调 `/supplier/*`。
       //
       // ⚠️ 为什么必须分开：`/supplier/dishes`、`/supplier/edit` 两个 key 同时在
@@ -96,12 +96,22 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/supplier/distribution-center.vue'),
       },
       {
+        path: 'supplier/packing-center',
+        name: 'PackingCenter',
+        component: () => import('@/views/supplier/packing-center.vue'),
+      },
+      {
         path: 'supplier/takeout-links',
         name: 'TakeoutLinks',
         component: () => import('@/views/supplier/takeout-links.vue'),
       },
 
-      // 商家端 P21 / P22（M3-8 实装 · 出餐链路 S1–S3）—— 组件调 `/supplier/*`
+      // 商家端 P21 / P22（M3-8 实装 · 出餐链路 S1–S2）—— 组件调 `/supplier/*`
+      //
+      // ⚠️ M4-0：原 `supplier/packing`（S3 打包任务）**已下线** —— 打包闸门要看到
+      //    **所有**供应商的到位情况，开给供应商就是泄露他方数据（I1）；
+      //    且自营下加工场所属 ABox 自有，原判据「本主体名下有集散中心」也已失效。
+      //    新落点 = 上面的 `supplier/packing-center`（运营后台，调 `/admin/packing-tasks`）。
       {
         path: 'supplier/workbench',
         name: 'SupplierWorkbench',
@@ -111,11 +121,6 @@ export const routes: RouteRecordRaw[] = [
         path: 'supplier/cook-confirm',
         name: 'SupplierCookConfirm',
         component: () => import('@/views/supplier/cook-confirm.vue'),
-      },
-      {
-        path: 'supplier/packing',
-        name: 'SupplierPacking',
-        component: () => import('@/views/supplier/packing.vue'),
       },
       // 商家端 P25（M3-9 实装 · 应付结算自查 S4）—— 组件调 `/supplier/settlement`
       {

@@ -55,8 +55,7 @@ onMounted(load);
         <div>
           <h3>商家工作台</h3>
           <p class="sub">
-            {{ data?.supplier?.name ?? '—' }} · {{ data?.supplier?.typeLabel ?? '—' }} ·
-            {{ data?.supplier?.statusLabel ?? '—' }}
+            {{ data?.supplier?.name ?? '—' }} · {{ data?.supplier?.statusLabel ?? '—' }}
           </p>
         </div>
         <div class="ops">

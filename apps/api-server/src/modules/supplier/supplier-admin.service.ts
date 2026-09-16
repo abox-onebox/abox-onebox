@@ -8,11 +8,8 @@ import {
   LicenseState,
   SUPPLIER_AUDIT_STATUS_LABEL,
   SUPPLIER_STATUS_LABEL,
-  SUPPLIER_TYPE_LABEL,
-  SUPPLIER_TYPE_OPTIONS,
   SupplierAuditStatus,
   SupplierStatus,
-  SupplierType,
   TAKEOUT_PLATFORM_LABEL,
   TakeoutPlatform,
 } from '@abox/shared-types';
@@ -23,7 +20,7 @@ import { maskPhone } from '../../common/utils/crypto';
 import { toFen } from '../../common/utils/money';
 import { normalizePage, paginate, PageResult } from '../../common/utils/response';
 import { addDays, monthRangeOf, toBjIso, todayBj } from '../../common/utils/time';
-import { DistributionCenter, SupplierShare } from '../../database/entities/finance.entity';
+import { SupplierShare } from '../../database/entities/finance.entity';
 import { AdminUser, OperationLog } from '../../database/entities/system.entity';
 import { Dish, Supplier } from '../../database/entities/supplier.entity';
 import {
@@ -33,19 +30,17 @@ import {
   PAYEE_TYPE_LABEL,
   PayeeType,
   SetSettleAccountDto,
-  SetSupplierTypeDto,
   SetTakeoutLinksDto,
   UpdateSupplierDto,
 } from './dto/supplier-admin.dto';
 
-/** 分账流水的主体类型（`ab_supplier_share.payee_type`） */
+/** 采购应付流水的主体类型（`ab_supplier_share.payee_type`） */
 const PAYEE_SUPPLIER = 'supplier';
 
 type SupplierActions = { canManage: boolean };
 
 type SupplierListResult = PageResult<Record<string, unknown>> & {
   summary: Record<string, unknown>;
-  typeOptions: Array<Record<string, unknown>>;
   auditStatusOptions: Array<Record<string, unknown>>;
   statusOptions: Array<Record<string, unknown>>;
   categoryOptions: Array<Record<string, unknown>>;
@@ -57,7 +52,7 @@ type SupplierListResult = PageResult<Record<string, unknown>> & {
 /**
  * 后台 · 供应商管理服务（M3-6 · 《接口规范》§6.4 D23–D28 · 原型 P33）
  *
- * ## 四条贯穿本文件的纪律
+ * ## 自营口径下的三条贯穿纪律（M4-0 修订）
  *
  * 1. **资质审核状态与经营状态正交**：`audit_status` 回答「有没有合规资格」，
  *    `status` 回答「平台要不要继续合作」。D26 **驳回不自动停用** ——
@@ -70,12 +65,26 @@ type SupplierListResult = PageResult<Record<string, unknown>> & {
  *    · D25 编辑时若把有效期改成过去 → **同步下架其关联菜品**（原型 P33 的联动行为）
  *    · D23 列表算出 `licenseState` 供筛选与告警（**派生值不落库**，避免双真相）
  *
- * 3. **类型不是标签，是履约能力声明**：`distribute` / `both` 才能被集散中心引用。
- *    D27 若把**已被集散中心引用**的供应商改成 `dish`，就会造出
- *    「集散中心指向一家不出餐也不集散的供应商」——故 50008 fail-closed。
+ * 3. ⭐ **供应商类型的整条链路已停用**（自营口径 · 2026-09-16）：
+ *    「出餐型 / 集散型 / 混合型」建立在「供应商入驻 + 供应商自己承担集散」之上；
+ *    自营后供应商只有一种角色 —— **半成品供货方**（供货 + 报价，菜单由 ABox 定、
+ *    热加工与打包在 ABox 自有场所完成）。故：
+ *    · `ab_supplier.type` 列保留为**历史字段**，新建 / 编辑 / 筛选一律不再收
+ *      （DTO 已移除，传上来即 10001）；
+ *    · D27 端点已删除、`SUPPLIER_TYPE_CONFLICT`(50008) 三处闸门已删除（号位保留）；
+ *    · 出参不再下发 `type` / `typeLabel`，`summary` 不再有 dish/distribute/both 三项计数。
+ *    ⚠️ **为什么不是「保留字段但只读」**：一个「选了三个值、选哪个都一样」的字段，
+ *    留下的唯一效果是让运营以为平台还在按类型分配职责。
+ *
+ * ## 另一条（列脱敏纪律）
  *
  * 4. **列表脱敏、详情才给真值**：列表页的 `contactPhoneMasked` 是防「顺手爬走全平台
  *    商家电话」；银行账号在 D28 响应里也只回 `bankAccountMasked`（运营刚填过也不回原文）。
+ *
+ * ## ⚠️ M4-0 起本服务不再注入 `DistributionCenter`
+ * 加工场所（集散中心）已不归属供应商 → D23 的 `dcCount` / `dcTotalCount`、
+ * 详情里的 `distributionCenters`、关键词跨表命中「场所名」三处一并删除。
+ * 一个恒为 0 的 KPI 比没有 KPI 更糟：它看起来像「这家还没挂场地」。
  */
 @Injectable()
 export class SupplierAdminService {
@@ -84,7 +93,6 @@ export class SupplierAdminService {
   constructor(
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
     @InjectRepository(Dish) private readonly dishRepo: Repository<Dish>,
-    @InjectRepository(DistributionCenter) private readonly dcRepo: Repository<DistributionCenter>,
     @InjectRepository(SupplierShare) private readonly shareRepo: Repository<SupplierShare>,
     @InjectRepository(AdminUser) private readonly adminRepo: Repository<AdminUser>,
     @InjectRepository(OperationLog) private readonly opLogRepo: Repository<OperationLog>,
@@ -120,19 +128,17 @@ export class SupplierAdminService {
       .getManyAndCount();
 
     const ids = all.map((s) => Number(s.id));
-    const [dishMap, dcMap, shareMap, auditNameMap] = await Promise.all([
+    const [dishMap, shareMap, auditNameMap] = await Promise.all([
       this.countGroup('d', 'd.supplier_id', this.dishRepo, ids),
-      this.countGroup('c', 'c.supplier_id', this.dcRepo, ids),
       this.monthShareMap(ids),
       this.adminNameMap(all.map((s) => Number(s.auditedBy ?? 0)).filter(Boolean)),
     ]);
 
-    const decorate = (s: Supplier) => this.decorate(s, dishMap, dcMap, shareMap, auditNameMap);
+    const decorate = (s: Supplier) => this.decorate(s, dishMap, shareMap, auditNameMap);
 
     return {
       ...paginate(rows.map(decorate), total, page, pageSize),
-      summary: this.summarize(all, dcMap),
-      typeOptions: SUPPLIER_TYPE_OPTIONS,
+      summary: this.summarize(all),
       auditStatusOptions: Object.values(SupplierAuditStatus).map((v) => ({
         value: v,
         label: SUPPLIER_AUDIT_STATUS_LABEL[v],
@@ -156,28 +162,33 @@ export class SupplierAdminService {
         licenseState:
           'licenseState 为**派生值**（由 licenseExpireAt 与北京时间当天实时算出），不落库；' +
           'expiring 阈值 30 天。已过期会让关联菜品被联动下架，建议筛选 expired 优先处理。',
+        supplierRole:
+          '自营口径下供应商只有一种角色：**半成品供货方**（供货 + 报价）。' +
+          '菜单由 ABox 定、热加工与打包在 ABox 自有加工场所完成 —— ' +
+          '原「出餐型 / 集散型 / 混合型」分类与 D27 设置类型入口已停用。',
       },
     };
   }
 
-  /** D23 附属 · 详情（档案 + 关联集散中心 + 菜品 + 近 30 条分账 + 操作日志） */
+  /** D23 附属 · 详情（档案 + 菜品 + 近 30 条采购应付 + 操作日志） */
   async detail(id: number) {
     const s = await this.assertSupplier(id);
-    const [dishes, dcList, shares, logs, shareMap, dcMap] = await Promise.all([
+    const [dishes, shares, logs] = await Promise.all([
       this.dishRepo.find({ where: { supplierId: id }, order: { id: 'ASC' } }),
-      this.dcRepo.find({ where: { supplierId: id }, order: { id: 'ASC' } }),
       this.shareRepo.find({
         where: { payeeType: PAYEE_SUPPLIER, payeeId: id },
         order: { id: 'DESC' },
         take: 30,
       }),
       this.opLogRepo.find({ where: { targetId: String(id) }, order: { id: 'DESC' }, take: 20 }),
+    ]);
+    const [shareMap, dishCountMap] = await Promise.all([
       this.monthShareMap([id]),
-      this.countGroup('c', 'c.supplier_id', this.dcRepo, [id]),
+      this.countGroup('d', 'd.supplier_id', this.dishRepo, [id]),
     ]);
 
     return {
-      supplier: this.decorate(s, new Map([[id, dishes.length]]), dcMap, shareMap, new Map()),
+      supplier: this.decorate(s, dishCountMap, shareMap, new Map()),
       /** ⚠️ 详情页才回真实手机号（列表页脱敏）*/
       contactPhone: s.contactPhone,
       contactPhoneMasked: maskPhone(s.contactPhone),
@@ -190,13 +201,8 @@ export class SupplierAdminService {
         invoiceTitle: s.invoiceTitle ?? null,
       },
       dishes: dishes.map((d) => this.decorateDish(d)),
-      distributionCenters: dcList.map((c) => ({
-        id: c.id,
-        name: c.name,
-        address: c.address,
-        status: c.status,
-        statusLabel: c.status === 1 ? '启用' : '停用',
-      })),
+      // ⚠️ M4-0：不再回 `distributionCenters` —— 加工场所（集散中心）属 ABox 自有，
+      //    不挂在任何供应商名下。回一个恒为空的数组会让运营以为「这家还没挂场地」。
       recentShares: shares.map((r) => ({
         id: r.id,
         shareNo: r.shareNo,
@@ -229,7 +235,7 @@ export class SupplierAdminService {
     const saved = await this.supplierRepo.save(
       this.supplierRepo.create({
         name: dto.name,
-        type: dto.type,
+        // ⚠️ 不再写 `type`（列保留为历史字段，走列默认值）—— 自营下供应商无类型之分
         contactName: dto.contactName,
         contactPhone: dto.contactPhone,
         category: dto.category ?? null,
@@ -248,7 +254,6 @@ export class SupplierAdminService {
     return {
       id: Number(saved.id),
       name: saved.name,
-      type: saved.type,
       auditStatus: saved.auditStatus,
       status: saved.status,
     };
@@ -257,17 +262,13 @@ export class SupplierAdminService {
   /**
    * D25 编辑供应商
    *
-   * ⚠️ 两个隐式副作用，都在出参里显式回报（不做「偷偷改了却不说」）：
-   *   · `type` 被改成 `dish` 却仍被集散中心引用 → 50008（见文件头纪律 3）
+   * ⚠️ 一个隐式副作用，在出参里显式回报（不做「偷偷改了却不说」）：
    *   · `licenseExpireAt` 被改成过去 → **同步下架其关联菜品**，回报 `unpublishedDishCount`
+   *
+   * ⚠️ M4-0 起不再处理 `type`（DTO 已移除，传上来即 10001）。
    */
   async update(id: number, dto: UpdateSupplierDto) {
     const s = await this.assertSupplier(id);
-
-    if (dto.type !== undefined && dto.type !== s.type) {
-      await this.assertTypeChangeAllowed(id, dto.type);
-      s.type = dto.type;
-    }
 
     if (dto.name !== undefined) s.name = dto.name;
     if (dto.contactName !== undefined) s.contactName = dto.contactName;
@@ -294,7 +295,6 @@ export class SupplierAdminService {
     await this.supplierRepo.save(s);
     return {
       id: Number(s.id),
-      type: s.type,
       status: s.status,
       licenseExpireAt: s.licenseExpireAt ?? null,
       licenseState: this.licenseStateOf(s.licenseExpireAt),
@@ -360,28 +360,13 @@ export class SupplierAdminService {
   }
 
   // ==========================================================================
-  // D27 · 设置类型
+  // D27 · 设置类型 —— ⚠️ 已下线（M4-0 · 自营口径）
   // ==========================================================================
-
-  async setType(id: number, dto: SetSupplierTypeDto) {
-    const s = await this.assertSupplier(id);
-    if (dto.type === s.type) {
-      // 目标态重复操作不是幂等成功：运营点两次「保存」与「确实改了」要能区分
-      throw new BizException(
-        ErrorCode.PARAM_INVALID,
-        `该供应商已经是「${SUPPLIER_TYPE_LABEL[dto.type as SupplierType]}」`,
-      );
-    }
-    await this.assertTypeChangeAllowed(id, dto.type);
-    s.type = dto.type;
-    s.version += 1;
-    await this.supplierRepo.save(s);
-    return {
-      id: Number(s.id),
-      type: s.type,
-      typeLabel: SUPPLIER_TYPE_LABEL[s.type as SupplierType],
-    };
-  }
+  //
+  // `setType()` 与 `assertTypeChangeAllowed()` 一并删除：
+  // 自营下不存在「承担集散的供应商」，类型三分法失效；原 50008 闸门的两个方向
+  // （D27 降级 / D30-D31 挂载）同时消失。端点已从控制器移除，故此处的服务方法
+  // 也必须删掉 —— 留着就是「没人调但还在的写入口」，日后极易被重新接上。
 
   // ==========================================================================
   // D28 · 对公结算账户
@@ -468,7 +453,7 @@ export class SupplierAdminService {
   private buildQuery(q: AdminSuppliersQueryDto) {
     const qb = this.supplierRepo.createQueryBuilder('s').where('s.deleted_at IS NULL');
 
-    if (q.type) qb.andWhere('s.type = :type', { type: q.type });
+    // ⚠️ M4-0 起**没有 `type` 筛选** —— 供应商类型已停用（见文件头纪律 3）。
     if (q.status !== undefined) qb.andWhere('s.status = :status', { status: q.status });
     if (q.auditStatus) qb.andWhere('s.audit_status = :as', { as: q.auditStatus });
     if (q.category) qb.andWhere('s.category = :cat', { cat: q.category });
@@ -499,17 +484,13 @@ export class SupplierAdminService {
 
     if (q.keyword) {
       const kw = `%${q.keyword}%`;
-      // 关键词同时命中「供应商自身字段」与「它名下集散中心的名字」——
-      // 运营记得住「集散中心 3（国贸 D/远洋）」，不一定记得住它挂在谁名下。
+      // ⚠️ M4-0 起关键词**只搜供应商自身**（名 / 联系人 / 手机号）。
+      //    原先还联了「它名下集散中心的名字」—— 加工场所已不归属供应商，该入口不成立。
       qb.andWhere(
         new Brackets((w) => {
           w.where('s.name LIKE :kw', { kw })
             .orWhere('s.contact_name LIKE :kw', { kw })
-            .orWhere('s.contact_phone LIKE :kw', { kw })
-            .orWhere(
-              's.id IN (SELECT c.supplier_id FROM ab_distribution_center c WHERE c.name LIKE :kw)',
-              { kw },
-            );
+            .orWhere('s.contact_phone LIKE :kw', { kw });
         }),
       );
     }
@@ -517,7 +498,7 @@ export class SupplierAdminService {
     return qb;
   }
 
-  private summarize(all: Supplier[], dcMap: Map<number, number>) {
+  private summarize(all: Supplier[]) {
     const count = (fn: (s: Supplier) => boolean) => all.filter(fn).length;
     const state = (s: Supplier) => this.licenseStateOf(s.licenseExpireAt);
 
@@ -525,11 +506,6 @@ export class SupplierAdminService {
       totalCount: all.length,
       activeCount: count((s) => s.status === SupplierStatus.ACTIVE),
       suspendedCount: count((s) => s.status === SupplierStatus.SUSPENDED),
-      dishCount: count((s) => s.type === SupplierType.DISH),
-      distributeCount: count((s) => s.type === SupplierType.DISTRIBUTE),
-      bothCount: count((s) => s.type === SupplierType.BOTH),
-      /** P33 KPI「集散中心数」——所有供应商名下的集散中心合计（M34-05 同源） */
-      dcTotalCount: all.reduce((a, s) => a + (dcMap.get(Number(s.id)) ?? 0), 0),
       auditPendingCount: count((s) => s.auditStatus === SupplierAuditStatus.PENDING),
       auditApprovedCount: count((s) => s.auditStatus === SupplierAuditStatus.APPROVED),
       auditRejectedCount: count((s) => s.auditStatus === SupplierAuditStatus.REJECTED),
@@ -538,13 +514,15 @@ export class SupplierAdminService {
       /** P33 KPI「已过期」（会让关联菜品被联动下架）*/
       expiredCount: count((s) => state(s) === LicenseState.EXPIRED),
       canServeCount: count((s) => this.canServe(s)),
+      // ⚠️ M4-0：`dishCount` / `distributeCount` / `bothCount` / `dcTotalCount` 四项已删除。
+      //    前三项依赖已停用的 `type`；`dcTotalCount`（名下场所合计）依赖已停用的场所归属。
+      //    恒为 0 或恒等于 totalCount 的 KPI 比没有 KPI 更糟：它看着像个指标，其实不是。
     };
   }
 
   private decorate(
     s: Supplier,
     dishMap: Map<number, number>,
-    dcMap: Map<number, number>,
     shareMap: Map<number, number>,
     auditNameMap: Map<number, string>,
   ) {
@@ -553,8 +531,7 @@ export class SupplierAdminService {
     return {
       id,
       name: s.name,
-      type: s.type,
-      typeLabel: SUPPLIER_TYPE_LABEL[s.type as SupplierType] ?? s.type,
+      // ⚠️ M4-0：不再下发 `type` / `typeLabel`（列已停用为历史字段）
       contactName: s.contactName,
       /** 列表一律脱敏（详情才给真号）*/
       contactPhoneMasked: maskPhone(s.contactPhone),
@@ -573,8 +550,7 @@ export class SupplierAdminService {
       status: s.status,
       statusLabel: SUPPLIER_STATUS_LABEL[s.status] ?? String(s.status),
       dishCount: dishMap.get(id) ?? 0,
-      dcCount: dcMap.get(id) ?? 0,
-      /** 本月应付（含反向冲销负行）· 与 M35 结算单同口径 */
+      /** 本月采购应付（含纠错冲销负行）· 与 M35 结算单同口径 */
       monthShareFen: shareMap.get(id) ?? 0,
       takeoutPlatforms: Object.keys(s.takeoutLinks ?? {}).filter((k) => !k.startsWith('__')),
       canServe: this.canServe(s),
@@ -611,21 +587,11 @@ export class SupplierAdminService {
   /**
    * 改类型前的履约一致性检查
    *
-   * 已被集散中心引用的供应商不能被降级为纯 `dish`：
-   * `ab_distribution_center.supplier_id` 指向的必须是**能承担集散**的主体，
-   * 否则会出现「集散中心挂在只出餐的商家名下」这种自相矛盾的主数据。
+   * ⚠️ **本方法已随自营口径删除**（M4-0）。原逻辑：已被集散中心引用的供应商
+   * 不能被降级为纯 `dish`，否则会出现「集散中心挂在只出餐的商家名下」的矛盾主数据。
+   * 自营下场所属 ABox 自有、供应商也不再有类型 —— 矛盾的前提整体消失，
+   * `SUPPLIER_TYPE_CONFLICT`(50008) 号位保留但不再有触发点。
    */
-  private async assertTypeChangeAllowed(supplierId: number, nextType: string): Promise<void> {
-    if (nextType !== SupplierType.DISH) return;
-    const dcCount = await this.dcRepo.count({ where: { supplierId } });
-    if (dcCount > 0) {
-      throw new BizException(
-        ErrorCode.SUPPLIER_TYPE_CONFLICT,
-        `该供应商名下仍有 ${dcCount} 个集散中心，不能改为「${SUPPLIER_TYPE_LABEL[SupplierType.DISH]}」——` +
-          '请先把集散中心改挂到其他主体，或改为集散型/混合型',
-      );
-    }
-  }
 
   /** 能否出餐：三项全满足（S2 出餐前置校验的同一判据）*/
   private canServe(s: Supplier): boolean {

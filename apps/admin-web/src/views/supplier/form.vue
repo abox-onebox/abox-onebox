@@ -39,17 +39,8 @@
           </div>
         </el-form-item>
 
-        <el-form-item label="类型" prop="type">
-          <el-radio-group v-model="form.type" :disabled="typeLocked">
-            <el-radio v-for="o in typeOptions" :key="o.value" :value="o.value">{{
-              o.label
-            }}</el-radio>
-          </el-radio-group>
-          <div v-if="typeLocked" class="hint">
-            该供应商名下已有 <b>{{ detail?.supplier.dcCount }}</b> 个集散中心， 不能改为「出餐型」——
-            集散中心必须挂在能承担集散的主体下（否则 50008）。
-          </div>
-        </el-form-item>
+        <!-- ⚠️ M4-0 删除「类型」字段：自营下供应商只有「半成品供货方」一种角色，
+             「出餐型 / 集散型 / 混合型」三分法与 D27 端点一并停用 -->
 
         <el-form-item label="联系人" prop="contactName">
           <el-input v-model="form.contactName" maxlength="32" style="width: 220px" />
@@ -69,11 +60,7 @@
         </el-form-item>
 
         <el-form-item label="地址">
-          <el-input
-            v-model="form.address"
-            maxlength="256"
-            placeholder="集散型供应商必填（复用其场地做集散）"
-          />
+          <el-input v-model="form.address" maxlength="256" placeholder="供应商经营地址（可选）" />
         </el-form-item>
 
         <el-form-item label="每日产能">
@@ -201,10 +188,6 @@
             <span class="ro-value">{{ detail.supplier.dishCount }}</span>
           </div>
           <div class="ro-item">
-            <span class="ro-label">集散中心</span>
-            <span class="ro-value">{{ detail.supplier.dcCount }}</span>
-          </div>
-          <div class="ro-item">
             <span class="ro-label">本月应付</span>
             <span class="ro-value">{{ fenToCny(detail.supplier.monthShareFen) }}</span>
           </div>
@@ -218,14 +201,7 @@
           </div>
         </div>
 
-        <div v-if="detail.distributionCenters.length" class="sub-block">
-          <div class="sub-block__title">名下集散中心</div>
-          <el-table :data="detail.distributionCenters" size="small">
-            <el-table-column prop="name" label="名称" min-width="180" />
-            <el-table-column prop="address" label="地址" min-width="200" />
-            <el-table-column prop="statusLabel" label="状态" width="90" />
-          </el-table>
-        </div>
+        <!-- ⚠️ M4-0 删除「名下集散中心」区块：加工场所属 ABox 自有，不挂在供应商名下 -->
 
         <div v-if="detail.recentShares.length" class="sub-block">
           <div class="sub-block__title">近 30 条应付流水（负行为「应付单算错」的纠错冲销）</div>
@@ -243,7 +219,6 @@
                 </span>
               </template>
             </el-table-column>
-            <el-table-column prop="type" label="类型" width="100" />
           </el-table>
         </div>
 
@@ -283,11 +258,7 @@ const submitting = ref(false);
 const canManage = ref(true);
 const detail = ref<SupplierDetail | null>(null);
 
-const typeOptions = [
-  { value: 'dish', label: '出餐型' },
-  { value: 'distribute', label: '集散型' },
-  { value: 'both', label: '混合型' },
-];
+// ⚠️ M4-0 删除 `typeOptions` 与 `typeLocked`：供应商类型已停用（见模板注释）。
 
 /** `?id=` 存在即编辑态 */
 const editId = computed(() => {
@@ -298,11 +269,8 @@ const editId = computed(() => {
 const isEdit = computed(() => editId.value !== undefined);
 
 /** 名下已有集散中心 → 不允许降级为纯出餐型（服务端 50008 的界面预演，少跑一趟白路） */
-const typeLocked = computed(() => (detail.value?.supplier.dcCount ?? 0) > 0);
-
 const form = reactive({
   name: '',
-  type: 'dish' as string,
   contactName: '',
   contactPhone: '',
   category: '',
@@ -323,7 +291,6 @@ const rules: FormRules = {
     { required: true, message: '请填写供应商名', trigger: 'blur' },
     { min: 2, max: 128, message: '长度 2–128 字', trigger: 'blur' },
   ],
-  type: [{ required: true, message: '请选择类型', trigger: 'change' }],
   contactName: [
     { required: true, message: '请填写联系人', trigger: 'blur' },
     { min: 2, max: 32, message: '长度 2–32 字', trigger: 'blur' },
@@ -350,7 +317,6 @@ async function loadDetail(): Promise<void> {
     detail.value = res;
     const s = res.supplier;
     form.name = s.name;
-    form.type = s.type;
     form.contactName = s.contactName;
     form.contactPhone = res.contactPhone ?? '';
     form.category = s.category ?? '';
@@ -382,7 +348,6 @@ async function submit(): Promise<void> {
     if (isEdit.value && editId.value) {
       const res = await updateSupplier(editId.value, {
         name: form.name,
-        type: form.type,
         contactName: form.contactName,
         contactPhone: form.contactPhone,
         category: form.category || undefined,
@@ -405,7 +370,6 @@ async function submit(): Promise<void> {
     } else {
       const res = await createSupplier({
         name: form.name,
-        type: form.type,
         contactName: form.contactName,
         contactPhone: form.contactPhone,
         category: form.category || undefined,

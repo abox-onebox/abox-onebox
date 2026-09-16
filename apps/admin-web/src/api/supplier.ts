@@ -12,7 +12,7 @@ import type { PageResult } from './system';
  * ⚠️ 金额一律**整数分**（`Fen` 结尾）。表单里用户填「元」，提交前用 `yuanToFen()`
  *    转换一次 —— 别在组件里散落 `* 100`。
  *
- * ⚠️ 枚举文案（类型 / 审核状态 / 档位 / 平台）**由服务端下发或取自
+ * ⚠️ 枚举文案（审核状态 / 档位 / 平台）**由服务端下发或取自
  *    `@abox/shared-types`**，不在此维护第二份中文映射。
  */
 
@@ -23,8 +23,11 @@ import type { PageResult } from './system';
 export interface SupplierRow {
   id: number;
   name: string;
-  type: string;
-  typeLabel: string;
+  /**
+   * ⚠️ M4-0 起服务端**不再下发** `type` / `typeLabel`（供应商类型已停用，
+   * 自营下只有「半成品供货方」一种角色）、也不再下发 `dcCount`
+   * （加工场所属 ABox 自有，不挂在供应商名下）。
+   */
   contactName: string;
   /** 列表只给脱敏号；详情才给真实号码 */
   contactPhoneMasked: string | null;
@@ -48,8 +51,7 @@ export interface SupplierRow {
   statusLabel: string;
 
   dishCount: number;
-  dcCount: number;
-  /** 本月应付（含反向冲销负行）*/
+  /** 本月采购应付（含纠错冲销负行）*/
   monthShareFen: number;
   /** 已配置外卖链接的平台 key 列表 */
   takeoutPlatforms: string[];
@@ -62,11 +64,9 @@ export interface SuppliersSummary {
   totalCount: number;
   activeCount: number;
   suspendedCount: number;
-  dishCount: number;
-  distributeCount: number;
-  bothCount: number;
-  /** 所有供应商名下的集散中心合计（P33 KPI「集散中心数」）*/
-  dcTotalCount: number;
+  // ⚠️ M4-0 删除 4 项：`dishCount` / `distributeCount` / `bothCount`（依赖已停用的
+  //    `type`）与 `dcTotalCount`（依赖已停用的「场所归属供应商」）。
+  //    恒为 0 或恒等于 totalCount 的 KPI 不是指标，是噪音。
   auditPendingCount: number;
   auditApprovedCount: number;
   auditRejectedCount: number;
@@ -76,7 +76,7 @@ export interface SuppliersSummary {
 }
 
 export interface SuppliersQuery {
-  type?: string;
+  // ⚠️ M4-0：`type` 筛选已移除（供应商类型停用）
   status?: number;
   auditStatus?: string;
   licenseState?: string;
@@ -89,12 +89,10 @@ export interface SuppliersQuery {
 export interface Option {
   value: string | number;
   label: string;
-  type?: string;
 }
 
 export interface SuppliersPage extends PageResult<SupplierRow> {
   summary: SuppliersSummary;
-  typeOptions: Option[];
   auditStatusOptions: Option[];
   statusOptions: Option[];
   categoryOptions: Option[];
@@ -119,13 +117,7 @@ export interface SupplierDetail {
     invoiceTitle: string | null;
   };
   dishes: DishRow[];
-  distributionCenters: Array<{
-    id: number;
-    name: string;
-    address: string;
-    status: number;
-    statusLabel: string;
-  }>;
+  // ⚠️ M4-0 删除 `distributionCenters`：加工场所属 ABox 自有，不挂在供应商名下。
   recentShares: Array<{
     id: number;
     shareNo: string;
@@ -152,12 +144,12 @@ export const fetchSupplierDetail = (id: number) =>
   http.get<SupplierDetail>(`/admin/suppliers/${id}`);
 
 // ============================================================================
-// D24 / D25 / D26 / D27 / D28
+// D24 / D25 / D26 / D28（D27 已下线）
 // ============================================================================
 
 export interface SupplierWritePayload {
   name?: string;
-  type?: string;
+  // ⚠️ M4-0 无 `type`：传上来会被 `forbidNonWhitelisted` 直接拒（10001）
   contactName?: string;
   contactPhone?: string;
   category?: string;
@@ -179,7 +171,6 @@ export const createSupplier = (data: SupplierWritePayload) =>
 
 export interface UpdateSupplierResult {
   id: number;
-  type: string;
   status: number;
   licenseExpireAt: string | null;
   licenseState: string;
@@ -207,10 +198,8 @@ export const auditSupplier = (
   data: { result: 'approved' | 'rejected'; licenseExpireAt?: string; remark?: string },
 ) => http.post<AuditResult>(`/admin/suppliers/${id}/audit`, data);
 
-export const setSupplierType = (id: number, type: string) =>
-  http.put<{ id: number; type: string; typeLabel: string }>(`/admin/suppliers/${id}/type`, {
-    type,
-  });
+// ⚠️ M4-0：`setSupplierType`（D27）已删除 —— 端点整体下线，
+//    留着这个函数会让页面很容易把「设置类型」按钮又接回来。
 
 export interface SettleAccountResult {
   id: number;
@@ -342,16 +331,17 @@ export const batchDishStatus = (data: { ids: number[]; status: number; reason?: 
 export interface DistributionCenterRow {
   id: number;
   name: string;
-  supplierId: number;
-  supplierName: string | null;
-  supplierType: string | null;
+  /**
+   * ⚠️ M4-0：`supplierId` / `supplierName` / `supplierType` 已从出参移除 ——
+   * 加工场所属 **ABox 自有**，不归属合作供应商。
+   */
   address: string;
   contactName: string | null;
   contactPhone: string | null;
-  /** 场地费（分）· C9 默认 0 */
+  /** 场地摊销（分）· 默认 0 = **未登记**（不是免费） */
   riceFeeFen: number;
   riceFeeYuan: string;
-  /** 打包费（分）· C9 默认 0 */
+  /** 打包人工（分）· 默认 0 = **未登记**（不是免费） */
   packFeeFen: number;
   packFeeYuan: string;
   serviceGroups: number[];
@@ -370,7 +360,7 @@ export interface DistributionCenterRow {
 
 export interface DcsQuery {
   status?: number;
-  supplierId?: number;
+  // ⚠️ M4-0：`supplierId` 筛选已移除（场所不归属供应商）
   groupId?: number;
   keyword?: string;
   page?: number;
@@ -387,7 +377,6 @@ export interface DcsPage extends PageResult<DistributionCenterRow> {
     servedGroupCount: number;
   };
   statusOptions: Option[];
-  supplierOptions: Option[];
   groupOptions: Option[];
   actions: { canManage: boolean };
   notes?: Record<string, string>;
@@ -398,7 +387,7 @@ export const fetchDistributionCenters = (params: DcsQuery) =>
 
 export interface DcWritePayload {
   name?: string;
-  supplierId?: number;
+  // ⚠️ M4-0：无 `supplierId` —— 场所属 ABox 自有（传上来会被直接拒 10001）
   address?: string;
   contactName?: string;
   contactPhone?: string;
@@ -410,10 +399,7 @@ export interface DcWritePayload {
 }
 
 export const createDistributionCenter = (data: DcWritePayload) =>
-  http.post<{ id: number; name: string; supplierId: number; status: number }>(
-    '/admin/distribution-centers',
-    data,
-  );
+  http.post<{ id: number; name: string; status: number }>('/admin/distribution-centers', data);
 
 export const updateDistributionCenter = (id: number, data: DcWritePayload) =>
   http.put<Record<string, unknown>>(`/admin/distribution-centers/${id}`, data);

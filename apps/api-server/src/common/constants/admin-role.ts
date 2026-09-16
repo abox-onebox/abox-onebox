@@ -69,16 +69,23 @@ export const ADMIN_MENU_KEYS = [
 /**
  * 供应商侧菜单 key（与 `admin-web/src/constants/index.ts` 的 `SUPPLIER_NAV` 逐项一致 · P21–P26）
  *
- * ⚠️ M3-8 起 `P21/P22` 有了真实页面（`/supplier/workbench`、`/supplier/cook-confirm`、
- *    `/supplier/packing`），不再借用 `/dashboard`、`/order/list` 顶替。
+ * ⚠️ M3-8 起 `P21/P22` 有了真实页面（`/supplier/workbench`、`/supplier/cook-confirm`），
+ *    不再借用 `/dashboard`、`/order/list` 顶替。
  *    `/order/list`（订单中心）**已从供应商角色移除** —— 供应商不需要看全量订单；
  *    `/dashboard` 保留为登录后的兜底落点。
+ *
+ * ⚠️ **M4-0：`/supplier/packing`（S3 打包任务）已移除**（2026-09-16 自营口径）。
+ *    打包闸门必须看到**所有**供应商的到位情况，一次查询天然含他方到货明细
+ *    （违反 I1：不泄露他方经营数据）；且自营下加工场所属 ABox 自有，
+ *    `ab_distribution_center.supplier_id` 已停用，原判据「本主体名下有没有启用中集散中心」
+ *    本身也失效（端点会恒返回 `visible=false`，点进去是一片空白）。
+ *    落点迁运营后台：`GET /admin/packing-tasks` · 菜单 key `/supplier/packing-center`。
+ *    供应商端 `GET /supplier/packing-tasks` **整条路由删除**（→ 10004）。
  */
 export const SUPPLIER_MENU_KEYS = [
   '/dashboard',
   '/supplier/workbench',
   '/supplier/cook-confirm',
-  '/supplier/packing',
   '/supplier/dishes',
   '/supplier/edit',
   // ⚠️ M3-9：原先借用的 `/finance/supplier-share` 是**后台财务页**（组件调

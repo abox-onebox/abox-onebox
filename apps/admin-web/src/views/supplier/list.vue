@@ -29,14 +29,7 @@
       <div class="stats__item">
         <span class="stats__label">供应商总数</span>
         <span class="stats__value">{{ summary.totalCount }}</span>
-        <span class="stats__sub">
-          出餐 {{ summary.dishCount }} · 集散 {{ summary.distributeCount }} · 混合
-          {{ summary.bothCount }}
-        </span>
-      </div>
-      <div class="stats__item">
-        <span class="stats__label">集散中心数</span>
-        <span class="stats__value">{{ summary.dcTotalCount }}</span>
+        <span class="stats__sub">自营下均为半成品供货方（无类型之分）</span>
       </div>
       <div class="stats__item">
         <span class="stats__label">可出餐</span>
@@ -63,21 +56,6 @@
 
     <!-- ─────────────── 工具条 ─────────────── -->
     <div class="toolbar">
-      <el-select
-        v-model="query.type"
-        placeholder="类型"
-        clearable
-        style="width: 130px"
-        @change="reload()"
-      >
-        <el-option
-          v-for="o in page.typeOptions"
-          :key="String(o.value)"
-          :label="o.label"
-          :value="String(o.value)"
-        />
-      </el-select>
-
       <el-select
         v-model="query.auditStatus"
         placeholder="审核状态"
@@ -162,12 +140,6 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="类型" width="100">
-        <template #default="{ row }">
-          <el-tag size="small" :type="typeTag(asRow(row).type)">{{ asRow(row).typeLabel }}</el-tag>
-        </template>
-      </el-table-column>
-
       <el-table-column label="联系人" min-width="150">
         <template #default="{ row }">
           <div class="stack">
@@ -178,10 +150,9 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="菜品 / 集散" width="110" align="center">
+      <el-table-column label="菜品数" width="90" align="center">
         <template #default="{ row }">
           <span>{{ asRow(row).dishCount }}</span>
-          <span class="sub"> / {{ asRow(row).dcCount }}</span>
         </template>
       </el-table-column>
 
@@ -351,10 +322,8 @@ const summary = reactive<SuppliersSummary>({
   totalCount: 0,
   activeCount: 0,
   suspendedCount: 0,
-  dishCount: 0,
-  distributeCount: 0,
-  bothCount: 0,
-  dcTotalCount: 0,
+  // ⚠️ M4-0：`dishCount` / `distributeCount` / `bothCount` / `dcTotalCount` 已随
+  //    类型停用与场所归属摘除一并删除（服务端不再下发）。
   auditPendingCount: 0,
   auditApprovedCount: 0,
   auditRejectedCount: 0,
@@ -365,12 +334,10 @@ const summary = reactive<SuppliersSummary>({
 
 /** 枚举选择器由服务端下发（含真实品类去重），端上不维护第二份中文映射 */
 const page = reactive<{
-  typeOptions: Option[];
   auditStatusOptions: Option[];
   statusOptions: Option[];
   actions: { canManage: boolean };
 }>({
-  typeOptions: [],
   auditStatusOptions: [],
   statusOptions: [],
   actions: { canManage: false },
@@ -379,7 +346,6 @@ const page = reactive<{
 const canManage = computed(() => page.actions.canManage);
 
 const query = reactive({
-  type: undefined as string | undefined,
   auditStatus: undefined as string | undefined,
   licenseState: undefined as string | undefined,
   status: undefined as number | undefined,
@@ -401,11 +367,8 @@ function asRow(raw: unknown): SupplierRow {
   return raw as SupplierRow;
 }
 
-function typeTag(type: string): 'info' | 'success' | 'warning' {
-  if (type === 'both') return 'warning';
-  if (type === 'distribute') return 'success';
-  return 'info';
-}
+// ⚠️ M4-0 删除 `typeTag()`：类型列与类型筛选已移除（供应商类型停用，
+//    自营下只有「半成品供货方」一种角色）。
 
 function auditTag(status: string): 'info' | 'success' | 'danger' {
   if (status === 'approved') return 'success';
@@ -422,7 +385,6 @@ function licenseTag(state: string): 'info' | 'success' | 'warning' | 'danger' {
 
 function buildParams(): SuppliersQuery {
   return {
-    type: query.type,
     auditStatus: query.auditStatus,
     licenseState: query.licenseState,
     status: query.status,
@@ -439,7 +401,6 @@ async function load(): Promise<void> {
     rows.value = res.list;
     total.value = res.total;
     Object.assign(summary, res.summary);
-    page.typeOptions = res.typeOptions;
     page.auditStatusOptions = res.auditStatusOptions;
     page.statusOptions = res.statusOptions;
     page.actions = res.actions;

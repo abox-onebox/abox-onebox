@@ -370,11 +370,12 @@ async function main() {
     );
     const menus = sup.account?.menus ?? [];
     assert(
-      menus.length === 7 &&
+      menus.length === 6 &&
         menus.includes('/supplier/settlement') &&
         menus.includes('/supplier/dishes') &&
+        !menus.includes('/supplier/packing') &&
         !menus.includes('/order/list'),
-      'A2 供应商 menus 共 7 项（P21–P26 + 概览 + 自有结算页；M3-8 起不再借用运营订单页，M3-9 起结算页为 `/supplier/settlement`）',
+      'A2 供应商 menus 共 6 项（出餐 P21/P22 + 自有菜品/资料 + 自有结算页 + 概览；M3-8 起不再借用运营订单页，M4-0 起 S3 打包任务迁运营后台不再对供应商开放）',
       `menus=${JSON.stringify(menus)}`,
     );
     assert(
@@ -742,10 +743,11 @@ async function main() {
   const supplierMenus = roleList.find((r) => r.role === 'supplier')?.menus ?? [];
   assert(
     roleList.find((r) => r.role === 'super_admin')?.menus?.includes('*') &&
-      supplierMenus.length === 7 &&
+      supplierMenus.length === 6 &&
       supplierMenus.includes('/supplier/settlement') &&
+      !supplierMenus.includes('/supplier/packing') &&
       supplierMenus.every((m) => m === '/dashboard' || m.startsWith('/supplier/')),
-    'D54 矩阵内容正确（超管通配；供应商 7 项，且每一项都在 `/supplier/*` 内 —— 角色矩阵与前端 `SUPPLIER_NAV` 必须逐项对齐）',
+    'D54 矩阵内容正确（超管通配；供应商 **6** 项且每一项都在 `/supplier/*` 内 —— M4-0 起 `/supplier/packing` 已移除，角色矩阵与前端 `SUPPLIER_NAV` 必须逐项对齐）',
     `supplierMenus=${JSON.stringify(supplierMenus)}`,
   );
   assert(
@@ -3454,11 +3456,11 @@ async function main() {
     `keys=${Object.keys(sRows[0] ?? {}).filter((k) => /phone/i.test(k)).join(',')}`,
   );
   assert(
-    (sList.body?.data?.typeOptions ?? []).length === 3 &&
+    sList.body?.data?.typeOptions === undefined &&
       (sList.body?.data?.auditStatusOptions ?? []).length === 3 &&
       (sList.body?.data?.statusOptions ?? []).length === 2,
-    'D23 下发三个枚举选择器（类型 3 / 审核状态 3 / 合作状态 2）',
-    `type=${sList.body?.data?.typeOptions?.length} audit=${sList.body?.data?.auditStatusOptions?.length}`,
+    'D23 下发两个枚举选择器（审核状态 3 / 合作状态 2），**不下发类型** —— M4-0 自营口径下供应商只有「半成品供货方」一种角色，三分法失效',
+    `typeOptions=${JSON.stringify(sList.body?.data?.typeOptions)} audit=${sList.body?.data?.auditStatusOptions?.length}`,
   );
   assert(
     (sList.body?.data?.categoryOptions ?? []).some((o) => o.value === '本帮菜'),
@@ -3471,15 +3473,15 @@ async function main() {
     `canManage=${sList.body?.data?.actions?.canManage}`,
   );
 
+  // ⚠️ M4-0：`type` 已从 DTO 白名单移除 → 带 `type` 筛选**直接 10001**（`forbidNonWhitelisted`），
+  //    而不是静默忽略后返回全量 —— 后者会让调用方以为筛选生效了。
   const onlyBoth = await call('GET', `/admin/suppliers?${qs({ type: 'both', pageSize: 100 })}`, {
     token: adminToken,
   });
   assert(
-    onlyBoth.body?.code === 0 &&
-      (onlyBoth.body?.data?.list ?? []).length > 0 &&
-      (onlyBoth.body?.data?.list ?? []).every((r) => r.type === 'both'),
-    'D23 按类型筛选有效（both 全命中，且返回行的 type 逐条一致）',
-    `count=${onlyBoth.body?.data?.list?.length}`,
+    onlyBoth.body?.code === 10001,
+    'D23 传已下线的 `type` 筛选 → 10001（**显式拒绝**，不是静默忽略后返回全量）',
+    `code=${onlyBoth.body?.code} msg=${onlyBoth.body?.message}`,
   );
 
   const onlyExpired = await call('GET', `/admin/suppliers?${qs({ licenseState: 'expired', pageSize: 100 })}`, {
@@ -3500,20 +3502,24 @@ async function main() {
     'D23 关键词命中供应商名（三味屋 · id=1）',
     `names=${JSON.stringify((kwByName.body?.data?.list ?? []).map((r) => r.name))}`,
   );
+  // ⚠️ M4-0：加工场所已不归属供应商 → 关键词**不再跨表**搜集散中心名。
+  //    搜场地名若还能找回 id=1，反而说明「场所挂在供应商名下」的旧关系没清干净。
   const kwByDc = await call('GET', `/admin/suppliers?${qs({ keyword: '集散中心 1' })}`, {
     token: adminToken,
   });
   assert(
-    kwByDc.body?.code === 0 && (kwByDc.body?.data?.list ?? []).some((r) => r.id === 1),
-    'D23 关键词**跨表命中集散中心名**（搜「集散中心 1」能找回三味屋 —— 运营是按场地找供应商的）',
+    kwByDc.body?.code === 0 && !(kwByDc.body?.data?.list ?? []).some((r) => r.id === 1),
+    'D23 关键词**不再跨表命中**集散中心名（加工场所属 ABox 自有，不作为供应商的检索维度）',
     `ids=${JSON.stringify((kwByDc.body?.data?.list ?? []).map((r) => r.id))}`,
   );
 
   const filterOpts = await call('GET', '/admin/suppliers/filter-options', { token: adminToken });
   assert(
-    filterOpts.body?.code === 0 && (filterOpts.body?.data?.typeOptions ?? []).length === 3,
-    'D23 filter-options 未被 `:id` 参数路由吃掉（**静态路由必须声明在参数路由之前**）',
-    `code=${filterOpts.body?.code} typeOptions=${filterOpts.body?.data?.typeOptions?.length}`,
+    filterOpts.body?.code === 0 &&
+      filterOpts.body?.data?.typeOptions === undefined &&
+      Array.isArray(filterOpts.body?.data?.auditStatusOptions),
+    'D23 filter-options 未被 `:id` 参数路由吃掉（**静态路由必须声明在参数路由之前**），且不再下发 `typeOptions`',
+    `code=${filterOpts.body?.code} typeOptions=${JSON.stringify(filterOpts.body?.data?.typeOptions)}`,
   );
 
   const noSuch = await call('GET', '/admin/suppliers/999999', { token: adminToken });
@@ -3531,11 +3537,11 @@ async function main() {
       !!detSup1d.supplier &&
       !!detSup1d.bank &&
       Array.isArray(detSup1d.dishes) &&
-      Array.isArray(detSup1d.distributionCenters) &&
       Array.isArray(detSup1d.recentShares) &&
       Array.isArray(detSup1d.operationLogs) &&
-      !!detSup1d.takeout,
-    'D23 详情一次性带齐 7 块（档案 / 银行 / 菜品 / 集散 / 近 30 条分账 / 日志 / 外卖链接）',
+      !!detSup1d.takeout &&
+      detSup1d.distributionCenters === undefined,
+    'D23 详情一次性带齐 6 块（档案 / 银行 / 菜品 / 近 30 条分账 / 日志 / 外卖链接），**不再回集散中心**（M4-0：场所不挂在供应商名下）',
     `keys=${Object.keys(detSup1d).join(',')}`,
   );
   assert(
@@ -3555,18 +3561,14 @@ async function main() {
     'D23 详情菜品全属本家，且 dishCount 与列表口径一致（两处若不同源，就会「列表 4 道、详情 3 道」）',
     `dishes=${detSup1d.dishes.length} dishCount=${detSup1d.supplier.dishCount}`,
   );
-  assert(
-    detSup1d.supplier.dcCount === detSup1d.distributionCenters.length,
-    'D23 详情集散中心数与 dcCount 一致',
-    `dc=${detSup1d.distributionCenters.length} dcCount=${detSup1d.supplier.dcCount}`,
-  );
+  // ⚠️ M4-0：`dcCount` / `distributionCenters` 已随「场所不归属供应商」一并移除；
+  //    上一条「7 块 → 6 块」的断言已覆盖「详情不再回集散中心」，此处不必再叠一条。
 
   // ================================================ C · D24 新增 / D25 编辑
   const cSupA = await call('POST', '/admin/suppliers', {
     token: adminToken,
     body: {
       name: supA,
-      type: 'both',
       contactName: 'e2e 联系人A',
       contactPhone: mkPhone(1),
       category: '测试品类',
@@ -3597,7 +3599,6 @@ async function main() {
     token: adminToken,
     body: {
       name: supB,
-      type: 'dish',
       contactName: 'e2e 联系人B',
       contactPhone: mkPhone(2),
       category: '测试品类',
@@ -3736,44 +3737,28 @@ async function main() {
     `audit=${rejectOk.body?.data?.auditStatus} status=${rejectOk.body?.data?.status}`,
   );
 
-  // ============================================ E · D27 设置类型 / D28 结算账户
-  const setTypeConflict = await call('PUT', '/admin/suppliers/1/type', {
+  // ============================================ E · D27（已下线）/ D28 结算账户
+  //
+  // ⚠️ M4-0：`PUT /admin/suppliers/:id/type` **整条路由已删除**（不是返回固定值）。
+  //    这里断言它确实「查无此路」——用 10004（框架 404 经全局异常过滤器翻译）而不是
+  //    「返回 0 但什么也没做」：留一个「点了没区别」的按钮，运营会以为类型还在起作用。
+  const setTypeGone = await call('PUT', '/admin/suppliers/1/type', {
     token: adminToken,
     body: { type: 'dish' },
   });
   assert(
-    setTypeConflict.body?.code === 50008,
-    'D27 三味屋（both）名下有集散中心 → 不能降级为 dish → 50008（否则集散中心会挂在「不出餐也不集散」的主体下）',
-    `code=${setTypeConflict.body?.code} msg=${setTypeConflict.body?.message}`,
+    setTypeGone.body?.code === 10004,
+    'D27 设置类型端点**已下线** → 10004（路由不存在，不是「返回成功但没改」）',
+    `code=${setTypeGone.body?.code} msg=${setTypeGone.body?.message}`,
   );
-  const setTypeSame = await call('PUT', '/admin/suppliers/1/type', {
-    token: adminToken,
-    body: { type: 'both' },
-  });
-  assert(
-    setTypeSame.body?.code === 10001,
-    'D27 目标态重复操作 → 10001（**不是幂等成功**：要点得动「确实改了」和「点重了」）',
-    `code=${setTypeSame.body?.code} msg=${setTypeSame.body?.message}`,
-  );
-  const setTypeBad = await call('PUT', `/admin/suppliers/${supAId}/type`, {
-    token: adminToken,
-    body: { type: 'not-a-type' },
-  });
-  assert(
-    setTypeBad.body?.code === 10001,
-    'D27 非法类型 → 10001（枚举白名单在 DTO 层就拦，不进服务层）',
-    `code=${setTypeBad.body?.code}`,
-  );
-  const setTypeOk = await call('PUT', `/admin/suppliers/${supAId}/type`, {
+  const setTypeOnUpdate = await call('PUT', `/admin/suppliers/${supAId}`, {
     token: adminToken,
     body: { type: 'distribute' },
   });
   assert(
-    setTypeOk.body?.code === 0 &&
-      setTypeOk.body?.data?.type === 'distribute' &&
-      setTypeOk.body?.data?.typeLabel === '集散型',
-    'D27 改为集散型成功并回带中文标签（文案由 shared-types 统一，端上不维护第二份）',
-    `type=${setTypeOk.body?.data?.type} label=${setTypeOk.body?.data?.typeLabel}`,
+    setTypeOnUpdate.body?.code === 10001,
+    'D27 编辑接口也不再收 `type` → 10001（类型是历史字段，任何写入口都拒收；`ab_supplier.type` 列保留仅供历史数据对照）',
+    `code=${setTypeOnUpdate.body?.code} msg=${setTypeOnUpdate.body?.message}`,
   );
 
   const settleNoAccount = await call('PUT', `/admin/suppliers/${supAId}/settle-account`, {
@@ -4003,7 +3988,7 @@ async function main() {
   );
   assert(
     dcSum.totalRiceFeeFen === 0 && dcSum.totalPackFeeFen === 0,
-    'D29 种子集散中心**场地费与打包费全为 0**（C9：复用供应商场地 + 平台兼职打包，非 0 才是异常）',
+    'D29 种子场所**场地费与打包费全为 0**（自营口径：场所是 ABox 自有、打包是自身成本，二者**不出付款单**；0 表示「**未登记**」而非免费）',
     `rice=${dcSum.totalRiceFeeFen} pack=${dcSum.totalPackFeeFen}`,
   );
   assert(
@@ -4035,13 +4020,15 @@ async function main() {
     `ids=${JSON.stringify((dcByKw.body?.data?.list ?? []).map((r) => r.id))}`,
   );
 
+  // ⚠️ M4-0：`supplierId` 已从 D30 入参白名单移除 —— 场所属 ABox 自有，不归属供应商。
+  //    原「往出餐型供应商名下挂 → 50008」的闸门随之删除，改为**入参层直接拒收**（10001）。
   const dcUnderDish = await call('POST', '/admin/distribution-centers', {
     token: adminToken,
     body: { name: `e2e错挂_${stamp}`, supplierId: supBId, address: '朝阳区测试路 9 号' },
   });
   assert(
-    dcUnderDish.body?.code === 50008,
-    'D30 往**出餐型**供应商名下挂集散中心 → 50008（纯出餐商家名下挂集散中心是自相矛盾的主数据）',
+    dcUnderDish.body?.code === 10001,
+    'D30 传已下线的 `supplierId` → 10001（旧「错挂」闸门随 50008 一并删除，入参层就拒收）',
     `code=${dcUnderDish.body?.code} msg=${dcUnderDish.body?.message}`,
   );
 
@@ -4049,7 +4036,6 @@ async function main() {
     token: adminToken,
     body: {
       name: `e2e集散_${stamp}`,
-      supplierId: supAId,
       address: '朝阳区测试路 2 号',
       contactName: 'e2e 场地',
       contactPhone: mkPhone(3),
@@ -4059,7 +4045,7 @@ async function main() {
   const dcId = Number(dcCreated.body?.data?.id ?? 0);
   assert(
     dcCreated.body?.code === 0 && dcId > 0 && dcCreated.body?.data?.status === 1,
-    'D30 新建集散中心成功（挂到集散型主体下）',
+    'D30 新建集散中心成功（ABox 自有加工场所，不挂任何供应商）',
     `id=${dcId}`,
   );
   const dcDb = readDb('SELECT rice_fee, pack_fee, service_groups FROM ab_distribution_center WHERE id = ?', [
@@ -4096,9 +4082,9 @@ async function main() {
     body: { supplierId: supBId },
   });
   assert(
-    dcMoveBad.body?.code === 50008,
-    'D31 改挂到出餐型供应商 → 50008（与 D30 是同一规则的两个入口，都得拦）',
-    `code=${dcMoveBad.body?.code}`,
+    dcMoveBad.body?.code === 10001,
+    'D31 编辑也不收 `supplierId` → 10001（与 D30 是同一关系的两个入口，都从入参层拒收）',
+    `code=${dcMoveBad.body?.code} msg=${dcMoveBad.body?.message}`,
   );
 
   const dcSuspend = await call('PUT', `/admin/distribution-centers/${dcId}`, {
@@ -4120,6 +4106,8 @@ async function main() {
   );
 
   // 制造「有历史应付」的前置：插一条集散中心应付流水（财务域夹具，非被测接口自身写入的字段）
+  // ⚠️ 自营后 `payee_type=distribution_center` 已**冻结**（场所摊销不出付款单），
+  //    此处刻意造一条 legacy 行来验证「历史应付 ⇒ 不可删」这条前置仍然生效。
   writeDb(
     'INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, quantity, unit_price, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     [`E2E${stamp}${dcId}`, bjToday(), bjToday(), 'distribution_center', dcId, 100, '0.00', '0.00'],
@@ -4139,7 +4127,7 @@ async function main() {
 
   const dcFresh = await call('POST', '/admin/distribution-centers', {
     token: adminToken,
-    body: { name: `e2e临时_${stamp}`, supplierId: supAId, address: '朝阳区测试路 3 号' },
+    body: { name: `e2e临时_${stamp}`, address: '朝阳区测试路 3 号' },
   });
   const dcFreshId = Number(dcFresh.body?.data?.id ?? 0);
   const dcDeleted = await call('DELETE', `/admin/distribution-centers/${dcFreshId}`, { token: adminToken });
@@ -4191,7 +4179,7 @@ async function main() {
   );
   const opDc = await call('POST', '/admin/distribution-centers', {
     token: supOpToken,
-    body: { name: 'e2e 越权集散', supplierId: supAId, address: 'x' },
+    body: { name: 'e2e 越权集散', address: 'x' },
   });
   assert(
     opDc.body?.code === 10003,
@@ -4618,13 +4606,11 @@ async function main() {
 
   // ---------------------------------------------------------- F · 派生联动 + 视图聚合
   // 给 grpA 挂一个**新建**集散中心 → 覆盖状态应由 uncovered 翻成 covered（跨批次联动：M3-6 D30/D31 → M3-7 派生）
-  const supForDc = await call('GET', `/admin/suppliers?${qs({ pageSize: 100 })}`, { token: adminToken });
-  const dcSupplier = (supForDc.body?.data?.list ?? []).find((s) => s.type !== 'dish') ?? {};
+  // ⚠️ M4-0：场所不再归属供应商（`supplierId` 已从入参移除），本节只需一个能服务 grpA 的场所。
   const dcCreate = await call('POST', '/admin/distribution-centers', {
     token: adminToken,
     body: {
       name: `e2e集散_${stamp}`,
-      supplierId: dcSupplier.id,
       address: 'e2e 集散地址',
       serviceGroups: [grpAId],
       status: 1,
@@ -4777,7 +4763,8 @@ async function main() {
   }
 
   // ==========================================================================
-  // §20 M3-8 出餐确认 S1–S3（原型 P21/P22 · 供应商端）
+  // §20 M3-8 出餐确认 S1–S2（原型 P21/P22 · 供应商端）
+  //      + M4-0 加工场所打包任务（原 S3 · 已迁运营后台 `GET /admin/packing-tasks`）
   // ==========================================================================
   //
   // ⚠️ **本节刻意不依赖下单窗口**（与 §18/§19 同纪律），且更进一步：
@@ -4892,18 +4879,18 @@ async function main() {
       `empty=${emptyWb.body?.data?.summary?.empty} dishes=${(emptyWb.body?.data?.dishes ?? []).length}`,
     );
 
-    // ---- C. S3 打包任务：闸门未就绪 ----
-    const pk1 = await call('GET', `/supplier/packing-tasks?date=${TMR}`, { token: supToken });
+    // ---- C. 加工场所打包任务：闸门未就绪（原 S3 · M4-0 迁运营后台） ----
+    const pk1 = await call('GET', `/admin/packing-tasks?date=${TMR}`, { token: adminToken });
     const pk1Data = pk1.body?.data;
-    const pk1Center = pk1Data?.centers?.[0];
+    const pk1Center = (pk1Data?.centers ?? []).find((c) => c.centerId === 1);
     assert(
-      pk1.body?.code === 0 && pk1Data?.visible === true && pk1Center?.centerId === 1,
-      'S3 对「名下挂了启用中集散中心」的主体可见（三味屋 type=both，名下有集散中心 1）',
-      `visible=${pk1Data?.visible} center=${pk1Center?.centerName}`,
+      pk1.body?.code === 0 && pk1Data?.visible === true && !!pk1Center,
+      '打包任务由**运营后台**读取，一次返回**全部启用中的加工场所** —— 判据不再是「本主体名下有没有集散中心」（自营下场所属 ABox 自有，`supplier_id` 已停用，该判据已失效）',
+      `visible=${pk1Data?.visible} centers=${JSON.stringify((pk1Data?.centers ?? []).map((c) => `#${c.centerId}`))}`,
     );
     assert(
       pk1Center?.ready === false && (pk1Center?.blockers ?? []).length === 4,
-      'S3 前置闸门：该中心当日菜品**未全部确认送达** → `ready=false`，blockers 列出欠的 4 家（此刻三味屋也还没确认）—— 未到齐就开包会包出缺菜的餐',
+      '打包前置闸门：该场所当日菜品**未全部确认送达** → `ready=false`，blockers 列出欠的 4 家（此刻三味屋也还没确认）—— 未到齐就开包会包出缺菜的餐',
       `ready=${pk1Center?.ready} blockers=${JSON.stringify((pk1Center?.blockers ?? []).map((b) => b.supplierName))}`,
     );
     const allDetailsTmr = readRows(
@@ -4912,41 +4899,67 @@ async function main() {
     );
     assert(
       allDetailsTmr.length === 4,
-      'S3 查询会**全量派生**（不只本主体）：闸门要看到所有供应商的到位情况，漏掉任何一家「已到齐」都是假象',
+      '打包任务**全量派生**（跨所有供应商）：闸门要看到所有供应商的到位情况，漏掉任何一家「已到齐」都是假象 —— 正因如此这份数据不能开给供应商（I1）',
       `rows=${allDetailsTmr.length} suppliers=${JSON.stringify(allDetailsTmr.map((r) => r.supplier_id))}`,
     );
     assert(
       (pk1Center?.routes ?? []).length === 2 &&
         (pk1Center?.routes ?? []).every((r) => r.routeNo && r.stops.length > 0),
-      'S3 路线派生：集散中心 1 服务楼群 1/2 → 两条路线，各带 R 编号与站点链（按楼栋 id 升序）',
+      '打包路线派生：加工场所 1 服务楼群 1/2 → 两条路线，各带 R 编号与站点链（按楼栋 id 升序）',
       `routes=${JSON.stringify((pk1Center?.routes ?? []).map((r) => `${r.routeNo}:${r.groupName}:${r.quantity}`))}`,
     );
     assert(
       pk1Center?.summary?.batchQuantity === 45 && pk1Center?.summary?.stopCount > 0,
-      'S3 打包份数 = 所服务楼群当日已售份数之和（bg1 45 + bg2 0 = 45）',
+      '打包份数 = 该场所所服务楼群当日已售份数之和（bg1 45 + bg2 0 = 45）',
       `batch=${pk1Center?.summary?.batchQuantity} stops=${pk1Center?.summary?.stopCount}`,
     );
     assert(
       pk1Center?.distanceKm === undefined && pk1Center?.durationMin === undefined,
-      'S3 **不返回距离与单段时长**（无地图数据，原型上的 km/分钟是演示值，写进接口就是对外承诺）',
+      '打包任务**不返回距离与单段时长**（无地图数据，原型上的 km/分钟是演示值，写进接口就是对外承诺）',
       `keys=${Object.keys(pk1Center ?? {}).join(',')}`,
     );
     assert(
-      !!pk1Data?.notes?.gateRule && !!pk1Data?.notes?.routeRule,
-      'S3 下发闸门规则与路线口径说明',
+      !!pk1Data?.notes?.scopeRule && !!pk1Data?.notes?.gateRule && !!pk1Data?.notes?.routeRule,
+      '打包任务下发**范围口径**（跨供应商 · 不对供应商端开放）与闸门 / 路线口径说明',
       `keys=${Object.keys(pk1Data?.notes ?? {}).join(',')}`,
     );
 
-    // ---- D. S3 可见性：纯出餐型（名下无集散中心） ----
-    writeDb('UPDATE ab_distribution_center SET supplier_id = 2 WHERE id = 1');
-    const pkHidden = await call('GET', `/supplier/packing-tasks?date=${TMR}`, { token: supToken });
-    writeDb('UPDATE ab_distribution_center SET supplier_id = 1 WHERE id = 1');
+    // ---- D. 原供应商端 S3 已下线 + 新端点的权限边界（M4-0） ----
+    const pkGone = await call('GET', `/supplier/packing-tasks?date=${TMR}`, { token: supToken });
     assert(
-      pkHidden.body?.code === 0 &&
-        pkHidden.body?.data?.visible === false &&
-        !!pkHidden.body?.data?.reason,
-      'S3 名下无启用集散中心 → `visible=false` + reason（**HTTP 200**：没有这项任务是正常状态，不是错误，不该让端上走报错分支）',
-      `code=${pkHidden.body?.code} visible=${pkHidden.body?.data?.visible}`,
+      pkGone.body?.code === 10004,
+      'S3 供应商端打包任务**已下线** → 10004（路由不存在，不是返回空壳 `visible=false`）—— 闸门含他方到货明细，不得开给供应商（I1）',
+      `code=${pkGone.body?.code} msg=${pkGone.body?.message}`,
+    );
+    const pkOp = await call('GET', `/admin/packing-tasks?date=${TMR}`, { token: supOpToken });
+    assert(
+      pkOp.body?.code === 0 && pkOp.body?.data?.visible === true,
+      '打包任务类级白名单**含 `operator`**（打包是运营的日常作业，必须能看）',
+      `code=${pkOp.body?.code}`,
+    );
+    const pkViewer = await call('GET', `/admin/packing-tasks?date=${TMR}`, { token: supViewToken });
+    assert(
+      pkViewer.body?.code === 10003,
+      '打包任务**不含 `viewer`** → 10003（只读观察者仅看板 —— 与 D47–D50 刻意含 viewer 正好相反）',
+      `code=${pkViewer.body?.code}`,
+    );
+    const pkFin = await call('GET', `/admin/packing-tasks?date=${TMR}`, { token: finToken2 });
+    assert(
+      pkFin.body?.code === 10003,
+      '打包任务**不含 `finance`** → 10003（菜单矩阵里财务没有这一页；API 放行而菜单没有 = 「能调但进不去」）',
+      `code=${pkFin.body?.code}`,
+    );
+    const pkMini = await call('GET', `/admin/packing-tasks?date=${TMR}`, { token: u.token });
+    assert(
+      pkMini.body?.code === 10003,
+      '双主体隔离：小程序 token 打 /admin/packing-tasks → 10003（与 /admin/suppliers 同一隔离依据）',
+      `code=${pkMini.body?.code}`,
+    );
+    const pkAnon = await call('GET', `/admin/packing-tasks?date=${TMR}`);
+    assert(
+      pkAnon.body?.code === 10002,
+      '未登录打 /admin/packing-tasks → 10002',
+      `code=${pkAnon.body?.code}`,
     );
 
     // ---- E. 资质闸门优先于时间闸门 ----
@@ -5011,7 +5024,7 @@ async function main() {
     const supLogs = await call('GET', '/admin/system/logs?pageSize=100', { token: adminToken });
     assert(
       (supLogs.body?.data?.list ?? []).some((l) => l.action === '出餐确认'),
-      'S2 写操作自动落操作日志（GET 的 S1/S3 不打日志 —— 否则列表接口会把日志表刷爆）',
+      'S2 写操作自动落操作日志（GET 的 S1 / 打包任务不打日志 —— 否则列表接口会把日志表刷爆）',
       `hit=${(supLogs.body?.data?.list ?? []).filter((l) => l.action === '出餐确认').length}`,
     );
 
@@ -5020,11 +5033,11 @@ async function main() {
       "UPDATE ab_supplier_dish_center_daily SET status = 'confirmed', actual_quantity = plan_quantity, confirmed_at = datetime('now') WHERE produce_date = ? AND distribution_center_id = 1 AND supplier_id <> 1",
       [TMR],
     );
-    const pk2 = await call('GET', `/supplier/packing-tasks?date=${TMR}`, { token: supToken });
-    const pk2Center = pk2.body?.data?.centers?.[0];
+    const pk2 = await call('GET', `/admin/packing-tasks?date=${TMR}`, { token: adminToken });
+    const pk2Center = (pk2.body?.data?.centers ?? []).find((c) => c.centerId === 1);
     assert(
       pk2Center?.ready === true && (pk2Center?.blockers ?? []).length === 0,
-      'S3 闸门翻转：其余 3 家确认后 → `ready=true`、blockers 清空（与 §19 同款的**跨批次实时性证明**：上游一动，下游派生值立刻变）',
+      '打包闸门翻转：其余 3 家确认后 → `ready=true`、blockers 清空（与 §19 同款的**跨批次实时性证明**：上游一动，下游派生值立刻变）',
       `ready=${pk2Center?.ready} blockers=${(pk2Center?.blockers ?? []).length} confirmed=${pk2Center?.summary?.confirmedDishCount}/${pk2Center?.summary?.dishCount}`,
     );
 

@@ -15,9 +15,25 @@ export class Supplier {
   @Column({ type: 'varchar', length: 128 })
   name!: string;
 
-  /** dish 出餐型 / distribute 集散型 / both 混合型 */
+  /**
+   * ⚠️ **自营下已停用（历史字段 · 2026-09-16 路线裁定）**
+   *
+   * 「出餐型 / 集散型 / 混合型」三分法建立在「供应商入驻 + 供应商自己承担集散」之上。
+   * 单主体自营后**不存在**「承担集散的供应商」—— 供应商只有一种角色：**半成品供货方**
+   * （供货 + 报价，菜单由 ABox 定、热加工与打包在 ABox 自有场所完成）。
+   * 三个枚举值中只剩一个成立，留着它就是「给了选择、选了没区别」。
+   *
+   * 处置：D27 设置类型**端点已下线**、D24/D25 新建编辑**已停收**、D23 筛选与展示**已移除**、
+   * `SUPPLIER_TYPE_CONFLICT`(50008) 三处闸门**已删除**。本列保留仅为兼容历史行与索引，
+   * **任何逻辑不得再读**（同 `share_rate` / `ab_distribution_center.supplier_id` 的处理）。
+   */
   @Index('idx_supplier_type_status')
-  @Column({ type: 'varchar', length: 16, default: 'dish' })
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: 'dish',
+    comment: '⚠️ 已停用（自营前历史字段）：自营下供应商只有「半成品供货方」一种角色',
+  })
   type!: string;
 
   @Column({ name: 'contact_name', type: 'varchar', length: 32 })

@@ -153,16 +153,11 @@
         <el-form-item label="集散中心">
           <el-select
             v-model="form.distributionCenterId"
-            placeholder="可不选（复用供应商场地 · 场地费 ¥0）"
+            placeholder="可不选（ABox 自有加工场所）"
             clearable
             style="width: 100%"
           >
-            <el-option
-              v-for="d in distributionCenters"
-              :key="d.id"
-              :label="`${d.name}（${d.supplierName ?? '—'}）`"
-              :value="d.id"
-            />
+            <el-option v-for="d in distributionCenters" :key="d.id" :label="d.name" :value="d.id" />
           </el-select>
         </el-form-item>
 

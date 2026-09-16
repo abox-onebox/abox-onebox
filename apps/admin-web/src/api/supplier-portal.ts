@@ -1,11 +1,13 @@
 import { http } from './request';
 
 /**
- * api/supplier-portal —— **供应商端**出餐链路（《接口规范 v1.0》§6.5 S1–S3 · 原型 P21/P22）
+ * api/supplier-portal —— **供应商端**出餐链路（《接口规范 v1.0》§6.5 S1–S2 / S9 · 原型 P21/P22/P25）
  *
  * ⚠️ 与 `api/supplier.ts`（**运营后台** `/admin/suppliers/*` · P33）**不是一回事**：
  *    本文件走 `/supplier/*`，主体是 `role=supplier` 的后台账号；
  *    服务端在 `JwtAuthGuard` 就按 `typ` 分流，数据范围由 token 里的 `supplierId` 决定。
+ *
+ * ⚠️ **S3 打包任务已迁运营后台**（M4-0）：见 `api/packing.ts`（`/admin/packing-tasks`）。
  *
  * ⚠️ 请求体里**不发 `supplierId`** —— 主体由登录态决定。多带这个字段会被
  *    `forbidNonWhitelisted` 直接拒（10001），这是刻意的：收下它就等于允许
@@ -49,8 +51,7 @@ export interface PortalDish {
 export interface PortalSupplier {
   id: number;
   name: string;
-  type: string;
-  typeLabel: string;
+  // ⚠️ M4-0：`type` / `typeLabel` 已从出参移除（自营下供应商只有「半成品供货方」一种角色）
   status: number;
   statusLabel: string;
   auditStatus: string;
@@ -139,58 +140,18 @@ export const cookConfirm = (body: { date: string; items: CookConfirmItem[] }) =>
   http.post<CookConfirmResult>('/supplier/meal/cook-confirm', body);
 
 // ============================================================================
-// S3 集散中心打包任务
+// S3 集散中心打包任务 —— ⚠️ 已迁运营后台（M4-0 · 2026-09-16）
 // ============================================================================
-
-export interface PackingDish {
-  supplierId: number;
-  supplierName: string;
-  dishId: number;
-  dishName: string;
-  unitPriceFen: number;
-  planQuantity: number;
-  actualQuantity: number | null;
-  status: string;
-  confirmedAt: string | null;
-}
-
-export interface PackingCenter {
-  centerId: number;
-  centerName: string;
-  centerAddress: string;
-  contactName: string | null;
-  contactPhone: string | null;
-  /** 该中心当日所有菜品均已确认送达 —— 未到齐不要开包 */
-  ready: boolean;
-  blockers: Array<{ supplierName: string; dishName: string; planQuantity: number; status: string }>;
-  dishes: PackingDish[];
-  routes: Array<{
-    routeNo: string | null;
-    buildingGroupId: number;
-    groupName: string;
-    quantity: number;
-    stops: Array<{ buildingId: number; buildingName: string; address: string }>;
-  }>;
-  summary: {
-    batchQuantity: number;
-    routeCount: number;
-    stopCount: number;
-    dishCount: number;
-    confirmedDishCount: number;
-  };
-}
-
-export interface PackingData {
-  /** 非集散型主体返回 false（「你没有这项任务」是正常状态，不是错误） */
-  visible: boolean;
-  reason?: string;
-  date: string | null;
-  centers: PackingCenter[];
-  notes?: Record<string, string>;
-}
-
-export const fetchPackingTasks = (date?: string) =>
-  http.get<PackingData>('/supplier/packing-tasks', date ? { date } : undefined);
+//
+// 原 `GET /supplier/packing-tasks` **整条路由已删除**（→ 10004），前端入口
+// `/supplier/packing` 也从 `SUPPLIER_NAV` / `SUPPLIER_MENU_KEYS` 下线。
+// 新的落点是运营后台 `GET /admin/packing-tasks` —— 见 `api/packing.ts`
+// 与 `views/supplier/packing-center.vue`。
+//
+// 为什么不能留给供应商：打包闸门必须看到**所有**供应商的到位情况，
+// 一次查询天然包含他方的到货明细（违反 I1：不泄露他方经营数据）。
+// 且自营下加工场所属 ABox 自有（`ab_distribution_center.supplier_id` 已停用），
+// 原可见性判据「本主体名下有没有启用中集散中心」本身也已失效。
 
 // ============================================================================
 // S9 我的应付结算明细（P25 · M3-9）

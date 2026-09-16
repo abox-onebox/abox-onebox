@@ -2,8 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 
-import { SupplierType } from '@abox/shared-types';
-
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { money, toFen, toYuan } from '../../common/utils/money';
@@ -11,20 +9,18 @@ import { normalizePage, paginate, PageResult } from '../../common/utils/response
 import { BuildingGroup } from '../../database/entities/building.entity';
 import { DistributionCenter, SupplierShare } from '../../database/entities/finance.entity';
 import { MealAssignment } from '../../database/entities/meal.entity';
-import { Supplier } from '../../database/entities/supplier.entity';
 import {
   AdminDistributionCentersQueryDto,
   CreateDistributionCenterDto,
   UpdateDistributionCenterDto,
 } from './dto/distribution-center-admin.dto';
 
-/** 分账流水的集散主体类型（`ab_supplier_share.payee_type`） */
+/** 分账流水的集散主体类型（`ab_supplier_share.payee_type`）—— **仅用于识别历史应付行** */
 const PAYEE_DC = 'distribution_center';
 
 type DcListResult = PageResult<Record<string, unknown>> & {
   summary: Record<string, unknown>;
   statusOptions: Array<Record<string, unknown>>;
-  supplierOptions: Array<Record<string, unknown>>;
   groupOptions: Array<Record<string, unknown>>;
   actions: { canManage: boolean };
   notes?: Record<string, string>;
@@ -37,22 +33,32 @@ interface ShareStat {
 }
 
 /**
- * 后台 · 集散中心配置服务（M3-6 · 《接口规范》§6.4 D29–D32 · M34-05 · C4 表驱动）
+ * 后台 · 集散中心（= **ABox 自有加工 / 出餐场所**）配置服务
+ * （M3-6 · 《接口规范》§6.4 D29–D32 · M34-05 · C4 表驱动 · 自营口径 M4-0）
  *
- * ## 四条纪律
+ * ## 五条纪律
  *
  * 1. **数量不硬编码（C4）**：默认种子 4 个，增删由表驱动。任何「最多 4 个」的校验、
  *    或前端写死的 4 个格子，都是违背 C4 裁决本身。
  *
- * 2. **费用项默认 ¥0 不是「漏填」（C9 修订）**：集散复用合作供应商场地 → 场地费默认 0；
- *    打包改由平台兼职承担 → 打包费默认 0。科目保留仅为按实际登记与审计留痕。
+ * 2. ⭐ **本表就是 ABox 自己的加工场所，不归属任何合作供应商**（M4-0 自营口径）：
+ *    `supplier_id` 已停用（列保留为历史字段）—— 故 D29 **不再有「按供应商筛选」与
+ *    `supplierOptions`**，D30/D31 **不再收 `supplierId`**，原先的
+ *    `SUPPLIER_TYPE_CONFLICT`(50008) 三处闸门前提出自于此，一并删除。
+ *    ⚠️ 这不是「少了一个筛选条件」，而是「**一个自营下不成立的关系被摘掉了**」：
+ *    留着它，运营会以为还能把场所挂到某家供应商名下。
  *
- * 3. **删除 ≠ 停用，删除有两道前置（D32）**：
+ * 3. **费用项默认 ¥0 的含义是「未登记」，不是「免费」**（C9 + 自营口径）：
+ *    场地摊销 / 打包人工 / 配送费都是 ABox **自身履约成本**，**不出付款单**，
+ *    但没登记时经营毛利会被**系统性高估**（D47–D50 看板须显式提示）。
+ *    科目保留仅为按实际登记与审计留痕。
+ *
+ * 4. **删除 ≠ 停用，删除有两道前置（D32）**：
  *    · 存在历史应付流水 → 50002：删了历史应付就没有归属
  *    · 仍被套餐分配引用（`ab_meal_assignment.distribution_center_id`）→ 50002：删了履约断链
  *    两者都指向同一出路：改用 `status=0` 停用（保留记录、退出新分配）。
  *
- * 4. **服务楼群筛选在内存做，不下推 SQL**：`service_groups` 是 JSON 数组，
+ * 5. **服务楼群筛选在内存做，不下推 SQL**：`service_groups` 是 JSON 数组，
  *    判断「包含某楼群」需要字符串拼接 —— `',' || x || ','` 在 SQLite 是连接、
  *    在 **MySQL 是逻辑或**（除非开 `PIPES_AS_CONCAT`），同一句 SQL 两个驱动两种语义。
  *    集散中心总量只有个位数，内存筛选既正确又不牺牲性能；表规模真要涨上来时，
@@ -64,7 +70,6 @@ export class DistributionCenterAdminService {
 
   constructor(
     @InjectRepository(DistributionCenter) private readonly dcRepo: Repository<DistributionCenter>,
-    @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
     @InjectRepository(BuildingGroup) private readonly groupRepo: Repository<BuildingGroup>,
     @InjectRepository(SupplierShare) private readonly shareRepo: Repository<SupplierShare>,
     @InjectRepository(MealAssignment) private readonly assignRepo: Repository<MealAssignment>,
@@ -79,18 +84,15 @@ export class DistributionCenterAdminService {
     const qb = this.dcRepo.createQueryBuilder('c').where('c.deleted_at IS NULL');
 
     if (q.status !== undefined) qb.andWhere('c.status = :st', { st: q.status });
-    if (q.supplierId) qb.andWhere('c.supplier_id = :sid', { sid: q.supplierId });
     if (q.keyword) {
       const kw = `%${q.keyword}%`;
-      qb.andWhere(
-        '(c.name LIKE :kw OR c.address LIKE :kw OR c.supplier_id IN ' +
-          '(SELECT s.id FROM ab_supplier s WHERE s.name LIKE :kw))',
-        { kw },
-      );
+      // ⚠️ 关键词**只搜场所自身**（名 / 地址）。自营前这里还联了「关联供应商名」——
+      //    那是「按场地找供应商」的入口，而场所已不归属供应商，该入口无从谈起。
+      qb.andWhere('(c.name LIKE :kw OR c.address LIKE :kw)', { kw });
     }
 
     let all = await qb.clone().orderBy('c.id', 'ASC').getMany();
-    // 服务楼群筛选：见文件头纪律 4（跨库语义差异，故在内存做）
+    // 服务楼群筛选：见文件头纪律 5（跨库语义差异，故在内存做）
     if (q.groupId) {
       const gid = q.groupId;
       all = all.filter((c) => ((c.serviceGroups ?? []) as number[]).includes(gid));
@@ -100,12 +102,6 @@ export class DistributionCenterAdminService {
     // 排序与分页同样在内存完成：`all` 已是过滤后的全量，切片不会漏行
     const ordered = [...all].sort((a, b) => b.status - a.status || a.id - b.id);
     const rows = ordered.slice(skip, skip + pageSize);
-
-    const supplierIds = [...new Set(all.map((c) => Number(c.supplierId)))];
-    const suppliers = supplierIds.length
-      ? await this.supplierRepo.find({ where: { id: In(supplierIds) } })
-      : [];
-    const supplierMap = new Map(suppliers.map((s) => [Number(s.id), s]));
 
     const groupIds = [...new Set(all.flatMap((c) => (c.serviceGroups ?? []) as number[]))];
     const groups = groupIds.length
@@ -119,8 +115,7 @@ export class DistributionCenterAdminService {
       this.assignCountMap(ids),
     ]);
 
-    const decorate = (c: DistributionCenter) =>
-      this.decorate(c, supplierMap, groupMap, shareMap, assignMap);
+    const decorate = (c: DistributionCenter) => this.decorate(c, groupMap, shareMap, assignMap);
 
     return {
       ...paginate(rows.map(decorate), total, page, pageSize),
@@ -128,26 +123,30 @@ export class DistributionCenterAdminService {
         totalCount: all.length,
         activeCount: all.filter((c) => c.status === 1).length,
         suspendedCount: all.filter((c) => c.status === 0).length,
-        /** 场地费 / 打包费合计（分）· C9 后默认全 0，非 0 表示按实际登记过 */
+        /** 场地摊销 / 打包人工合计（分）· 默认全 0 = **未登记**，非 0 才表示按实际登记过 */
         totalRiceFeeFen: all.reduce((a, c) => a + toFen(Number(c.riceFee)), 0),
         totalPackFeeFen: all.reduce((a, c) => a + toFen(Number(c.packFee)), 0),
-        /** 已服务楼群去重数（C4：一个集散中心可服务多个楼群） */
+        /** 已服务楼群去重数（C4：一个场所可服务多个楼群） */
         servedGroupCount: new Set(all.flatMap((c) => (c.serviceGroups ?? []) as number[])).size,
       },
       statusOptions: [
         { value: 1, label: '启用' },
         { value: 0, label: '停用' },
       ],
-      supplierOptions: suppliers
-        .map((s) => ({ value: Number(s.id), label: s.name, type: s.type }))
-        .sort((a, b) => a.value - b.value),
       groupOptions: groups
         .map((g) => ({ value: Number(g.id), label: g.name }))
         .sort((a, b) => a.value - b.value),
       actions: { canManage: viewerRole === 'super_admin' || viewerRole === 'admin' },
       notes: {
-        c4: '集散中心**表驱动，不硬编码数量**（C4）：默认种子 4 个，可按实际增删。',
-        fee: '场地费与打包费 **C9 后默认 ¥0**（复用供应商场地 / 平台兼职打包），非 0 表示按实际登记过。',
+        semantics:
+          '⚠️ 本表 = **ABox 自有加工 / 出餐场所**（半成品在此热加工后打包配送），' +
+          '**不归属任何合作供应商**。自营前的「关联供应商」字段已停用，列表不再展示、' +
+          '新增/编辑不再收取 —— 若仍需按供应商找场地，那是自营前的关系，不再成立。',
+        c4: '数量**表驱动，不硬编码**（C4）：默认种子 4 个，可按实际增删。',
+        fee:
+          '场地摊销与打包人工**默认 ¥0 的含义是「未登记」而非「免费」** —— ' +
+          '它们是 ABox 自身履约成本、不出付款单，但未登记时经营毛利会被系统性高估' +
+          '（见 P35 看板提示）。',
         deleteVsDisable:
           '`DELETE` 是软删（仅限从未产生结算、未被分配引用的记录）；' +
           '已有历史结算或仍被套餐分配引用时请改用停用（`PUT` 置 status=0），此时删除会被拒（50002）。',
@@ -163,39 +162,33 @@ export class DistributionCenterAdminService {
   // ==========================================================================
 
   async create(dto: CreateDistributionCenterDto) {
-    const supplier = await this.assertSupplierCanHost(dto.supplierId);
     const saved = await this.dcRepo.save(
       this.dcRepo.create({
         name: dto.name,
-        supplierId: dto.supplierId,
+        /** 历史字段：新场所**不再归属任何供应商**（自营下场所属 ABox 自己） */
+        supplierId: null,
         address: dto.address,
         contactName: dto.contactName ?? null,
         contactPhone: dto.contactPhone ?? null,
-        /** C9：默认 0 —— 不是「必须填 0」，而是「不填就是 0」 */
+        /** 默认 0 —— 不是「必须填 0」，而是「不填就是未登记」 */
         riceFee: money(toYuan(dto.riceFeeFen ?? 0)),
         packFee: money(toYuan(dto.packFeeFen ?? 0)),
         serviceGroups: dto.serviceGroups ?? null,
         status: dto.status ?? 1,
       }),
     );
-    this.logger.log(`新增集散中心 #${saved.id} ${saved.name}（供应商 ${supplier.name}）`);
+    this.logger.log(`新增加工场所 #${saved.id} ${saved.name}`);
     return {
       id: Number(saved.id),
       name: saved.name,
-      supplierId: Number(saved.supplierId),
       status: saved.status,
     };
   }
 
-  /** D31 编辑（含关联供应商与结算参数） */
+  /** D31 编辑（含结算参数） */
   async update(id: number, dto: UpdateDistributionCenterDto) {
     const dc = await this.assertDc(id);
 
-    if (dto.supplierId !== undefined && dto.supplierId !== Number(dc.supplierId)) {
-      // 改挂主体时同样要求新主体「能承担集散」，否则集散中心会挂在纯出餐商家名下
-      await this.assertSupplierCanHost(dto.supplierId);
-      dc.supplierId = dto.supplierId;
-    }
     if (dto.name !== undefined) dc.name = dto.name;
     if (dto.address !== undefined) dc.address = dto.address;
     if (dto.contactName !== undefined) dc.contactName = dto.contactName;
@@ -211,7 +204,6 @@ export class DistributionCenterAdminService {
     return {
       id: Number(dc.id),
       name: dc.name,
-      supplierId: Number(dc.supplierId),
       riceFeeFen: toFen(Number(dc.riceFee)),
       packFeeFen: toFen(Number(dc.packFee)),
       serviceGroups: (dc.serviceGroups ?? []) as number[],
@@ -272,30 +264,18 @@ export class DistributionCenterAdminService {
   /**
    * 关联供应商必须是**能承担集散**的类型（`distribute` / `both`）
    *
-   * 与 D27 是同一件事的两个方向：纯出餐型供应商若名下已有集散中心，不允许降级成 `dish`。
-   * 两处夹逼，保证「集散中心 ↔ 供应商类型」这对关系不会自相矛盾。
+   * ⚠️ **本方法已随自营口径删除**（M4-0）。原逻辑：与 D27 夹逼，保证
+   * 「集散中心 ↔ 供应商类型」这对关系不自相矛盾。自营下场所属 ABox 自有、
+   * 供应商也不再有类型，这对关系整体不存在 → 校验点与 50008 号位一并停用。
    */
-  private async assertSupplierCanHost(supplierId: number): Promise<Supplier> {
-    const s = await this.supplierRepo.findOne({ where: { id: supplierId } });
-    if (!s || s.deletedAt) throw new BizException(ErrorCode.SUPPLIER_NOT_FOUND);
-    if (s.type !== SupplierType.DISTRIBUTE && s.type !== SupplierType.BOTH) {
-      throw new BizException(
-        ErrorCode.SUPPLIER_TYPE_CONFLICT,
-        `供应商「${s.name}」当前为出餐型，不能挂载集散中心 —— 请先用 D27 设为集散型或混合型`,
-      );
-    }
-    return s;
-  }
 
   private decorate(
     c: DistributionCenter,
-    supplierMap: Map<number, Supplier>,
     groupMap: Map<number, string>,
     shareMap: Map<number, ShareStat>,
     assignMap: Map<number, number>,
   ) {
     const id = Number(c.id);
-    const supplierId = Number(c.supplierId);
     const groups = (c.serviceGroups ?? []) as number[];
     const riceFeeFen = toFen(Number(c.riceFee));
     const packFeeFen = toFen(Number(c.packFee));
@@ -305,9 +285,6 @@ export class DistributionCenterAdminService {
     return {
       id,
       name: c.name,
-      supplierId,
-      supplierName: supplierMap.get(supplierId)?.name ?? null,
-      supplierType: supplierMap.get(supplierId)?.type ?? null,
       address: c.address,
       contactName: c.contactName ?? null,
       contactPhone: c.contactPhone ?? null,

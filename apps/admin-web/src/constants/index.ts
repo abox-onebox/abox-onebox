@@ -81,6 +81,11 @@ export const ADMIN_NAV = [
     items: [
       { path: '/leader/list', title: '团长管理', page: 'P32', module: 'M33-03/04/05' },
       { path: '/supplier/list', title: '供应商管理', page: 'P33', module: 'M34' },
+      // ⚠️ M4-0：打包任务从供应商端迁到运营后台（原 `GET /supplier/packing-tasks` 已下线）。
+      //    闸门要看到**所有**供应商的到位情况，这份信息跨供应商，不能开给供应商端。
+      //    它是**运营的日常作业页**（每天都要开包），故给一个**顶级菜单入口**，
+      //    而不是像 `distribution-center` / `dish-library` 那样挂在供应商管理页里下钻。
+      { path: '/supplier/packing-center', title: '加工场所打包', page: 'P39', module: 'M21-03' },
       { path: '/building/overview', title: '办公楼管理', page: 'P37', module: 'M33-01/02' },
       // ⚠️ M3-14 修复：原先财务域**只挂了 `/finance/overview` 一个入口**，其余子页
       //    （佣金 / 余额 / 应付 / 退款 / 对账）在服务端 `ADMIN_MENU_KEYS` 里**早已授权**，
@@ -113,7 +118,10 @@ export const ADMIN_NAV = [
 export const SUPPLIER_NAV = [
   { path: '/supplier/workbench', title: '商家工作台', page: 'P21', module: 'M21-01' },
   { path: '/supplier/cook-confirm', title: '出餐确认', page: 'P22', module: 'M21-02' },
-  { path: '/supplier/packing', title: '打包任务', page: 'P22（下游）', module: 'M21-03' },
+  // ⚠️ M4-0：原 `/supplier/packing`（P22 下游「打包任务」）**已从供应商端下线**。
+  //    打包闸门必须看到**所有**供应商的到位情况 —— 开给供应商就是泄露他方经营数据（I1）；
+  //    且自营下加工场所属 ABox 自有，原判据「本主体名下有没有启用中集散中心」本身也已失效
+  //    （端点整体迁运营后台 `/admin/packing-tasks` · 菜单 `/supplier/packing-center`）。
   { path: '/supplier/dishes', title: '我的菜品', page: 'P23', module: 'M22-01' },
   {
     path: '/supplier/edit',

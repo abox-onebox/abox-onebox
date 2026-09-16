@@ -7,7 +7,6 @@ import {
   LicenseState,
   SUPPLIER_AUDIT_STATUS_LABEL,
   SUPPLIER_STATUS_LABEL,
-  SUPPLIER_TYPE_LABEL,
   SupplierAuditStatus,
   SupplierStatus,
 } from '@abox/shared-types';
@@ -146,7 +145,7 @@ export class SupplierService {
         .map((r) => ({
           distributionCenterId: r.distributionCenterId,
           centerName:
-            centerMap.get(r.distributionCenterId)?.name ?? `集散中心 ${r.distributionCenterId}`,
+            centerMap.get(r.distributionCenterId)?.name ?? `加工场所 ${r.distributionCenterId}`,
           centerAddress: centerMap.get(r.distributionCenterId)?.address ?? null,
           planQuantity: Number(r.planQuantity),
           actualQuantity: r.actualQuantity ?? null,
@@ -188,9 +187,8 @@ export class SupplierService {
       supplier: {
         id: supplier.id,
         name: supplier.name,
-        type: supplier.type,
-        typeLabel:
-          SUPPLIER_TYPE_LABEL[supplier.type as keyof typeof SUPPLIER_TYPE_LABEL] ?? supplier.type,
+        // ⚠️ M4-0：不再下发 `type` / `typeLabel` —— 自营下供应商只有一种角色
+        //    （半成品供货方），类型三分法已停用（`ab_supplier.type` 为历史字段）。
         status: supplier.status,
         statusLabel: SUPPLIER_STATUS_LABEL[supplier.status] ?? String(supplier.status),
         auditStatus: supplier.auditStatus,
@@ -381,37 +379,40 @@ export class SupplierService {
   }
 
   // =====================================================================
-  // S3 · 集散中心打包任务
+  // 加工场所打包任务（原 S3 · M4-0 起由运营后台 `GET /admin/packing-tasks` 消费）
   // =====================================================================
 
   /**
-   * S3 `GET /supplier/packing-tasks?date=` —— 集散中心打包任务（原型 P21/P22 的下游）
+   * 加工场所打包任务派生（原型 P22 下游 · 消费方 = 运营后台「加工场所打包」页）
    *
-   * **可见性**：只对「名下挂了启用中集散中心」的主体可见（原型的集散型 / 混合型）。
-   * 判定以**数据**为准（有没有 dc），不以类型标签为准 —— 标签与数据不一致时，
-   * 以「它确实有场地要打包」为真，否则会出现「有任务却看不到」。
+   * ⚠️⚠️ **M4-0 迁运营后台（自营口径 · 2026-09-16）**：
+   *    原可见性判据是「本主体名下有没有启用中的集散中心」（原型 P21/P22 的集散型 / 混合型）。
+   *    自营下加工场所**属 ABox 自有**、`ab_distribution_center.supplier_id` 已停用，
+   *    该判据随之失效；更要命的是**语义上本来就是错的** —— 本方法必须**全量派生**
+   *    （闸门要看到**所有**供应商的到位情况），把它开给供应商就等于让 A 家看到 B 家的
+   *    到货明细（I1：不泄露他方经营数据）。故端点整体迁运营后台、供应商端 S3 **下线**
+   *    （路由删除 → 10004），本方法不再收 `supplierId`，返回**全部启用中的加工场所**。
    *
-   * **前置闸门 `ready`**：该中心当日**所有**应到菜品都已确认送达，才 `ready=true`。
+   * **前置闸门 `ready`**：该场所当日**所有**应到菜品都已确认送达，才 `ready=true`。
    * 否则列出 `blockers`。这是原型那句「出餐确认后将推送给集散中心，由兼职打包并安排货拉拉配送」
    * 的落地 —— 未到齐就开包，会包出缺菜的餐。
    */
-  async packingTasks(adminSupplierId: number | null | undefined, q: PackingTasksQueryDto) {
-    const supplier = await this.loadSupplier(adminSupplierId);
-    const centers = await this.dcRepo.find({ where: { supplierId: supplier.id, status: 1 } });
+  async packingTasks(q: PackingTasksQueryDto) {
+    const centers = await this.dcRepo.find({ where: { status: 1 }, order: { id: 'ASC' } });
     const usable = centers.filter((c) => !c.deletedAt);
 
     if (!usable.length) {
       return {
         visible: false,
         reason:
-          '当前主体名下没有启用中的集散中心，没有打包任务。' +
-          '（打包任务仅对承担集散的供应商可见；如已配置集散中心请确认其状态为「启用」）',
+          '当前没有启用中的加工场所（D29 未配置或全部停用），没有打包任务。' +
+          '（打包任务是 ABox 自有加工场所的作业视图；如已配置场所请确认其状态为「启用」）',
         date: q.date ?? null,
         centers: [],
       };
     }
 
-    const date = q.date ?? (await this.defaultDate(supplier.id));
+    const date = q.date ?? (await this.defaultPackingDate());
     // ⚠️ 全量生成（不传 supplierId）：打包闸门要看到**所有**供应商的到位情况，
     //    漏掉任何一家都会让「已到齐」成为假象。
     await this.ensureProducePlan(date);
@@ -503,12 +504,15 @@ export class SupplierService {
       date,
       centers: result,
       notes: {
+        scopeRule:
+          '本页是**运营后台作业视图**：一次返回**全部启用中的加工场所**（含各场所的供应商到位情况）。' +
+          '该信息跨供应商，**不对供应商端开放** —— 原 `GET /supplier/packing-tasks` 已随自营口径下线（M4-0）。',
         gateRule:
-          '「可开始打包」= 该集散中心当日所有菜品均已确认送达。未到齐时请先催未确认的供应商，不要开包。',
+          '「可开始打包」= 该加工场所当日所有菜品均已确认送达。未到齐时请先催未确认的供应商，不要开包。',
         routeRule:
-          '路线号（R1…Rn）按「主集散中心 id 升序」派生；站点顺序按楼栋 id 升序。' +
+          '路线号（R1…Rn）按「主加工场所 id 升序」派生；站点顺序按楼栋 id 升序。' +
           '本接口**不返回距离与单段时长** —— 无地图数据，原型上的 km/分钟是演示值，不做承诺。',
-        quantityRule: '打包份数 = 该中心所服务楼群的当日已售份数之和（与用户端下单数同源）。',
+        quantityRule: '打包份数 = 该场所所服务楼群的当日已售份数之和（与用户端下单数同源）。',
       },
     };
   }
@@ -695,6 +699,22 @@ export class SupplierService {
       .createQueryBuilder('d')
       .select('MIN(d.produce_date)', 'date')
       .where('d.supplier_id = :supplierId AND d.produce_date >= :today', { supplierId, today })
+      .getRawOne<{ date: string | null }>();
+    return row?.date ?? tomorrowBj();
+  }
+
+  /**
+   * 打包任务的 `date` 缺省：**全局**最近一个有生产计划的出餐日，无则明日
+   *
+   * ⚠️ 刻意**不复用** `defaultDate(supplierId)`：那个是本主体范围。打包页要看到所有场所 /
+   *    所有供应商，缺省日也必须取全局 —— 否则「本主体当日无计划、别家有」的日子会被判成空。
+   */
+  private async defaultPackingDate(): Promise<string> {
+    const today = todayBj();
+    const row = await this.dailyRepo
+      .createQueryBuilder('d')
+      .select('MIN(d.produce_date)', 'date')
+      .where('d.produce_date >= :today', { today })
       .getRawOne<{ date: string | null }>();
     return row?.date ?? tomorrowBj();
   }

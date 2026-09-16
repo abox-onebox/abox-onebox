@@ -19,7 +19,6 @@ import {
   LicenseState,
   SupplierAuditStatus,
   SupplierStatus,
-  SupplierType,
   TakeoutPlatform,
 } from '@abox/shared-types';
 
@@ -28,11 +27,20 @@ import {
  *
  * ⚠️ 校验分层（与订单/退款/团长后台同一纪律）：
  *   类级装饰器 → 只管「类型 / 格式 / 枚举合法性」（失败即 10001）
- *   服务层     → 管「业务语义」（类型与集散中心冲突 50008、对公账户缺项 10001、
- *                证照过期不得通过审核 50001、被引用/有历史结算不得停用 50002 …）
+ *   服务层     → 管「业务语义」（对公账户缺项 10001、证照过期不得通过审核 50001、
+ *                被引用/有历史结算不得停用 50002 …）
+ *
+ * ⚠️ **自营口径（M4-0 · 2026-09-16）**：
+ *    · **D27「设置类型」已下线** —— 自营下不存在「承担集散的供应商」，
+ *      「出餐型 / 集散型 / 混合型」三分法失效（供应商只有一种角色：半成品供货方）。
+ *      `ab_supplier.type` 列保留为历史字段，**任何入口（筛选 / 新建 / 编辑）都不再收**；
+ *      `SUPPLIER_TYPE_CONFLICT`(50008) 三处闸门随之删除（号位保留、不再触发）。
+ *    · 集散中心（= ABox 自有加工场所）已不归属供应商 → D23 不再有 `dcCount` /
+ *      `dcTotalCount`，关键词也不再跨表命中「集散中心名」。
  *
  * ⚠️ 全局 `ValidationPipe` 开了 `forbidNonWhitelisted` —— DTO 未声明的字段会被
- *   **直接拒绝（10001）而非静默忽略**。别在前端偷偷多传一个 `id` 就以为能改主键。
+ *   **直接拒绝（10001）而非静默忽略**。已下线字段（如 `type`）传上来即 10001，
+ *   这是刻意的：静默忽略会让端上以为「改了、其实没改」。
  *
  * ⚠️ **金额入参用「分」（后缀 `Fen`）**：`ab_distribution_center.rice_fee` 是
  *   DECIMAL(8,2) 元列，但接口层统一收发「整数分」—— 端上只做 `fenToYuan` 显示，
@@ -61,11 +69,6 @@ export const PAYEE_TYPE_LABEL: Record<PayeeType, string> = {
 export const LICENSE_STATES = Object.values(LicenseState);
 
 export class AdminSuppliersQueryDto {
-  @ApiPropertyOptional({ description: '类型过滤', enum: SupplierType })
-  @IsOptional()
-  @IsIn(Object.values(SupplierType), { message: '供应商类型不合法' })
-  type?: string;
-
   @ApiPropertyOptional({ description: '合作状态：1 合作中 / 0 停用', enum: SupplierStatus })
   @IsOptional()
   @Type(() => Number)
@@ -92,7 +95,7 @@ export class AdminSuppliersQueryDto {
   @MaxLength(32)
   category?: string;
 
-  @ApiPropertyOptional({ description: '关键词：名称 / 联系人 / 手机号 / 集散中心名（片段）' })
+  @ApiPropertyOptional({ description: '关键词：名称 / 联系人 / 手机号（片段）' })
   @IsOptional()
   @IsString()
   @MaxLength(32)
@@ -133,13 +136,6 @@ class SupplierWriteFields {
   @MinLength(2, { message: '供应商名至少 2 个字' })
   @MaxLength(128)
   name!: string;
-
-  @ApiProperty({
-    description: '类型：dish 出餐型 / distribute 集散型 / both 混合型',
-    enum: SupplierType,
-  })
-  @IsIn(Object.values(SupplierType), { message: '供应商类型不合法' })
-  type!: string;
 
   @ApiProperty({ description: '联系人' })
   @IsString()
@@ -205,11 +201,6 @@ export class UpdateSupplierDto {
   @MinLength(2, { message: '供应商名至少 2 个字' })
   @MaxLength(128)
   name?: string;
-
-  @ApiPropertyOptional({ description: '类型', enum: SupplierType })
-  @IsOptional()
-  @IsIn(Object.values(SupplierType), { message: '供应商类型不合法' })
-  type?: string;
 
   @ApiPropertyOptional({ description: '联系人' })
   @IsOptional()
@@ -303,14 +294,14 @@ export class AuditSupplierDto {
 }
 
 // ============================================================================
-// D27 · 设置类型
+// D27 · 设置类型 —— ⚠️ 已下线（M4-0 · 自营口径）
 // ============================================================================
-
-export class SetSupplierTypeDto {
-  @ApiProperty({ description: '类型：dish / distribute / both', enum: SupplierType })
-  @IsIn(Object.values(SupplierType), { message: '供应商类型不合法' })
-  type!: string;
-}
+//
+// 「出餐型 / 集散型 / 混合型」建立在「供应商入驻 + 供应商自己承担集散」之上；
+// 自营后不存在「承担集散的供应商」，供应商只有一种角色：半成品供货方。
+// 故 `PUT /admin/suppliers/:id/type` **端点与 DTO 一并删除**（不是隐藏、不是返回固定值）：
+// 留一个「选了没区别」的入口，运营会以为平台还在按类型分配职责。
+// `ab_supplier.type` 列保留为历史字段；`SUPPLIER_TYPE_CONFLICT`(50008) 号位保留但不再触发。
 
 // ============================================================================
 // D28 · 对公结算账户

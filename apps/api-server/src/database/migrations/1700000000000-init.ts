@@ -349,7 +349,7 @@ const TABLES: string[] = [
 
   `CREATE TABLE IF NOT EXISTS \`ab_distribution_center\` (
     \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    \`name\` VARCHAR(64) NOT NULL, \`supplier_id\` BIGINT UNSIGNED NOT NULL,
+    \`name\` VARCHAR(64) NOT NULL, \`supplier_id\` BIGINT UNSIGNED DEFAULT NULL,
     \`address\` VARCHAR(256) NOT NULL, \`contact_name\` VARCHAR(32) DEFAULT NULL,
     \`contact_phone\` VARCHAR(20) DEFAULT NULL,
     \`rice_fee\` DECIMAL(8,2) NOT NULL DEFAULT 0.00, \`pack_fee\` DECIMAL(8,2) NOT NULL DEFAULT 0.00,
@@ -359,7 +359,7 @@ const TABLES: string[] = [
     \`updated_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     \`deleted_at\` DATETIME(3) DEFAULT NULL,
     PRIMARY KEY (\`id\`), KEY \`idx_dc_supplier\` (\`supplier_id\`), KEY \`idx_dc_status\` (\`status\`)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='集散中心配置（C4）'`,
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='ABox 自有加工/出餐场所配置（C4 · 原「集散中心」）'`,
 
   `CREATE TABLE IF NOT EXISTS \`ab_admin_user\` (
     \`id\` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, \`username\` VARCHAR(64) NOT NULL,

@@ -36,11 +36,12 @@ export class DistributionCenterAdminController {
 
   @Get()
   @ApiOperation({
-    summary: 'D29 集散中心配置列表（C4 · 表驱动）',
+    summary: 'D29 加工场所配置列表（C4 · 表驱动）',
     description:
-      '按状态 / 关联供应商 / 服务楼群 / 关键词筛选。出参含：场地费与打包费（元分双份，' +
-      '**C9 后默认为 ¥0**）、服务楼群 id 与名称、历史应付笔数与金额、被套餐分配引用数，' +
+      '按状态 / 服务楼群 / 关键词（场所名 · 地址）筛选。出参含：场地费与打包费（元分双份，' +
+      '**默认为 ¥0 表示「未登记」**）、服务楼群 id 与名称、历史应付笔数与金额、被套餐分配引用数，' +
       '以及 `canDelete`（两道前置都为空才为 true）。' +
+      '⚠️ M4-0 起**不再按供应商筛选**（加工场所属 ABox 自有，关键词也不跨表命中供应商名）。' +
       '服务楼群筛选在服务端内存完成（JSON 列跨库字符串连接语义不同），对外行为与 SQL 筛选一致。',
   })
   list(@Query() q: AdminDistributionCentersQueryDto, @CurrentAdmin('role') role: string) {
@@ -51,10 +52,12 @@ export class DistributionCenterAdminController {
   @Roles('super_admin', 'admin')
   @OperationLog({ module: 'supplier', action: '新增集散中心' })
   @ApiOperation({
-    summary: 'D30 新增集散中心',
+    summary: 'D30 新增加工场所',
     description:
-      '关联供应商必须是**集散型或混合型**，否则 50008（纯出餐商家名下挂集散中心是自相矛盾的主数据）。' +
-      '场地费 / 打包费不填即为 0（C9：复用供应商场地、平台兼职打包）。',
+      '⚠️ M4-0 起**不再收 `supplierId`**（加工场所属 ABox 自有，入参传它即 10001）；' +
+      '原「关联供应商必须是集散型或混合型，否则 50008」的闸门随自营口径删除。' +
+      '`address` 必须是 **ABox 自有持证场所**（证照地址 = 线上店铺地址 = 实际出餐地址）。' +
+      '场地费 / 打包费不填即为 0，含义是「**未登记**」而非免费（ABox 自身成本，不出付款单）。',
   })
   create(@Body() dto: CreateDistributionCenterDto) {
     return this.dcAdmin.create(dto);
@@ -64,9 +67,10 @@ export class DistributionCenterAdminController {
   @Roles('super_admin', 'admin')
   @OperationLog({ module: 'supplier', action: '编辑集散中心', targetParam: 'id' })
   @ApiOperation({
-    summary: 'D31 编辑集散中心（含关联供应商 · 结算参数 · 服务楼群）',
+    summary: 'D31 编辑加工场所（含结算参数 · 服务楼群）',
     description:
       '⚠️ `serviceGroups` 是**整体替换**语义（传 `[]` 即清空，不是增量追加）。' +
+      '⚠️ M4-0 起**不再收 `supplierId`**（传它即 10001）。' +
       '`status=0` 是**停用**：保留记录、退出新分配、随时可恢复 —— 有历史结算时这就是唯一出路。',
   })
   update(@Param() p: DistributionCenterIdParamDto, @Body() dto: UpdateDistributionCenterDto) {

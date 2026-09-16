@@ -6,13 +6,18 @@
       <code>/admin/distribution-centers</code> · 数据源 <code>ab_distribution_center</code>
     </p>
 
-    <!-- C9 与 C4 的交叉口径：场地费默认 0 是最容易被运营改坏的一个数 -->
-    <el-alert type="info" :closable="false" class="note">
+    <!-- ⭐ 自营口径（M4-0）：本表语义 + 「默认 0 = 未登记」的诚实标注 -->
+    <el-alert type="warning" :closable="false" class="note">
       <template #title>
-        <b>集散中心复用合作供应商的场地 → 场地费默认 ￥0.00</b> —— 它是 C9 结算成本项之一（售价
-        ￥25.80 锁定 = 供价 + 场地费 + 打包人工 + 配送费 + 团长佣金 → 毛利为结果值）。
-        一旦这里填了非 0 金额，<b>平台毛利会直接减少</b>；请只在供应商确实单独收取场地费时填写。
+        <b>集散中心 = ABox 自有加工 / 出餐场所</b>（半成品在此热加工后打包配送），
+        <b>不归属任何合作供应商</b> —— 自营前的「所属供应商」字段已停用，新增 / 编辑不再收取。
       </template>
+      <div class="note__body">
+        <b>场地费与打包人工默认 ￥0.00 的含义是「未登记」，不是「免费」。</b>
+        它们是 ABox 自身履约成本（不出付款单），未登记时毛利会被<b>系统性高估</b>；
+        请按实际发生额登记。场地必须是 ABox <b>自有持证场所</b>：证照地址 = 线上店铺地址 =
+        实际出餐地址，三者不一致会直接踩红线。
+      </div>
     </el-alert>
 
     <!-- ─────────────── KPI（同一过滤条件的全量，翻页不跳） ─────────────── -->
@@ -56,22 +61,6 @@
       >
         <el-option
           v-for="o in page.statusOptions"
-          :key="String(o.value)"
-          :label="o.label"
-          :value="Number(o.value)"
-        />
-      </el-select>
-
-      <el-select
-        v-model="query.supplierId"
-        placeholder="所属供应商"
-        clearable
-        filterable
-        style="width: 190px"
-        @change="reload(1)"
-      >
-        <el-option
-          v-for="o in page.supplierOptions"
           :key="String(o.value)"
           :label="o.label"
           :value="Number(o.value)"
@@ -127,17 +116,6 @@
           <div class="stack">
             <span class="strong">{{ asRow(row).name }}</span>
             <span class="sub">{{ asRow(row).address }}</span>
-          </div>
-        </template>
-      </el-table-column>
-
-      <el-table-column label="所属供应商" min-width="150">
-        <template #default="{ row }">
-          <div class="stack">
-            <span>{{ displayOr(asRow(row).supplierName) }}</span>
-            <span v-if="asRow(row).supplierType" class="sub"
-              >类型 {{ asRow(row).supplierType }}</span
-            >
           </div>
         </template>
       </el-table-column>
@@ -261,25 +239,8 @@
           <el-input v-model="editForm.name" maxlength="64" placeholder="如：望京 SOHO 集散点" />
         </el-form-item>
 
-        <el-form-item label="所属供应商" required>
-          <el-select
-            v-model="editForm.supplierId"
-            placeholder="选择供应商"
-            filterable
-            style="width: 100%"
-          >
-            <el-option
-              v-for="o in page.supplierOptions"
-              :key="String(o.value)"
-              :label="o.label"
-              :value="Number(o.value)"
-            />
-          </el-select>
-          <p class="field-hint">
-            C4：集散场所属 ABox 自有（持证加工场所）—— 场地成本按「场所摊销」计入 ABox
-            自身成本，不再向供应商支付场地费。
-          </p>
-        </el-form-item>
+        <!-- ⚠️ M4-0 删除「所属供应商」字段：场所属 ABox 自有，不归属供应商
+             （`ab_distribution_center.supplier_id` 已停用为历史字段） -->
 
         <el-form-item label="地址" required>
           <el-input v-model="editForm.address" maxlength="128" placeholder="详细到门牌号" />
@@ -297,7 +258,9 @@
           <el-input v-model="editForm.riceFeeYuan" placeholder="0.00" style="width: 160px">
             <template #append>元</template>
           </el-input>
-          <p class="field-hint">默认 0。填非 0 会直接减少平台毛利，请确认供应商确实单独收费。</p>
+          <p class="field-hint">
+            默认 0 = <b>未登记</b>（不是免费）。留 0 会让经营毛利被高估，请按实际摊销额登记。
+          </p>
         </el-form-item>
 
         <el-form-item label="打包费（元）">
@@ -376,12 +339,10 @@ const summary = reactive({
 
 const page = reactive<{
   statusOptions: Option[];
-  supplierOptions: Option[];
   groupOptions: Option[];
   actions: { canManage: boolean };
 }>({
   statusOptions: [],
-  supplierOptions: [],
   groupOptions: [],
   actions: { canManage: false },
 });
@@ -390,7 +351,6 @@ const canManage = computed(() => page.actions.canManage);
 
 const query = reactive({
   status: undefined as number | undefined,
-  supplierId: undefined as number | undefined,
   groupId: undefined as number | undefined,
   keyword: '',
   page: 1,
@@ -401,7 +361,6 @@ const editVisible = ref(false);
 const editForm = reactive({
   id: 0,
   name: '',
-  supplierId: undefined as number | undefined,
   address: '',
   contactName: '',
   contactPhone: '',
@@ -432,7 +391,6 @@ async function load(): Promise<void> {
   try {
     const res = await fetchDistributionCenters({
       status: query.status,
-      supplierId: query.supplierId,
       groupId: query.groupId,
       keyword: query.keyword || undefined,
       page: query.page,
@@ -442,7 +400,6 @@ async function load(): Promise<void> {
     total.value = res.total;
     Object.assign(summary, res.summary);
     page.statusOptions = res.statusOptions;
-    page.supplierOptions = res.supplierOptions;
     page.groupOptions = res.groupOptions;
     page.actions = res.actions;
   } catch (e) {
@@ -460,7 +417,6 @@ function reload(pageNo = 1): void {
 function openCreate(): void {
   editForm.id = 0;
   editForm.name = '';
-  editForm.supplierId = query.supplierId;
   editForm.address = '';
   editForm.contactName = '';
   editForm.contactPhone = '';
@@ -474,7 +430,6 @@ function openCreate(): void {
 function openEdit(row: DistributionCenterRow): void {
   editForm.id = row.id;
   editForm.name = row.name;
-  editForm.supplierId = row.supplierId;
   editForm.address = row.address;
   editForm.contactName = row.contactName ?? '';
   editForm.contactPhone = row.contactPhone ?? '';
@@ -490,10 +445,6 @@ async function submitEdit(): Promise<void> {
     ElMessage.warning('请填写名称');
     return;
   }
-  if (!editForm.supplierId) {
-    ElMessage.warning('请选择所属供应商');
-    return;
-  }
   if (!editForm.address.trim()) {
     ElMessage.warning('请填写地址');
     return;
@@ -501,7 +452,6 @@ async function submitEdit(): Promise<void> {
 
   const payload = {
     name: editForm.name.trim(),
-    supplierId: editForm.supplierId,
     address: editForm.address.trim(),
     contactName: editForm.contactName || undefined,
     contactPhone: editForm.contactPhone || undefined,

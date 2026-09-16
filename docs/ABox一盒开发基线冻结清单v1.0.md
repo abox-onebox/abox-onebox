@@ -19,10 +19,10 @@
 | 原型版本 | v4.10.0（37 页，已部署；结算成本项可配置版） |
 | 现行资产 | 29 份 |
 | 已废弃资产 | 7 份（存档，勿参考） |
-| 工程骨架 | `abox-onebox/` · **486 个文件**（阶段四产出） |
+| 工程骨架 | `abox-onebox/` · **494 个文件**（阶段四产出） |
 | 数据库表 | **27 张**（ER v2.1：23 张 + 评审新增 `ab_leader_invite` + M2 新增 `ab_withdraw` + M3-8 新增 `ab_supplier_dish_center_daily` + M3-12 新增 `ab_message_template`） |
 | 技术栈 | uni-app(Vue3+TS) + NestJS + MySQL 8 + Redis 7 + 微信支付 V3；**佣金出款走灵活用工平台代发**（C11，见目录结构 v2.0） |
-| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `9ad50bb`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
+| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `b6683b0`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
 | 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**；M1（后端 + 小程序基座）· M2（团长端全链路）已端到端验收；**M3（运营后台 + 供应商端）进行中**：已落地 M3-1 后台鉴权基座 · M3-2 套餐编排 D1–D7 · M3-3 订单中心 D8–D12 · M3-4 退款审批 D40–D42 · M3-5 后台团长管理 D19–D22 · M3-6 后台供应商管理 + 集散 D23–D32 · M3-7 后台办公楼与楼群 D13–D18 · M3-8 供应商端出餐确认 S1–S3 · M3-9 应付结算 S9（自营口径首次实装）· M3-10 系统配置 D57–D58 · M3-11 数据看板 D47–D50 · **M3-12 通知模板 D59–D60** · **M3-13 财务端点 D33–D35** · **M3-14 余额账户管理与调整 D38–D39** · **M3-15 微信支付对账 D43 + 发票管理 D44**；**待写**：《部署运维手册》（M5 前）· **M4 前置** `ab_distribution_center` 重构 |
 
 ---
@@ -42,15 +42,15 @@
 | 9 | `ABox一盒业务运作理解v2.0.md` | 业务时序与关键事实（已最终确认） | 9,059 | `37e971cf0bd0` |
 | 10 | `ABox一盒协作规范v1.0.md` | 分支 / 提交 / 评审 / 配置纪律 / 文档变更流程 / DoD（阶段四） | 12,095 | `41d9c7b51a8e` |
 | 11 | `ABox一盒合规资质与协议清单v1.0.md` | 资质与协议要点（阶段三）· 资金定性=自营 + 佣金个税走灵活用工 · 2026-09-16 结算改采购应付口径 | 15,644 | `17c806a2a074` |
-| 12 | `ABox一盒外卖小程序上线资质与平台准入清单v1.2.md` | 自营路线上线资质与准入执行清单（v1.2 · 2026-09-16 裁定回归「单主体自营 + 半成品供应链」：不需 EDI / 不需平台备案 / 不涉二清；核心资质 = 食品经营许可证（热食类制售）） | 10,493 | `5ef0bca42795` |
+| 12 | `ABox一盒外卖小程序上线资质与平台准入清单v1.2.md` | 自营路线上线资质与准入执行清单（v1.2 · 2026-09-16 裁定回归「单主体自营 + 半成品供应链」：不需 EDI / 不需平台备案 / 不涉二清；核心资质 = 食品经营许可证（热食类制售）） | 10,813 | `87dd94242618` |
 | 13 | `ABox一盒外卖小程序最快上线路径与提审自检清单v1.2.md` | 最快上线路径 + 提审自检清单（v1.2） | 17,812 | `084ffc9cac90` |
 | 14 | `ABox一盒开发前准备计划v1.0.html` | 四阶段推进路线（准备期总纲） | 28,685 | `feb3c6c759a2` |
-| 15 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四） | 57,730 | `15786ba48610` |
-| 16 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 · 2026-09-16 S9 应付结算改「采购应付」口径 | 165,122 | `deed446e7541` |
-| 17 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 26 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor + ab_refund.order_status_before）· 2026-09-16 M3-5 后台团长管理零 DDL（§5.4）· M3-6 ab_supplier 补 7 列（§5.5：资质审核四列 + license_expire_at + invoice_title + takeout_links）· M3-7 ab_building 增 population + 状态三态（§5.6，唯一 DDL、无新表）· **M3-8 新增 ab_supplier_dish_center_daily**（§3.6.1，供应商出餐确认分中心明细）· **M3-12 新增 ab_message_template**（§3.9，通知模板 5 场景 —— 场景定义留在代码里，库表只存可编辑部分；**合计 27 张表**） | 58,238 | `08f284586cfa` |
+| 15 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四） | 60,510 | `352e2443af4a` |
+| 16 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 · 2026-09-16 S9 应付结算改「采购应付」口径 | 173,241 | `eb047b3b9dd9` |
+| 17 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 26 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor + ab_refund.order_status_before）· 2026-09-16 M3-5 后台团长管理零 DDL（§5.4）· M3-6 ab_supplier 补 7 列（§5.5：资质审核四列 + license_expire_at + invoice_title + takeout_links）· M3-7 ab_building 增 population + 状态三态（§5.6，唯一 DDL、无新表）· **M3-8 新增 ab_supplier_dish_center_daily**（§3.6.1，供应商出餐确认分中心明细）· **M3-12 新增 ab_message_template**（§3.9，通知模板 5 场景 —— 场景定义留在代码里，库表只存可编辑部分；**合计 27 张表**） | 62,008 | `6603f990e749` |
 | 18 | `ABox一盒本地开发手册v1.0.md` | 不依赖云资源的本地开发手册（四驱动开关 · 本地跑通登录→下单→支付→回调） | 17,370 | `3bf300948fea` |
 | 19 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 | 25,366 | `825a0050035c` |
-| 20 | `ABox一盒自营结算口径定义v1.0.md` | 自营口径下结算定义（2026-09-16 定稿）· 4 条裁定 + 2 条不变量：**退款不冲减供应商应付** / 计费基数取**实收量** / 应付对象**仅供应商采购款** / siteFee 改**自有场所摊销**；S9 出单 fail-closed + 幂等键；错误码预留 50012–50014 | 17,710 | `68ced7c24539` |
+| 20 | `ABox一盒自营结算口径定义v1.0.md` | 自营口径下结算定义（2026-09-16 定稿）· 4 条裁定 + 2 条不变量：**退款不冲减供应商应付** / 计费基数取**实收量** / 应付对象**仅供应商采购款** / siteFee 改**自有场所摊销**；S9 出单 fail-closed + 幂等键；错误码预留 50012–50014 | 20,252 | `a01b11642c05` |
 | 21 | `ABox一盒表结构评审意见v1.0.md` | ER 评审结论（阶段二）· P0×6 + 4 张补齐 DDL | 24,817 | `53e5f67f568c` |
 | 22 | `ABox一盒订单状态机与全链路流转v1.0.md` | 订单域行为契约（阶段二）· 11 态 / 8 定时任务 / C6 退款三段式 / C11 出款通道 | 18,802 | `73bfdbfabc76` |
 | 23 | `ABox一盒设计token规范v1.0.html` | 设计与实现共用视觉变量 | 20,375 | `34faff40f86e` |
@@ -79,7 +79,7 @@
 
 ## 四、工程骨架 `abox-onebox/`（阶段四产出）
 
-**总计 486 个文件**，按区域分布：
+**总计 494 个文件**，按区域分布：
 
 | 区域 | 文件数 |
 | --- | --- |
@@ -95,8 +95,14 @@
 | `.prettierrc.json` | 1 |
 | `CONTRIBUTING.md` | 1 |
 | `README.md` | 1 |
-| `apps/admin-web` | 88 |
-| `apps/api-server` | 219 |
+| `_p40_portal.py` | 1 |
+| `_p40_portal2.py` | 1 |
+| `_p40_seed.py` | 1 |
+| `_p41_e2e.py` | 1 |
+| `_p42_e2e_msg.py` | 1 |
+| `_p43_e2e_s3.py` | 1 |
+| `apps/admin-web` | 89 |
+| `apps/api-server` | 220 |
 | `apps/miniprogram` | 80 |
 | `commitlint.config.cjs` | 1 |
 | `data` | 1 |
@@ -155,7 +161,7 @@
 | 24 | `apps/miniprogram/src/constants/index.ts` |  | 4,094 | `e7efa02eebf2` |
 | 25 | `apps/miniprogram/src/uni.scss` |  | 622 | `016600e38e91` |
 | 26 | `apps/miniprogram/src/pages.json` |  | 3,470 | `3f08ea37d3ac` |
-| 27 | `apps/admin-web/src/constants/index.ts` |  | 6,314 | `ba923c84a6cd` |
+| 27 | `apps/admin-web/src/constants/index.ts` |  | 7,250 | `231754aac0f9` |
 | 28 | `apps/admin-web/src/styles/element-override.scss` |  | 830 | `6dab60cc998b` |
 | 29 | `apps/api-server/src/app.module.ts` |  | 2,338 | `378e08442352` |
 | 30 | `apps/api-server/src/modules/order/order-state-machine.ts` |  | 6,246 | `c71905a46aca` |
@@ -178,25 +184,25 @@
 | 47 | `apps/api-server/src/common/guards/jwt-auth.guard.ts` |  | 3,684 | `f89e03f08c13` |
 | 48 | `apps/api-server/src/common/guards/admin.guard.ts` |  | 2,620 | `c49e7801c5e5` |
 | 49 | `apps/api-server/src/common/decorators/auth.decorator.ts` |  | 3,650 | `46f10b5df6e7` |
-| 50 | `apps/api-server/src/common/constants/admin-role.ts` |  | 5,973 | `23390410f36e` |
+| 50 | `apps/api-server/src/common/constants/admin-role.ts` |  | 6,637 | `e0dfabac4009` |
 | 51 | `apps/api-server/src/common/decorators/operation-log.decorator.ts` |  | 1,463 | `d9980b6251a1` |
 | 52 | `apps/api-server/src/common/interceptors/operation-log.interceptor.ts` |  | 8,065 | `73d818c25b99` |
-| 53 | `apps/api-server/src/common/constants/error-code.ts` |  | 16,862 | `be82295e49f1` |
+| 53 | `apps/api-server/src/common/constants/error-code.ts` |  | 17,557 | `8f229100bd3d` |
 | 54 | `apps/admin-web/src/api/request.ts` |  | 4,529 | `739e3e115d78` |
 | 55 | `apps/admin-web/src/api/auth.ts` |  | 2,262 | `2341475025f9` |
 | 56 | `apps/admin-web/src/router/guards.ts` |  | 2,523 | `47f9d2ab636d` |
-| 57 | `apps/api-server/src/modules/meal/meal-admin.service.ts` |  | 32,051 | `3822a99bced4` |
+| 57 | `apps/api-server/src/modules/meal/meal-admin.service.ts` |  | 32,038 | `adf491a6ca8a` |
 | 58 | `apps/api-server/src/modules/meal/meal-admin.controller.ts` |  | 5,757 | `53b6534a82bf` |
 | 59 | `apps/api-server/src/modules/meal/dto/meal-admin.dto.ts` |  | 7,291 | `d26ef850cc4c` |
-| 60 | `apps/admin-web/src/api/meal.ts` |  | 7,445 | `4cdc8d32b4d1` |
-| 61 | `apps/admin-web/src/views/meal/matrix.vue` |  | 24,092 | `3b02eb0f3548` |
+| 60 | `apps/admin-web/src/api/meal.ts` |  | 7,587 | `821e5d312f3a` |
+| 61 | `apps/admin-web/src/views/meal/matrix.vue` |  | 23,972 | `91b706e7cec2` |
 | 62 | `apps/api-server/src/modules/order/order-admin.service.ts` |  | 30,326 | `528f91035164` |
 | 63 | `apps/api-server/src/modules/order/order-admin.controller.ts` |  | 5,432 | `6434847ba8cb` |
 | 64 | `apps/api-server/src/modules/order/dto/order-admin.dto.ts` |  | 5,629 | `2659c0d826f4` |
 | 65 | `apps/api-server/src/modules/finance/reversal.service.ts` |  | 11,985 | `4b3828ac78a9` |
 | 66 | `apps/admin-web/src/api/order.ts` |  | 8,547 | `d4706221d804` |
 | 67 | `apps/admin-web/src/views/order/list.vue` |  | 17,670 | `06d88e56d646` |
-| 68 | `scripts/e2e-m3.mjs` |  | 427,268 | `b4067e0b3dcf` |
+| 68 | `scripts/e2e-m3.mjs` |  | 429,813 | `a73075518401` |
 | 69 | `apps/api-server/src/modules/finance/refund-admin.service.ts` |  | 12,431 | `c510cc162bb7` |
 | 70 | `apps/api-server/src/modules/finance/refund-admin.controller.ts` |  | 4,484 | `a72a21a641c3` |
 | 71 | `apps/api-server/src/modules/finance/dto/refund-admin.dto.ts` |  | 3,839 | `afe4177c79ec` |
@@ -213,23 +219,23 @@
 | 82 | `apps/admin-web/src/views/leader/list.vue` |  | 29,126 | `b2633d3fbdd3` |
 | 83 | `apps/admin-web/src/views/leader/apply.vue` |  | 10,891 | `128d34315b92` |
 | 84 | `apps/admin-web/src/views/leader/detail.vue` |  | 16,235 | `887411803ae4` |
-| 85 | `apps/api-server/src/modules/supplier/supplier-admin.service.ts` |  | 30,857 | `43009bdfc6f5` |
-| 86 | `apps/api-server/src/modules/supplier/supplier-admin.controller.ts` |  | 9,296 | `38fd88c0761e` |
-| 87 | `apps/api-server/src/modules/supplier/dto/supplier-admin.dto.ts` |  | 17,972 | `5071cae12669` |
+| 85 | `apps/api-server/src/modules/supplier/supplier-admin.service.ts` |  | 30,865 | `674cb364c6a1` |
+| 86 | `apps/api-server/src/modules/supplier/supplier-admin.controller.ts` |  | 9,767 | `c540dd856380` |
+| 87 | `apps/api-server/src/modules/supplier/dto/supplier-admin.dto.ts` |  | 18,437 | `c1c5a2d2f5b4` |
 | 88 | `apps/api-server/src/modules/supplier/dish/dish-admin.service.ts` |  | 9,974 | `b0d047b334c1` |
 | 89 | `apps/api-server/src/modules/supplier/dish/dish-admin.controller.ts` |  | 4,184 | `fa7e1adad641` |
-| 90 | `apps/api-server/src/modules/supplier/supplier.module.ts` |  | 2,870 | `4ec4b39beac2` |
-| 91 | `apps/api-server/src/modules/distribution-center/distribution-center-admin.service.ts` |  | 16,454 | `826cfef2a6bc` |
-| 92 | `apps/api-server/src/modules/distribution-center/distribution-center-admin.controller.ts` |  | 4,377 | `a4cee4e101f8` |
-| 93 | `apps/api-server/src/modules/distribution-center/dto/distribution-center-admin.dto.ts` |  | 5,950 | `1812ac36d5ef` |
-| 94 | `apps/api-server/src/database/entities/supplier.entity.ts` |  | 12,011 | `ef755161ea24` |
-| 95 | `packages/shared-types/src/enums/supplier-admin.ts` |  | 6,140 | `ce91d27b89bd` |
-| 96 | `apps/admin-web/src/api/supplier.ts` |  | 12,027 | `ab5132a74725` |
-| 97 | `apps/admin-web/src/views/supplier/list.vue` |  | 20,362 | `8c0cdf07a36d` |
-| 98 | `apps/admin-web/src/views/supplier/form.vue` |  | 19,295 | `58994ab9bc98` |
+| 90 | `apps/api-server/src/modules/supplier/supplier.module.ts` |  | 3,497 | `bc546a344e94` |
+| 91 | `apps/api-server/src/modules/distribution-center/distribution-center-admin.service.ts` |  | 16,040 | `12af4b57c460` |
+| 92 | `apps/api-server/src/modules/distribution-center/distribution-center-admin.controller.ts` |  | 4,819 | `86d63bd0d72a` |
+| 93 | `apps/api-server/src/modules/distribution-center/dto/distribution-center-admin.dto.ts` |  | 5,792 | `638cc653a8d9` |
+| 94 | `apps/api-server/src/database/entities/supplier.entity.ts` |  | 12,977 | `da57d6788b58` |
+| 95 | `packages/shared-types/src/enums/supplier-admin.ts` |  | 7,029 | `59c1c2e8836d` |
+| 96 | `apps/admin-web/src/api/supplier.ts` |  | 12,597 | `bf03c747bbae` |
+| 97 | `apps/admin-web/src/views/supplier/list.vue` |  | 19,405 | `2040c152bdae` |
+| 98 | `apps/admin-web/src/views/supplier/form.vue` |  | 17,953 | `56634e56218d` |
 | 99 | `apps/admin-web/src/views/supplier/dish-library.vue` |  | 20,889 | `7c541604ca13` |
-| 100 | `apps/admin-web/src/views/supplier/distribution-center.vue` |  | 20,812 | `5e36823842fb` |
-| 101 | `apps/admin-web/src/views/supplier/takeout-links.vue` |  | 10,919 | `dd41a6ed12b8` |
+| 100 | `apps/admin-web/src/views/supplier/distribution-center.vue` |  | 19,446 | `f98f5c2a64ee` |
+| 101 | `apps/admin-web/src/views/supplier/takeout-links.vue` |  | 10,830 | `1431b6f1ff8b` |
 | 102 | `packages/shared-types/src/enums/building-admin.ts` |  | 5,113 | `9fc8a93f4f2e` |
 | 103 | `apps/api-server/src/modules/building/building-admin.service.ts` |  | 46,753 | `f887c1cea2c8` |
 | 104 | `apps/api-server/src/modules/building/building-admin.controller.ts` |  | 10,111 | `9c96366f5200` |
@@ -242,14 +248,14 @@
 | 111 | `apps/admin-web/src/views/building/groups.vue` |  | 15,984 | `edb70213a27d` |
 | 112 | `apps/admin-web/src/views/building/leader-binding.vue` |  | 8,687 | `46eacab91f64` |
 | 113 | `apps/admin-web/src/views/building/delivery-map.vue` |  | 9,988 | `42d5d0180d80` |
-| 114 | `apps/api-server/src/modules/supplier/supplier.service.ts` |  | 34,503 | `b220a6c405e9` |
-| 115 | `apps/api-server/src/modules/supplier/supplier.controller.ts` |  | 6,603 | `cc310328af86` |
+| 114 | `apps/api-server/src/modules/supplier/supplier.service.ts` |  | 36,009 | `f14f4daeef41` |
+| 115 | `apps/api-server/src/modules/supplier/supplier.controller.ts` |  | 6,718 | `2da2bbf6a478` |
 | 116 | `apps/api-server/src/modules/supplier/dto/supplier.dto.ts` |  | 3,376 | `54e45cd27b2e` |
-| 117 | `apps/admin-web/src/api/supplier-portal.ts` |  | 7,990 | `20c37fd16c7a` |
-| 118 | `apps/admin-web/src/views/supplier/workbench.vue` |  | 7,547 | `7e7c8e068b49` |
+| 117 | `apps/admin-web/src/api/supplier-portal.ts` |  | 7,567 | `820992eb4cad` |
+| 118 | `apps/admin-web/src/views/supplier/workbench.vue` |  | 7,491 | `191175689037` |
 | 119 | `apps/admin-web/src/views/supplier/cook-confirm.vue` |  | 9,094 | `297e2dbcf19b` |
-| 120 | `apps/admin-web/src/views/supplier/packing.vue` |  | 7,432 | `e91195dacea2` |
-| 121 | `apps/admin-web/src/router/routes.ts` |  | 8,290 | `02580cacab2b` |
+| 120 | `apps/admin-web/src/views/supplier/packing.vue` | （缺失） | 0 | `—` |
+| 121 | `apps/admin-web/src/router/routes.ts` |  | 8,762 | `272dc8dcfecc` |
 | 122 | `apps/api-server/src/modules/finance/supplier-share.service.ts` |  | 28,987 | `b923d6e54ac2` |
 | 123 | `apps/api-server/src/modules/finance/supplier-share-admin.controller.ts` |  | 5,627 | `8592568d8e6f` |
 | 124 | `apps/api-server/src/modules/finance/dto/supplier-share.dto.ts` |  | 5,457 | `a1676cf530c8` |

@@ -8,14 +8,13 @@ import { SupplierShareService } from '../finance/supplier-share.service';
 import {
   CookConfirmDto,
   MAX_CONFIRM_ITEMS,
-  PackingTasksQueryDto,
   SupplierSettlementQueryDto,
   SupplierWorkbenchQueryDto,
 } from './dto/supplier.dto';
 import { SupplierService } from './supplier.service';
 
 /**
- * 供应商端 · 出餐链路 + 结算自查（《接口规范 v1.0》§6.5 S1–S3 / S9 供应商侧 · 原型 P21–P25）
+ * 供应商端 · 出餐链路 + 结算自查（《接口规范 v1.0》§6.5 S1–S2 / S9 供应商侧 · 原型 P21–P25）
  *
  * ## 主体与隔离（与后台 D 系列是**两套账号体系**）
  *   · 本控制器 `@Controller('supplier')` → 供应商 Web（`role=supplier`）
@@ -28,8 +27,12 @@ import { SupplierService } from './supplier.service';
  *   否则就成了「A 供应商改 B 供应商的计划」。
  *
  * ## 只读不写日志
- *   S1 / S3 / S9 是 `GET`，**不标** `@OperationLog`（否则列表页会把日志表刷爆）；
+ *   S1 / S9 是 `GET`，**不标** `@OperationLog`（否则列表页会把日志表刷爆）；
  *   S2 是写操作（置送达确认、留责任人），必须留痕。
+ *
+ * ## ⚠️ S3 已下线（M4-0 · 2026-09-16）
+ *   原 `GET packing-tasks` 迁至运营后台 `GET /admin/packing-tasks`
+ *   （见 `packing-admin.controller.ts`）。原因见本文件 S3 段落注释。
  *
  * ## 结算自查（S9 · M3-9）
  *   `GET settlement` 由 `SupplierShareService.supplierView()` 提供 —— **刻意复用财务侧
@@ -52,7 +55,7 @@ export class SupplierController {
   @ApiOperation({
     summary: 'S1 出餐工作台（P21）',
     description:
-      '当日（或 `date` 指定日）出餐计划 + 按集散中心拆分的配送清单。' +
+      '当日（或 `date` 指定日）出餐计划 + 按加工场所拆分的配送清单。' +
       '`date` 缺省取「本供应商最近一个有生产计划的出餐日」——不写死明天，' +
       '因为周末或停团时最近有计划的日子可能不是明日。' +
       '`deadline` 给出确认截止（出餐日当天 09:30）与是否已过点；' +
@@ -89,24 +92,16 @@ export class SupplierController {
     return this.supplier.cookConfirm(supplierId, adminId, dto);
   }
 
-  @Get('packing-tasks')
-  @ApiOperation({
-    summary: 'S3 集散中心打包任务（P21/P22 下游）',
-    description:
-      '**仅对名下挂了启用中集散中心的主体可见**（原型的集散型 / 混合型）。' +
-      '无集散中心时返回 `visible=false` + `reason`（HTTP 200）——' +
-      '「你没有这项任务」是正常状态，不是错误，不该让端上走报错分支。\n\n' +
-      '`ready` = 该中心当日**所有**菜品均已确认送达，才允许开包；' +
-      '未到齐时 `blockers` 列出欠的供应商与菜品（原型「出餐确认后推送给集散中心」的落地）。\n\n' +
-      '`routes` 是路线派生（R 编号 / 站点链 / 各楼群份数），' +
-      '**不返回距离与单段时长** —— 无地图数据，原型上的 km/分钟是演示值。',
-  })
-  packingTasks(
-    @Query() q: PackingTasksQueryDto,
-    @CurrentAdmin('supplierId') supplierId: number | null,
-  ) {
-    return this.supplier.packingTasks(supplierId, q);
-  }
+  // ------------------------------------------------------------ S3 已迁运营后台
+  //
+  // 原 `GET /supplier/packing-tasks` **已随自营口径下线**（M4-0 · 2026-09-16）：
+  //   · 可见性判据「本主体名下有没有启用中的集散中心」在自营下失效
+  //     （加工场所属 ABox 自有，`ab_distribution_center.supplier_id` 已停用）；
+  //   · 更根本的是**语义不该给供应商** —— 闸门必须看到**所有**供应商的到位情况，
+  //     一次查询天然包含他方的到货明细（违反 I1：不泄露他方经营数据）。
+  // 故端点整体迁到运营后台：`GET /admin/packing-tasks`（见 `packing-admin.controller.ts`），
+  // 供应商端**整条路由删掉**（不是返回固定值）—— 否则供应商端会点进一个永远空白的页面。
+  // 前端入口同步下线：`/supplier/packing` 已从 `SUPPLIER_NAV` / `SUPPLIER_MENU_KEYS` 移除。
 
   @Get('settlement')
   @ApiOperation({

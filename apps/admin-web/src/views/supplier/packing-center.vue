@@ -2,15 +2,19 @@
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 
-import { fetchPackingTasks, type PackingCenter, type PackingData } from '@/api/supplier-portal';
+import { fetchPackingTasks, type PackingCenter, type PackingData } from '@/api/packing';
 
 /**
- * 集散中心打包任务（《接口规范》S3 · 原型 P22 的下游）
+ * 加工场所打包任务（运营后台 · 原供应商端 S3 · 原型 P22 的下游）
  *
- * 闸门语义：该中心当日**所有**菜品均已确认送达，才 `ready=true`。
+ * 闸门语义：该场所当日**所有**菜品均已确认送达，才 `ready=true`。
  * 未到齐时列出 `blockers` —— 未到齐就开包，会包出缺菜的餐。
  *
- * ⚠️ 非集散型主体返回 `visible=false`（HTTP 200）：**「你没有这项任务」是正常状态**，
+ * ⚠️ 一次返回**全部启用中的加工场所**（含各场所的供应商到位情况）。
+ *    这份信息**跨供应商**，所以它只在运营后台 —— 原供应商端 `GET /supplier/packing-tasks`
+ *    已随自营口径下线（会泄露他方到货明细，违反 I1）。
+ *
+ * ⚠️ 没有任何启用中的加工场所 → `visible=false`（HTTP 200）：**「没有这项任务」是正常状态**，
  *    不是错误，所以这里走空态而不是报错。
  */
 const loading = ref(false);
@@ -42,8 +46,11 @@ onMounted(load);
     <el-card shadow="never">
       <div class="head">
         <div>
-          <h3>集散中心打包任务</h3>
-          <p class="sub">按路线分装并安排配送 · 出餐日 {{ date || '—' }}</p>
+          <h3>加工场所打包</h3>
+          <p class="sub">
+            按路线分装并安排配送 · 出餐日 {{ date || '—' }} · ABox
+            自有加工场所（含各场所的供应商到位情况）
+          </p>
         </div>
         <div class="ops">
           <el-date-picker
@@ -57,10 +64,21 @@ onMounted(load);
           <el-button @click="load">刷新</el-button>
         </div>
       </div>
+      <el-alert
+        type="info"
+        show-icon
+        :closable="false"
+        style="margin-top: 12px"
+        title="本页信息跨供应商，不对供应商端开放"
+        description="打包闸门要看到所有供应商的到位情况，因此原供应商端「打包任务」页已随自营口径下线；供应商端仍可在「出餐确认」页完成自己的确认动作。"
+      />
     </el-card>
 
-    <!-- 非集散型主体：这是正常状态，不是错误 -->
-    <el-empty v-if="!loading && !visible" :description="data?.reason ?? '当前主体没有打包任务'" />
+    <!-- 没有任何启用中的加工场所：这是正常状态，不是错误 -->
+    <el-empty
+      v-if="!loading && !visible"
+      :description="data?.reason ?? '当前没有启用中的加工场所'"
+    />
 
     <template v-for="c in centers" :key="c.centerId">
       <el-card shadow="never" style="margin-top: 12px">

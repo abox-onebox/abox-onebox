@@ -37,7 +37,7 @@
 | `ab_balance_log` | 余额变动流水 |
 | `ab_supplier_dish_daily` | 供应商-菜品-日期对应（每日生产哪道菜） |
 | `ab_delivery_record` | 货拉拉送达记录（轻量） |
-| `ab_distribution_center` | 集散中心配置（C4 · 表驱动，默认 4 个，可增删） |
+| `ab_distribution_center` | 加工场所配置（C4 · 表驱动，默认 4 个，可增删；**M4-0 起 `supplier_id` 为可空历史字段**） |
 | `ab_withdraw` | **提现申请单**（2026-09-15 补 · C11：出款走灵活用工代发代扣，须独立单承载提现单号 / 审批 / 打款状态） |
 | `ab_supplier_dish_center_daily` | **供应商-菜品-集散中心-日 交付确认明细**（2026-09-16 补 · M3-8：出餐确认的交互粒度是「一道菜分别送达 N 个集散中心」的**逐项**确认，需独立承载实送份数 / 确认人 / 确认时点） |
 | `ab_message_template` | **通知模板**（2026-09-16 补 · M3-12：D59/D60 的「场景 + 渠道 + 变量白名单 + 启用闸门」在 `ab_config` 的**扁平标量**类型系统里装不下；且 `ab_message` 是**推送日志**表（`template_id` 存微信侧模板 ID），**不是模板定义**） |
@@ -49,7 +49,7 @@
 | `ab_user` | `phone` 改可选；删除 `company_id`、`floor` 必填 |
 | `ab_set_meal` | 删除 `uk_set_meal_date`（同一天可以有多个套餐分配给不同楼群） |
 | `ab_set_meal_item` | `supplier_id` 不再唯一约束（可重复，前期一人多菜） |
-| `ab_supplier` | 增加 `type` 字段（出餐型/集散型/混合型）；**增加资质审核五列 `audit_status` / `audit_remark` / `audited_at` / `audited_by` + 证照有效期 `license_expire_at`（D26 落点 · 2026-09-16 补）**；**增加 `invoice_title`（D28 发票抬头）与 `takeout_links`（JSON · 外卖跳转 · 不参与结算）** |
+| `ab_supplier` | 增加 `type` 字段（出餐型/集散型/混合型 · **M4-0 起转为历史字段**）；**增加资质审核五列 `audit_status` / `audit_remark` / `audited_at` / `audited_by` + 证照有效期 `license_expire_at`（D26 落点 · 2026-09-16 补）**；**增加 `invoice_title`（D28 发票抬头）与 `takeout_links`（JSON · 外卖跳转 · 不参与结算）** |
 | `ab_team_leader` | 增加 `balance` 字段（余额账户）；`level` 等级字段（C2）；`signed_at` 改为 `agreed_at` 勾选协议（C3）；**增加 `floor` 楼层维度（2026-09-15 裁定② 恢复）**；**增加收款方式三字段 `payout_type` / `payout_account`（脱敏存储）/ `payout_name`（C11 · 提现前置条件，2026-09-15 补）** |
 | `ab_refund` | 增加代退三段式字段：`apply_source`、`apply_reason`、`apply_by_leader_id`、`approve_admin_id`、`approve_at`（C6）；**增加 `order_status_before`（申请前订单状态 · D42 驳回回退的唯一依据，2026-09-15 补）** |
 | `ab_balance_log` | **增加出款字段 `payout_channel` / `payout_batch_no` / `tax_withheld_amount`（P2-5 · C11，2026-09-15 补）** |
@@ -353,17 +353,17 @@ CREATE TABLE `ab_delivery_record` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='货拉拉送达记录';
 ```
 
-### 3.8 `ab_distribution_center` 集散中心配置表（C4 · 新增）⭐
+### 3.8 `ab_distribution_center` 集散中心配置表（C4 · 新增）⭐（**M4-0 起对外称「加工场所」** —— 实体名与 `name` 字段保留，改的是派生文案与页面标题）
 
 ```sql
 CREATE TABLE `ab_distribution_center` (
   `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `name`          VARCHAR(64) NOT NULL COMMENT '集散中心名，如"集散中心 1（国贸片）"',
-  `supplier_id`   BIGINT UNSIGNED NOT NULL COMMENT '关联供应商（集散中心=某供应商，可同时出餐）',
-  `address`       VARCHAR(256) NOT NULL COMMENT '场地地址（集散中心复用合作供应商场地 · C4）',
+  `supplier_id`   BIGINT UNSIGNED DEFAULT NULL COMMENT '⚠️ M4-0 起为**历史字段**（列保留 · 可空 · 新逻辑不读不写）：加工场所属 ABox 自有，不再关联供应商',
+  `address`       VARCHAR(256) NOT NULL COMMENT '场地地址（**M4-0 起**：ABox 自有持证场所地址，不再复用供应商场地；须 = 证照地址 = 线上店铺地址）',
   `contact_name`  VARCHAR(32)  DEFAULT NULL,
   `contact_phone` VARCHAR(20)  DEFAULT NULL,
-  `rice_fee`      DECIMAL(8,2) NOT NULL DEFAULT 0.00 COMMENT '集散/场地费（C9 修订：复用供应商场地 → 默认 ¥0，按实际登记）',
+  `rice_fee`      DECIMAL(8,2) NOT NULL DEFAULT 0.00 COMMENT '场地费（C9 修订 + M4-0：**默认 ¥0 仅表示「尚未登记」，不代表成本为零** —— ABox 自有场所摊销，非 0 才是常态）',
   `pack_fee`      DECIMAL(8,2) NOT NULL DEFAULT 0.00 COMMENT '打包费（C9 修订：改由平台兼职承担 → settlement.packing_labor_fee，本项默认 ¥0）',
   `service_groups` JSON DEFAULT NULL COMMENT '服务的楼群 id 列表',
   `status`        TINYINT NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
@@ -374,10 +374,10 @@ CREATE TABLE `ab_distribution_center` (
   PRIMARY KEY (`id`),
   KEY `idx_dc_supplier` (`supplier_id`),
   KEY `idx_dc_status` (`status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='集散中心配置（MVP 默认 4 个，数量可配置，不硬编码）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='加工场所配置（MVP 默认 4 个，数量可配置，不硬编码；M4-0 起 supplier_id 为历史字段）';
 ```
 
-> ⭐ C4 裁决：运营按 4 个跑，但系统**不得硬编码**；集散中心**复用合作供应商场地**，场地 / 打包费用**默认 ¥0**（科目保留、字段级拆分便于审计，按实际登记）。<br>> **C9 修订（2026-09-15）**：原「固定 ¥5.00/份 = 米饭 ¥2.00 + 打包 ¥3.00」作废 —— 供价逐菜协商、场地复用默认 0、打包人工与配送费单列，平台毛利为结果值。
+> ⭐ C4 裁决：运营按 4 个跑，但系统**不得硬编码**；集散中心**复用合作供应商场地**，场地 / 打包费用**默认 ¥0**（科目保留、字段级拆分便于审计，按实际登记）。<br>> **C9 修订（2026-09-15）**：原「固定 ¥5.00/份 = 米饭 ¥2.00 + 打包 ¥3.00」作废 —— 供价逐菜协商、场地复用默认 0、打包人工与配送费单列，平台毛利为结果值。<br>> **M4-0 修订（2026-09-16 · 自营口径前置）**：① `supplier_id` 由 NOT NULL 改**可空历史字段**（加工场所属 ABox 自有，不再挂供应商）；② 对外**派生文案**（打包任务 `reason` / 菜单 / 页面标题）统一称**「加工场所」**，实体名与库内 `name` 字段**保留**；③ 费用**默认 0 仅表示「尚未登记」**（自营下场地是 ABox 自有场所摊销、打包是 ABox 用工，**非 0 才是常态**）；④ 场地须为 ABox **自有持证场所**（证照地址 = 线上店铺地址 = 实际出餐地址）。
 
 ### 3.9 `ab_message_template` 通知模板（M3-12 · 2026-09-16 新增）⭐
 
@@ -490,8 +490,8 @@ CREATE TABLE `ab_team_leader` (
 CREATE TABLE `ab_supplier` (
   `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `name`            VARCHAR(128) NOT NULL,
-  `type`            VARCHAR(16) NOT NULL DEFAULT 'dish'
-                    COMMENT 'dish=出餐型 / distribute=集散型 / both=混合型',
+  `type`            VARCHAR(16) DEFAULT NULL
+                    COMMENT '⚠️ M4-0 起为**历史字段**（列保留 · 新逻辑不读不写）：dish=出餐型 / distribute=集散型 / both=混合型',
   `contact_name`    VARCHAR(32)  NOT NULL,
   `contact_phone`   VARCHAR(20)  NOT NULL,
   `business_license` VARCHAR(256) DEFAULT NULL,
@@ -519,7 +519,7 @@ CREATE TABLE `ab_supplier` (
   `deleted_at`      DATETIME(3) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_supplier_type_status` (`type`, `status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='供应商（出餐型/集散型/混合型）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='供应商（M4-0 起 type 为历史字段 —— 不再区分出餐型/集散型/混合型）';
 ```
 
 ### 4.4 `ab_set_meal` 套餐表
@@ -744,6 +744,30 @@ ALTER TABLE `ab_supplier`
 
 ⚠️ **集散中心（`ab_distribution_center`）零 DDL 变更**：D29–D32 复用的列在 v1.0 已齐备（`rice_fee` / `pack_fee` 默认 0 · `service_groups` JSON · `supplier_id` · `status` · `deleted_at`）。软删靠既有 `deleted_at`，无需新增 —— D32 的两道前置（历史应付 / 被分配引用）是**校验逻辑**，不是结构。
 
+### 5.7 M4-0 契约级修正：两列降级为历史字段（**改可空 · 零新增列 · 零新表**）
+
+> M4-0（2026-09-16 · 自营口径前置）把 M3-6 引入的、在自营口径下不再成立的两个假设拆掉。**表数仍 27**。
+
+| 表 | 列 | 变更 | 理由 |
+| --- | --- | --- | --- |
+| `ab_distribution_center` | `supplier_id` | `NOT NULL` → **`DEFAULT NULL`**（历史字段） | 自营下加工场所是 ABox **自有**场地；「场所属于某供应商」既无业务意义，又让「场所 → 供应商」唯一性约束失真 |
+| `ab_supplier` | `type` | `NOT NULL DEFAULT 'dish'` → **`DEFAULT NULL`**（历史字段） | 三分类（出餐型 / 集散型 / 混合型）的前提是「供应商自己兼营场所」——自营下前提不成立 |
+
+**统一手法（三要素，缺一不可）**：
+
+1. **列保留** —— 历史数据可读，不删列、不改名（删列会连带毁掉历史审计与回滚能力）；
+2. **改可空** —— 新流程不再写值，非空约束会让新插入失败；
+3. **新逻辑不读不写 + DTO 删字段** —— 前端传旧字段即 **`10001`**（`forbidNonWhitelisted`），**绝不静默忽略**（静默忽略 = 「传了不报错、也不生效」，最难查的一类不一致）。
+
+**连带收敛（同一批次）**：
+
+- `PUT /admin/suppliers/{id}/type`（D27）**整条路由删除** → 旧路径 `10004`；错误码 `50008 SUPPLIER_TYPE_CONFLICT` 三处闸门拆除、号位保留不再使用；
+- D23 列表不再下发 `typeOptions`、`?type=` 筛选不受理；供应商详情由 7 块减为 **6 块**（移除「加工场所」块与 `dcCount`）；
+- D29/D30/D31 三个入口**均不再收 `supplierId`** → `10001`；
+- ⭐ 打包任务 `GET /supplier/packing-tasks`（S3）**整条迁运营后台** `GET /admin/packing-tasks`（P39）—— 原可见性判据「本主体名下有启用中集散中心」在上述改动后**必然失效**，且其**数据面本身跨供应商**（开给任一供应商即泄露同业经营数据，违反 I1），故**迁移**而非换判据。详见《缺陷与陷阱》#58。
+
+**迁移与种子落点**：`migrations/1700000000000-init.ts`（`ab_distribution_center.supplier_id` 已建为 `DEFAULT NULL`）· `seeds/seed.ts`（4 个场所**不写 `supplierId`**，`riceFee`/`packFee` 写 0 并在注释里点明「未登记 ≠ 免费」）。
+
 ### 5.6 M3-7 后台办公楼与楼群：`ab_building` 增 1 列 + 状态三态（**有 DDL 变更 · 无新表**）
 
 > M3-7（D13–D18 · 原型 P37 五视图 · 模块 M33-01/02）的结构变更。**为什么非加不可**：
@@ -822,19 +846,21 @@ INSERT INTO ab_config (config_key, config_value, description) VALUES
 ('distribution_center.rice_fee', '0.00', '集散/场地费（复用供应商场地 → 默认 0 · C9 修订）'),
 ('distribution_center.pack_fee', '0.00', '打包费（改由平台兼职承担 → packing_labor_fee · C9 修订）'),
 ('settlement.supplier_purchase_price', 'negotiated', '供应商供价来源：与各供应商逐菜协商（非固定 · C9 修订）'),
-('settlement.site_fee', '0.00', '集散/场地费：集散中心复用合作供应商场地 → 默认 0'),
+('settlement.site_fee', '0.00', '场地费：ABox 自有场所摊销 → 默认 0 仅表示「尚未登记」，非 0 才是常态'),
 ('settlement.packing_labor_fee', '0.00', '打包人工：雇佣兼职打包（按件/按时/按班次），默认 0'),
 ('settlement.delivery_fee', '0.00', '配送费：安排货拉拉送货（按趟/按路线），默认 0'),
 ('settlement.gross_profit_policy', 'residual', '平台毛利口径：结果值 = 售价 − 成本合计 − 佣金'),
 ('wechat.subscribe.app_id', '', '小程序 AppID'),
 ('wechat.pay.mch_id', '', '微信支付商户号');
 
--- 集散中心（C4：默认 4 个，表驱动）
-INSERT INTO ab_distribution_center (name, supplier_id, address, contact_name, contact_phone) VALUES
-('集散中心 1（国贸片）', 1, '北京市朝阳区XX路1号', '王师傅', '13800000001'),
-('集散中心 2（CBD片）',  2, '北京市朝阳区XX路2号', '刘师傅', '13800000002'),
-('集散中心 3（中关村片）', 3, '北京市海淀区XX路3号', '赵师傅', '13800000003'),
-('集散中心 4（望京片）',  4, '北京市朝阳区XX路4号', '钱师傅', '13800000004');
+-- 加工场所（C4：默认 4 个，表驱动）
+-- ⚠️ M4-0 起**不写 supplier_id**（历史字段）；seed.ts 内的演示 `name` 仍为「集散中心 N（片区）」，
+--    改的是派生文案与页面标题（对外一律称「加工场所」）。
+INSERT INTO ab_distribution_center (name, address, contact_name, contact_phone) VALUES
+('集散中心 1（国贸/建外）', '朝阳区建国路 88 号', '王师傅', '13800000001'),
+('集散中心 2（银泰/建外）', '朝阳区光华路 21 号', '刘师傅', '13800000002'),
+('集散中心 3（国贸/远洋）', '朝阳区东三环中路 65 号', '赵师傅', '13800000003'),
+('集散中心 4（华贸组）',   '朝阳区四惠东', '钱师傅', '13800000004');
 ```
 
 ---
