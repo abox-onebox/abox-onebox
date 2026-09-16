@@ -1,6 +1,7 @@
 # ABox 一盒 · 开发基线冻结清单 v1.0
 
-> **基线标识**：`v1.1-local-dev-base` · **冻结日期**：2026-09-14 · **最近修订**：2026-09-16（① C9 结算口径修订：成本项可配置 · 平台毛利为结果值 · 原型升 v4.10.0 · 废弃《产品方案 v1.0》移入 `archive/`；② M2-2.1/2.2 落地：团长叠加身份 + 申请即生效，`ab_team_leader` 补回 `floor`，「团长在职」判据统一 `status = 1`，等级值统一 `formal`；③ 验证路径纳入冻结：`scripts/gate.mjs` / `e2e-m1` / `e2e-m2` / `lib/e2e-server.mjs`；④ M3-1 后台鉴权基座落地：**双主体隔离**（小程序 `ab_user` 与后台 `ab_admin_user` 各自独立账号，靠 JWT `typ` 按路径隔离，越权 = 10002/10003）· 角色→菜单**以代码为唯一来源**（`admin-role.ts`，一期不建 `ab_admin_role` 表）· 令牌吊销走 KV（改角色/停用后旧 token 立即失效）· 声明式操作日志 · 错误码补 `20009`/`20010` · 验证路径纳入 `scripts/e2e-m3.mjs`；⑤ **M3-2 套餐编排 D1–D7 落地**：`创建 ≠ 上架` 两步分离（D2 建 pending，D4 才 active）· 矩阵返回**完整网格**且 `emptyBuildings` 由楼栋状态派生 · 已截单不许上架（`30013`）· D5 批量复制**不覆盖**已存在项 · D7 由菜品**反查**供应商并求和成本（前端不提交 `supplierId`/`costPrice`）· 错误码补 `30011`/`30012`/`30013`；⑥ **M3-3 订单中心 D8–D12 落地**：D8 返回**完整网格语义**且 `tab=abnormal` 不含 `cancelled`、`summary` 不受分页影响、**后台列表同样脱敏**（全号只有 D12 导出且强制留痕）· D9 `actions` 把按钮可用性口径收到服务端 · D10 改单给的是**目标值不是增量**（重试不翻倍）、改份数仅限未支付、改取餐楼须**同楼群**（`30015`）、过截单 `30014` · D11 后台强制退款拆两路（微信原路退 + 余额单独退回）、`amountFen` 是防误操作参数（不符 `40011`）· **C9 反向结算**：原记录不得改写（冲销写负行、原行只翻 `cancelled`）、毛利留存、应付三态（未生成时不造空冲销行）· 错误码补 `30014`/`30015`/`40009`/`40010`/`40011`）；⑦ **M3-4 退款审批 D40–D42 落地**：C6 三段式收口 —— 审批与实退**同事务**（唯一执行口 `executeRefund`）· 驳回资金零变动且订单回 `ab_refund.order_status_before`（**缺列值 40014 fail-closed**，不猜默认值）· 仅 `applying` 可批（否则 `40013`）· 审批时**重算可退额**不符即 `40011` · 两级白名单（类级含 `operator`，D41/D42 方法级收窄到资金角色）· 错误码补 `40012`/`40013`/`40014`；⑧ **M3-5 后台团长管理 D19–D22 落地**：名录/流水/详情（操作日志按**团长 id 与 用户 id 双键**查）· 任命与转交闸门 `20012`（回带 `occupiedBy`，现任**停职而非删除**）· 改等级**同步写 `commission_rate`** · 停用/复职只走 D22 单一入口 · 两级白名单 · 错误码补 `20011`/`20012`/`20013` · **零 DDL 变更**；⑨ **M3-6 后台供应商管理 + 集散 D23–D32 落地**：列表脱敏 / 详情才回真实手机号、**银行账号原文任何接口不回** · 新建即 `audit_status=pending` · 资质审核与 `status` **正交**（驳回不自动下架）· 类型闸门 `50008` 三入口同拦 · 集散中心软删两道前置（错误信息给「改用停用」的出路）· `serviceGroups` **整体替换**（传空数组即清空）· **`ab_supplier` 补 7 列**（本批次唯一 DDL）· 操作日志拦截器**响应体兜底取新建对象 id** · 错误码补 `50003`/`50005`/`50006`/`50007`/`50008`；⑩ **M3-7 后台办公楼与楼群 D13–D18 落地**（原型 P37 五视图）：**状态三态修订** `BuildingStatus`（1 营业中 / 2 待开通 / 3 已暂停）修掉旧种子「待开通与已暂停都写 2」的**一值两义**缺陷（楼群**刻意保持二态**）· **覆盖缺口三因** `DistributionGap`（`none`/`no_group`/`no_center`/`all_center_disabled` —— 三种成因三种修法）· **集散主备与路线号 R1…Rn 全派生不落库**（真源 `ab_distribution_center.service_groups`；且**不返回距离/时长** —— 无地图数据，原型 km/分钟是演示值）· D15 `buildingGroupId: null` = **移出楼群**、空变更 `10001`、**刻意不收 `leaderId`**（改团长只有 D20/D21 一个入口，避免绕过 `20012` 闸门）· D18 停用非空楼群 `60003` **fail-closed** 且**先搬楼再判闸门**（一次请求内「清空成员 + 停用」放行）· `ab_building` 增 `population` 列（**唯一 DDL，无新表**）· 错误码补 `60001`–`60005`（新号段 `6xxxx 主数据`））
+> **基线标识**：`v1.1-local-dev-base` · **冻结日期**：2026-09-14 · **最近修订**：2026-09-16（⑩ M3-8 出餐确认 S1–S3 + ⑪ 上线路线回归自营（见下）；① C9 结算口径修订：成本项可配置 · 平台毛利为结果值 · 原型升 v4.10.0 · 废弃《产品方案 v1.0》移入 `archive/`；② M2-2.1/2.2 落地：团长叠加身份 + 申请即生效，`ab_team_leader` 补回 `floor`，「团长在职」判据统一 `status = 1`，等级值统一 `formal`；③ 验证路径纳入冻结：`scripts/gate.mjs` / `e2e-m1` / `e2e-m2` / `lib/e2e-server.mjs`；④ M3-1 后台鉴权基座落地：**双主体隔离**（小程序 `ab_user` 与后台 `ab_admin_user` 各自独立账号，靠 JWT `typ` 按路径隔离，越权 = 10002/10003）· 角色→菜单**以代码为唯一来源**（`admin-role.ts`，一期不建 `ab_admin_role` 表）· 令牌吊销走 KV（改角色/停用后旧 token 立即失效）· 声明式操作日志 · 错误码补 `20009`/`20010` · 验证路径纳入 `scripts/e2e-m3.mjs`；⑤ **M3-2 套餐编排 D1–D7 落地**：`创建 ≠ 上架` 两步分离（D2 建 pending，D4 才 active）· 矩阵返回**完整网格**且 `emptyBuildings` 由楼栋状态派生 · 已截单不许上架（`30013`）· D5 批量复制**不覆盖**已存在项 · D7 由菜品**反查**供应商并求和成本（前端不提交 `supplierId`/`costPrice`）· 错误码补 `30011`/`30012`/`30013`；⑥ **M3-3 订单中心 D8–D12 落地**：D8 返回**完整网格语义**且 `tab=abnormal` 不含 `cancelled`、`summary` 不受分页影响、**后台列表同样脱敏**（全号只有 D12 导出且强制留痕）· D9 `actions` 把按钮可用性口径收到服务端 · D10 改单给的是**目标值不是增量**（重试不翻倍）、改份数仅限未支付、改取餐楼须**同楼群**（`30015`）、过截单 `30014` · D11 后台强制退款拆两路（微信原路退 + 余额单独退回）、`amountFen` 是防误操作参数（不符 `40011`）· **C9 反向结算**：原记录不得改写（冲销写负行、原行只翻 `cancelled`）、毛利留存、应付三态（未生成时不造空冲销行）· 错误码补 `30014`/`30015`/`40009`/`40010`/`40011`）；⑦ **M3-4 退款审批 D40–D42 落地**：C6 三段式收口 —— 审批与实退**同事务**（唯一执行口 `executeRefund`）· 驳回资金零变动且订单回 `ab_refund.order_status_before`（**缺列值 40014 fail-closed**，不猜默认值）· 仅 `applying` 可批（否则 `40013`）· 审批时**重算可退额**不符即 `40011` · 两级白名单（类级含 `operator`，D41/D42 方法级收窄到资金角色）· 错误码补 `40012`/`40013`/`40014`；⑧ **M3-5 后台团长管理 D19–D22 落地**：名录/流水/详情（操作日志按**团长 id 与 用户 id 双键**查）· 任命与转交闸门 `20012`（回带 `occupiedBy`，现任**停职而非删除**）· 改等级**同步写 `commission_rate`** · 停用/复职只走 D22 单一入口 · 两级白名单 · 错误码补 `20011`/`20012`/`20013` · **零 DDL 变更**；⑨ **M3-6 后台供应商管理 + 集散 D23–D32 落地**：列表脱敏 / 详情才回真实手机号、**银行账号原文任何接口不回** · 新建即 `audit_status=pending` · 资质审核与 `status` **正交**（驳回不自动下架）· 类型闸门 `50008` 三入口同拦 · 集散中心软删两道前置（错误信息给「改用停用」的出路）· `serviceGroups` **整体替换**（传空数组即清空）· **`ab_supplier` 补 7 列**（本批次唯一 DDL）· 操作日志拦截器**响应体兜底取新建对象 id** · 错误码补 `50003`/`50005`/`50006`/`50007`/`50008`；⑩ **M3-7 后台办公楼与楼群 D13–D18 落地**（原型 P37 五视图）：**状态三态修订** `BuildingStatus`（1 营业中 / 2 待开通 / 3 已暂停）修掉旧种子「待开通与已暂停都写 2」的**一值两义**缺陷（楼群**刻意保持二态**）· **覆盖缺口三因** `DistributionGap`（`none`/`no_group`/`no_center`/`all_center_disabled` —— 三种成因三种修法）· **集散主备与路线号 R1…Rn 全派生不落库**（真源 `ab_distribution_center.service_groups`；且**不返回距离/时长** —— 无地图数据，原型 km/分钟是演示值）· D15 `buildingGroupId: null` = **移出楼群**、空变更 `10001`、**刻意不收 `leaderId`**（改团长只有 D20/D21 一个入口，避免绕过 `20012` 闸门）· D18 停用非空楼群 `60003` **fail-closed** 且**先搬楼再判闸门**（一次请求内「清空成员 + 停用」放行）· `ab_building` 增 `population` 列（**唯一 DDL，无新表**）· 错误码补 `60001`–`60005`（新号段 `6xxxx 主数据`））
+> **⑩ 本批次（M3-8）**：供应商端出餐确认 S1–S3 落地 —— 生产计划**惰性生成且生成即冻结**（只生成 `planQuantity > 0` 的行）· 09:30 deadline 是**截止点不是最早点**（迟于出餐日 09:30 一律 `50009` fail-closed，**不接受补确认**）· 确认粒度 = (供应商, 菜品, 出餐日, 集散中心) 逐项**幂等** · 父表状态由明细**派生** pending/cooking/done（不新增 `partial`）· S3 打包闸门 `ready` 依赖全中心确认，非集散型主体 `visible=false`（HTTP 200 而非错误）· 请求体**刻意不收 `supplierId`**（收下即 `10001`）· **新增表 `ab_supplier_dish_center_daily`**（本批次唯一 DDL）· 错误码补 `50009`/`50010`/`50011`；**⑪ 上线路线裁定**：由 v1.1 的「第三方平台路线」**回归「单主体自营 + 半成品供应链」**（2026-09-16）—— EDI 许可证 / 网络食品交易第三方平台备案 / 电商收付通与二级商户号**全部撤销**，资金定性恢复「自营 → 不涉二清」，核心长周期项变为**《食品经营许可证》（热食类制售）**，详见《上线资质与平台准入清单 v1.2》。
 > **用途**：本清单声明开发阶段（M1 起）的**唯一输入版本**。开发方一律以本清单所列「现行」文件为准，**不得参考「已废弃」文件**。
 > **校验方式**：文件名 + 字节数 + SHA-256（前 12 位）三重核对；拿到文件后先跑一次摘要比对，防止版本漂移。
 
@@ -14,12 +15,12 @@
 | 冻结日期 | 2026-09-14 |
 | 原型版本 | v4.10.0（37 页，已部署；结算成本项可配置版） |
 | 现行资产 | 28 份 |
-| 已废弃资产 | 6 份（存档，勿参考） |
-| 工程骨架 | `abox-onebox/` · **471 个文件**（阶段四产出） |
-| 数据库表 | **25 张**（ER v2.1：23 张 + 评审新增 `ab_leader_invite` + M2 新增 `ab_withdraw`） |
+| 已废弃资产 | 7 份（存档，勿参考） |
+| 工程骨架 | `abox-onebox/` · **475 个文件**（阶段四产出） |
+| 数据库表 | **26 张**（ER v2.1：23 张 + 评审新增 `ab_leader_invite` + M2 新增 `ab_withdraw` + M3-8 新增 `ab_supplier_dish_center_daily`） |
 | 技术栈 | uni-app(Vue3+TS) + NestJS + MySQL 8 + Redis 7 + 微信支付 V3；**佣金出款走灵活用工平台代发**（C11，见目录结构 v2.0） |
-| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `142c975`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
-| 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**；M1（后端 + 小程序基座）· M2（团长端全链路）已端到端验收；**M3（运营后台 + 供应商端）进行中**（M3-1 后台鉴权基座 · M3-2 套餐编排 D1–D7 · M3-3 订单中心 D8–D12 · M3-4 退款审批 D40–D42 · M3-5 后台团长管理 D19–D22 · M3-6 后台供应商管理 + 集散 D23–D32 · M3-7 后台办公楼与楼群 D13–D18 已落地；M3-8~M3-11 待写） |
+| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `5fd4f02`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
+| 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**；M1（后端 + 小程序基座）· M2（团长端全链路）已端到端验收；**M3（运营后台 + 供应商端）进行中**（M3-1 后台鉴权基座 · M3-2 套餐编排 D1–D7 · M3-3 订单中心 D8–D12 · M3-4 退款审批 D40–D42 · M3-5 后台团长管理 D19–D22 · M3-6 后台供应商管理 + 集散 D23–D32 · M3-7 后台办公楼与楼群 D13–D18 已落地 · **M3-8 供应商端出餐确认 S1–S3 已落地**；M3-9~M3-11 待写） |
 
 ---
 
@@ -38,14 +39,14 @@
 | 9 | `ABox一盒业务运作理解v2.0.md` | 业务时序与关键事实（已最终确认） | 9,031 | `05e25145ee01` |
 | 10 | `ABox一盒协作规范v1.0.md` | 分支 / 提交 / 评审 / 配置纪律 / 文档变更流程 / DoD（阶段四） | 12,013 | `422595eff119` |
 | 11 | `ABox一盒合规资质与协议清单v1.0.md` | 资质与协议要点（阶段三）· 资金定性=自营 + 佣金个税走灵活用工 | 15,446 | `d3a9b3a0f902` |
-| 12 | `ABox一盒外卖小程序上线资质与平台准入清单v1.1.md` | 资质与平台准入口径（v1.1 · 第三方平台路线：EDI → 网络食品交易第三方平台备案） | 28,500 | `44872b6f3656` |
+| 12 | `ABox一盒外卖小程序上线资质与平台准入清单v1.2.md` | 自营路线上线资质与准入执行清单（v1.2 · 2026-09-16 裁定回归「单主体自营 + 半成品供应链」：不需 EDI / 不需平台备案 / 不涉二清；核心资质 = 食品经营许可证（热食类制售）） | 10,493 | `5ef0bca42795` |
 | 13 | `ABox一盒外卖小程序最快上线路径与提审自检清单v1.2.md` | 最快上线路径 + 提审自检清单（v1.2） | 17,812 | `084ffc9cac90` |
 | 14 | `ABox一盒开发前准备计划v1.0.html` | 四阶段推进路线（准备期总纲） | 28,685 | `feb3c6c759a2` |
-| 15 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四） | 20,011 | `c0c760748575` |
-| 16 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 | 86,436 | `011329e43291` |
-| 17 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 25 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor + ab_refund.order_status_before）· 2026-09-16 M3-5 后台团长管理零 DDL（§5.4）· M3-6 ab_supplier 补 7 列（§5.5：资质审核四列 + license_expire_at + invoice_title + takeout_links）· M3-7 ab_building 增 population + 状态三态（§5.6，唯一 DDL、无新表） | 49,683 | `64a91c2344cc` |
+| 15 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四） | 22,769 | `061933e9eb4f` |
+| 16 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 | 91,772 | `dd6e9cca57ed` |
+| 17 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 26 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor + ab_refund.order_status_before）· 2026-09-16 M3-5 后台团长管理零 DDL（§5.4）· M3-6 ab_supplier 补 7 列（§5.5：资质审核四列 + license_expire_at + invoice_title + takeout_links）· M3-7 ab_building 增 population + 状态三态（§5.6，唯一 DDL、无新表）· **M3-8 新增 ab_supplier_dish_center_daily**（§3.6.1，供应商出餐确认分中心明细，本批次唯一 DDL） | 52,911 | `9e96ecce1776` |
 | 18 | `ABox一盒本地开发手册v1.0.md` | 不依赖云资源的本地开发手册（四驱动开关 · 本地跑通登录→下单→支付→回调） | 15,697 | `0a1cccd8a63d` |
-| 19 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 | 20,473 | `3a057caf1568` |
+| 19 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 | 21,769 | `17afba5634a7` |
 | 20 | `ABox一盒表结构评审意见v1.0.md` | ER 评审结论（阶段二）· P0×6 + 4 张补齐 DDL | 24,817 | `53e5f67f568c` |
 | 21 | `ABox一盒订单状态机与全链路流转v1.0.md` | 订单域行为契约（阶段二）· 11 态 / 8 定时任务 / C6 退款三段式 / C11 出款通道 | 18,629 | `ac3901dcc284` |
 | 22 | `ABox一盒设计token规范v1.0.html` | 设计与实现共用视觉变量 | 20,375 | `34faff40f86e` |
@@ -63,17 +64,18 @@
 | # | 文件 | 版本 / 说明 | 字节 | SHA-256（前 12） |
 | --- | --- | --- | --- | --- |
 | 1 | `ABox一盒外卖小程序上线资质与平台准入清单v1.0.md` | 已被 v1.1 取代（第三方平台路线与 EDI 前置未纳入） | 22,361 | `942e462eb54a` |
-| 2 | `archive/ABox一盒MVP优化交接包v1.0.md` | 已被 v1.3 取代（C1–C9 未裁决）（已移入 `archive/`，不再进 `docs/` 与交接目录） | 9,690 | `db99aa95da84` |
-| 3 | `archive/ABox一盒业务运作理解v1.0.md` | 已被 v2.0 取代（已移入 `archive/`，不再进 `docs/` 与交接目录） | 10,221 | `e25f5ffa3112` |
-| 4 | `archive/ABox一盒小程序产品方案v1.0.md` | v1.0 系列，口径已过时（已移入 `archive/`，不再进 `docs/` 与交接目录） | 26,941 | `585efc549bd3` |
-| 5 | `archive/ABox一盒数据库ER设计v1.0.md` | 已被 v2.1 取代（已移入 `archive/`，不再进 `docs/` 与交接目录） | 33,423 | `ba8ea158ee0d` |
-| 6 | `archive/ABox一盒项目目录结构v1.0.md` | 已被 v2.0 取代（含楼长端 / T-1 20:00）（已移入 `archive/`，不再进 `docs/` 与交接目录） | 22,300 | `82aeb781ebce` |
+| 2 | `ABox一盒外卖小程序上线资质与平台准入清单v1.1.md` | 已被 v1.2 取代（第三方平台路线于 2026-09-16 被裁定推翻） | 28,500 | `44872b6f3656` |
+| 3 | `archive/ABox一盒MVP优化交接包v1.0.md` | 已被 v1.3 取代（C1–C9 未裁决）（已移入 `archive/`，不再进 `docs/` 与交接目录） | 9,690 | `db99aa95da84` |
+| 4 | `archive/ABox一盒业务运作理解v1.0.md` | 已被 v2.0 取代（已移入 `archive/`，不再进 `docs/` 与交接目录） | 10,221 | `e25f5ffa3112` |
+| 5 | `archive/ABox一盒小程序产品方案v1.0.md` | v1.0 系列，口径已过时（已移入 `archive/`，不再进 `docs/` 与交接目录） | 26,941 | `585efc549bd3` |
+| 6 | `archive/ABox一盒数据库ER设计v1.0.md` | 已被 v2.1 取代（已移入 `archive/`，不再进 `docs/` 与交接目录） | 33,423 | `ba8ea158ee0d` |
+| 7 | `archive/ABox一盒项目目录结构v1.0.md` | 已被 v2.0 取代（含楼长端 / T-1 20:00）（已移入 `archive/`，不再进 `docs/` 与交接目录） | 22,300 | `82aeb781ebce` |
 
 ---
 
 ## 四、工程骨架 `abox-onebox/`（阶段四产出）
 
-**总计 471 个文件**，按区域分布：
+**总计 475 个文件**，按区域分布：
 
 | 区域 | 文件数 |
 | --- | --- |
@@ -92,7 +94,7 @@
 | `_m3c.log` | 1 |
 | `_m3d.log` | 1 |
 | `_m3e.log` | 1 |
-| `apps/admin-web` | 80 |
+| `apps/admin-web` | 84 |
 | `apps/api-server` | 210 |
 | `apps/miniprogram` | 80 |
 | `commitlint.config.cjs` | 1 |
@@ -152,7 +154,7 @@
 | 24 | `apps/miniprogram/src/constants/index.ts` |  | 4,094 | `e7efa02eebf2` |
 | 25 | `apps/miniprogram/src/uni.scss` |  | 622 | `016600e38e91` |
 | 26 | `apps/miniprogram/src/pages.json` |  | 3,470 | `3f08ea37d3ac` |
-| 27 | `apps/admin-web/src/constants/index.ts` |  | 4,360 | `2bc11554a750` |
+| 27 | `apps/admin-web/src/constants/index.ts` |  | 4,857 | `58934dbfd03c` |
 | 28 | `apps/admin-web/src/styles/element-override.scss` |  | 830 | `6dab60cc998b` |
 | 29 | `apps/api-server/src/app.module.ts` |  | 2,338 | `378e08442352` |
 | 30 | `apps/api-server/src/modules/order/order-state-machine.ts` |  | 6,246 | `c71905a46aca` |
@@ -175,10 +177,10 @@
 | 47 | `apps/api-server/src/common/guards/jwt-auth.guard.ts` |  | 3,684 | `f89e03f08c13` |
 | 48 | `apps/api-server/src/common/guards/admin.guard.ts` |  | 2,620 | `c49e7801c5e5` |
 | 49 | `apps/api-server/src/common/decorators/auth.decorator.ts` |  | 3,650 | `46f10b5df6e7` |
-| 50 | `apps/api-server/src/common/constants/admin-role.ts` |  | 4,972 | `cba012fc6e79` |
+| 50 | `apps/api-server/src/common/constants/admin-role.ts` |  | 5,422 | `e127605cf2f1` |
 | 51 | `apps/api-server/src/common/decorators/operation-log.decorator.ts` |  | 1,463 | `d9980b6251a1` |
 | 52 | `apps/api-server/src/common/interceptors/operation-log.interceptor.ts` |  | 8,065 | `73d818c25b99` |
-| 53 | `apps/api-server/src/common/constants/error-code.ts` |  | 13,474 | `c36a8e068021` |
+| 53 | `apps/api-server/src/common/constants/error-code.ts` |  | 14,882 | `0c50b8af8c00` |
 | 54 | `apps/admin-web/src/api/request.ts` |  | 4,529 | `739e3e115d78` |
 | 55 | `apps/admin-web/src/api/auth.ts` |  | 2,262 | `2341475025f9` |
 | 56 | `apps/admin-web/src/router/guards.ts` |  | 2,523 | `47f9d2ab636d` |
@@ -193,7 +195,7 @@
 | 65 | `apps/api-server/src/modules/finance/reversal.service.ts` |  | 14,705 | `aa6a5cfd3e96` |
 | 66 | `apps/admin-web/src/api/order.ts` |  | 8,547 | `d4706221d804` |
 | 67 | `apps/admin-web/src/views/order/list.vue` |  | 17,670 | `06d88e56d646` |
-| 68 | `scripts/e2e-m3.mjs` |  | 223,018 | `847376ca22c1` |
+| 68 | `scripts/e2e-m3.mjs` |  | 241,427 | `2a2780d16725` |
 | 69 | `apps/api-server/src/modules/finance/refund-admin.service.ts` |  | 12,164 | `8281685c4cae` |
 | 70 | `apps/api-server/src/modules/finance/refund-admin.controller.ts` |  | 4,484 | `a72a21a641c3` |
 | 71 | `apps/api-server/src/modules/finance/dto/refund-admin.dto.ts` |  | 3,839 | `afe4177c79ec` |
@@ -215,11 +217,11 @@
 | 87 | `apps/api-server/src/modules/supplier/dto/supplier-admin.dto.ts` |  | 17,972 | `5071cae12669` |
 | 88 | `apps/api-server/src/modules/supplier/dish/dish-admin.service.ts` |  | 9,974 | `b0d047b334c1` |
 | 89 | `apps/api-server/src/modules/supplier/dish/dish-admin.controller.ts` |  | 4,184 | `fa7e1adad641` |
-| 90 | `apps/api-server/src/modules/supplier/supplier.module.ts` |  | 2,171 | `0c4a075c0048` |
+| 90 | `apps/api-server/src/modules/supplier/supplier.module.ts` |  | 2,469 | `4b4e44b63dfa` |
 | 91 | `apps/api-server/src/modules/distribution-center/distribution-center-admin.service.ts` |  | 16,454 | `826cfef2a6bc` |
 | 92 | `apps/api-server/src/modules/distribution-center/distribution-center-admin.controller.ts` |  | 4,377 | `a4cee4e101f8` |
 | 93 | `apps/api-server/src/modules/distribution-center/dto/distribution-center-admin.dto.ts` |  | 5,950 | `1812ac36d5ef` |
-| 94 | `apps/api-server/src/database/entities/supplier.entity.ts` |  | 8,879 | `11eee5774753` |
+| 94 | `apps/api-server/src/database/entities/supplier.entity.ts` |  | 11,993 | `19c44fefa1a9` |
 | 95 | `packages/shared-types/src/enums/supplier-admin.ts` |  | 6,140 | `ce91d27b89bd` |
 | 96 | `apps/admin-web/src/api/supplier.ts` |  | 12,027 | `ab5132a74725` |
 | 97 | `apps/admin-web/src/views/supplier/list.vue` |  | 20,362 | `8c0cdf07a36d` |
@@ -239,6 +241,14 @@
 | 111 | `apps/admin-web/src/views/building/groups.vue` |  | 15,984 | `edb70213a27d` |
 | 112 | `apps/admin-web/src/views/building/leader-binding.vue` |  | 8,687 | `46eacab91f64` |
 | 113 | `apps/admin-web/src/views/building/delivery-map.vue` |  | 9,988 | `42d5d0180d80` |
+| 114 | `apps/api-server/src/modules/supplier/supplier.service.ts` |  | 34,503 | `b220a6c405e9` |
+| 115 | `apps/api-server/src/modules/supplier/supplier.controller.ts` |  | 4,982 | `1795d00df8c1` |
+| 116 | `apps/api-server/src/modules/supplier/dto/supplier.dto.ts` |  | 2,896 | `221fcce297ea` |
+| 117 | `apps/admin-web/src/api/supplier-portal.ts` |  | 5,958 | `7d5d8549ea71` |
+| 118 | `apps/admin-web/src/views/supplier/workbench.vue` |  | 7,547 | `4c114b9d62b1` |
+| 119 | `apps/admin-web/src/views/supplier/cook-confirm.vue` |  | 9,094 | `297e2dbcf19b` |
+| 120 | `apps/admin-web/src/views/supplier/packing.vue` |  | 7,432 | `2fcc1097cece` |
+| 121 | `apps/admin-web/src/router/routes.ts` |  | 7,733 | `2db569e391a6` |
 
 > 骨架含：根配置（pnpm workspace / TS / ESLint / Prettier / commitlint）+ CI 四作业 + Docker Compose（MySQL 8 + Redis 7，无 RabbitMQ）
 > + 小程序 21 页骨架 + 后台 33 视图骨架 + 后端 15 模块 / 8 定时任务 / 3 消费者 + 4 个 packages。
@@ -255,7 +265,7 @@
 | 3 | `tests/bracket_check.py` | 括号与反引号配平 | 2,297 | `665a00c07c76` |
 | 4 | `tests/js-syntax-check.js` | JS 语法校验 | 785 | `1e5cfda6093b` |
 | 5 | `tests/check_online.py` | 线上部署核验 | 1,475 | `3efc02e45877` |
-| 6 | `tests/baseline_manifest.py` | 本清单生成器（基线变更时重跑） | 29,309 | `b326b41cfc29` |
+| 6 | `tests/baseline_manifest.py` | 本清单生成器（基线变更时重跑） | 31,976 | `c5d6a7e2a5ef` |
 
 ---
 
