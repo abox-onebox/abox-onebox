@@ -7609,6 +7609,505 @@ async function main() {
     }
   }
 
+  // §26 M3-14 余额账户管理与调整 D38–D39（后台 P34 · 模块 M35-04）
+  //
+  // ⚠️ 本节不依赖下单窗口（同 §18–§25 纪律）：账户夹具直接读 `ab_balance`、直插一个新用户；
+  //    D39 的**被测写入一律走 HTTP**，不由夹具代劳。
+  //
+  // 本节钉死六条**不变量**：
+  //   ① ⭐ **D38 负债合计 === D33 资金总览的 `liability`**（必须来自同一服务端函数）。
+  //      各算一套时漂移**不会报任何错**，只会让「资金总览」与「余额账户」报出不同的数。
+  //   ② ⭐ 负债是**时点量**：换 `pageSize`、换 `accountType` 都不应改变它。
+  //   ③ ⭐ **冻结 / 解冻不改动 `total_in` / `total_out`** —— 钱没进出平台，只是换了位置。
+  //   ④ ⭐ **余额不得为负**：扣减 / 冻结越界 → `40002`；解冻越界 → `40015`
+  //      （两码刻意分开：前者「钱不够花」，后者「冻结账对不上」属账实不符信号）。
+  //   ⑤ ⭐ **幂等**：同键重复提交 → `10006` + 首次结果，余额一分不再动。
+  //   ⑥ 每次调账在同一事务里留下：余额快照 + `ab_balance_log`
+  //      （`type='adjust'`、`balance_after` 逐步落痕、`related_id` = `AJ…` 可追溯）。
+  {
+    log('\n§26 M3-14 余额账户管理与调整 D38–D39');
+
+    const FIN26 = '/admin/finance';
+    const PREFIX26 = `E2E26${stamp}`;
+    const OPENID26 = `${PREFIX26}OPENID`;
+    const fenOf26 = (v) => Math.round(Number(v ?? 0) * 100);
+
+    // ---------------------------------------------------------- A. 夹具
+    // 只用**新造用户自己的账户**做金额断言：它的余额完全由本节控制（从 0 开始），
+    // 可以放心用绝对值与 Δ。种子里既有账户只用于「对账」类只读断言 ——
+    // 对它做金额断言就是 #108「共享维度不能用 Δ」的翻版（别的章节会改它）。
+    const nowIso26 = `${bjToday()} 10:00:00`;
+    writeDb(
+      'INSERT INTO ab_user (openid, nickname, gender, status, version, created_at, updated_at) VALUES (?, ?, 0, 1, 0, ?, ?)',
+      [OPENID26, `${PREFIX26}新用户`, nowIso26, nowIso26],
+    );
+    const fresh26 = readDb('SELECT id FROM ab_user WHERE openid = ?', [OPENID26]);
+    const uid26 = Number(fresh26?.id ?? 0);
+    const ready26 = uid26 > 0 && !!readDb('SELECT id FROM ab_balance ORDER BY id LIMIT 1');
+
+    assert(
+      ready26,
+      '§26 前置：新用户已建（`ab_balance` 尚无其行）+ 库内至少有一个既有余额账户',
+      `新用户=${uid26}`,
+    );
+
+    if (ready26) {
+      const bal26 = () =>
+        readDb('SELECT balance, frozen, total_in, total_out FROM ab_balance WHERE user_id = ?', [
+          uid26,
+        ]);
+      const one26 = async (uid, token) =>
+        (await call('GET', `${FIN26}/balances?userId=${uid}`, { token })).body;
+      const row26 = (res) => res?.data?.list?.[0] ?? null;
+      const adj26 = async (body, token, idem) =>
+        (await call('POST', `${FIN26}/balances/adjust`, { token, body, idem })).body;
+
+      // 权限矩阵账号（固定名 —— 每天重跑只累积 2 个，不翻倍）
+      const ok26Op = 'e2e_s26op';
+      const ok26View = 'e2e_s26view';
+      await call('POST', '/admin/system/accounts', {
+        token: adminToken,
+        body: { username: ok26Op, password: PWD, role: 'operator', realName: 'e2e 余额运营' },
+      });
+      await call('POST', '/admin/system/accounts', {
+        token: adminToken,
+        body: { username: ok26View, password: PWD, role: 'viewer', realName: 'e2e 余额只读' },
+      });
+      const t26Op = (await adminLogin(ok26Op, PWD)).token;
+      const t26View = (await adminLogin(ok26View, PWD)).token;
+      const t26Fin = (await adminLogin('finance', 'finance123')).token;
+
+      // ---------------------------------------------------- B. D38 空视图（无账户）
+      const empty26 = await one26(uid26, adminToken);
+      assert(
+        empty26?.code === 0 &&
+          empty26?.data?.view === 'single' &&
+          row26(empty26)?.hasAccount === false &&
+          row26(empty26)?.balanceFen === 0 &&
+          row26(empty26)?.netFen === 0 &&
+          Array.isArray(empty26?.data?.logs) &&
+          empty26.data.logs.length === 0,
+        '⭐ D38 按 `userId` 精确查**无账户用户** → 仍返回一行 `hasAccount=false`（余额全 0）且 `logs=[]` —— 否则运营「搜不到人 → 以为查无此用户 → 不敢充值」，而 D39 恰恰支持给无账户用户首充建户',
+        `code=${empty26?.code} hasAccount=${row26(empty26)?.hasAccount} logs=${empty26?.data?.logs?.length}`,
+      );
+
+      // ---------------------------------------------------- C. ⭐ 跨页对账（写入前）
+      const ov26a = (await call('GET', `${FIN26}/overview`, { token: adminToken })).body?.data;
+      const lb26a = (await call('GET', `${FIN26}/balances`, { token: adminToken })).body?.data;
+      assert(
+        !!ov26a?.liability?.asOf &&
+          lb26a?.liability?.balanceFen === ov26a?.liability?.balanceFen &&
+          lb26a?.liability?.frozenFen === ov26a?.liability?.frozenFen &&
+          Number(lb26a?.liability?.accountCount ?? -1) > 0,
+        '⭐⭐ D38 的 `liability` 与 D33 资金总览的 `liability` **逐项相等**（同一个 `FinanceService.loadLiability()`）—— 两页各算一套 `SUM(ab_balance)` 时漂移**不报任何错**，只会让运营看到两个不同的「平台欠用户多少钱」。把 D38 改回自己 SUM 会立刻红',
+        `D33=${ov26a?.liability?.balanceFen}/${ov26a?.liability?.frozenFen} D38=${lb26a?.liability?.balanceFen}/${lb26a?.liability?.frozenFen}`,
+      );
+      assert(
+        lb26a?.liability?.netFen === lb26a?.liability?.balanceFen + lb26a?.liability?.frozenFen &&
+          Number(lb26a?.liability?.leaderAccountCount ?? -1) >= 0,
+        'D38 `liability.netFen` = 可用 + 冻结（负债合计自洽），且下发团长账户数（时点量）',
+        `net=${lb26a?.liability?.netFen} 团长账户=${lb26a?.liability?.leaderAccountCount}`,
+      );
+
+      // ---------------------------------------------------- D. 权限矩阵
+      const opGet26 = await call('GET', `${FIN26}/balances`, { token: t26Op });
+      assert(
+        opGet26.body?.code === 0 && opGet26.body?.data?.actions?.canAdjust === false,
+        '⭐ D38 类级白名单含 `operator`（运营要能看「这个用户余额为什么异常」），但 `actions.canAdjust=false` —— 它**不准调账**。`actions` 与服务端 `@Roles(...BALANCE_ADJUST_ROLES)` **共用同一角色常量**，结构上不会出现「按钮亮着、点了 10003」或反之',
+        `code=${opGet26.body?.code} canAdjust=${opGet26.body?.data?.actions?.canAdjust}`,
+      );
+      assert(
+        (await call('GET', `${FIN26}/balances`, { token: t26View })).body?.code === 10003,
+        '⭐ D38 `viewer` → 10003 —— `admin-role.ts` 里 viewer 的菜单只有 4 个看板页（财务页不在其中）。白名单比菜单宽，就会造出「菜单看不到、接口却能调」',
+        '',
+      );
+      assert(
+        (await call('GET', `${FIN26}/balances`, {})).body?.code === 10002,
+        'D38 未登录 → 10002',
+        '',
+      );
+      const sup26 = await adminLogin('sanweiwu', 'supplier123');
+      assert(
+        (await call('GET', `${FIN26}/balances`, { token: sup26.token })).body?.code === 10003,
+        '双主体隔离：供应商 token 打 `/admin/finance/balances` → 10003',
+        '',
+      );
+
+      // ---------------------------------------------------- E. D39 四动作
+      const rc26 = await adj26(
+        { userId: uid26, action: 'recharge', amountFen: 10000, reason: 'e2e 首充建户' },
+        adminToken,
+        `${PREFIX26}R1`,
+      );
+      const b1 = bal26();
+      assert(
+        rc26?.code === 0 &&
+          rc26?.data?.balanceFen === 10000 &&
+          rc26?.data?.totalInFen === 10000 &&
+          rc26?.data?.totalOutFen === 0 &&
+          /^AJ\d{16}$/.test(String(rc26?.data?.adjustNo)) &&
+          Number(rc26?.data?.logId) > 0 &&
+          fenOf26(b1?.balance) === 10000 &&
+          fenOf26(b1?.total_in) === 10000,
+        '⭐ D39 `recharge` **首充建户**：无账户用户在充值那一刻自动建户（`ab_balance` 原本没有该行）—— 若因「无账户」而失败，「给从没下过单的用户发补偿」这条运营刚需就走不通；同时返回 `AJ…` 调整单号与流水 id 供追溯',
+        `code=${rc26?.code} bal=${fenOf26(b1?.balance)} in=${fenOf26(b1?.total_in)} no=${rc26?.data?.adjustNo}`,
+      );
+
+      const dc26 = await adj26(
+        { userId: uid26, action: 'deduct', amountFen: 3000, reason: 'e2e 扣减' },
+        adminToken,
+        `${PREFIX26}D1`,
+      );
+      const b2 = bal26();
+      assert(
+        dc26?.code === 0 &&
+          dc26?.data?.balanceFen === 7000 &&
+          dc26?.data?.totalOutFen === 3000 &&
+          fenOf26(b2?.balance) === 7000 &&
+          fenOf26(b2?.total_out) === 3000,
+        'D39 `deduct`：可用余额 ↓、`total_out` ↑（扣减是真正的支出，与充值对称）',
+        `bal=${fenOf26(b2?.balance)} out=${fenOf26(b2?.total_out)}`,
+      );
+
+      const fz26 = await adj26(
+        { userId: uid26, action: 'freeze', amountFen: 2000, reason: 'e2e 冻结' },
+        adminToken,
+        `${PREFIX26}F1`,
+      );
+      const b3 = bal26();
+      assert(
+        fz26?.code === 0 &&
+          fz26?.data?.balanceFen === 5000 &&
+          fz26?.data?.frozenFen === 2000 &&
+          fenOf26(b3?.total_in) === 10000 &&
+          fenOf26(b3?.total_out) === 3000,
+        '⭐⭐ D39 `freeze`：可用 ↓2000、冻结 ↑2000，而 `total_in` / `total_out` **一分未动** —— 钱没有进出平台，只是从「可用」挪到「冻结」。若把冻结记成支出，`total_out` 会随冻结/解冻来回跳，并与提现累计互相污染（L12 也刻意「申请阶段不计入累计支出」）',
+        `bal=${fenOf26(b3?.balance)} frozen=${fenOf26(b3?.frozen)} in=${fenOf26(b3?.total_in)} out=${fenOf26(b3?.total_out)}`,
+      );
+
+      const uf26 = await adj26(
+        { userId: uid26, action: 'unfreeze', amountFen: 500, reason: 'e2e 解冻' },
+        adminToken,
+        `${PREFIX26}U1`,
+      );
+      const b4 = bal26();
+      assert(
+        uf26?.code === 0 &&
+          uf26?.data?.balanceFen === 5500 &&
+          uf26?.data?.frozenFen === 1500 &&
+          fenOf26(b4?.total_in) === 10000 &&
+          fenOf26(b4?.total_out) === 3000,
+        '⭐⭐ D39 `unfreeze`：可用 ↑500、冻结 ↓500，`total_in` / `total_out` 同样**不动**（与 freeze 对称）。⚠️ 没有解冻的冻结就是死钱 —— 故 `unfreeze` 是对规范「充/扣/冻」三动作的**必要补充**',
+        `bal=${fenOf26(b4?.balance)} frozen=${fenOf26(b4?.frozen)} in=${fenOf26(b4?.total_in)} out=${fenOf26(b4?.total_out)}`,
+      );
+
+      // ---------------------------------------------------- F. 余额不得为负
+      const overD26 = await adj26(
+        { userId: uid26, action: 'deduct', amountFen: 99900, reason: 'e2e 越界扣减' },
+        adminToken,
+        `${PREFIX26}X1`,
+      );
+      const b5 = bal26();
+      assert(
+        overD26?.code === 40002 &&
+          fenOf26(b5?.balance) === 5500 &&
+          Number(overD26?.data?.availableFen ?? -1) === 5500,
+        '⭐ D39 扣减超出可用额 → `40002`（fail-closed：**余额不得为负**），余额一分未动 —— 越界不是「扣到 0 为止」，且 `data.availableFen` 把「实际有多少」明确告知',
+        `code=${overD26?.code} bal=${fenOf26(b5?.balance)}`,
+      );
+      const overF26 = await adj26(
+        { userId: uid26, action: 'freeze', amountFen: 99900, reason: 'e2e 越界冻结' },
+        adminToken,
+        `${PREFIX26}X2`,
+      );
+      const b6 = bal26();
+      assert(
+        overF26?.code === 40002 && fenOf26(b6?.frozen) === 1500 && fenOf26(b6?.balance) === 5500,
+        'D39 冻结超出可用额 → `40002`（冻结也只能从**可用余额**里挪，不能凭空冻；用冻结掩盖「钱不够」会造出账面上有钱、实际调不动的账户）',
+        `code=${overF26?.code} frozen=${fenOf26(b6?.frozen)}`,
+      );
+      const overU26 = await adj26(
+        { userId: uid26, action: 'unfreeze', amountFen: 99900, reason: 'e2e 越界解冻' },
+        adminToken,
+        `${PREFIX26}X3`,
+      );
+      const b7 = bal26();
+      assert(
+        overU26?.code === 40015 && fenOf26(b7?.balance) === 5500 && fenOf26(b7?.frozen) === 1500,
+        '⭐⭐ D39 解冻超出冻结额 → **`40015`**（而非复用 `40002`）—— 两者运维含义完全不同：`40002` 是「钱不够花」（充值 / 等回款即可），`40015` 是「**冻结账对不上**」的账实不符信号，要查的是数据结构而不是让人去充钱。合成一个码就把这条线索埋掉了',
+        `code=${overU26?.code} bal=${fenOf26(b7?.balance)} frozen=${fenOf26(b7?.frozen)}`,
+      );
+
+      // ---------------------------------------------------- G. ⭐ 幂等
+      const IDEM26 = `${PREFIX26}IDEM`;
+      const idemBody = { userId: uid26, action: 'recharge', amountFen: 111, reason: 'e2e 幂等' };
+      const idem1 = await adj26(idemBody, adminToken, IDEM26);
+      const bIdem1 = bal26();
+      const idem2 = await adj26(idemBody, adminToken, IDEM26);
+      const bIdem2 = bal26();
+      assert(
+        idem1?.code === 0 &&
+          idem2?.code === 10006 &&
+          !!idem1?.data?.adjustNo &&
+          idem2?.data?.adjustNo === idem1?.data?.adjustNo &&
+          fenOf26(bIdem2?.balance) === fenOf26(bIdem1?.balance),
+        '⭐⭐ D39 **幂等**：同一 `Idempotency-Key` 重复提交 → `10006` + **首次结果原样返回**（`adjustNo` 相同），余额**不再增加** —— 调账没有业务单号可供判重，网络超时后重试若再加一次就是真金白银的事故',
+        `code1=${idem1?.code} code2=${idem2?.code} sameNo=${idem2?.data?.adjustNo === idem1?.data?.adjustNo} Δbal=${fenOf26(bIdem2?.balance) - fenOf26(bIdem1?.balance)}`,
+      );
+      assert(
+        (
+          await adj26(
+            { userId: uid26, action: 'recharge', amountFen: 100, reason: 'e2e 无幂等键' },
+            adminToken,
+            undefined,
+          )
+        ).code === 10001,
+        'D39 **缺幂等键** → `10001`（资金接口的幂等键是**必填**，不能寄望端上自觉）',
+        '',
+      );
+
+      // ---------------------------------------------------- H. 入参校验
+      const bads26 = [
+        [{ userId: uid26, action: 'recharge', amountFen: 0, reason: 'e2e 零金额' }, '金额 0'],
+        [{ userId: uid26, action: 'recharge', amountFen: -100, reason: 'e2e 负金额' }, '负数金额'],
+        [
+          { userId: uid26, action: 'recharge', amountFen: 100000001, reason: 'e2e 超上限' },
+          '超单笔上限',
+        ],
+        [{ userId: uid26, action: 'recharge', amountFen: 100, reason: 'x' }, '原因过短'],
+        [{ userId: uid26, action: 'recharge', amountFen: 100 }, '缺原因'],
+        [
+          { userId: uid26, action: 'transfer', amountFen: 100, reason: 'e2e 非法动作' },
+          '非法 action',
+        ],
+        [{ userId: uid26, amountFen: 100, reason: 'e2e 缺动作' }, '缺 action'],
+        [{ action: 'recharge', amountFen: 100, reason: 'e2e 缺用户' }, '缺 userId'],
+      ];
+      let badOk26 = 0;
+      for (let i = 0; i < bads26.length; i += 1) {
+        const r = await adj26(bads26[i][0], adminToken, `${PREFIX26}BAD${i}`);
+        if (r?.code === 10001) badOk26 += 1;
+        else log(`  … 期望 10001 但得到 ${r?.code}：${bads26[i][1]}`);
+      }
+      assert(
+        badOk26 === bads26.length,
+        `D39 入参校验：${bads26.length} 组非法入参（金额 0 / 负数 / 超单笔上限 / 原因过短 / 缺原因 / 非法 action / 缺 action / 缺 userId）**全部** → 10001`,
+        `${badOk26}/${bads26.length}`,
+      );
+
+      const nou26 = await adj26(
+        { userId: 99999999, action: 'recharge', amountFen: 100, reason: 'e2e 不存在用户' },
+        adminToken,
+        `${PREFIX26}NOU`,
+      );
+      assert(
+        nou26?.code === 10004,
+        'D39 `userId` 不存在 → `10004`（余额只能挂在真实用户上，不静默建号）',
+        `code=${nou26?.code}`,
+      );
+
+      // ---------------------------------------------------- I. 无账户用户的非充值动作
+      writeDb(
+        'INSERT INTO ab_user (openid, nickname, gender, status, version, created_at, updated_at) VALUES (?, ?, 0, 1, 0, ?, ?)',
+        [`${OPENID26}B`, `${PREFIX26}无账户`, nowIso26, nowIso26],
+      );
+      const ghost26 = readDb('SELECT id FROM ab_user WHERE openid = ?', [`${OPENID26}B`]);
+      const gid26 = Number(ghost26?.id ?? 0);
+      const gDeduct26 = await adj26(
+        { userId: gid26, action: 'deduct', amountFen: 100, reason: 'e2e 无账户扣减' },
+        adminToken,
+        `${PREFIX26}G1`,
+      );
+      const gUnf26 = await adj26(
+        { userId: gid26, action: 'unfreeze', amountFen: 100, reason: 'e2e 无账户解冻' },
+        adminToken,
+        `${PREFIX26}G2`,
+      );
+      assert(
+        gDeduct26?.code === 40002 &&
+          gDeduct26?.data?.hasAccount === false &&
+          gUnf26?.code === 40015 &&
+          !readDb('SELECT id FROM ab_balance WHERE user_id = ?', [gid26]),
+        '⭐ D39 无账户用户做「扣减 / 解冻」→ `40002` / `40015`，且 `data.hasAccount=false` 点明原因**不是**「余额不足」而是「还没有账户」；**不会**先建一个 0 余额账户再报错（否则库里会积一堆空账户）',
+        `deduct=${gDeduct26?.code} unfreeze=${gUnf26?.code} 建户=${!!readDb('SELECT id FROM ab_balance WHERE user_id = ?', [gid26])}`,
+      );
+
+      // ---------------------------------------------------- J. 操作日志与账本
+      const adjLog26 = await waitDb(
+        "SELECT action FROM ab_operation_log WHERE module = 'finance' AND action = '余额调整' ORDER BY id DESC LIMIT 1",
+        [],
+        (r) => !!r,
+        { timeout: 4000 },
+      );
+      assert(
+        !!adjLog26,
+        'D39 由 `@OperationLog({ module:finance, action:余额调整 })` 落 `ab_operation_log` —— 必须能回答「谁在什么时候给谁调了多少钱、为什么」',
+        `action=${adjLog26?.action ?? '未落库'}`,
+      );
+
+      const logs26 = readRows(
+        'SELECT type, direction, amount, balance_after, related_id, remark FROM ab_balance_log WHERE user_id = ? ORDER BY id ASC',
+        [uid26],
+      );
+      const cur26 = bal26();
+      const tail26 = logs26[logs26.length - 1];
+      assert(
+        logs26.length === 5 &&
+          logs26.every((r) => r.type === 'adjust') &&
+          JSON.stringify(logs26.map((r) => Number(r.direction))) === JSON.stringify([1, -1, -1, 1, 1]) &&
+          logs26.every((r) => /^AJ\d{16}$/.test(String(r.related_id))) &&
+          String(tail26?.remark ?? '').includes('操作人'),
+        '⭐ D39 账本自洽：5 条流水**全部** `type=adjust` 且带 `AJ…` 单号；`direction` 依次为 +1/−1/−1/+1/+1（充 / 扣 / 冻 / 解 / 幂等那条首跑）—— **冻结记 `direction=-1`** 与 L12 提现同口径；`remark` 里带操作人（用户在自己的余额明细里能看到「谁动过我的钱」）',
+        `logs=${logs26.length} dirs=${JSON.stringify(logs26.map((r) => Number(r.direction)))}`,
+      );
+      assert(
+        fenOf26(tail26?.balance_after) === fenOf26(cur26?.balance),
+        '⭐⭐ 快照与账本**同源**：末条流水的 `balance_after` === 当前 `ab_balance.balance`（这正是 L11 余额与 L19 流水「可相互验算」的落点；两条写入不同步时这里必红）',
+        `末条after=${fenOf26(tail26?.balance_after)} 当前=${fenOf26(cur26?.balance)}`,
+      );
+
+      // ---------------------------------------------------- K. ⭐ 写后重读对账
+      const ov26b = (await call('GET', `${FIN26}/overview`, { token: adminToken })).body?.data;
+      const lb26b = (await call('GET', `${FIN26}/balances`, { token: adminToken })).body?.data;
+      const dBal26 = Number(lb26b?.liability?.balanceFen ?? 0) - Number(lb26a?.liability?.balanceFen ?? 0);
+      const dFrz26 = Number(lb26b?.liability?.frozenFen ?? 0) - Number(lb26a?.liability?.frozenFen ?? 0);
+      assert(
+        lb26b?.liability?.balanceFen === ov26b?.liability?.balanceFen &&
+          lb26b?.liability?.frozenFen === ov26b?.liability?.frozenFen &&
+          dBal26 === 5611 &&
+          dFrz26 === 1500,
+        '⭐⭐ 调账**写后重读**：D38 与 D33 的负债**仍然逐项相等**，且都比调账前正好多「可用 +5611 分 / 冻结 +1500 分」（10000−3000−2000+500+111 与 2000−500）—— 「同一函数」不只是签名相同，而是两边**同时**看到本次写入',
+        `Δ可用=${dBal26} Δ冻结=${dFrz26} D33=${ov26b?.liability?.balanceFen} D38=${lb26b?.liability?.balanceFen}`,
+      );
+
+      // ---------------------------------------------------- L. D38 筛选与时点量
+      const p1_26 = (await call('GET', `${FIN26}/balances?pageSize=1`, { token: adminToken })).body
+        ?.data;
+      const p100_26 = (await call('GET', `${FIN26}/balances?pageSize=100`, { token: adminToken }))
+        .body?.data;
+      assert(
+        p1_26?.liability?.balanceFen === p100_26?.liability?.balanceFen &&
+          p1_26?.liability?.frozenFen === p100_26?.liability?.frozenFen &&
+          p1_26?.liability?.accountCount === p100_26?.liability?.accountCount,
+        '⭐⭐ D38 负债是**时点量**：`pageSize=1` 与 `pageSize=100` 的 `liability` **完全相同**（`total` 才随筛选/分页变化）—— 「平台还欠用户多少钱」不该因为翻页而变。把 `liability` 做成「当前页求和」是最容易犯的错',
+        `p1=${p1_26?.liability?.balanceFen}/${p1_26?.liability?.accountCount} p100=${p100_26?.liability?.balanceFen}/${p100_26?.liability?.accountCount}`,
+      );
+
+      // ⚠️ `code` 在 `.body` 上、**不在** `.body.data` 里。写成 `data?.code === 0` 会恒等于
+      //    `undefined === 0` —— 断言静默失败，而诊断行照旧打印出「看起来正常」的数据。
+      const leaderRes26 = await call('GET', `${FIN26}/balances?accountType=leader`, {
+        token: adminToken,
+      });
+      const userRes26 = await call('GET', `${FIN26}/balances?accountType=user`, {
+        token: adminToken,
+      });
+      const leaderOnly26 = leaderRes26.body?.data;
+      const userOnly26 = userRes26.body?.data;
+      const leaderAll26 = (leaderOnly26?.list ?? []).every((r) => r.isLeader === true);
+      const userAll26 = (userOnly26?.list ?? []).every((r) => r.isLeader === false);
+      assert(
+        leaderRes26.body?.code === 0 &&
+          userRes26.body?.code === 0 &&
+          (leaderOnly26?.list ?? []).length > 0 &&
+          leaderAll26 &&
+          userAll26 &&
+          leaderOnly26?.liability?.balanceFen === p100_26?.liability?.balanceFen,
+        'D38 `accountType=leader` / `user` 分流正确（`leader` 侧每行 `isLeader=true`），且**两种筛选下的 `liability` 相同** —— 它按全量算，不随账户类型缩放',
+        `leader=${leaderOnly26?.list?.length}(全真=${leaderAll26}) user=${userOnly26?.list?.length}(全假=${userAll26}) liab=${leaderOnly26?.liability?.balanceFen}/${p100_26?.liability?.balanceFen}`,
+      );
+      assert(
+        (await call('GET', `${FIN26}/balances?accountType=staff`, { token: adminToken })).body
+          ?.code === 10001,
+        'D38 非法 `accountType` → `10001`（不静默回落成 `all` —— 静默回落会让「筛选没生效」看起来像「没有这类账户」）',
+        '',
+      );
+      assert(
+        (await call('GET', `${FIN26}/balances?userId=99999999`, { token: adminToken })).body?.code ===
+          10004,
+        'D38 `userId` 不存在 → `10004`（不是「返回一行空账户」—— 查无此人要能被区分出来）',
+        '',
+      );
+
+      const kwRes26 = await call('GET', `${FIN26}/balances?keyword=${PREFIX26}`, {
+        token: adminToken,
+      });
+      const kw26 = kwRes26.body?.data;
+      const kwHit26 = (kw26?.list ?? []).find((r) => r.userId === uid26) ?? null;
+      assert(
+        kwRes26.body?.code === 0 && !!kwHit26,
+        'D38 `keyword` 按昵称模糊匹配到目标账户',
+        `命中=${kw26?.total} 目标uid=${uid26} 样例昵称=${kwHit26?.nickname ?? '未命中'}`,
+      );
+      assert(
+        (p100_26?.list ?? []).every((r) => !r.phoneMasked || /\*{2,}/.test(String(r.phoneMasked))),
+        'D38 手机号**列表一律脱敏**（同 M3-6 纪律）—— 余额页不是查人资料的地方',
+        `样本=${(p100_26?.list ?? []).find((r) => r.phoneMasked)?.phoneMasked ?? '无'}`,
+      );
+
+      // ---------------------------------------------------- M. 角色 × 动作
+      const finAdj26 = await adj26(
+        { userId: uid26, action: 'freeze', amountFen: 100, reason: 'e2e 财务冻结' },
+        t26Fin,
+        `${PREFIX26}F2`,
+      );
+      assert(
+        finAdj26?.code === 0,
+        'D39 `finance` → 0（财务是资金动作的合法执行人，与 D35 入账同一档）',
+        `code=${finAdj26?.code}`,
+      );
+      assert(
+        (
+          await adj26(
+            { userId: uid26, action: 'freeze', amountFen: 100, reason: 'e2e 运营越权' },
+            t26Op,
+            `${PREFIX26}F3`,
+          )
+        ).code === 10003,
+        '⭐⭐ D39 `operator` → `10003` —— 类级白名单含 operator（**能看**），方法级收窄到 super_admin/admin/finance（**能改**）。「能看资金」与「能动资金」是两件事，前者是跟进问题的前提，后者是拍板',
+        '',
+      );
+
+      // ---------------------------------------------------- N. single 视图完整性
+      const single26 = await one26(uid26, adminToken);
+      const s26 = row26(single26);
+      const curF26 = bal26();
+      assert(
+        single26?.code === 0 &&
+          single26?.data?.view === 'single' &&
+          s26?.hasAccount === true &&
+          s26?.balanceFen === fenOf26(curF26?.balance) &&
+          s26?.frozenFen === fenOf26(curF26?.frozen) &&
+          s26?.netFen === s26?.balanceFen + s26?.frozenFen &&
+          (single26?.data?.logs ?? []).length > 0 &&
+          (single26?.data?.logs ?? []).every((l) => !!l.typeText && !!l.createdAt),
+        'D38 `view=single` 明细：账户字段与库内快照逐项一致，且**附带最近流水**（`logs` 非空、每条都有服务端给的中文 `typeText`）—— 没有流水，「他这 ¥150 是哪来的」当场答不出来，运营只能去翻后台操作日志（那是「谁调了接口」，不是「钱怎么动的」）',
+        `bal=${s26?.balanceFen} frozen=${s26?.frozenFen} logs=${single26?.data?.logs?.length}`,
+      );
+
+      // ---------------------------------------------------- O. 夹具还原
+      // ⚠️ 本节**只在新造用户上动钱**，故还原 = 删掉该用户及其余额行与流水。
+      //    种子里既有账户**一分未改**（仅只读用于对账断言），无需写回。
+      writeDb(
+        'DELETE FROM ab_balance_log WHERE user_id IN (SELECT id FROM ab_user WHERE openid LIKE ?)',
+        [`${PREFIX26}%`],
+      );
+      writeDb(
+        'DELETE FROM ab_balance WHERE user_id IN (SELECT id FROM ab_user WHERE openid LIKE ?)',
+        [`${PREFIX26}%`],
+      );
+      writeDb('DELETE FROM ab_user WHERE openid LIKE ?', [`${PREFIX26}%`]);
+      const left26 = readDb(
+        'SELECT (SELECT COUNT(*) FROM ab_user WHERE openid LIKE ?) AS u, (SELECT COUNT(*) FROM ab_balance WHERE user_id NOT IN (SELECT id FROM ab_user)) AS orphan',
+        [`${PREFIX26}%`],
+      );
+      assert(
+        Number(left26?.u ?? -1) === 0 && Number(left26?.orphan ?? -1) === 0,
+        '§26 夹具还原：新造用户与其余额 / 流水全部清除，且**没有留下孤儿余额行** —— 余额行不还原，下一次重跑的平台负债就会凭空多出 ¥56.11，并让 D38↔D33 的对账断言在「两次读之间」产生假绿',
+        `user=${left26?.u} orphan=${left26?.orphan}`,
+      );
+    }
+  }
+
   // ==========================================================================
   // 汇总
   // ==========================================================================

@@ -10,6 +10,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 
 import { REFUND_REASON_LABEL, RefundReasonType, ReceiveType } from '@abox/shared-types';
@@ -291,4 +292,121 @@ export class AdminSettleCommissionsDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date 需为 YYYY-MM-DD' })
   date?: string;
+}
+
+// ---------------------------------------------------------------- D38 / D39 余额账户
+
+/** D39 调整动作取值（`recharge` 充值 / `deduct` 扣减 / `freeze` 冻结 / `unfreeze` 解冻） */
+export const BALANCE_ADJUST_ACTIONS = ['recharge', 'deduct', 'freeze', 'unfreeze'] as const;
+/** D38 账户类型过滤取值 */
+export const BALANCE_ACCOUNT_TYPES = ['all', 'leader', 'user'] as const;
+
+const BALANCE_ADJUST_HINT = 'recharge(充值) / deduct(扣减) / freeze(冻结) / unfreeze(解冻)';
+const BALANCE_ACCOUNT_TYPE_HINT = 'all(全部) / leader(仅团长) / user(仅普通用户)';
+
+/**
+ * D38 · 余额账户管理查询（**跨用户**）
+ *
+ * ⚠️ `accountType` 用**字符串枚举**而不是 `onlyLeader=true/false`：
+ *    query 里的布尔串经 `@Type(() => Boolean)` 会把 `'false'` 转成 `true`
+ *    （非空字符串一律为真），是「传了 false 却筛出全部」的经典陷阱。
+ *
+ * ⚠️ 按 `userId` 精确查询时，**即使该用户还没有账户**（`ab_balance` 无行）也返回
+ *    一行 `hasAccount=false` 的全 0 视图 —— 否则运营「搜不到人 → 以为查无此用户 →
+ *    不敢充值」，而 D39 恰恰支持给无账户用户首充建户。
+ */
+export class AdminBalancesQueryDto {
+  @ApiPropertyOptional({ description: '按用户精确查询（`ab_user.id`）', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  userId?: number;
+
+  @ApiPropertyOptional({
+    description: `账户类型过滤：${BALANCE_ACCOUNT_TYPE_HINT}`,
+    enum: BALANCE_ACCOUNT_TYPES,
+    default: 'all',
+  })
+  @IsOptional()
+  @IsIn(BALANCE_ACCOUNT_TYPES as unknown as string[], {
+    message: `accountType 需为：${BALANCE_ACCOUNT_TYPE_HINT}`,
+  })
+  accountType?: string;
+
+  @ApiPropertyOptional({
+    description: '关键词：昵称 / 手机号（模糊匹配）',
+    example: '1380000',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  keyword?: string;
+
+  @ApiPropertyOptional({ description: '页码，默认 1' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({ description: '每页条数，默认 20，上限 100' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number;
+}
+
+/**
+ * D39 · 余额调整（充值 / 扣减 / 冻结 / 解冻）
+ *
+ * ⚠️ `amountFen` 是**整数分**（不是元）：管理端出参一律分，入参用分才对称；
+ *    且 `IsInt` 天然挡掉 `0.1 + 0.2` 这类浮点残差。端上是元输入框，提交前自行换算。
+ *
+ * ⚠️ `reason` **必填**（《接口规范》D39 原文要求）：这笔钱为什么动，是日后唯一能
+ *    回答「运营为什么给这个人加钱」的信息 —— 写进 `ab_balance_log.remark`。
+ *
+ * ⚠️ 本接口**必须**带幂等键（`Idempotency-Key`）：它没有业务单号可供判重，
+ *    重复提交就是重复加钱（同 L12 提现）。
+ */
+export class AdminAdjustBalanceDto {
+  @ApiProperty({
+    description: '目标用户（`ab_user.id`）—— 用户与团长**共用同一小程序身份**，故此处不区分',
+    example: 1,
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  userId!: number;
+
+  @ApiProperty({
+    description: `调整动作：${BALANCE_ADJUST_HINT}`,
+    enum: BALANCE_ADJUST_ACTIONS,
+    example: 'recharge',
+  })
+  @IsIn(BALANCE_ADJUST_ACTIONS as unknown as string[], {
+    message: `action 需为：${BALANCE_ADJUST_HINT}`,
+  })
+  action!: string;
+
+  @ApiProperty({
+    description: '调整金额（**整数分 · 必须 > 0**；单笔上限 ¥1,000,000.00 防手滑）',
+    example: 1000,
+  })
+  @Type(() => Number)
+  @IsInt({ message: 'amountFen 需为整数分' })
+  @Min(1, { message: 'amountFen 必须大于 0' })
+  @Max(100_000_000, { message: '单笔调整金额不得超过 ¥1,000,000.00' })
+  amountFen!: number;
+
+  @ApiProperty({
+    description: '调整原因（**必填** · 2–128 字 · 写入余额流水 remark）',
+    example: '客服补偿：9-15 配送超时',
+  })
+  @IsString()
+  @MinLength(2, { message: 'reason 至少 2 个字（这笔钱为什么动必须写清楚）' })
+  @MaxLength(128, { message: 'reason 最长 128 字' })
+  reason!: string;
 }

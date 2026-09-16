@@ -323,11 +323,18 @@ export class FinanceService {
    * 这两笔钱已经在用户账上、随时可提现或抵扣，因此是平台的**即时负债**，
    * 与「区间」无关 —— 出参带 `asOf` 时刻，页面必须按「截至某时刻」展示，
    * 否则会被误读成「本期新增负债」。
+   *
+   * ⚠️ **口径唯一真相**（M3-14）：D33 资金总览与 **D38 余额账户管理共用本函数**。
+   *    两页各自 `SUM(ab_balance)` 必然漂移（改了一处忘另一处，且没有任何报错），
+   *    故本函数为 `public` 供 `BalanceAdminService` 直接调用；e2e 用
+   *    「D38 `summary.liability.balanceFen` === D33 `liability.balanceFen`」钉死这条。
    */
-  private async loadLiability(): Promise<{
+  async loadLiability(): Promise<{
     asOf: string;
     balanceFen: number;
     frozenFen: number;
+    /** 账户数（`ab_balance` 有行 = 已发生过资金往来）—— 取到的行数即计数，不额外查库 */
+    accountCount: number;
   }> {
     const rows = await this.dataSource
       .getRepository(Balance)
@@ -340,7 +347,7 @@ export class FinanceService {
       balanceFen += fen(r.balance);
       frozenFen += fen(r.frozen);
     }
-    return { asOf: toBjIso(new Date()) ?? '', balanceFen, frozenFen };
+    return { asOf: toBjIso(new Date()) ?? '', balanceFen, frozenFen, accountCount: rows.length };
   }
 
   /** 待入账佣金（全量 · 时点量）：`ab_commission.status='pending'` */

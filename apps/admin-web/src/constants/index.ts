@@ -82,7 +82,17 @@ export const ADMIN_NAV = [
       { path: '/leader/list', title: '团长管理', page: 'P32', module: 'M33-03/04/05' },
       { path: '/supplier/list', title: '供应商管理', page: 'P33', module: 'M34' },
       { path: '/building/overview', title: '办公楼管理', page: 'P37', module: 'M33-01/02' },
-      { path: '/finance/overview', title: '财务结算', page: 'P34', module: 'M35' },
+      // ⚠️ M3-14 修复：原先财务域**只挂了 `/finance/overview` 一个入口**，其余子页
+      //    （佣金 / 余额 / 应付 / 退款 / 对账）在服务端 `ADMIN_MENU_KEYS` 里**早已授权**，
+      //    前端却没有任何菜单指向它们 —— 运营只能手输 URL 才能打开。
+      //    「菜单与白名单同源」反过来同样成立：**授权了就必须有入口**，
+      //    否则那些页面等同于不存在（本例正是新做的余额页在界面上点不到）。
+      { path: '/finance/overview', title: '资金总览', page: 'P34', module: 'M35-01' },
+      { path: '/finance/commission', title: '佣金结算', page: 'P34', module: 'M35-02' },
+      { path: '/finance/balance', title: '余额账户', page: 'P34', module: 'M35-04' },
+      { path: '/finance/supplier-share', title: '应付结算', page: 'P34 / P25', module: 'M35-03' },
+      { path: '/finance/refund', title: '退款审批', page: 'P34', module: 'M35-05' },
+      { path: '/finance/reconciliation', title: '微信对账', page: 'P34', module: 'M35-06' },
       { path: '/stats/core-metrics', title: '数据看板', page: 'P35', module: 'M36' },
     ],
   },

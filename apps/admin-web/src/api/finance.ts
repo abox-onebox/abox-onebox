@@ -1,3 +1,5 @@
+import { HEADER } from '@abox/shared-types';
+
 import { http } from './request';
 import type { StatsCostItems, StatsCostRegistration, StatsRangeView } from './stats';
 import type { PageResult } from './system';
@@ -8,8 +10,9 @@ import type { PageResult } from './system';
  * 覆盖：
  *   · **C6 三段式第二段** —— 退款审批（D40 流水 / D41 通过 / D42 驳回）
  *   · **M3-13** —— D33 资金总览 / D34 佣金结算明细 / D35 佣金入账（补跑）
+ *   · **M3-14** —— D38 余额账户管理 / D39 余额调整（资金动作 · 必带幂等键）
  *
- * 尚未落点：D38–D39（余额账户与调整）、D43（微信对账）、D44（发票管理）。
+ * 尚未落点：D43（微信对账）、D44（发票管理）。
  *
  * ⚠️ 金额一律**整数分**（`Fen` 结尾）；端上只做展示换算，绝不参与口径计算
  *    —— 「可退多少」由服务端重算并下发，端上算错时会退错钱。
@@ -329,3 +332,129 @@ export interface SettleCommissionsResult {
  */
 export const settleCommissions = (payload: SettleCommissionsPayload = {}) =>
   http.post<SettleCommissionsResult>('/admin/finance/commissions/settle', payload);
+
+// ------------------------------------------------------------------ D38 余额账户
+
+/** D38 单条账户行 */
+export interface BalanceAccountRow {
+  userId: number;
+  nickname: string | null;
+  avatarUrl: string | null;
+  /** 手机号**列表一律脱敏**（同 M3-6 纪律） */
+  phoneMasked: string | null;
+  isLeader: boolean;
+  leaderId: number | null;
+  leaderLevel: string | null;
+  leaderLevelText: string | null;
+  /** 团长状态（1 在职 / 2 停职）；非团长为 null */
+  leaderStatus: number | null;
+  leaderStatusText: string | null;
+  balanceFen: number;
+  frozenFen: number;
+  /** 可用 + 冻结 */
+  netFen: number;
+  totalInFen: number;
+  totalOutFen: number;
+  /** `false` = 从未发生资金往来（余额全 0）—— 此时仍可给他充值（D39 会自动建户） */
+  hasAccount: boolean;
+  updatedAt: string | null;
+}
+
+/** 平台负债（**全量 · 时点量** · 与 D33 资金总览的 `liability` 同源同值） */
+export interface BalanceLiability {
+  asOf: string;
+  balanceFen: number;
+  frozenFen: number;
+  netFen: number;
+  accountCount: number;
+  leaderAccountCount: number;
+}
+
+/** D38 余额流水（仅精确查单用户时下发最近 20 条） */
+export interface BalanceLogRow {
+  id: number;
+  type: string;
+  typeText: string;
+  direction: number;
+  amountFen: number;
+  balanceAfterFen: number;
+  relatedId: string | null;
+  remark: string | null;
+  createdAt: string;
+}
+
+export interface BalanceListQuery {
+  /** 按用户精确查（返回 `view='single'` + 最近 20 条流水；无账户也会返回一行） */
+  userId?: number;
+  accountType?: string;
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface BalanceAccountList extends PageResult<BalanceAccountRow> {
+  /** ⭐ 全量负债：**不随筛选变化**（`total` 才是本次筛选命中数） */
+  liability: BalanceLiability;
+  view: 'list' | 'single';
+  accountTypeOptions: Array<{ value: string; label: string }>;
+  /**
+   * 端上可用动作（**判定权威在服务端 `@Roles`**，此处只让端上不必猜）
+   *
+   * `canAdjust` 与 `FinanceAdminController` 的 `@Roles(...BALANCE_ADJUST_ROLES)`
+   * **共用同一角色常量**，不可能出现「按钮亮着、点了 `10003`」。
+   */
+  actions: { canAdjust: boolean };
+  logs: BalanceLogRow[];
+}
+
+/** D38 余额账户管理 */
+export const fetchFinanceBalances = (params: BalanceListQuery = {}) =>
+  http.get<BalanceAccountList>('/admin/finance/balances', params);
+
+// ------------------------------------------------------------------ D39 余额调整
+
+/** D39 调整动作 */
+export type BalanceAdjustAction = 'recharge' | 'deduct' | 'freeze' | 'unfreeze';
+
+export interface AdjustBalancePayload {
+  userId: number;
+  action: BalanceAdjustAction;
+  /** **整数分**（端上从元输入框换算：`Math.round(yuan * 100)`） */
+  amountFen: number;
+  /** **必填** · 2–128 字 · 写入余额流水 `remark` */
+  reason: string;
+}
+
+export interface AdjustBalanceResult {
+  /** 调整单号（`AJ…`） */
+  adjustNo: string;
+  action: string;
+  actionText: string;
+  userId: number;
+  nickname: string | null;
+  isLeader: boolean;
+  amountFen: number;
+  balanceBeforeFen: number;
+  frozenBeforeFen: number;
+  balanceFen: number;
+  frozenFen: number;
+  netFen: number;
+  totalInFen: number;
+  totalOutFen: number;
+  reason: string;
+  operatorId: number;
+  operatorName: string;
+  logId: number;
+}
+
+/**
+ * D39 余额调整（幂等 · 资金动作）
+ *
+ * ⚠️ `idempotencyKey` **必填**：调账没有业务单号可供判重，重复提交就是重复加钱。
+ *    键的语义是「**这一笔调整**」：弹窗打开时生成一次，**提交失败重试沿用同一个**
+ *    （服务端会返回首次结果而不是再扣一次）；成功后即作废（下次调整是新的一笔）。
+ */
+export const adjustFinanceBalance = (payload: AdjustBalancePayload, idempotencyKey: string) =>
+  http.post<AdjustBalanceResult>('/admin/finance/balances/adjust', payload, {
+    headers: { [HEADER.IDEMPOTENCY_KEY]: idempotencyKey },
+  });

@@ -15,6 +15,7 @@ import { User } from '../../database/entities/user.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
 import { MessageModule } from '../message/message.module';
 import { StatsModule } from '../stats/stats.module';
+import { BalanceAdminService } from './balance-admin.service';
 import { CommissionService } from './commission.service';
 import { FinanceAdminController } from './finance-admin.controller';
 import { FinanceService } from './finance.service';
@@ -44,7 +45,12 @@ import { WithdrawService } from './withdraw.service';
  *    `FinanceAdminController`（`/admin/finance/*`）。D33 的收入/成本/毛利**取 `StatsService`**
  *    （与 D47 看板同函数），只补资金视角独有的应付状态、已退金额、余额负债、待入账佣金。
  *
- * 后台侧仍待写：D38–D39（余额账户与调整）、D43（微信对账）、D44（发票管理）。
+ *  · **M3-14 `BalanceAdminService` —— D38 余额账户 / D39 余额调整**（同挂
+ *    `FinanceAdminController`）：`ab_balance` 快照 + `ab_balance_log` 账本的同源读端；
+ *    ⭐ 负债合计直接调 `FinanceService.loadLiability()`（**与 D33 同函数**，不另算一套）。
+ *    D39 是资金动作 → 方法级白名单收窄 + 必带幂等键 + 乐观锁。
+ *
+ * 后台侧仍待写：D43（微信对账）、D44（发票管理）。
  *   提现审批 D45/D46 一期由 `WithdrawService` + 团长侧路由承载，后台审批页在 M4 补。
  *
  * ⚠️ 依赖方向：`OrderModule → FinanceModule`（取 Refund/Reversal），单向无循环。
@@ -91,6 +97,7 @@ import { WithdrawService } from './withdraw.service';
   providers: [
     CommissionService,
     FinanceService,
+    BalanceAdminService,
     WithdrawService,
     RefundService,
     ReversalService,

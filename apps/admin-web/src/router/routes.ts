@@ -175,6 +175,11 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/finance/commission.vue'),
       },
       {
+        path: 'finance/balance',
+        name: 'FinanceBalance',
+        component: () => import('@/views/finance/balance.vue'),
+      },
+      {
         path: 'finance/supplier-share',
         name: 'FinanceSupplierShare',
         component: () => import('@/views/finance/supplier-share.vue'),

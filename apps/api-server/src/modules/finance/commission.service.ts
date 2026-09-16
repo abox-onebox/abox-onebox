@@ -765,6 +765,14 @@ export const BALANCE_LOG_TYPE_LABEL: Record<string, string> = {
   withdraw: '提现',
   withdraw_refund: '提现退回',
   refund: '退款回退',
+  /**
+   * M3-14 新增：管理端手工调整（充 / 扣 / 冻 / 解）
+   *
+   * ⚠️ 漏了这条，团长在 P17 余额明细里会看到裸英文 `adjust` ——
+   *    `listBalanceLogs` 的文案回退是 `LABEL[type] ?? type`，**不报错、只是变丑**，
+   *    属于最容易漏且最难被发现的一类。值的定义见 `balance-admin.service.ts`。
+   */
+  adjust: '管理端调整',
 };
 
 export function levelLabel(level: string): string {

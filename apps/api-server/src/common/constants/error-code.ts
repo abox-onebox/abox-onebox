@@ -147,6 +147,15 @@ export enum ErrorCode {
    * 运营不会因此卡死 —— 兜底通道是 D11 强制退款。
    */
   REFUND_ORIGIN_UNKNOWN = 40014,
+  /**
+   * 扩展（M3-14）：冻结余额不足（D39 解冻超出该用户已冻结额）
+   *
+   * ⚠️ 刻意**不复用** `40002 BALANCE_NOT_ENOUGH`（可用余额不足）：
+   *    两者运维含义完全不同 —— 前者是「钱不够花」，用户充值/等回款即可；
+   *    本码是「**冻结账对不上**」，说明存在绕过冻结口径的写点，属**账实不符**信号，
+   *    要查的是数据结构而不是让人去充钱。合成一个码会把这条线索埋掉。
+   */
+  BALANCE_FROZEN_NOT_ENOUGH = 40015,
 
   /** ---- 5xxxx 财务 / 结算 / 供应商 ---- */
   SUPPLIER_NOT_QUALIFIED = 50001,
@@ -274,6 +283,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.REFUND_NOT_FOUND]: '退款单不存在',
   [ErrorCode.REFUND_STATUS_ILLEGAL]: '退款单当前状态不支持该操作',
   [ErrorCode.REFUND_ORIGIN_UNKNOWN]: '退款申请缺少原状态记录，无法驳回',
+  [ErrorCode.BALANCE_FROZEN_NOT_ENOUGH]: '冻结余额不足',
   [ErrorCode.SUPPLIER_NOT_QUALIFIED]: '供应商资质未通过审核',
   [ErrorCode.DISTRIBUTION_CENTER_LOCKED]: '集散中心配置不可删除（存在历史结算）',
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',
