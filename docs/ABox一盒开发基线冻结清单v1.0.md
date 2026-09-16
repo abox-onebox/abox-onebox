@@ -13,13 +13,13 @@
 | 基线标识 | `v1.1-local-dev-base`（提交历史重建后的现行 tag） |
 | 冻结日期 | 2026-09-14 |
 | 原型版本 | v4.10.0（37 页，已部署；结算成本项可配置版） |
-| 现行资产 | 26 份 |
-| 已废弃资产 | 5 份（存档，勿参考） |
-| 工程骨架 | `abox-onebox/` · **449 个文件**（阶段四产出） |
+| 现行资产 | 28 份 |
+| 已废弃资产 | 6 份（存档，勿参考） |
+| 工程骨架 | `abox-onebox/` · **455 个文件**（阶段四产出） |
 | 数据库表 | **25 张**（ER v2.1：23 张 + 评审新增 `ab_leader_invite` + M2 新增 `ab_withdraw`） |
 | 技术栈 | uni-app(Vue3+TS) + NestJS + MySQL 8 + Redis 7 + 微信支付 V3；**佣金出款走灵活用工平台代发**（C11，见目录结构 v2.0） |
-| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `956bbd2`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
-| 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**；M1（后端 + 小程序基座）· M2（团长端全链路）已端到端验收；**M3（运营后台 + 供应商端）进行中**（M3-1 后台鉴权基座 · M3-2 套餐编排 D1–D7 · M3-3 订单中心 D8–D12 已落地） |
+| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `35037b8`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
+| 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**；M1（后端 + 小程序基座）· M2（团长端全链路）已端到端验收；**M3（运营后台 + 供应商端）进行中**（M3-1 后台鉴权基座 · M3-2 套餐编排 D1–D7 · M3-3 订单中心 D8–D12 · M3-4 退款审批 D40–D42 · M3-5 后台团长管理 D19–D22 已落地；M3-6~M3-11 待写） |
 
 ---
 
@@ -38,21 +38,23 @@
 | 9 | `ABox一盒业务运作理解v2.0.md` | 业务时序与关键事实（已最终确认） | 9,031 | `05e25145ee01` |
 | 10 | `ABox一盒协作规范v1.0.md` | 分支 / 提交 / 评审 / 配置纪律 / 文档变更流程 / DoD（阶段四） | 12,013 | `422595eff119` |
 | 11 | `ABox一盒合规资质与协议清单v1.0.md` | 资质与协议要点（阶段三）· 资金定性=自营 + 佣金个税走灵活用工 | 15,446 | `d3a9b3a0f902` |
-| 12 | `ABox一盒开发前准备计划v1.0.html` | 四阶段推进路线（准备期总纲） | 28,685 | `feb3c6c759a2` |
-| 13 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四） | 16,519 | `4cb4f05a75e9` |
-| 14 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 | 62,088 | `79a0f84e59a4` |
-| 15 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 25 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor + ab_refund.order_status_before） | 40,535 | `45cf9443b3de` |
-| 16 | `ABox一盒本地开发手册v1.0.md` | 不依赖云资源的本地开发手册（四驱动开关 · 本地跑通登录→下单→支付→回调） | 15,697 | `0a1cccd8a63d` |
-| 17 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 | 19,393 | `69e1adde9292` |
-| 18 | `ABox一盒表结构评审意见v1.0.md` | ER 评审结论（阶段二）· P0×6 + 4 张补齐 DDL | 24,817 | `53e5f67f568c` |
-| 19 | `ABox一盒订单状态机与全链路流转v1.0.md` | 订单域行为契约（阶段二）· 11 态 / 8 定时任务 / C6 退款三段式 / C11 出款通道 | 18,629 | `ac3901dcc284` |
-| 20 | `ABox一盒设计token规范v1.0.html` | 设计与实现共用视觉变量 | 20,375 | `34faff40f86e` |
-| 21 | `ABox一盒账号资源与密钥清单v1.0.md` | 外部资源核对表（阶段三）· 含 C10/C11 结算与出款通道定案 | 15,851 | `3973bac7ad74` |
-| 22 | `ABox一盒项目目录结构v2.0.md` | Monorepo 布局 · 端页模块映射 · v2.0.2 补 leader-expire.task | 34,822 | `b39104373c87` |
-| 23 | `手机测试指南.md` | 原型真机测试方式 | 5,615 | `fdadff0b2889` |
-| 24 | `prototype/index.html` | 可点击原型 v4.10.0（37 页 · 结算成本项可配置版 · 已部署线上） | 275,848 | `6069906879d5` |
-| 25 | `prototype/README.md` | 原型变更日志（已刷新至 v4.10.0，页索引 37 页；页面归属仍以《目录结构 v2.0》§十 为准） | 43,872 | `4ced2a5caa17` |
-| 26 | `prototype/manifest.json` | PWA 清单 | 679 | `a339bfd8ca0d` |
+| 12 | `ABox一盒外卖小程序上线资质与平台准入清单v1.1.md` | 资质与平台准入口径（v1.1 · 第三方平台路线：EDI → 网络食品交易第三方平台备案） | 28,500 | `44872b6f3656` |
+| 13 | `ABox一盒外卖小程序最快上线路径与提审自检清单v1.2.md` | 最快上线路径 + 提审自检清单（v1.2） | 17,812 | `084ffc9cac90` |
+| 14 | `ABox一盒开发前准备计划v1.0.html` | 四阶段推进路线（准备期总纲） | 28,685 | `feb3c6c759a2` |
+| 15 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四） | 17,205 | `5a8d52b4599b` |
+| 16 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 | 67,840 | `38b283c292fa` |
+| 17 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 25 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor + ab_refund.order_status_before）· 2026-09-16 M3-5 后台团长管理零 DDL（§5.4） | 42,496 | `6b5692be4f66` |
+| 18 | `ABox一盒本地开发手册v1.0.md` | 不依赖云资源的本地开发手册（四驱动开关 · 本地跑通登录→下单→支付→回调） | 15,697 | `0a1cccd8a63d` |
+| 19 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 | 19,393 | `69e1adde9292` |
+| 20 | `ABox一盒表结构评审意见v1.0.md` | ER 评审结论（阶段二）· P0×6 + 4 张补齐 DDL | 24,817 | `53e5f67f568c` |
+| 21 | `ABox一盒订单状态机与全链路流转v1.0.md` | 订单域行为契约（阶段二）· 11 态 / 8 定时任务 / C6 退款三段式 / C11 出款通道 | 18,629 | `ac3901dcc284` |
+| 22 | `ABox一盒设计token规范v1.0.html` | 设计与实现共用视觉变量 | 20,375 | `34faff40f86e` |
+| 23 | `ABox一盒账号资源与密钥清单v1.0.md` | 外部资源核对表（阶段三）· 含 C10/C11 结算与出款通道定案 | 15,851 | `3973bac7ad74` |
+| 24 | `ABox一盒项目目录结构v2.0.md` | Monorepo 布局 · 端页模块映射 · v2.0.2 补 leader-expire.task | 34,822 | `b39104373c87` |
+| 25 | `手机测试指南.md` | 原型真机测试方式 | 5,615 | `fdadff0b2889` |
+| 26 | `prototype/index.html` | 可点击原型 v4.10.0（37 页 · 结算成本项可配置版 · 已部署线上） | 275,848 | `6069906879d5` |
+| 27 | `prototype/README.md` | 原型变更日志（已刷新至 v4.10.0，页索引 37 页；页面归属仍以《目录结构 v2.0》§十 为准） | 43,872 | `4ced2a5caa17` |
+| 28 | `prototype/manifest.json` | PWA 清单 | 679 | `a339bfd8ca0d` |
 
 ---
 
@@ -60,17 +62,18 @@
 
 | # | 文件 | 版本 / 说明 | 字节 | SHA-256（前 12） |
 | --- | --- | --- | --- | --- |
-| 1 | `archive/ABox一盒MVP优化交接包v1.0.md` | 已被 v1.3 取代（C1–C9 未裁决）（已移入 `archive/`，不再进 `docs/` 与交接目录） | 9,690 | `db99aa95da84` |
-| 2 | `archive/ABox一盒业务运作理解v1.0.md` | 已被 v2.0 取代（已移入 `archive/`，不再进 `docs/` 与交接目录） | 10,221 | `e25f5ffa3112` |
-| 3 | `archive/ABox一盒小程序产品方案v1.0.md` | v1.0 系列，口径已过时（已移入 `archive/`，不再进 `docs/` 与交接目录） | 26,941 | `585efc549bd3` |
-| 4 | `archive/ABox一盒数据库ER设计v1.0.md` | 已被 v2.1 取代（已移入 `archive/`，不再进 `docs/` 与交接目录） | 33,423 | `ba8ea158ee0d` |
-| 5 | `archive/ABox一盒项目目录结构v1.0.md` | 已被 v2.0 取代（含楼长端 / T-1 20:00）（已移入 `archive/`，不再进 `docs/` 与交接目录） | 22,300 | `82aeb781ebce` |
+| 1 | `ABox一盒外卖小程序上线资质与平台准入清单v1.0.md` | 已被 v1.1 取代（第三方平台路线与 EDI 前置未纳入） | 22,361 | `942e462eb54a` |
+| 2 | `archive/ABox一盒MVP优化交接包v1.0.md` | 已被 v1.3 取代（C1–C9 未裁决）（已移入 `archive/`，不再进 `docs/` 与交接目录） | 9,690 | `db99aa95da84` |
+| 3 | `archive/ABox一盒业务运作理解v1.0.md` | 已被 v2.0 取代（已移入 `archive/`，不再进 `docs/` 与交接目录） | 10,221 | `e25f5ffa3112` |
+| 4 | `archive/ABox一盒小程序产品方案v1.0.md` | v1.0 系列，口径已过时（已移入 `archive/`，不再进 `docs/` 与交接目录） | 26,941 | `585efc549bd3` |
+| 5 | `archive/ABox一盒数据库ER设计v1.0.md` | 已被 v2.1 取代（已移入 `archive/`，不再进 `docs/` 与交接目录） | 33,423 | `ba8ea158ee0d` |
+| 6 | `archive/ABox一盒项目目录结构v1.0.md` | 已被 v2.0 取代（含楼长端 / T-1 20:00）（已移入 `archive/`，不再进 `docs/` 与交接目录） | 22,300 | `82aeb781ebce` |
 
 ---
 
 ## 四、工程骨架 `abox-onebox/`（阶段四产出）
 
-**总计 449 个文件**，按区域分布：
+**总计 455 个文件**，按区域分布：
 
 | 区域 | 文件数 |
 | --- | --- |
@@ -90,16 +93,16 @@
 | `_m3d.log` | 1 |
 | `_m3e.log` | 1 |
 | `apps/admin-web` | 77 |
-| `apps/api-server` | 196 |
+| `apps/api-server` | 199 |
 | `apps/miniprogram` | 80 |
 | `commitlint.config.cjs` | 1 |
 | `data` | 1 |
 | `docker-compose.yml` | 1 |
-| `docs` | 24 |
+| `docs` | 26 |
 | `lint-staged.config.cjs` | 1 |
 | `package.json` | 1 |
 | `packages/eslint-config` | 2 |
-| `packages/shared-types` | 17 |
+| `packages/shared-types` | 18 |
 | `packages/shared-utils` | 7 |
 | `packages/tsconfig` | 4 |
 | `pnpm-lock.yaml` | 1 |
@@ -175,7 +178,7 @@
 | 50 | `apps/api-server/src/common/constants/admin-role.ts` |  | 4,605 | `6c5ab8df26f8` |
 | 51 | `apps/api-server/src/common/decorators/operation-log.decorator.ts` |  | 1,463 | `d9980b6251a1` |
 | 52 | `apps/api-server/src/common/interceptors/operation-log.interceptor.ts` |  | 6,431 | `8be66881aed6` |
-| 53 | `apps/api-server/src/common/constants/error-code.ts` |  | 9,845 | `9b2709b8aee2` |
+| 53 | `apps/api-server/src/common/constants/error-code.ts` |  | 11,421 | `ddf06f653e38` |
 | 54 | `apps/admin-web/src/api/request.ts` |  | 4,529 | `739e3e115d78` |
 | 55 | `apps/admin-web/src/api/auth.ts` |  | 2,262 | `2341475025f9` |
 | 56 | `apps/admin-web/src/router/guards.ts` |  | 2,523 | `47f9d2ab636d` |
@@ -190,7 +193,7 @@
 | 65 | `apps/api-server/src/modules/finance/reversal.service.ts` |  | 14,705 | `aa6a5cfd3e96` |
 | 66 | `apps/admin-web/src/api/order.ts` |  | 8,547 | `d4706221d804` |
 | 67 | `apps/admin-web/src/views/order/list.vue` |  | 17,670 | `06d88e56d646` |
-| 68 | `scripts/e2e-m3.mjs` |  | 113,750 | `6343f51fb6ea` |
+| 68 | `scripts/e2e-m3.mjs` |  | 150,854 | `d42d9315c649` |
 | 69 | `apps/api-server/src/modules/finance/refund-admin.service.ts` |  | 12,164 | `8281685c4cae` |
 | 70 | `apps/api-server/src/modules/finance/refund-admin.controller.ts` |  | 4,484 | `a72a21a641c3` |
 | 71 | `apps/api-server/src/modules/finance/dto/refund-admin.dto.ts` |  | 3,839 | `afe4177c79ec` |
@@ -198,6 +201,15 @@
 | 73 | `apps/admin-web/src/api/finance.ts` |  | 4,787 | `c5415498ec40` |
 | 74 | `apps/admin-web/src/views/finance/refund.vue` |  | 18,046 | `aa5bfd754a75` |
 | 75 | `apps/admin-web/src/views/order/detail.vue` |  | 23,753 | `9afb57e30ebe` |
+| 76 | `packages/shared-types/src/enums/leader-admin.ts` |  | 1,889 | `ea7f8141c5ef` |
+| 77 | `apps/api-server/src/modules/team-leader/leader-admin.service.ts` |  | 39,441 | `30f38c2fd007` |
+| 78 | `apps/api-server/src/modules/team-leader/leader-admin.controller.ts` |  | 6,228 | `fb18b4aa296f` |
+| 79 | `apps/api-server/src/modules/team-leader/dto/leader-admin.dto.ts` |  | 8,319 | `220a8d77ab08` |
+| 80 | `apps/api-server/src/modules/team-leader/team-leader.module.ts` |  | 3,398 | `341de4ad8cb0` |
+| 81 | `apps/admin-web/src/api/leader.ts` |  | 8,931 | `24473f928968` |
+| 82 | `apps/admin-web/src/views/leader/list.vue` |  | 28,734 | `cc87b268c900` |
+| 83 | `apps/admin-web/src/views/leader/apply.vue` |  | 10,891 | `128d34315b92` |
+| 84 | `apps/admin-web/src/views/leader/detail.vue` |  | 16,235 | `887411803ae4` |
 
 > 骨架含：根配置（pnpm workspace / TS / ESLint / Prettier / commitlint）+ CI 四作业 + Docker Compose（MySQL 8 + Redis 7，无 RabbitMQ）
 > + 小程序 21 页骨架 + 后台 33 视图骨架 + 后端 15 模块 / 8 定时任务 / 3 消费者 + 4 个 packages。
@@ -214,7 +226,7 @@
 | 3 | `tests/bracket_check.py` | 括号与反引号配平 | 2,297 | `665a00c07c76` |
 | 4 | `tests/js-syntax-check.js` | JS 语法校验 | 785 | `1e5cfda6093b` |
 | 5 | `tests/check_online.py` | 线上部署核验 | 1,475 | `3efc02e45877` |
-| 6 | `tests/baseline_manifest.py` | 本清单生成器（基线变更时重跑） | 22,256 | `4081f6665a55` |
+| 6 | `tests/baseline_manifest.py` | 本清单生成器（基线变更时重跑） | 23,968 | `71867ca4570f` |
 
 ---
 
