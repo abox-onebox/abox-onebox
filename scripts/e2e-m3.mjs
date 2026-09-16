@@ -5921,6 +5921,647 @@ async function main() {
   }
 
   // ==========================================================================
+  // §23 M3-11 数据看板 D47–D50（后台 P35 · 模块 M36）
+  // ==========================================================================
+  //
+  // 口径唯一真相：`apps/api-server/src/modules/stats/stats.constants.ts`
+  //   · 统计基准 = **出餐日**（`ab_order.meal_date`）；区间只给 today / 7d / 30d 三档
+  //   · GMV = Σ `unit_price` × `quantity`；**排除** 未支付 / 已取消 / 已退款
+  //   · 经营毛利 = GMV − 采购款 − 履约成本 − 佣金（**结果值**，可能为负）
+  //
+  // ⚠️ 本节**不依赖下单窗口**（同 §18–§22 纪律）：订单夹具一律直插 `ab_order`。
+  //    API 下单只能下「明日」且要求北京时间 14:00–23:00，靠它会让本节在窗口外整组变红。
+  // ⚠️ 断言口径 = **增量对照 + 结构不变量**，不写死累计值：库里本来就有别处留下的订单，
+  //    写死绝对值等于把别处的行为绑进本节（见《缺陷与陷阱》#31）。
+  // ⚠️ 夹具以 `order_no` / `share_no` 前缀标记，**节首与节末各清一次** → 可重复跑。
+  {
+    log('\n§23 M3-11 数据看板 D47–D50');
+
+    const PREFIX = `E2ESTATS${stamp}`;
+    const D0 = bjToday();
+    const D1 = addDaysStr(D0, -1);
+    const D2 = addDaysStr(D0, -2);
+    const UP = '25.80'; // 锁定售价
+    const toFen = (v) => Math.round(Number(v ?? 0) * 100);
+
+    const cleanFixtures = () => {
+      writeDb('DELETE FROM ab_order WHERE order_no LIKE ?', [`${PREFIX}%`]);
+      writeDb('DELETE FROM ab_commission WHERE order_no LIKE ?', [`${PREFIX}%`]);
+      writeDb('DELETE FROM ab_supplier_share WHERE share_no LIKE ?', [`${PREFIX}%`]);
+    };
+    cleanFixtures(); // 上一次失败留下的残留先清掉
+
+    // ---- 夹具原料：一律取自库内真实行，避免裸 id 在 MySQL 下撞外键 ----
+    const freeUsers = readRows(
+      'SELECT id FROM ab_user WHERE id NOT IN (SELECT DISTINCT user_id FROM ab_order) ORDER BY id DESC LIMIT 4',
+    );
+    const bRows = readRows(
+      'SELECT id, building_group_id FROM ab_building WHERE building_group_id IS NOT NULL ORDER BY id LIMIT 2',
+    );
+    const mRows = readRows('SELECT id FROM ab_set_meal ORDER BY id LIMIT 2');
+    const assignRow = readDb('SELECT id FROM ab_meal_assignment ORDER BY id LIMIT 1');
+    const leaderRow = readDb('SELECT id FROM ab_team_leader ORDER BY id LIMIT 1');
+    const supRow = readDb('SELECT id FROM ab_supplier ORDER BY id LIMIT 1');
+
+    const ready =
+      freeUsers.length >= 4 &&
+      bRows.length >= 2 &&
+      mRows.length >= 2 &&
+      !!assignRow &&
+      !!leaderRow &&
+      !!supRow;
+    assert(
+      ready,
+      '§23 前置：夹具原料齐备（≥4 个「从未下过单」的用户 / ≥2 栋有楼群的楼 / ≥2 个套餐 / 1 条分配行 / 1 名团长 / 1 家供应商）',
+      `users=${freeUsers.length} buildings=${bRows.length} meals=${mRows.length} assign=${!!assignRow} leader=${!!leaderRow} supplier=${!!supRow}`,
+    );
+
+    if (ready) {
+      const u1 = Number(freeUsers[0].id);
+      const u2 = Number(freeUsers[1].id);
+      const u3 = Number(freeUsers[2].id);
+      const u4 = Number(freeUsers[3].id);
+      const b1 = { id: Number(bRows[0].id), gid: Number(bRows[0].building_group_id) };
+      const b2 = { id: Number(bRows[1].id), gid: Number(bRows[1].building_group_id) };
+      const m1 = Number(mRows[0].id);
+      const m2 = Number(mRows[1].id);
+      const assignId = Number(assignRow.id);
+      const leaderId = Number(leaderRow.id);
+
+      // ---------------------------------------------------------- A. 区间（三档 + 回显 + 缺省 + 非法值）
+      const before = (await call('GET', '/admin/stats/dashboard?range=7d', { token: adminToken }))
+        .body?.data;
+      const beforeHeat = (
+        await call('GET', '/admin/stats/dish-heat?range=7d&topN=50', { token: adminToken })
+      ).body?.data;
+      const beforeRet = (await call('GET', '/admin/stats/retention?range=7d', { token: adminToken }))
+        .body?.data;
+
+      assert(
+        before?.range?.range === '7d' && before?.range?.days === 7,
+        'D47 区间回显：`range=7d` → days=7，且**回带起止日**（同档 = 同区间，端上不再自己算日期）',
+        `range=${before?.range?.range} days=${before?.range?.days}`,
+      );
+      assert(
+        before.range.endDate === D0 && before.range.startDate === addDaysStr(D0, -6),
+        '区间**含末日**：近 7 日 = [今日−6, 今日] —— 少算一天会静默丢掉昨天的数据，看板上完全看不出来',
+        `${before.range.startDate} ~ ${before.range.endDate}`,
+      );
+      const rToday = (
+        await call('GET', '/admin/stats/dashboard?range=today', { token: adminToken })
+      ).body?.data;
+      assert(
+        rToday?.range?.days === 1 && rToday.range.startDate === D0 && rToday.range.endDate === D0,
+        '`range=today` → 单日出餐日区间',
+        `days=${rToday?.range?.days}`,
+      );
+      const r30 = (await call('GET', '/admin/stats/dashboard?range=30d', { token: adminToken }))
+        .body?.data;
+      assert(
+        r30?.range?.days === 30 && r30.range.startDate === addDaysStr(D0, -29),
+        '`range=30d` → [今日−29, 今日]',
+        `days=${r30?.range?.days} start=${r30?.range?.startDate}`,
+      );
+      const rDefault = (await call('GET', '/admin/stats/dashboard', { token: adminToken })).body
+        ?.data;
+      assert(
+        rDefault?.range?.range === '7d',
+        '`range` 缺省 = 7d（与原型 P35 首屏「近 7 日」一致，不让端上决定默认口径）',
+        `range=${rDefault?.range?.range}`,
+      );
+      const rBad = await call('GET', '/admin/stats/dashboard?range=90d', { token: adminToken });
+      assert(
+        rBad.body?.code === 10001,
+        '⭐ 非法 `range` → **10001**，不静默回落默认档 —— 否则运营以为在看 90 天，实际看的是 7 天',
+        `code=${rBad.body?.code}`,
+      );
+
+      // ---------------------------------------------------------- B. 夹具：7 单（4 有效 / 3 无效）
+      const INS_ORDER =
+        'INSERT INTO ab_order (order_no, user_id, team_leader_id, building_id, building_group_id, set_meal_id, assignment_id, meal_date, quantity, unit_price, total_amount, balance_used, discount_amount, pay_amount, status, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, 0, ?, ?)';
+      const addOrder = (no, userId, leadId, b, mealId, date, qty, status) => {
+        const total = (25.8 * qty).toFixed(2);
+        writeDb(INS_ORDER, [
+          no,
+          userId,
+          leadId,
+          b.id,
+          b.gid,
+          mealId,
+          assignId,
+          date,
+          qty,
+          UP,
+          total,
+          total,
+          status,
+          `${date} 12:00:00`,
+          `${date} 12:00:00`,
+        ]);
+      };
+
+      addOrder(`${PREFIX}O1`, u1, leaderId, b1, m1, D0, 2, 'paid');
+      addOrder(`${PREFIX}O2`, u1, leaderId, b1, m2, D0, 1, 'completed');
+      addOrder(`${PREFIX}O3`, u2, leaderId, b2, m1, D1, 3, 'delivered');
+      // 在途退款（钱还没退、佣金尚未冲销）→ **计入** GMV
+      addOrder(`${PREFIX}O7`, u3, null, b1, m2, D1, 2, 'refund_applying');
+      // 以下三单均**不计入** GMV
+      addOrder(`${PREFIX}O4`, u4, null, b2, m1, D2, 1, 'pending_pay');
+      addOrder(`${PREFIX}O5`, u4, null, b1, m1, D2, 1, 'refunded');
+      addOrder(`${PREFIX}O6`, u2, null, b2, m2, D2, 1, 'cancelled');
+
+      const o1 = readDb('SELECT id FROM ab_order WHERE order_no = ?', [`${PREFIX}O1`]);
+      const o1Id = Number(o1?.id ?? 0);
+      const o2 = readDb('SELECT id FROM ab_order WHERE order_no = ?', [`${PREFIX}O2`]);
+      const o2Id = Number(o2?.id ?? 0);
+
+      // ---------------------------------------------------------- C. 成本侧净额（佣金 / 采购）
+      const INS_COMM =
+        'INSERT INTO ab_commission (order_id, order_no, team_leader_id, leader_level, rate, base_amount, quantity, amount, type, status, meal_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+      writeDb(INS_COMM, [
+        o1Id,
+        `${PREFIX}O1`,
+        leaderId,
+        'formal',
+        '0.0900',
+        '51.60',
+        2,
+        '5.00',
+        'normal',
+        'pending',
+        D0,
+      ]);
+      writeDb(INS_COMM, [
+        o1Id,
+        `${PREFIX}O1`,
+        leaderId,
+        'formal',
+        '0.0900',
+        '51.60',
+        2,
+        '-2.00',
+        'reversal',
+        'pending',
+        D0,
+      ]);
+      // ⚠️ `ab_commission` 上有 **`uk_commission_order_type` UNIQUE(order_id, type)** ——
+      //    一单最多一条 `normal` + 一条 `reversal`（这正是 C9 冲销的形状：原行 + 负行）。
+      //    所以「已被冲销的 normal 行」这条夹具**必须挪到另一单**上，否则直插就撞唯一约束。
+      //    status='cancelled' 的 normal 行 → 必须被排除，否则净额会算成 5.00 + 1.00
+      writeDb(INS_COMM, [
+        o2Id,
+        `${PREFIX}O2`,
+        leaderId,
+        'formal',
+        '0.0900',
+        '25.80',
+        1,
+        '1.00',
+        'normal',
+        'cancelled',
+        D0,
+      ]);
+
+      const supId = Number(supRow.id);
+      const INS_SHARE =
+        "INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, dish_id, quantity, unit_price, amount, type, channel, status) VALUES (?, ?, ?, 'supplier', ?, ?, ?, ?, ?, ?, 'manual', ?)";
+      writeDb(INS_SHARE, [
+        `${PREFIX}S1`,
+        D0,
+        D0,
+        supId,
+        null,
+        10,
+        '10.00',
+        '100.00',
+        'normal',
+        'pending',
+      ]);
+      writeDb(INS_SHARE, [
+        `${PREFIX}S2`,
+        D0,
+        D0,
+        supId,
+        null,
+        10,
+        '4.00',
+        '-40.00',
+        'reversal',
+        'pending',
+      ]);
+      // 已被纠错冲销的行（status='reversed'）→ 必须排除
+      writeDb(INS_SHARE, [
+        `${PREFIX}S3`,
+        D0,
+        D0,
+        supId,
+        null,
+        10,
+        '999.00',
+        '999.00',
+        'normal',
+        'reversed',
+      ]);
+
+      // ---------------------------------------------------------- D. D47 增量
+      const after = (await call('GET', '/admin/stats/dashboard?range=7d', { token: adminToken }))
+        .body?.data;
+      const g = after?.metrics;
+      const b0 = before?.metrics;
+      const d = (k) => Number(g?.[k] ?? 0) - Number(b0?.[k] ?? 0);
+
+      assert(
+        d('orderCount') === 4,
+        '⭐ GMV 口径：4 条有效单计入（paid / completed / delivered / refund_applying）—— 含**在途退款**：钱还没退、佣金也尚未冲销，此时剔除会造成「钱已收但 GMV 不计、佣金却还在支出」的双向错配',
+        `ΔorderCount=${d('orderCount')}`,
+      );
+      assert(d('quantity') === 8, '份数增量 = 2+1+3+2 = 8', `Δquantity=${d('quantity')}`);
+      assert(
+        d('gmvFen') === 20640,
+        '⭐ GMV = Σ `unit_price` × `quantity` = 8 × ¥25.80 = ¥206.40（**不是** `pay_amount`：折扣与余额抵扣不进 GMV，否则「收入」会随支付方式变化）',
+        `ΔgmvFen=${d('gmvFen')}`,
+      );
+      assert(
+        d('totalOrderCount') === 7,
+        '退款率分母 = **全部**订单数（含未支付 / 已取消 / 已退款），增量 7 —— 分母只取有效单会让退款率翻倍虚高',
+        `ΔtotalOrderCount=${d('totalOrderCount')}`,
+      );
+      assert(d('pendingPayCount') === 1, '未支付单独计数（既不算进 GMV，也不从分母里藏掉）', `Δ=${d('pendingPayCount')}`);
+      assert(
+        d('refundCount') === 2,
+        '退款订单数 = `refund_applying` + `refunded` = 2；**`cancelled` 不算退款**（截单前自助取消不是事故）',
+        `ΔrefundCount=${d('refundCount')}`,
+      );
+      assert(
+        d('activeUserCount') === 3,
+        '活跃用户去重：u4 只有无效单（未支付 + 已退款）→ 不计入',
+        `ΔactiveUserCount=${d('activeUserCount')}`,
+      );
+      assert(
+        d('repeatUserCount') === 1,
+        '复购用户 = 区间内有效单 ≥2 次者（u1 两单）；u2 的第二单是 cancelled → 不算复购',
+        `ΔrepeatUserCount=${d('repeatUserCount')}`,
+      );
+      assert(
+        d('activeLeaderCount') === 1,
+        '活跃团长去重：`refund_applying` 那单 `team_leader_id` 为空 → 不虚增',
+        `ΔactiveLeaderCount=${d('activeLeaderCount')}`,
+      );
+      assert(d('activeBuildingCount') === 2, '活跃楼栋去重 = 2', `Δ=${d('activeBuildingCount')}`);
+
+      // ---------------------------------------------------------- E. 结构不变量（比率 / 均价 / 等式闭合）
+      assert(
+        g.refundRate === Number((g.refundCount / g.totalOrderCount).toFixed(4)),
+        '退款率 = 退款单数 ÷ 总订单数（服务端算好下发，端上不再算第二遍）',
+        `rate=${g.refundRate} ${g.refundCount}/${g.totalOrderCount}`,
+      );
+      assert(
+        g.repeatRate === Number((g.repeatUserCount / g.activeUserCount).toFixed(4)),
+        '复购率 = 复购用户 ÷ 活跃用户',
+        `rate=${g.repeatRate} ${g.repeatUserCount}/${g.activeUserCount}`,
+      );
+      assert(
+        g.avgUnitPriceFen === Math.round(g.gmvFen / g.quantity),
+        '单份均价 = GMV ÷ 份数',
+        `${g.avgUnitPriceFen}`,
+      );
+      assert(
+        g.avgOrderAmountFen === Math.round(g.gmvFen / g.orderCount),
+        '⭐ 客单价 = GMV ÷ **订单数**，且与「单份均价」**并列下发** —— 一单可多份，只给一个数必定被读错（§6.6 原文的括号里「份数 / 订单量」表述含糊，故两个都出）',
+        `客单价=${g.avgOrderAmountFen} 单份均价=${g.avgUnitPriceFen}`,
+      );
+      assert(
+        g.grossProfitFen === g.gmvFen - g.purchaseFen - g.fulfillmentFen - g.commissionFen,
+        '⭐⭐ 等式闭合：经营毛利 = GMV − 采购款 − 履约成本 − 佣金（**结果值** · 四个数放进同一等式才算得平，任一项口径漂移都会在这里现形）',
+        `${g.grossProfitFen} vs ${g.gmvFen - g.purchaseFen - g.fulfillmentFen - g.commissionFen}`,
+      );
+
+      // ---------------------------------------------------------- F. 成本侧净额
+      assert(
+        d('commissionFen') === 300,
+        '⭐ 佣金支出取**净额**：`normal +¥5.00` 与 `reversal −¥2.00` 相加 = ¥3.00；`status=cancelled` 的 ¥1.00 必须排除（含进去就变成 ¥5.00，凭空多出 66%）',
+        `ΔcommissionFen=${d('commissionFen')}`,
+      );
+      assert(
+        d('purchaseFen') === 6000,
+        '⭐ 采购款取**净额**：`normal ¥100.00` + `reversal −¥40.00` = ¥60.00；`status=reversed` 的 ¥999.00 行必须排除',
+        `ΔpurchaseFen=${d('purchaseFen')}`,
+      );
+      assert(
+        after.purchaseGenerated === (after.metrics.purchaseFen !== 0),
+        '`purchaseGenerated` 与 `purchaseFen` **同进同出**（前者是后者是否非零的显式标记，供前端标「毛利未扣采购款」）',
+        `purchaseGenerated=${after.purchaseGenerated} purchaseFen=${after.metrics.purchaseFen}`,
+      );
+      assert(
+        g.fulfillmentFen ===
+          (toFen(after.costItems.siteFee) +
+            toFen(after.costItems.packingLaborFee) +
+            toFen(after.costItems.deliveryFee)) *
+            g.quantity,
+        '⭐ 履约成本 = 三项配置单价之和 × 份数，且**不含** `supplierTotal` —— 采购款走实际应付单，若把兜底示例值 14.00 也扣一遍就是重复计成本',
+        `fulfillmentFen=${g.fulfillmentFen}`,
+      );
+      assert(
+        after.costRegistration.allRegistered === (after.costRegistration.missingKeys.length === 0),
+        '`costRegistration` 自洽（**与 P36 系统配置页共用同一份 `summarizeCostRegistration()`** —— 两处各自实现必然出现「配置页说已登记、看板说未登记」）',
+        `allRegistered=${after.costRegistration.allRegistered} missing=${after.costRegistration.missingKeys.length}`,
+      );
+
+      // ---------------------------------------------------------- G. 毛利可靠性提示（上限值）
+      const expectWarning =
+        (g.gmvFen > 0 && !after.costRegistration.allRegistered) ||
+        (g.quantity > 0 && !after.purchaseGenerated);
+      assert(
+        (after.warnings.length > 0) === expectWarning,
+        '⚠️ 毛利可靠性提示与判据**同源**：履约成本未登记 / 采购单未出 → 必须出现「上限值」提示。任何一个减项缺失都会让经营毛利虚高，不给提示等于让运营拿虚高的数做决策',
+        `warnings=${after.warnings.length} expect=${expectWarning}`,
+      );
+
+      // ---------------------------------------------------------- H. 逐日趋势
+      assert(
+        after.trend.length === 7 && after.trend.reduce((s, t) => s + t.gmvFen, 0) === g.gmvFen,
+        '⭐ 趋势与总额**同一份口径**：`trend.length` = 区间天数（无单日补 0，端上不必自己补空洞），且 Σ 逐日 GMV = 区间 GMV',
+        `len=${after.trend.length} Σ=${after.trend.reduce((s, t) => s + t.gmvFen, 0)} gmv=${g.gmvFen}`,
+      );
+      const d0Before = before.trend.find((t) => t.date === D0)?.orderCount ?? 0;
+      const d0After = after.trend.find((t) => t.date === D0)?.orderCount ?? 0;
+      assert(
+        d0After - d0Before === 2,
+        '趋势按**出餐日**归集：D0 当日新增 2 单（O1/O2）',
+        `Δ=${d0After - d0Before}`,
+      );
+
+      // ---------------------------------------------------------- I. D48 楼群 / 楼栋榜单
+      const rank = (
+        await call('GET', '/admin/stats/building-rank?range=7d', { token: adminToken })
+      ).body?.data;
+      assert(
+        rank.groups.reduce((s, r) => s + r.gmvFen, 0) === rank.totalGmvFen,
+        '⭐ D48 楼群维度**分项之和 = 合计 GMV** —— 分项加起来对不上总额，运营从此不再信任任何一个数',
+        `Σ=${rank.groups.reduce((s, r) => s + r.gmvFen, 0)} total=${rank.totalGmvFen}`,
+      );
+      assert(
+        rank.buildings.reduce((s, r) => s + r.gmvFen, 0) === rank.totalGmvFen,
+        '⭐ D48 楼栋维度分项之和 = 合计 GMV（楼栋被停用/软删也要保留行，否则两个维度对不上）',
+        `Σ=${rank.buildings.reduce((s, r) => s + r.gmvFen, 0)}`,
+      );
+      assert(
+        rank.totalGmvFen === after.metrics.gmvFen,
+        '⭐⭐ D48 与 D47 的 GMV **同源**（同一份「有效订单」判定）—— 两处各算一套必然出现「看板 ¥4,798、榜单加起来 ¥4,301」',
+        `rank=${rank.totalGmvFen} dashboard=${after.metrics.gmvFen}`,
+      );
+      assert(
+        rank.groups.every((r) => r.gmvShare === Number((r.gmvFen / rank.totalGmvFen).toFixed(4))),
+        'D48 占比 = 行 GMV ÷ 合计（服务端算，端上不做除法）',
+        '',
+      );
+      assert(
+        rank.buildings.every(
+          (b) => typeof b.buildingGroupName === 'string' && b.buildingGroupName.length > 0,
+        ),
+        'D48 楼栋行必带所属楼群名（找不到时回退「未分组」/`楼群#id`，**不丢行**）',
+        '',
+      );
+
+      // ---------------------------------------------------------- J. D49 菜品热度
+      const heat = (await call('GET', '/admin/stats/dish-heat?range=7d&topN=5', { token: adminToken }))
+        .body?.data;
+      assert(
+        heat.topN === 5 && heat.items.length === Math.min(5, heat.dishCount),
+        'D49 `topN` 生效：`items` 条数 = min(topN, 菜品数)，不是「有多少给多少」',
+        `items=${heat.items.length} dishCount=${heat.dishCount}`,
+      );
+      assert(
+        heat.items.every((it) => it.share === Number((it.quantity / heat.totalQuantity).toFixed(4))),
+        '⭐ D49 占比分母 = 区间内**全部**菜品份数，不是 topN 之和 —— 按 topN 之和算，排行末位的占比会凭空虚高',
+        `totalQuantity=${heat.totalQuantity}`,
+      );
+      assert(
+        heat.items.reduce((s, it) => s + it.quantity, 0) <= heat.totalQuantity,
+        'D49 topN 份数之和 ≤ 全部份数',
+        '',
+      );
+      assert(
+        new Set(heat.items.map((it) => it.dishId)).size === heat.items.length,
+        'D49 同一菜品不出现两行（一个菜被多个套餐引用时必须合并，否则热度被拆散）',
+        '',
+      );
+      const badTop = await call('GET', '/admin/stats/dish-heat?topN=999', { token: adminToken });
+      assert(
+        badTop.body?.code === 10001,
+        'D49 `topN` 上限收口 → 10001（不放开的话一次查询就能拉全量菜品）',
+        `code=${badTop.body?.code}`,
+      );
+
+      const heatFull = (
+        await call('GET', '/admin/stats/dish-heat?range=7d&topN=50', { token: adminToken })
+      ).body?.data;
+      const m1Dishes = readRows('SELECT dish_id FROM ab_set_meal_item WHERE set_meal_id = ?', [m1]);
+      const gained = m1Dishes.filter((dd) =>
+        heatFull.items.some((it) => it.dishId === Number(dd.dish_id)),
+      );
+      assert(
+        gained.length >= 1,
+        'D49 前置：套餐 m1 的菜品出现在 TOP 50（否则下面的份数增量无从校验）',
+        `m1Dishes=${m1Dishes.length} inTop50=${gained.length}`,
+      );
+
+      // 期望值**从库里推导**，不写死数字：套餐 m1 与 m2 的菜品有重叠
+      // （m1 = 1,6,4,7 / m2 = 2,6,4,7 —— 6、4、7 是「一菜多套餐」的常见形状）。
+      // 若把 m1 的菜一律按「只属于 m1」期望 +5，共享菜就会红：实测 #4/#6 是 8 而不是 5。
+      // ⭐ 这恰恰是 D49 必须**按菜品合并**而非按套餐展开的直接证据 —— 拆开就两行各 5。
+      const dishSetOf = (mealId) =>
+        new Set(
+          readRows('SELECT dish_id FROM ab_set_meal_item WHERE set_meal_id = ?', [mealId]).map((r) =>
+            Number(r.dish_id),
+          ),
+        );
+      // 本节**有效**夹具订单（与 D47 计入 GMV 的 4 条同集合；未支付/已退款/已取消三单不计）
+      const validFixtures = [
+        { no: 'O1', dishes: dishSetOf(m1), qty: 2 },
+        { no: 'O2', dishes: dishSetOf(m2), qty: 1 },
+        { no: 'O3', dishes: dishSetOf(m1), qty: 3 },
+        { no: 'O7', dishes: dishSetOf(m2), qty: 2 },
+      ];
+      const expectDelta = (dishId) =>
+        validFixtures.reduce((s, o) => s + (o.dishes.has(dishId) ? o.qty : 0), 0);
+
+      for (const dd of gained.slice(0, 3)) {
+        const id = Number(dd.dish_id);
+        const qBefore = beforeHeat.items.find((it) => it.dishId === id)?.quantity ?? 0;
+        const qAfter = heatFull.items.find((it) => it.dishId === id)?.quantity ?? 0;
+        const expect = expectDelta(id);
+        const from = validFixtures
+          .filter((o) => o.dishes.has(id))
+          .map((o) => `${o.no}×${o.qty}`)
+          .join(' + ');
+        assert(
+          qAfter - qBefore === expect,
+          `⭐ D49 菜品份数 = 「套餐展开 × 订单份数」累加：菜品 #${id} 应 +${expect} 份（${from}）—— 一个菜被多个套餐引用时**必须合并到同一行**，拆成两行热度就被腰斩了`,
+          `Δ=${qAfter - qBefore} expect=${expect}`,
+        );
+      }
+
+      // ---------------------------------------------------------- K. D50 留存
+      const ret = (await call('GET', '/admin/stats/retention?range=7d', { token: adminToken })).body
+        ?.data;
+      assert(
+        ret.summary.activeUserCount === ret.summary.newUserCount + ret.summary.returningUserCount,
+        '⭐ D50 不变量：活跃用户 = 新客 + 回流（两数相加必须等于总数，否则「新客 / 回流」的定义漏了一种人）',
+        `${ret.summary.activeUserCount} vs ${ret.summary.newUserCount}+${ret.summary.returningUserCount}`,
+      );
+      assert(
+        ret.summary.repeatRate ===
+          Number((ret.summary.repeatUserCount / ret.summary.activeUserCount).toFixed(4)),
+        'D50 复购率与 D47 同口径（分子分母同源，不是各算一套）',
+        `rate=${ret.summary.repeatRate}`,
+      );
+      assert(
+        ret.summary.newUserCount - (beforeRet?.summary?.newUserCount ?? 0) === 3,
+        '⭐ 新客判定看**全历史**首单：这 3 位此前从未有过订单 → 计入新客（只看区间内的话，所有人都会显得像新客）',
+        `ΔnewUser=${ret.summary.newUserCount - (beforeRet?.summary?.newUserCount ?? 0)}`,
+      );
+      assert(
+        ret.cohorts.length === 4,
+        'D50 cohort = 最近 4 个自然周（**周一为始**，不是「最近 4 个 7 天窗口」——后者与日历周对不上，运营无法与周报对齐）',
+        `len=${ret.cohorts.length}`,
+      );
+      assert(
+        ret.cohorts.every((c) => {
+          // 两个条件同时成立才有留存数字，否则 `retainedWeek1` / `retentionRate1` **成对为 null**：
+          //   (1) 观察窗口已走完；(2) 该群非空（0 人时 0/0 无意义，给 0 会被读成「0% 留存 = 新客质量差」）
+          const canRate = c.observable && c.newUserCount > 0;
+          return canRate
+            ? c.retainedWeek1 !== null && c.retentionRate1 !== null
+            : c.retainedWeek1 === null && c.retentionRate1 === null;
+        }),
+        '⭐ 留存数字**成对下发**：观察窗口未走完的 cohort、以及当周 0 新客的 cohort，两个字段都必须是 null —— 前者算出来只是「数据还没长出来」，后者是 0/0；任一种被兜底成 0，运营都会读成「新客质量差」',
+        ret.cohorts
+          .map(
+            (c) =>
+              `${c.cohortStart}:${c.newUserCount}人${
+                c.retentionRate1 === null ? (c.observable ? '/空群→null' : '/观察中') : `/${c.retentionRate1}`
+              }`,
+          )
+          .join(' '),
+      );
+      // 上一条只证明「该 null 时是 null」；再补一组**历史周**夹具证明「该有数时有数」，
+      // 两条合起来才真正锁住「成对下发」的语义（只测一边，服务端整体返回 null 也能蒙过去）。
+      const weekStartOf = (ds) => {
+        const [y, m, d] = ds.split('-').map(Number);
+        const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=周日
+        return addDaysStr(ds, -((dow + 6) % 7)); // 回退到本周一
+      };
+      const wkNow = weekStartOf(D0);
+      const wkBack3 = addDaysStr(wkNow, -21); // = cohortStarts[0]，观察窗口（+7…+13）已走完
+      // u3 首单落在三周前的那一周（cohort 起点），次周再下一单 → 次周留存 1 人
+      addOrder(`${PREFIX}O8`, u3, null, b1, m2, wkBack3, 1, 'completed');
+      addOrder(`${PREFIX}O9`, u3, null, b1, m2, addDaysStr(wkBack3, 8), 1, 'completed');
+      const ret2 = (await call('GET', '/admin/stats/retention?range=7d', { token: adminToken })).body
+        ?.data;
+      const c3 = ret2?.cohorts?.find((c) => c.cohortStart === wkBack3);
+      assert(
+        !!c3 &&
+          c3.observable &&
+          c3.newUserCount >= 1 &&
+          c3.retainedWeek1 >= 1 &&
+          c3.retentionRate1 === Number((c3.retainedWeek1 / c3.newUserCount).toFixed(4)),
+        '⭐ 观察窗口**已走完且群非空**的 cohort 必须下发真实留存数字：`observable=true` + 两个字段非 null，且率 = 留存人数 ÷ 新客数（服务端算好，端上不做除法）',
+        c3 ? `observable=${c3.observable} 新客=${c3.newUserCount} 留存=${c3.retainedWeek1} 率=${c3.retentionRate1}` : '未找到该 cohort',
+      );
+      const curCohort = ret.cohorts[ret.cohorts.length - 1];
+      assert(
+        curCohort.cohortStart === wkNow &&
+          !curCohort.observable &&
+          curCohort.retainedWeek1 === null &&
+          curCohort.retentionRate1 === null,
+        '⭐ 本周（cohort 末群）**必定「观察中」**：它的观察窗口要等到下周日才走完 —— 判定锚在「窗口末日 vs 今天」，不是「这个群老不老」；两种 null 也不可混用（`observable=false` = 观察中，`observable=true` + 率为 null = 空群），混成一个就会把「没人来」错说成「数据还没长出来」',
+        `${curCohort.cohortStart} observable=${curCohort.observable} retained=${curCohort.retainedWeek1} 末群应=${wkNow}`,
+      );
+      assert(
+        ret.cohorts.every((c) => c.cohortStart <= c.cohortEnd),
+        'D50 cohort 起止有序（首单周 周一 ≤ 周日）',
+        '',
+      );
+      assert(
+        typeof ret.note === 'string' && ret.note.includes('有效订单'),
+        'D50 出参自带口径说明（端上不复制第二份文案，口径改了只改一处）',
+        '',
+      );
+
+      // ---------------------------------------------------------- L. 主体隔离 + 白名单
+      const s23Op = `e2e_s23op_${stamp}`;
+      const s23View = `e2e_s23view_${stamp}`;
+      await call('POST', '/admin/system/accounts', {
+        token: adminToken,
+        body: { username: s23Op, password: PWD, role: 'operator', realName: 'e2e 看板运营' },
+      });
+      await call('POST', '/admin/system/accounts', {
+        token: adminToken,
+        body: { username: s23View, password: PWD, role: 'viewer', realName: 'e2e 看板只读' },
+      });
+      const s23OpToken = (await adminLogin(s23Op, PWD)).token;
+      const s23ViewToken = (await adminLogin(s23View, PWD)).token;
+      const s23FinToken = (await adminLogin('finance', 'finance123')).token;
+
+      assert(
+        (await call('GET', '/admin/stats/dashboard', { token: s23OpToken })).body?.code === 0,
+        '看板对 `operator` 开放（运营要能看经营数据跟进业务，不该「看得见点不开」）',
+        '',
+      );
+      assert(
+        (await call('GET', '/admin/stats/dashboard', { token: s23FinToken })).body?.code === 0,
+        '看板对 `finance` 开放',
+        '',
+      );
+      assert(
+        (await call('GET', '/admin/stats/dashboard', { token: s23ViewToken })).body?.code === 0,
+        '⭐ 看板对 `viewer` **必须**开放 —— `admin-role.ts` 里 viewer 的菜单**只有这 4 个看板页**；接口白名单若漏了他，该角色会在自己唯一拥有的页面上拿 10003（「菜单能点、点了报无权限」，最容易被当成 bug 的一类不一致）',
+        '',
+      );
+      const guest23 = await userLogin(`e2e_s23_${stamp}`);
+      assert(
+        (await call('GET', '/admin/stats/dashboard', { token: guest23.token })).body?.code === 10003,
+        '双主体隔离：小程序 token 打 `/admin/stats/*` → 10003（C 端与后台 id 各自自增，不隔离即静默越权）',
+        '',
+      );
+      const sup23 = await adminLogin('sanweiwu', 'supplier123');
+      assert(
+        (await call('GET', '/admin/stats/dashboard', { token: sup23.token })).body?.code === 10003,
+        '双主体隔离：供应商 token 打 `/admin/stats/*` → 10003 —— 不变量 I1（供应商端不得出现终端定价信息）在看板上同样成立：GMV / 佣金 / 毛利一个都不能漏给供应商',
+        '',
+      );
+      assert(
+        (await call('GET', '/admin/stats/dashboard')).body?.code === 10002,
+        '未登录 → 10002',
+        '',
+      );
+
+      // ---------------------------------------------------------- M. 夹具还原
+      cleanFixtures();
+      const restored = (
+        await call('GET', '/admin/stats/dashboard?range=7d', { token: adminToken })
+      ).body?.data;
+      assert(
+        restored.metrics.orderCount === before.metrics.orderCount &&
+          restored.metrics.gmvFen === before.metrics.gmvFen &&
+          restored.metrics.commissionFen === before.metrics.commissionFen &&
+          restored.metrics.purchaseFen === before.metrics.purchaseFen &&
+          restored.metrics.totalOrderCount === before.metrics.totalOrderCount,
+        'D47 夹具还原：删掉本节订单 / 佣金 / 应付后**各项增量归零** —— 看板是**全局**聚合，不还原会把副作用（凭空多出的 GMV、佣金、采购款）留给后续重跑',
+        `orderCount ${before.metrics.orderCount}→${restored.metrics.orderCount} gmv ${before.metrics.gmvFen}→${restored.metrics.gmvFen}`,
+      );
+      assert(
+        !readDb('SELECT id FROM ab_order WHERE order_no LIKE ?', [`${PREFIX}%`]) &&
+          !readDb('SELECT id FROM ab_commission WHERE order_no LIKE ?', [`${PREFIX}%`]) &&
+          !readDb('SELECT id FROM ab_supplier_share WHERE share_no LIKE ?', [`${PREFIX}%`]),
+        'D47 还原校验：三类夹具行均已清空（回到可重复跑的初始状态）',
+        '',
+      );
+    }
+  }
+
+  // ==========================================================================
   // 汇总
   // ==========================================================================
   await stopApiServer(server, PORT);

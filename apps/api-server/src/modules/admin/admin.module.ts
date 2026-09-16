@@ -23,7 +23,7 @@ import { OperationLogService } from './operation-log/operation-log.service';
  *   · `modules/supplier/*-admin.controller.ts`        → D23–D32 供应商与集散
  *   · `modules/finance/refund-admin.controller.ts`    → D40–D42 退款审批（C6 收口）
  *   · `modules/finance/supplier-share-admin.controller.ts` → D36–D37 应付结算（M3-9）
- *   · `modules/stats/stats-admin.controller.ts`       → D47–D50 数据统计（**待落点**）
+ *   · `modules/stats/stats-admin.controller.ts`       → D47–D50 数据统计（**已落点** · M3-11）
  *   · 财务其余端点（D33–D35 / D38–D39 / D43–D44）    → **待落点**（P34 资金总览 / 佣金 / 对账）
  *   · 通知模板（D59–D60）                            → **待落点**（P36）
  *
