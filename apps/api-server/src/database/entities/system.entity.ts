@@ -1,4 +1,4 @@
-import { Column, CreateDateColumn, UpdateDateColumn, Entity, Index } from 'typeorm';
+import { Column, CreateDateColumn, UpdateDateColumn, Entity, Index, VersionColumn } from 'typeorm';
 import { bigintTransformer, PkColumn } from './transformers';
 
 /** ab_admin_user 后台账号（运营后台 + 供应商后台，按 role 过滤菜单） */
@@ -138,4 +138,73 @@ export class Message {
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
   createdAt!: Date;
+}
+
+/**
+ * ab_message_template 通知模板（M3-12 · D59/D60 载体 · 第 27 张表）
+ *
+ * ## 为什么单独一张表，而不是塞进 `ab_config`
+ *
+ * `CONFIG_SPECS` 的类型系统是**扁平标量**（money / percent / int / text / time）——
+ * 它撑得住「最低提现金额」，撑不住「一个场景 + 多渠道 + 变量白名单 + 启用闸门」。
+ * 硬塞进去只有两条路：把 JSON 塞进 `config_value`（则 D58 的白名单与单点校验失效，
+ * 校验逻辑四散 → 立刻多出第二个真相），或把模板拆成十几个扁平键（则「一个场景」
+ * 这个整体概念在库里不复存在，`ab_message.template_id` 也无从对应）。
+ *
+ * ## ⭐ 本表只存「可编辑部分」，场景定义留在代码里
+ *
+ * `scene` / 渠道 / 触发时机 / 变量白名单 / 是否必推 —— 全部是**代码事实**
+ * （见 `modules/admin/template/message-template.specs.ts`），**不落库**。
+ * 落了库就会漂移成「库里写着走微信群、代码只发订阅消息」这种无法自证的矛盾。
+ *
+ * ## ⭐ 必须直说的事实：微信订阅消息的文案**不由本表决定**
+ *
+ * 微信订阅消息的内容格式在**微信公众平台**按模板定义（`thing1` / `time2` 这类
+ * keyword），服务端只能往 `data` 里填值。所以后台改文案**改不了用户看到的推送**。
+ * 本表三个字段的真实效力：
+ *   · `enabled`            总开关 —— **真生效**（代码据此决定投不投递）
+ *   · `wechatTemplateId`   微信侧模板 ID —— **真生效**（发送时传给微信）
+ *   · `groupContent`       微信群人工通知文案 —— **存档用途**（一期由人工复制粘贴发群）
+ *
+ * 若把 `groupContent` 做成「改了用户就会看到新文案」的承诺，就是本项目反复栽过的
+ * 那一类错（见《接口规范》§6.7 的 `wiring` 三态）：**给了输入框，却没接上线**。
+ */
+@Entity('ab_message_template')
+export class MessageTemplate {
+  @PkColumn()
+  id!: number;
+
+  /**
+   * 场景键 —— 取值必须来自 `MESSAGE_TEMPLATE_SPECS`（D60 **不可改**）
+   *
+   * 唯一索引同时是**防重闸门**：同一场景两行会让「退款通知用哪一行」变成随机。
+   */
+  @Index('uk_msg_tpl_scene', { unique: true })
+  @Column({ type: 'varchar', length: 64 })
+  scene!: string;
+
+  /** 总开关：1 启用 / 0 关闭（**真生效**） */
+  @Column({ type: 'tinyint', default: 0 })
+  enabled!: number;
+
+  /** 微信订阅消息模板 ID（微信公众平台创建；**真生效**） */
+  @Column({ name: 'wechat_template_id', type: 'varchar', length: 64, nullable: true })
+  wechatTemplateId?: string | null;
+
+  /** 微信群人工通知文案（含 `{{变量}}`，变量须在该场景白名单内；**存档用途**） */
+  @Column({ name: 'group_content', type: 'text', nullable: true })
+  groupContent?: string | null;
+
+  /** 最近修改人（`ab_admin_user.id`） */
+  @Column({ name: 'updated_by', type: 'bigint', transformer: bigintTransformer, nullable: true })
+  updatedBy?: number | null;
+
+  @VersionColumn()
+  version!: number;
+
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
+  updatedAt!: Date;
 }

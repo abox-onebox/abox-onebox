@@ -13,7 +13,7 @@
 | 版本 | v1.0 |
 | 日期 | 2026-09-14 |
 | 依据 | 原型 v4.9.1（P27/P32/P33/P37 等）· ER v2.1 · 表结构评审意见 v1.0 |
-| 覆盖 | 5 楼群 · 12 办公楼 · 5 示例团长 · 4 出餐供应商 · 4 集散中心 · 8 菜品 · 7 套餐模板 · 全局配置 |
+| 覆盖 | 5 楼群 · 12 办公楼 · 5 示例团长 · 4 出餐供应商 · 4 集散中心 · 8 菜品 · 7 套餐模板 · 全局配置 · **5 通知模板（M3-12）** |
 
 ### 种子数据三原则
 
@@ -222,6 +222,44 @@
 
 > ⚠️ **截单时间口径**：界面控件写 `23:59`（HTML `time` 控件无法表达 `24:00`），**注释与文档一律表述为「T-1 24:00」**；后端 Cron 以 **次日 00:00:00** 为准（见《订单状态机》§3）。
 > ⚠️ **密钥不入库**：AppID / 商户号 / APIv3 密钥走环境变量，`ab_config` 只存**非密配置**。
+
+### 7.1 通知模板 `ab_message_template`（M3-12 · 5 行）
+
+> **由 `MESSAGE_TEMPLATE_SPECS` 派生**（`apps/api-server/src/modules/admin/template/message-template.specs.ts`）——
+> **不存在第二份场景列表**：加/减场景只改那一个文件，种子自动跟上。
+> ⚠️ **只存可编辑部分**（`enabled` / `wechatTemplateId` / `groupContent`）；
+> `scene` / 渠道组合 / 触发时机 / 变量白名单 / 是否必推是**代码事实，不落库**（落库必漂移）。
+
+| scene | 场景名 | 渠道 | 触发时机 | 必推 | 种子 `enabled` | 变量白名单 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `user_order_status` | 用户端常规状态推送 | 订阅消息 | 订单状态流转 | ✗ | **0** | `orderNo` `statusText` `mealDate` |
+| `leader_delivery` | 团长送达通知 | **微信群** | 餐送达办公楼楼下（约 11:30） | ✗ | **1** ⭐ | `buildingName` `mealDate` `arriveTime` `quantity` |
+| `merchant_cook` | 商家出餐提醒 | 订阅消息 | 截单后（T-1 24:00 之后） | ✗ | **0** | `mealDate` `centerName` `dishCount` |
+| `leader_apply` | 团长申请提交确认 | 订阅消息 | 提交团长申请即时 | ✗ | **0** | `applyAt` `leaderLevel` |
+| `refund_result` | 退款结果通知 | 订阅消息 | 退款到账即触达 | **✓ 必推** | **0** | `orderNo` `amount` `refundedAt` |
+
+**`group_content` 种子文案（存档 / 人工发群用）**
+
+| scene | `group_content` |
+| --- | --- |
+| `user_order_status` | *(空 —— 该场景刻意不推，文案留空)* |
+| `leader_delivery` | `【ABox 取餐提醒】{{mealDate}} 的午餐已于 {{arriveTime}} 送达 {{buildingName}} 楼下，共 {{quantity}} 份，请安排取餐。` |
+| `merchant_cook` | `【出餐通知】{{mealDate}} 需向 {{centerName}} 交付 {{dishCount}} 个菜品，请在 09:30 前完成出餐确认。` |
+| `leader_apply` | `【ABox 团长】你已于 {{applyAt}} 成为{{leaderLevel}}团长，可在小程序查看推广物料与佣金。` |
+| `refund_result` | `【ABox 退款】订单 {{orderNo}} 已于 {{refundedAt}} 退款 ¥{{amount}}，请留意到账。` |
+
+**`wechat_template_id` 种子一律 `NULL`** —— 一期尚未申请微信订阅消息模板，故
+**只有 `leader_delivery` 允许启用**（它走微信群渠道，人工发群只需文案，不依赖模板 ID）。
+其余 4 个场景 `enabled = 0` —— ⭐ **这是「如实标注」而非「没配」**：
+启用闸门（fail-closed）要求「订阅消息渠道必须有模板 ID」，缺一即拒启用；
+与其显示「已启用」而实际发不出去，不如如实显示「未启用（缺模板 ID）」。
+
+> ⭐ `refund_result` 是**必推项**却也是 `enabled = 0` —— 两者不矛盾：
+> 「该不该推」是产品口径（必推），「现在推不推得出去」是运行态（没有模板 ID）。
+> 前者不因后者而改变，后者必须能被看见。
+>
+> ⭐ 页面的「接线状态」两级如实标注：场景级 `wiring`（仅 `refund_result` = `live`，其余 `pending` 且附原因）+
+> 字段级 `fieldWiring`（`enabled` / `wechatTemplateId` = `live`；`groupContent` = `record_only`）。
 
 ---
 

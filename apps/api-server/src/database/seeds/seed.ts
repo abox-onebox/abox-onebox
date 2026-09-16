@@ -8,9 +8,10 @@ import { DistributionCenter } from '../entities/finance.entity';
 import { LeaderInvite, TeamLeader } from '../entities/leader.entity';
 import { MealAssignment, SetMeal, SetMealItem } from '../entities/meal.entity';
 import { Dish, Supplier, SupplierDishDaily } from '../entities/supplier.entity';
-import { AdminUser, SysConfig } from '../entities/system.entity';
+import { AdminUser, MessageTemplate, SysConfig } from '../entities/system.entity';
 import { User } from '../entities/user.entity';
 import { addDays, cutoffAtOf, publishAtOf, todayBj, tomorrowBj } from '../../common/utils/time';
+import { MESSAGE_TEMPLATE_SPECS } from '../../modules/admin/template/message-template.specs';
 
 /**
  * 种子数据（依据《种子数据清单 v1.0》）
@@ -144,6 +145,23 @@ async function main(): Promise<void> {
         '客服页提示文案（端上不自造，服务端下发）',
       ],
     ].map(([configKey, configValue, description]) => ({ configKey, configValue, description })),
+  );
+
+  // ---------- 2.5 通知模板（5 场景 · 由代码声明派生 · M3-12） ----------
+  // ⚠️ **不给第二份场景列表**：`MESSAGE_TEMPLATE_SPECS` 是唯一真相，
+  //    增删场景只改那一处，种子自动跟着变。
+  // ⚠️ 种子里只有「微信群兜底」场景是启用的（`leader_delivery`）——
+  //    订阅消息渠道需要微信模板 ID，而一期没有微信账号，**强行启用就是假绿灯**。
+  const tplRepo = dataSource.getRepository(MessageTemplate);
+  await tplRepo.clear();
+  await tplRepo.save(
+    MESSAGE_TEMPLATE_SPECS.map((s) => ({
+      scene: s.scene,
+      enabled: s.seed.enabled,
+      wechatTemplateId: s.seed.wechatTemplateId,
+      groupContent: s.seed.groupContent || null,
+      updatedBy: null,
+    })),
   );
 
   // ---------- 3. 供应商（4 出餐 + 6 备选） ----------

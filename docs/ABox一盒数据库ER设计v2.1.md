@@ -27,7 +27,7 @@
 | `ab_company` | 简化模型，普通用户无需选公司 |
 | `ab_floor_leader` | **无楼长角色**，团长兼任取餐分发 |
 
-### 1.2 新增的表（9 张）
+### 1.2 新增的表（10 张）
 
 | 表名 | 用途 |
 | --- | --- |
@@ -40,6 +40,7 @@
 | `ab_distribution_center` | 集散中心配置（C4 · 表驱动，默认 4 个，可增删） |
 | `ab_withdraw` | **提现申请单**（2026-09-15 补 · C11：出款走灵活用工代发代扣，须独立单承载提现单号 / 审批 / 打款状态） |
 | `ab_supplier_dish_center_daily` | **供应商-菜品-集散中心-日 交付确认明细**（2026-09-16 补 · M3-8：出餐确认的交互粒度是「一道菜分别送达 N 个集散中心」的**逐项**确认，需独立承载实送份数 / 确认人 / 确认时点） |
+| `ab_message_template` | **通知模板**（2026-09-16 补 · M3-12：D59/D60 的「场景 + 渠道 + 变量白名单 + 启用闸门」在 `ab_config` 的**扁平标量**类型系统里装不下；且 `ab_message` 是**推送日志**表（`template_id` 存微信侧模板 ID），**不是模板定义**） |
 
 ### 1.3 修改的表（7 张）
 
@@ -55,7 +56,7 @@
 
 ---
 
-## 二、ER 总览（26 张表 · 2026-09-16 增补 `ab_supplier_dish_center_daily`）
+## 二、ER 总览（27 张表 · 2026-09-16 增补 `ab_supplier_dish_center_daily` 与 `ab_message_template`）
 
 ```
                               ┌──────────────────┐
@@ -123,8 +124,13 @@
        └──────────────┘    └──────────────┘
 
        ┌──────────────┐    ┌──────────────┐
-       │ab_config     │    │ab_message    │
+       │ab_config     │    │ab_message    │  推送日志（只增）
        └──────────────┘    └──────────────┘
+                                   ▲ 发射自（场景键）
+       ┌────────────────────┐      │
+       │ab_message_template │──────┘  通知模板（M3-12 · 27 张表）
+       │ (通知模板·5 场景)  │
+       └────────────────────┘
 
        ┌────────────────┐  ┌────────────────────┐
        │ab_supplier_    │  │ab_distribution_    │
@@ -372,6 +378,44 @@ CREATE TABLE `ab_distribution_center` (
 ```
 
 > ⭐ C4 裁决：运营按 4 个跑，但系统**不得硬编码**；集散中心**复用合作供应商场地**，场地 / 打包费用**默认 ¥0**（科目保留、字段级拆分便于审计，按实际登记）。<br>> **C9 修订（2026-09-15）**：原「固定 ¥5.00/份 = 米饭 ¥2.00 + 打包 ¥3.00」作废 —— 供价逐菜协商、场地复用默认 0、打包人工与配送费单列，平台毛利为结果值。
+
+### 3.9 `ab_message_template` 通知模板（M3-12 · 2026-09-16 新增）⭐
+
+```sql
+CREATE TABLE `ab_message_template` (
+  `id`                 BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `scene`              VARCHAR(64) NOT NULL COMMENT '场景键（取值来自 MESSAGE_TEMPLATE_SPECS，D60 不可改）',
+  `enabled`            TINYINT NOT NULL DEFAULT 0 COMMENT '总开关 1启用 0关闭 —— **真生效**',
+  `wechat_template_id` VARCHAR(64) DEFAULT NULL COMMENT '微信订阅消息模板 ID（微信公众平台创建）—— **真生效**',
+  `group_content`      TEXT DEFAULT NULL COMMENT '微信群人工通知文案，含 {{变量}}，变量须在该场景白名单内 —— **存档用途**',
+  `updated_by`         BIGINT UNSIGNED DEFAULT NULL COMMENT '最近修改人（ab_admin_user.id）',
+  `version`            INT UNSIGNED NOT NULL DEFAULT 0,
+  `created_at`         DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at`         DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_msg_tpl_scene` (`scene`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通知模板（5 场景 · 只存可编辑部分，场景定义留在代码里）';
+```
+
+> ⭐ **为什么必须独立成表**（而不是塞进 `ab_config`）：
+> ① `CONFIG_SPECS` 的类型系统是**扁平标量**（money / percent / int / text / time），撑不住
+> 「场景 + 多渠道 + 变量白名单 + 启用闸门」这个**结构化**整体。硬塞只有两条路 ——
+> JSON-in-`config_value`（则 D58 的白名单与单点校验失效，校验逻辑四散 → 立刻多出第二个真相），
+> 或拆成十几个扁平键（则「一个场景」在库里不复存在，`ab_message` 也无从对应）；
+> ② ⚠️ **一处规格纠偏**：《接口规范》§八 原把 `ab_message` 列入 P36 依赖 —— 实查它是
+> **推送日志**表（只增，记「发过什么」），**不是模板定义**，故新增本表并同步登记映射表。
+>
+> ⭐ **场景定义不落库**：`scene` / 渠道组合 / 触发时机 / 变量白名单 / 是否必推全是**代码事实**
+> （`modules/admin/template/message-template.specs.ts`），落库必然漂移成「库里写着走微信群、
+> 代码只发订阅消息」这种**无法自证**的矛盾。本表只存**可编辑部分**。
+>
+> ⭐ **`group_content` 的效力必须说清**：微信订阅消息的内容格式在**微信公众平台**侧按模板
+> 定义（`thing1` / `time2` 这类 keyword），服务端只能往 `data` 填值 —— 后台改文案**改不了
+> 用户看到的推送**。故本字段是**存档 / 人工发群**用途，页面以 `fieldWiring='record_only'`
+> 如实标注（同 M3-10「给了输入框却没接上线」的纪律）。
+>
+> **零产量不适用**：本表是**全局配置**（5 行），由 `MESSAGE_TEMPLATE_SPECS` **派生种子**
+> （不存在第二份场景列表）；只有 `leader_delivery` 种子态启用（含微信群渠道，人工发群只需文案）。
 
 ---
 
@@ -821,16 +865,18 @@ INSERT INTO ab_distribution_center (name, supplier_id, address, contact_name, co
 | 订单与支付域 | 4（order、payment_log、refund、delivery_record） |
 | 财务域 | 5（commission、supplier_share、balance、balance_log、withdraw） |
 | 集散中心域 | 1（distribution_center） |
-| 系统域 | 4（admin_user、operation_log、config、message） |
-| **合计** | **26 张表** |
+| 系统域 | 5（admin_user、operation_log、config、message、message_template） |
+| **合计** | **27 张表** |
 
 > 张数说明：较 v1.0 删除 3 张（address / company / floor_leader）、新增 9 张、修改 8 张、沿用 9 张。
 > ⚠️ 阶段二已补 `ab_leader_invite`（支撑 C2 晋级审计）与 `ab_withdraw`（C11 提现单）；
-> M3-7 **零新表**（仅 `ab_building` 增 `population` 列）、**M3-8 补 `ab_supplier_dish_center_daily`**（出餐确认明细），
-> **合计 26 张表** —— 与 `apps/api-server/src/database/entities/index.ts` 的 `ALL_ENTITIES` 逐张对齐，
+> M3-7 **零新表**（仅 `ab_building` 增 `population` 列）、**M3-8 补 `ab_supplier_dish_center_daily`**（出餐确认明细）、
+> **M3-10 / M3-11 零新表**（配置走 `ab_config`、看板纯聚合）、**M3-12 补 `ab_message_template`**（通知模板），
+> **合计 27 张表** —— 与 `apps/api-server/src/database/entities/index.ts` 的 `ALL_ENTITIES` 逐张对齐，
 > 并由 `tests/baseline_manifest.py` 在门禁中校验。
 
 ---
 
 *文档结束 · ABox 一盒 · ER v2.1（回填 C2/C3/C4/C6/C9；阶段一基线一致性修补）· 2026-09-14*
 *2026-09-15 增补：`ab_withdraw` 提现申请单（C11）· `ab_balance_log` 出款字段 · `ab_team_leader` 收款方式三字段 + `floor` 恢复*
+*2026-09-16 增补：`ab_supplier_dish_center_daily`（M3-8 出餐确认明细 · 26 张）· `ab_message_template`（M3-12 通知模板 · **27 张**）*

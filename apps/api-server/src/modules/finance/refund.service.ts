@@ -15,9 +15,11 @@ import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { money, round2, toFen } from '../../common/utils/money';
 import { genRefundNo } from '../../common/utils/order-no';
+import { toBjIso } from '../../common/utils/time';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { Order, Refund } from '../../database/entities/order.entity';
 import { WX_PAY_PROVIDER, WxPayProvider } from '../../providers/wx-pay/wx-pay.provider';
+import { MessageService } from '../message/message.service';
 import { RefundApplyReqDto } from './dto/finance.dto';
 import { ReversalResult, ReversalService } from './reversal.service';
 
@@ -84,6 +86,7 @@ export class RefundService {
     @InjectRepository(Refund) private readonly refundRepo: Repository<Refund>,
     private readonly reversal: ReversalService,
     @Inject(WX_PAY_PROVIDER) private readonly wxPay: WxPayProvider,
+    private readonly message: MessageService,
   ) {}
 
   // ==========================================================================
@@ -297,6 +300,12 @@ export class RefundService {
         ' 供应商应付=不冲减（自营口径）',
     );
 
+    await this.notifyRefundResult(
+      { userId: order.userId ?? null, orderNo: order.orderNo },
+      result.refund.refundNo,
+      refundableFen,
+    );
+
     return {
       refundNo: result.refund.refundNo,
       orderNo: order.orderNo,
@@ -387,7 +396,12 @@ export class RefundService {
       const approved = await m.save(refund);
 
       const executed = await this.executeRefund(m, order, approved);
-      return { ...executed, orderStatusBefore: refund.orderStatusBefore ?? null };
+      return {
+        ...executed,
+        orderStatusBefore: refund.orderStatusBefore ?? null,
+        // 事务外发通知需要的信息：只带出**必要字段**，不把已脱离会话的实体拿到外面
+        notifyTarget: { userId: order.userId ?? null, orderNo: order.orderNo },
+      };
     });
 
     this.logger.log(
@@ -395,6 +409,12 @@ export class RefundService {
         `合计 ¥${money(toFen(Number(result.refund.amount)) / 100)}` +
         `（微信 ¥${money(result.wxFen / 100)} + 余额 ¥${money(result.balanceFen / 100)}）` +
         ` 佣金冲销 ¥${money(result.reversal.commissionReversedFen / 100)}`,
+    );
+
+    await this.notifyRefundResult(
+      result.notifyTarget,
+      result.refund.refundNo,
+      toFen(Number(result.refund.amount)),
     );
 
     return {
@@ -569,6 +589,60 @@ export class RefundService {
       .execute();
 
     return { refund: saved, wxFen, balanceFen, reversal };
+  }
+
+  /**
+   * 退款结果通知（M3-12 · 原型标注的**必推项**）
+   *
+   * ## 三个刻意的选择
+   *
+   * 1. **调用点在事务之外**（两个调用点都在 `dataSource.transaction()` 返回之后）。
+   *    放进 `executeRefund` 就是事务内 —— 一旦回滚，用户已收到「退款成功」的通知
+   *    而钱并没退，这是退款链路最忌讳的「说不清」。通知是**既成事实的告知**，
+   *    必须发生在事实确立之后。
+   * 2. **通知失败不影响退款结果**。`MessageService.notify()` 已承诺不抛异常，
+   *    此处再兜一层 try —— 双保险，确保「通知」永远无法把一笔成功的退款变成失败。
+   * 3. **未启用就不发**（场景开关在 `ab_message_template`）。一期没有微信订阅消息
+   *    模板 ID，`refund_result` 的启用闸门会拦住启用，故此路径当前是「静默跳过」——
+   *    这是**如实状态**，不是漏了。
+   *
+   * ⚠️ 一期 `wxData` 的 key 用**我们自己的变量名**（`orderNo` / `amount` / `refundedAt`）：
+   *    真实微信模板要求 `thing1` / `time2` 这类 keyword，业务变量名 → keyword 的映射
+   *    要等微信模板创建后才能定，届时在**本方法一处**完成映射即可（不要在别处再拼一份）。
+   */
+  private async notifyRefundResult(
+    target: { userId: number | null; orderNo: string },
+    refundNo: string,
+    amountFen: number,
+  ): Promise<void> {
+    try {
+      const at = toBjIso(new Date());
+      const amount = money(amountFen / 100);
+      const result = await this.message.notify({
+        scene: 'refund_result',
+        userId: target.userId,
+        page: 'pages/order/detail',
+        variables: {
+          orderNo: target.orderNo,
+          refundNo,
+          amount: amount ?? '0.00',
+          refundedAt: at ?? '',
+        },
+        wxData: {
+          orderNo: { value: target.orderNo },
+          amount: { value: amount ?? '0.00' },
+          refundedAt: { value: at ?? '' },
+        },
+      });
+      if (!result.delivered) {
+        this.logger.log(`退款通知未投递（订单 ${target.orderNo}）：${result.reason ?? '-'}`);
+      }
+    } catch (e) {
+      // 双保险：确保通知永远无法影响退款结果
+      this.logger.warn(
+        `退款通知异常（订单 ${target.orderNo}）：${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   /** 订单是否存在未终结的退款申请（供订单视图标注） */

@@ -13,6 +13,7 @@ import { Order, Refund } from '../../database/entities/order.entity';
 import { Dish, Supplier, SupplierDishDaily } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
+import { MessageModule } from '../message/message.module';
 import { CommissionService } from './commission.service';
 import { FinanceController } from './finance.controller';
 import { LeaderFinanceController } from './leader-finance.controller';
@@ -67,6 +68,8 @@ import { WithdrawService } from './withdraw.service';
       Dish,
       SupplierDishDaily,
     ]),
+    // M3-12：退款成功后的「退款结果通知」投递口（必推项，见 message-template.specs）
+    MessageModule,
   ],
   controllers: [
     FinanceController,

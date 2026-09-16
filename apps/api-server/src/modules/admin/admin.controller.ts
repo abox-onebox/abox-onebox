@@ -16,6 +16,7 @@ import { OperationLog } from '../../common/decorators/operation-log.decorator';
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { AdminUserService } from './admin-user/admin-user.service';
 import { ConfigService } from './config/config.service';
+import { MessageTemplateService } from './template/message-template.service';
 import { AdminRoleService } from './role/role.service';
 import { OperationLogService } from './operation-log/operation-log.service';
 import {
@@ -25,11 +26,12 @@ import {
   UpdateAdminUserDto,
 } from './dto/admin.dto';
 import { UpdateConfigsDto } from './dto/config.dto';
+import { UpdateMessageTemplateDto } from './dto/message-template.dto';
 
 /**
- * 后台 · 系统管理（D51–D56）· 见《接口规范 v1.0》§6.7
+ * 后台 · 系统管理（D51–D60）· 见《接口规范 v1.0》§6.7
  *
- * ⚠️ **`@Roles('super_admin','admin')` 打在类上**：系统管理（账号/角色/日志）
+ * ⚠️ **`@Roles('super_admin','admin')` 打在类上**：系统管理（账号/角色/日志/配置/通知模板）
  *    只对这两个角色开放。`operator` 的菜单矩阵本就不含 `/system/*`，
  *    这里是**服务端兜底** —— 前端菜单过滤是体验，不是安全边界（M3 验收标准 1）。
  */
@@ -44,6 +46,7 @@ export class AdminController {
     private readonly adminRoleService: AdminRoleService,
     private readonly operationLogService: OperationLogService,
     private readonly configService: ConfigService,
+    private readonly messageTemplateService: MessageTemplateService,
   ) {}
 
   // ------------------------------------------------------------ D51–D53 账号
@@ -128,5 +131,38 @@ export class AdminController {
   })
   updateConfigs(@Body() dto: UpdateConfigsDto, @CurrentAdmin('sub') operatorId: number) {
     return this.configService.update(dto, operatorId);
+  }
+
+  // ------------------------------------------------------------ D59–D60 通知模板
+
+  @Get('templates')
+  @ApiOperation({
+    summary: 'D59 通知模板清单（含接线状态与启用闸门）',
+    description:
+      '以服务端代码里的**场景声明**为准返回（库只补可编辑值）。每条附：' +
+      '`channels[]`（每个渠道的必要条件是否已满足）、`blockers[]`（启用还缺什么）、' +
+      '`wiring`（`live` = 真有代码投递；`pending` = 一期无投递点，改了不生效）。',
+  })
+  listTemplates() {
+    return this.messageTemplateService.list();
+  }
+
+  @Put('templates/:id')
+  @OperationLog({ module: 'system', action: '编辑通知模板' })
+  @ApiOperation({
+    summary: 'D60 编辑通知模板（只可改 启用状态 / 微信模板ID / 微信群文案）',
+    description:
+      '场景键、渠道、触发时机、变量白名单是**代码事实**，不在可编辑范围 —— ' +
+      '传入这些字段会被 `forbidNonWhitelisted` 直接拒绝（`10001`，不静默忽略）。' +
+      '两道闸门：① 文案变量须在该场景白名单内；② **启用时**每个渠道的必要条件' +
+      '（订阅消息需模板 ID、微信群需文案）必须齐备，否则拒绝启用（fail-closed）—— ' +
+      '避免页面显示「已启用」而实际投不出去。',
+  })
+  updateTemplate(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateMessageTemplateDto,
+    @CurrentAdmin('sub') operatorId: number,
+  ) {
+    return this.messageTemplateService.update(id, dto, operatorId);
   }
 }

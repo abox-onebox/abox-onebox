@@ -6562,6 +6562,525 @@ async function main() {
   }
 
   // ==========================================================================
+  // §24 M3-12 通知模板 D59–D60（后台 P36 · 模块 M37）
+  // ==========================================================================
+  //
+  // 口径唯一真相：`apps/api-server/src/modules/admin/template/message-template.specs.ts`
+  //   · D59 读：场景清单（**以代码声明为准**）+ 接线状态 + 启用闸门现状
+  //   · D60 写：只可改 3 个字段 + 变量白名单 + ⭐ **启用闸门 fail-closed**
+  //
+  // 本节的三个核心不变量：
+  //   ① 「接线状态」必须**如实**（live 的场景真有投递点，pending 的附具体原因）
+  //   ② 「启用」必须 **fail-closed**（缺必要条件就拒绝启用，杜绝「已启用但发不出去」）
+  //   ③ 只读字段**拒绝**而非静默忽略（`forbidNonWhitelisted`）
+  //
+  // ⚠️ 本节不依赖下单窗口（同 §18–§23 纪律）：订单夹具直插 `ab_order`。
+  // ⚠️ 模板是**全局**的：本节改动在节末逐条还原为快照值。
+  {
+    log('\n§24 M3-12 通知模板 D59–D60');
+
+    // ⚠️ 块作用域：`D0` 定义在 §23 的 `{ }` 里，本块看不见，必须自己再取一次
+    const D0 = bjToday();
+
+    const TPL = '/admin/system/templates';
+    const PREFIX24 = `E2ETPL${stamp}`;
+    const getList = async () => (await call('GET', TPL, { token: adminToken })).body?.data;
+    const pick = (list, scene) => (list ?? []).find((t) => t.scene === scene);
+
+    const list0 = await getList();
+    const snap = Object.fromEntries(
+      (list0?.list ?? []).map((t) => [
+        t.scene,
+        {
+          id: t.id,
+          enabled: t.enabled ? 1 : 0,
+          wechatTemplateId: t.wechatTemplateId,
+          groupContent: t.groupContent,
+        },
+      ]),
+    );
+
+    // ---------------------------------------------------------- A. 清单结构
+    assert(
+      list0?.list?.length === 5,
+      'D59 场景清单 = **5 个场景**（与原型 P36「消息推送策略」卡片的 5 行逐一对应）',
+      `count=${list0?.list?.length}`,
+    );
+    assert(
+      list0?.summary?.total === (list0?.list ?? []).length &&
+        list0.summary.enabled === (list0.list ?? []).filter((t) => t.enabled).length &&
+        list0.summary.live === (list0.list ?? []).filter((t) => t.wiring === 'live').length &&
+        list0.summary.pending === (list0.list ?? []).filter((t) => t.wiring === 'pending').length,
+      '⭐ D59 概览与明细**同源可复算**（总数 / 已启用 / 已接线 / 待接入四项）—— 分两处各算一遍，迟早出现「汇总 5、列表 4」',
+      `total=${list0?.summary?.total} enabled=${list0?.summary?.enabled} live=${list0?.summary?.live} pending=${list0?.summary?.pending}`,
+    );
+    assert(
+      (list0?.list ?? []).every(
+        (t) =>
+          t.label &&
+          t.audience &&
+          t.trigger &&
+          t.channels.length > 0 &&
+          t.consumedBy &&
+          Array.isArray(t.variables),
+      ),
+      'D59 每条都带 场景名 / 触达对象 / 触发时机 / 渠道 / 消费点 / 变量清单（端上不维护第二份文案）',
+      '',
+    );
+    const mandatory = (list0?.list ?? []).filter((t) => t.mandatory);
+    assert(
+      mandatory.length === 1 && mandatory[0].scene === 'refund_result',
+      '⭐ **必推项只有「退款结果通知」一条** —— 原型口径：用户端常规状态不推送（避免打扰），退款结果属必推',
+      `mandatory=${mandatory.map((t) => t.scene).join(',')}`,
+    );
+    const orderStatusTpl = pick(list0?.list, 'user_order_status');
+    assert(
+      orderStatusTpl?.mandatory === false && orderStatusTpl?.enabled === false,
+      '⭐「用户端常规状态推送」默认**关闭且非必推**（原型的「简化原则」）—— 这一行留着是为了让「用户为什么收不到出餐提醒」有据可查：它是设计选择，不是漏了',
+      `enabled=${orderStatusTpl?.enabled} mandatory=${orderStatusTpl?.mandatory}`,
+    );
+    const deliveryTpl = pick(list0?.list, 'leader_delivery');
+    assert(
+      deliveryTpl?.channels?.length === 1 && deliveryTpl.channels[0].key === 'wechat_group',
+      '⭐「团长送达通知」一期渠道**只有微信群**（人工发群兜底）；原型的「服务通知」属二期替代方案 —— 若声明成双渠道，本场景在种子里启用后必然缺订阅消息模板 ID，「已启用」与「启用闸门」就会互相矛盾',
+      `channels=${deliveryTpl?.channels?.map((c) => c.key).join('+')}`,
+    );
+
+    // ---------------------------------------------------------- B. 接线状态如实标注
+    const liveTpl = (list0?.list ?? []).filter((t) => t.wiring === 'live');
+    const pendingTpl = (list0?.list ?? []).filter((t) => t.wiring === 'pending');
+    assert(
+      liveTpl.length === 1 &&
+        liveTpl[0].scene === 'refund_result' &&
+        String(liveTpl[0].consumedBy).includes('refund.service'),
+      '⭐ **接线状态如实**：一期只有「退款结果通知」有真实投递点（`refund.service`），其余 4 个场景标 `pending` —— 与 M3-10「9 项未接线」同一纪律',
+      `live=${liveTpl.length} pending=${pendingTpl.length}`,
+    );
+    assert(
+      pendingTpl.every((t) => !!t.pendingReason),
+      '⭐ `pending` 必须附**具体原因**（「没有投递点」与「为什么没有」是两件事）—— 只标状态不给原因，运营仍不知道下一步该做什么',
+      `缺原因=${pendingTpl.filter((t) => !t.pendingReason).length}`,
+    );
+    const refundTpl = pick(list0?.list, 'refund_result');
+    assert(
+      refundTpl?.fieldWiring?.enabled === 'live' &&
+        refundTpl?.fieldWiring?.wechatTemplateId === 'live' &&
+        refundTpl?.fieldWiring?.groupContent === 'record_only',
+      '⭐ **字段级接线状态**：`enabled` / `wechatTemplateId` 真生效，`groupContent` 标 `record_only`（微信群文案供人工复制，不是程序行为）',
+      `enabled=${refundTpl?.fieldWiring?.enabled} id=${refundTpl?.fieldWiring?.wechatTemplateId} content=${refundTpl?.fieldWiring?.groupContent}`,
+    );
+    assert(
+      String(list0?.note ?? '').includes('微信公众平台'),
+      '⭐ 页面口径明说「**微信订阅消息的实际文案由微信公众平台侧的模板定义**」—— 不写明，运营会以为改了本页文案用户就能看到新内容（本项目反复栽过的那类「给了输入框却没接上线」）',
+      `note 含关键词=${String(list0?.note ?? '').includes('微信公众平台')}`,
+    );
+
+    // ---------------------------------------------------------- C. 种子状态与闸门现状
+    assert(
+      deliveryTpl?.enabled === true && (deliveryTpl?.blockers ?? []).length === 0,
+      '⭐ 种子里**只有「团长送达通知」启用**：它含微信群渠道（人工发群只需文案），不依赖尚未申请的微信模板 ID —— 正对应原型「初期采用微信群人工通知兜底」',
+      `enabled=${deliveryTpl?.enabled} blockers=${deliveryTpl?.blockers?.length}`,
+    );
+    assert(
+      (list0?.list ?? [])
+        .filter((t) => t.scene !== 'leader_delivery')
+        .every((t) => t.enabled === false),
+      '⭐ 其余 4 个场景**均未启用** —— 一期没有微信订阅消息模板 ID，启用必然发不出去；如实显示「未启用」远好过假装已启用',
+      `已启用的其余场景=${(list0?.list ?? [])
+        .filter((t) => t.scene !== 'leader_delivery' && t.enabled)
+        .map((t) => t.scene)
+        .join(',') || '无'}`,
+    );
+    assert(
+      (refundTpl?.blockers ?? []).some((b) => b.includes('微信订阅消息模板 ID')),
+      '⭐ D59 给出**启用还缺什么**（`blockers` 点名字段）—— 「不能启用」与「缺什么才能启用」是两件事，只有后者可执行',
+      `blockers=${refundTpl?.blockers?.join('；') ?? '无'}`,
+    );
+
+    // ---------------------------------------------------------- D. ⭐ 启用闸门 fail-closed
+    const enableNoId = await call('PUT', `${TPL}/${snap.merchant_cook.id}`, {
+      token: adminToken,
+      body: { enabled: 1 },
+    });
+    assert(
+      enableNoId.body?.code === 10001,
+      '⭐⭐ **启用闸门 fail-closed**：缺微信模板 ID 时启用 → 10001 —— 放行的后果是页面显示「已启用」而投递必然失败，用户那边永远静默收不到，且**没有任何地方显示异常**',
+      `code=${enableNoId.body?.code}`,
+    );
+    assert(
+      JSON.stringify(enableNoId.body?.data ?? {}).includes('微信订阅消息模板 ID'),
+      '⭐ 拒绝理由点名**缺哪个字段**（不是一个笼统的「参数错误」）—— 运营据此直接知道去填什么',
+      `data=${JSON.stringify(enableNoId.body?.data ?? {}).slice(0, 120)}`,
+    );
+
+    const fillIdFirst = await call('PUT', `${TPL}/${snap.merchant_cook.id}`, {
+      token: adminToken,
+      body: { wechatTemplateId: 'E2E_DEMO_COOK_TPL' },
+    });
+    const thenEnable = await call('PUT', `${TPL}/${snap.merchant_cook.id}`, {
+      token: adminToken,
+      body: { enabled: 1 },
+    });
+    assert(
+      fillIdFirst.body?.code === 0 && thenEnable.body?.code === 0,
+      'D60 补齐必要条件后即可启用（**看的是最终状态**，不是「先启用再说」）—— 门禁不该变成死锁',
+      `fill=${fillIdFirst.body?.code} enable=${thenEnable.body?.code}`,
+    );
+
+    const tearDownWhileOn = await call('PUT', `${TPL}/${snap.merchant_cook.id}`, {
+      token: adminToken,
+      body: { wechatTemplateId: null },
+    });
+    assert(
+      tearDownWhileOn.body?.code === 10001,
+      '⭐⭐ **不能「先启用、再单独拆掉条件」**：已启用状态下清空模板 ID → 10001 —— 否则可以绕过闸门，得到一个「启用但发不出」的场景',
+      `code=${tearDownWhileOn.body?.code}`,
+    );
+    const restoreCook = await call('PUT', `${TPL}/${snap.merchant_cook.id}`, {
+      token: adminToken,
+      body: { enabled: 0, wechatTemplateId: null },
+    });
+    assert(
+      restoreCook.body?.code === 0,
+      'D60 关闭后即可清空模板 ID（顺序反过来就合法）—— 闸门约束的是**最终状态**，不是操作次序',
+      `code=${restoreCook.body?.code}`,
+    );
+
+    const emptyPatch = await call('PUT', `${TPL}/${snap.merchant_cook.id}`, {
+      token: adminToken,
+      body: {},
+    });
+    assert(
+      emptyPatch.body?.code === 10001,
+      'D60 空请求（三个可编辑字段一个都没传）→ 10001 —— 无意义的调用不是幂等成功，回一句「已更新」会让调用方以为改了什么',
+      `code=${emptyPatch.body?.code}`,
+    );
+
+    // ---------------------------------------------------------- E. 变量白名单
+    const badVar = await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
+      token: adminToken,
+      body: { groupContent: '【ABox】{{mealDate}} 送达 {{bulidingName}}，共 {{quantity}} 份。' },
+    });
+    assert(
+      badVar.body?.code === 10001,
+      '⭐ 文案里的 `{{变量}}` 必须在**白名单**内：`{{bulidingName}}`（拼错的 `buildingName`）→ 10001 —— 写错的变量在发送时不会被替换，用户会直接看到 `{{bulidingName}}` 原文',
+      `code=${badVar.body?.code}`,
+    );
+    const okVar = await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
+      token: adminToken,
+      body: {
+        groupContent: '【ABox 取餐提醒】{{mealDate}} 的午餐已于 {{arriveTime}} 送达 {{buildingName}} 楼下，共 {{quantity}} 份。',
+      },
+    });
+    assert(
+      okVar.body?.code === 0,
+      'D60 合法变量写入成功（4 个变量全在白名单内）',
+      `code=${okVar.body?.code}`,
+    );
+    const singleBrace = await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
+      token: adminToken,
+      body: { groupContent: '【ABox】今日共 {3} 种套餐，{{mealDate}} 送达。' },
+    });
+    assert(
+      singleBrace.body?.code === 0,
+      '变量识别的**边界**：单花括号 `{3}` 不算占位符（只有 `{{...}}` 才是）—— 否则「共 {12} 份」这类自然文本会被误判成非法变量而拒写',
+      `code=${singleBrace.body?.code}`,
+    );
+
+    // ---------------------------------------------------------- F. 只读字段拒绝（不静默忽略）
+    const writeScene = await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
+      token: adminToken,
+      body: { scene: 'hacked_scene', enabled: 1 },
+    });
+    assert(
+      writeScene.body?.code === 10001,
+      '⭐⭐ **只读字段拒绝而非静默忽略**：传 `scene` → 10001（`forbidNonWhitelisted`）—— `scene` 是代码分派投递的键，改了这条模板就再也投不出去；静默忽略更糟：调用方以为改成功了',
+      `code=${writeScene.body?.code}`,
+    );
+    const writeChannels = await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
+      token: adminToken,
+      body: { channels: ['wechat_subscribe'] },
+    });
+    assert(
+      writeChannels.body?.code === 10001,
+      'D60 渠道组合同样不可改（渠道是**代码事实**：代码按它决定走哪条通道）',
+      `code=${writeChannels.body?.code}`,
+    );
+
+    // ---------------------------------------------------------- G. 目标不存在
+    const ghost = await call('PUT', `${TPL}/999999`, {
+      token: adminToken,
+      body: { enabled: 0 },
+    });
+    assert(
+      ghost.body?.code === 10004,
+      'D60 目标 id 不存在 → 10004（不是 10001：请求本身合法，是**资源不存在**）',
+      `code=${ghost.body?.code}`,
+    );
+
+    // ---------------------------------------------------------- H. 幂等 + 审计
+    // ⚠️ 要用**当前值**去比，不能用 `snap`（快照是本节开始前的值，E 段已经改过文案了）——
+    //    拿快照去提交，得到的是一次**真实变更**（改回快照），断言会误报。
+    const curDelivery = pick((await getList())?.list, 'leader_delivery');
+    const noop = await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
+      token: adminToken,
+      body: { groupContent: curDelivery.groupContent },
+    });
+    assert(
+      noop.body?.code === 0 && (noop.body?.data?.changed ?? []).length === 0,
+      'D60 幂等：提交与当前值相同 → `changed=[]`，不产生假变更记录（按「请求非空」就记一笔的话，审计日志会被无意义的重复提交淹没）',
+      `changed=${(noop.body?.data?.changed ?? []).length}`,
+    );
+    // 反面对照：只验「相同返回空」是很弱的 —— 一个**恒返回空**的 diff 也能过。
+    // 必须同时验「不同时报告且点名字段」，才证明回执真的在比对。
+    const oneChange = await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
+      token: adminToken,
+      body: { groupContent: `${curDelivery.groupContent}（校对）` },
+    });
+    assert(
+      oneChange.body?.code === 0 &&
+        (oneChange.body?.data?.changed ?? []).length === 1 &&
+        oneChange.body?.data?.changed?.[0]?.field === 'groupContent' &&
+        oneChange.body?.data?.changed?.[0]?.before !==
+          oneChange.body?.data?.changed?.[0]?.after,
+      '⭐ 变更回执**真的在逐字段比对**：提交不同内容 → 恰好 1 项变更、点名字段、且 before≠after（与上一条配对，否则「恒返回空」的实现也能骗过测试）',
+      `changed=${JSON.stringify(oneChange.body?.data?.changed ?? []).slice(0, 120)}`,
+    );
+    const tplLog = await waitDb(
+      "SELECT action FROM ab_operation_log WHERE module = 'system' AND action = '编辑通知模板' ORDER BY id DESC LIMIT 1",
+      [],
+      (r) => !!r,
+      { timeout: 4000 },
+    );
+    assert(
+      !!tplLog,
+      'D60 由 `@OperationLog()` 落 `ab_operation_log`（改通知开关必须能回答「谁在什么时候关掉了退款通知」）',
+      `action=${tplLog?.action ?? '未落库'}`,
+    );
+
+    // ---------------------------------------------------------- I. ⭐ 真消费点（退款结果通知）
+    const users24 = readRows(
+      'SELECT id, openid FROM ab_user WHERE openid IS NOT NULL ORDER BY id LIMIT 2',
+    );
+    const b24 = readDb(
+      'SELECT id, building_group_id FROM ab_building WHERE building_group_id IS NOT NULL ORDER BY id LIMIT 1',
+    );
+    const m24 = readDb('SELECT id FROM ab_set_meal ORDER BY id LIMIT 1');
+    const a24 = readDb('SELECT id FROM ab_meal_assignment ORDER BY id LIMIT 1');
+    const l24 = readDb('SELECT id FROM ab_team_leader ORDER BY id LIMIT 1');
+    const ready24 = users24.length >= 2 && !!b24 && !!m24 && !!a24 && !!l24;
+
+    assert(
+      ready24,
+      '§24 前置：退款通知消费点的夹具原料齐备（≥2 个有 openid 的用户 / 1 栋有楼群的楼 / 1 套餐 / 1 分配行 / 1 团长）',
+      `users=${users24.length} building=${!!b24} meal=${!!m24} assign=${!!a24} leader=${!!l24}`,
+    );
+
+    if (ready24) {
+      const INS24 =
+        'INSERT INTO ab_order (order_no, user_id, team_leader_id, building_id, building_group_id, set_meal_id, assignment_id, meal_date, quantity, unit_price, total_amount, balance_used, discount_amount, pay_amount, status, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, 0, ?, ?, 0, ?, ?)';
+      const addOrder24 = (no, userId) =>
+        writeDb(INS24, [
+          no,
+          userId,
+          Number(l24.id),
+          Number(b24.id),
+          Number(b24.building_group_id),
+          Number(m24.id),
+          Number(a24.id),
+          D0,
+          '25.80',
+          '25.80',
+          '25.80',
+          'paid',
+          `${D0} 12:00:00`,
+          `${D0} 12:00:00`,
+        ]);
+
+      addOrder24(`${PREFIX24}O1`, Number(users24[0].id));
+      addOrder24(`${PREFIX24}O2`, Number(users24[1].id));
+
+      const msgMax = () =>
+        Number(readDb('SELECT COALESCE(MAX(id), 0) AS m FROM ab_message')?.m ?? 0);
+
+      // ① 场景「未启用」→ 不投递、不留日志
+      const msgBefore = msgMax();
+      const refund1 = await call('POST', `/admin/orders/${PREFIX24}O1/force-refund`, {
+        token: adminToken,
+        body: { reason: 'e2e 通知模板用例（场景未启用）' },
+      });
+      assert(
+        refund1.body?.code === 0,
+        'D11 强制退款成功（此时「退款结果通知」处于**未启用**态）',
+        `code=${refund1.body?.code}`,
+      );
+      assert(
+        msgMax() === msgBefore,
+        '⭐⭐ **未启用 = 不投递且不留日志**：`ab_message` 的语义是「发过什么」，把「因为没启用所以没发」也写进去，这张表就失去了查询价值',
+        `before=${msgBefore} after=${msgMax()}`,
+      );
+
+      // ② 配置并启用后 → 真投递 + 落日志
+      const setTplId = await call('PUT', `${TPL}/${snap.refund_result.id}`, {
+        token: adminToken,
+        body: { wechatTemplateId: 'E2E_DEMO_REFUND_TPL' },
+      });
+      assert(
+        setTplId.body?.code === 0,
+        'D60 先填微信模板 ID（仍为关闭态）→ 成功',
+        `code=${setTplId.body?.code}`,
+      );
+      const enableRefund = await call('PUT', `${TPL}/${snap.refund_result.id}`, {
+        token: adminToken,
+        body: { enabled: 1 },
+      });
+      assert(
+        enableRefund.body?.code === 0,
+        'D60 再启用「退款结果通知」→ 成功（**必推项**从「发不出去」变为「真会发」）',
+        `code=${enableRefund.body?.code}`,
+      );
+
+      const refund2 = await call('POST', `/admin/orders/${PREFIX24}O2/force-refund`, {
+        token: adminToken,
+        body: { reason: 'e2e 通知模板用例（场景已启用）' },
+      });
+      assert(
+        refund2.body?.code === 0,
+        'D11 强制退款成功（「退款结果通知」**已启用**）',
+        `code=${refund2.body?.code}`,
+      );
+      const sentRow = await waitDb(
+        'SELECT id, status, template_id, payload FROM ab_message WHERE id > ? ORDER BY id DESC LIMIT 1',
+        [msgBefore],
+        (r) => !!r,
+        { timeout: 5000 },
+      );
+      assert(
+        !!sentRow && sentRow.status === 'success',
+        '⭐⭐ **启用后真的投递了**并落 `ab_message` 日志（status=success）—— 这是本批次唯一被真实消费的字段，也正是「接线状态标 live」的事实依据',
+        `found=${!!sentRow} status=${sentRow?.status}`,
+      );
+      assert(
+        sentRow?.template_id === 'E2E_DEMO_REFUND_TPL',
+        '⭐ 日志 `template_id` = 后台刚配置的值 —— 配置**真的被用上了**，不是写死在代码里的常量',
+        `template_id=${sentRow?.template_id}`,
+      );
+      let payload24 = null;
+      try {
+        payload24 = sentRow?.payload ? JSON.parse(sentRow.payload) : null;
+      } catch {
+        payload24 = null;
+      }
+      assert(
+        payload24?.scene === 'refund_result',
+        '日志 `payload.scene` 标明来源场景（事后能回答「这条通知是哪个场景发的」，多场景共用一张日志表时这条是刚需）',
+        `scene=${payload24?.scene}`,
+      );
+
+      // 清理本节订单与日志
+      writeDb('DELETE FROM ab_message WHERE id > ?', [msgBefore]);
+      writeDb('DELETE FROM ab_refund WHERE order_no LIKE ?', [`${PREFIX24}%`]);
+      writeDb('DELETE FROM ab_order WHERE order_no LIKE ?', [`${PREFIX24}%`]);
+      assert(
+        msgMax() === msgBefore &&
+          !readDb('SELECT id FROM ab_order WHERE order_no LIKE ?', [`${PREFIX24}%`]),
+        '§24 夹具还原：本节产生的推送日志与订单已清空（`ab_message` 是**只增**表，不清理会让下次重跑的对照失去基准）',
+        `msg=${msgBefore}→${msgMax()}`,
+      );
+    }
+
+    // ---------------------------------------------------------- J. 权限与主体隔离
+    const ok24Op = `e2e_s24op_${stamp}`;
+    const ok24View = `e2e_s24view_${stamp}`;
+    await call('POST', '/admin/system/accounts', {
+      token: adminToken,
+      body: { username: ok24Op, password: PWD, role: 'operator', realName: 'e2e 模板运营' },
+    });
+    await call('POST', '/admin/system/accounts', {
+      token: adminToken,
+      body: { username: ok24View, password: PWD, role: 'viewer', realName: 'e2e 模板只读' },
+    });
+    const t24Op = (await adminLogin(ok24Op, PWD)).token;
+    const t24View = (await adminLogin(ok24View, PWD)).token;
+    const t24Fin = (await adminLogin('finance', 'finance123')).token;
+
+    assert(
+      (await call('GET', TPL, { token: t24Op })).body?.code === 10003,
+      'D59 `operator` → 10003（`admin-role.ts` 里 operator 的菜单**不含 `/system/*`**；接口白名单与菜单矩阵一致，否则「菜单看不到、接口却能调」）',
+      '',
+    );
+    assert(
+      (await call('GET', TPL, { token: t24Fin })).body?.code === 10003,
+      'D59 `finance` → 10003（通知模板属系统管理，不在财务职责内）',
+      '',
+    );
+    assert(
+      (await call('GET', TPL, { token: t24View })).body?.code === 10003,
+      '⭐ D59 `viewer` → 10003 —— 这是**反向**的「两个真相」检查：viewer 的菜单只有 4 个看板页，若他在这里被放行，说明白名单比菜单更宽（M3-11 遇到的镜像问题）',
+      '',
+    );
+    assert(
+      (await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
+        token: t24Op,
+        body: { enabled: 0 },
+      })).body?.code === 10003,
+      'D60 越权写 → 10003（守卫挡在业务层之前，不是「执行了再回滚」）',
+      '',
+    );
+    const sup24 = await adminLogin('sanweiwu', 'supplier123');
+    assert(
+      (await call('GET', TPL, { token: sup24.token })).body?.code === 10003,
+      '双主体隔离：供应商 token 打 `/admin/system/*` → 10003',
+      '',
+    );
+    const guest24 = await userLogin(`e2e_s24_${stamp}`);
+    assert(
+      (await call('GET', TPL, { token: guest24.token })).body?.code === 10003,
+      '双主体隔离：小程序 token 打 `/admin/system/*` → 10003（C 端与后台 id 各自自增，不隔离即静默越权）',
+      '',
+    );
+    assert(
+      (await call('GET', TPL)).body?.code === 10002,
+      'D59 未登录 → 10002',
+      '',
+    );
+
+    // ---------------------------------------------------------- K. 夹具还原（模板是全局的）
+    const restoreFail = [];
+    for (const [scene, s] of Object.entries(snap)) {
+      if (!s.id) continue;
+      const r = await call('PUT', `${TPL}/${s.id}`, {
+        token: adminToken,
+        body: {
+          enabled: s.enabled,
+          wechatTemplateId: s.wechatTemplateId,
+          groupContent: s.groupContent,
+        },
+      });
+      if (r.body?.code !== 0) restoreFail.push(`${scene}:${r.body?.code}`);
+    }
+    assert(
+      restoreFail.length === 0,
+      'D60 夹具还原（逐条写回快照）—— 模板是**全局**的，不还原会把「退款通知已启用」这类副作用留给后续重跑',
+      `失败=${restoreFail.join(',') || '无'}`,
+    );
+    const listEnd = await getList();
+    assert(
+      (listEnd?.list ?? []).every((t) => {
+        const s = snap[t.scene];
+        return (
+          s &&
+          (t.enabled ? 1 : 0) === s.enabled &&
+          (t.wechatTemplateId ?? null) === s.wechatTemplateId &&
+          (t.groupContent ?? null) === s.groupContent
+        );
+      }),
+      'D60 还原校验：5 个场景**逐字段**回到初始值（三项都比对 —— 少比一项就会留下脏状态，且它以「下一次偶发失败」的形式出现）',
+      '',
+    );
+  }
+
+  // ==========================================================================
   // 汇总
   // ==========================================================================
   await stopApiServer(server, PORT);

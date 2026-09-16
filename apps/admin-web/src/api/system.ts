@@ -217,3 +217,85 @@ export function updateSystemConfigs(
 ): Promise<ConfigUpdateResult> {
   return http.put<ConfigUpdateResult>('/admin/system/configs', { items });
 }
+
+/* ------------------------------------------------------------------ *
+ * D59 / D60 通知模板（M3-12）
+ *
+ * ⚠️ 同样**不维护第二份场景文案**：场景名 / 渠道 / 触发时机 / 变量白名单 /
+ *    接线状态 / 启用还缺什么，全部由 D59 下发（服务端 `message-template.specs.ts`
+ *    是唯一真相）。前端只按 `fieldWiring` 决定「能不能改」，按 `blockers` 提示缺项。
+ * ------------------------------------------------------------------ */
+
+/** 字段级接线状态：`live` 改了生效 / `record_only` 仅供人工使用（非程序行为） */
+export type MessageFieldWiring = 'live' | 'record_only';
+
+/** 场景级接线状态：`live` 有代码投递点 / `pending` 一期无投递点 */
+export type MessageSceneWiring = 'live' | 'pending';
+
+export interface MessageTemplateChannelView {
+  key: string;
+  label: string;
+  requirementField: string;
+  requirementFieldLabel: string;
+  /** 该渠道的必要条件是否已配置（未满足则不允许启用） */
+  requirementMet: boolean;
+}
+
+export interface MessageTemplateItemView {
+  id: number | null;
+  persisted: boolean;
+  scene: string;
+  label: string;
+  audience: string;
+  channels: MessageTemplateChannelView[];
+  trigger: string;
+  mandatory: boolean;
+  variables: string[];
+  enabled: boolean;
+  wechatTemplateId: string | null;
+  groupContent: string | null;
+  fieldWiring: {
+    enabled: MessageFieldWiring;
+    wechatTemplateId: MessageFieldWiring;
+    groupContent: MessageFieldWiring;
+  };
+  wiring: MessageSceneWiring;
+  pendingReason?: string;
+  consumedBy: string;
+  note?: string;
+  canEnable: boolean;
+  blockers: string[];
+  updatedBy: number | null;
+  updatedAt: string | null;
+}
+
+export interface MessageTemplateListView {
+  list: MessageTemplateItemView[];
+  summary: { total: number; enabled: number; live: number; pending: number };
+  note: string;
+}
+
+export interface MessageTemplateUpdateResult {
+  item: MessageTemplateItemView;
+  changed: Array<{ field: string; label: string; before: string; after: string }>;
+  note: string;
+}
+
+/** D59 通知模板清单 */
+export function fetchMessageTemplates(): Promise<MessageTemplateListView> {
+  return http.get<MessageTemplateListView>('/admin/system/templates');
+}
+
+/**
+ * D60 编辑单条通知模板
+ *
+ * ⚠️ 只传**要改的字段**：缺省 = 不改，显式传 `null` = 清空（两者语义不同）。
+ * ⚠️ `scene` / 渠道等只读字段**不能**放进请求体 —— 服务端开了
+ *    `forbidNonWhitelisted`，传了会直接 `10001`。
+ */
+export function updateMessageTemplate(
+  id: number,
+  patch: { enabled?: number; wechatTemplateId?: string | null; groupContent?: string | null },
+): Promise<MessageTemplateUpdateResult> {
+  return http.put<MessageTemplateUpdateResult>(`/admin/system/templates/${id}`, patch);
+}

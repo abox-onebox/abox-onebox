@@ -11,8 +11,8 @@
  * 供应商生产域（2）：SupplierDishDaily / SupplierDishCenterDaily（M3-8 新增）
  * 订单与支付域（4）：Order / PaymentLog / Refund / DeliveryRecord
  * 财务域（6）：Commission / SupplierShare / Balance / BalanceLog / DistributionCenter / Withdraw
- * 系统域（4）：AdminUser / OperationLog / SysConfig / Message
- * 合计 26 张
+ * 系统域（5）：AdminUser / OperationLog / SysConfig / Message / MessageTemplate（M3-12 新增）
+ * 合计 27 张
  */
 export * from './user.entity';
 export * from './leader.entity';
@@ -38,7 +38,7 @@ import {
   DistributionCenter,
 } from './finance.entity';
 import { Withdraw } from './withdraw.entity';
-import { AdminUser, OperationLog, SysConfig, Message } from './system.entity';
+import { AdminUser, OperationLog, SysConfig, Message, MessageTemplate } from './system.entity';
 
 /** 全量实体数组（TypeORM 注册用） */
 export const ALL_ENTITIES = [
@@ -68,4 +68,5 @@ export const ALL_ENTITIES = [
   OperationLog,
   SysConfig,
   Message,
+  MessageTemplate,
 ];

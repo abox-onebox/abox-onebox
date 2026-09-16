@@ -2,10 +2,16 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Supplier } from '../../database/entities/supplier.entity';
-import { AdminUser, OperationLog, SysConfig } from '../../database/entities/system.entity';
+import {
+  AdminUser,
+  OperationLog,
+  SysConfig,
+  MessageTemplate,
+} from '../../database/entities/system.entity';
 import { AdminController } from './admin.controller';
 import { AdminUserService } from './admin-user/admin-user.service';
 import { ConfigService } from './config/config.service';
+import { MessageTemplateService } from './template/message-template.service';
 import { AdminRoleService } from './role/role.service';
 import { OperationLogService } from './operation-log/operation-log.service';
 
@@ -25,7 +31,7 @@ import { OperationLogService } from './operation-log/operation-log.service';
  *   · `modules/finance/supplier-share-admin.controller.ts` → D36–D37 应付结算（M3-9）
  *   · `modules/stats/stats-admin.controller.ts`       → D47–D50 数据统计（**已落点** · M3-11）
  *   · 财务其余端点（D33–D35 / D38–D39 / D43–D44）    → **待落点**（P34 资金总览 / 佣金 / 对账）
- *   · 通知模板（D59–D60）                            → **待落点**（P36）
+ *   · 通知模板（D59–D60）                            → **已落点**（P36 · M3-12，本文件内 AdminController）
  *
  * **为什么这样分**：每个后台控制器只需注入同模块的 service（零跨模块 DI），
  * 依赖关系天然收敛；集中到 admin 模块则会反向依赖全部业务模块。
@@ -40,9 +46,26 @@ import { OperationLogService } from './operation-log/operation-log.service';
  *    「配置唯一入口」这条纪律一旦破，就会出现两套缓存、两种生效时机。
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([AdminUser, OperationLog, Supplier, SysConfig])],
+  imports: [
+    TypeOrmModule.forFeature([AdminUser, OperationLog, Supplier, SysConfig, MessageTemplate]),
+  ],
   controllers: [AdminController],
-  providers: [AdminUserService, AdminRoleService, OperationLogService, ConfigService],
-  exports: [AdminUserService, AdminRoleService, OperationLogService, ConfigService],
+  providers: [
+    AdminUserService,
+    AdminRoleService,
+    OperationLogService,
+    ConfigService,
+    MessageTemplateService,
+  ],
+  exports: [
+    AdminUserService,
+    AdminRoleService,
+    OperationLogService,
+    ConfigService,
+    // ⚠️ 导出给 `MessageModule`（投递侧按 scene 读模板判断能否发）——
+    //    投递侧与管理侧共用 `message-template.specs.ts` 的闸门函数，
+    //    但**不共用 service**（读写职责不同：这里管编辑，那边管投递）
+    MessageTemplateService,
+  ],
 })
 export class AdminModule {}
