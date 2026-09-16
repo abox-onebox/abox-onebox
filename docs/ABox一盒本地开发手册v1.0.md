@@ -196,6 +196,33 @@ POST /api/v1/payments/mock/paid   { "orderNo": "AB202609150001" }
 | `pnpm docker:up` / `docker:down` | 起停本地 MySQL + Redis |
 | `pwsh scripts/setup.ps1` | Windows 一键初始化（自动识别是否装了 Docker） |
 
+### 6.1 ⚠️ 开发机沙箱内：`pnpm` 跑不了，改用 `tests/tools/`
+
+**现象**：本机沙箱内 `pnpm -v` / `pnpm -C <dir> lint` **无任何输出、退出码为空**（corepack shim 路径被错拼成 `C:\\c\\Users\\...`）。
+因此上表所有 `pnpm xxx` 在这台机器上**一律不可用**，但这**不影响任何验收口径** —— 绕开 pnpm 即可完整复刻 CI。
+
+替代方案已固化在工作区的 `tests/tools/`（**注意：`tests/` 在工作区根，不在 git 仓库内，随工作区共享给所有任务**）：
+
+| 工具 | 用途 |
+| --- | --- |
+| `tests/tools/gate.mjs` | 一次跑完 CI 全部 12 道门禁（lint / tsc×3 / vue-tsc×2 / jest / nest·vite·uni build / format:check / seed） |
+| `tests/tools/verify-manifest.mjs` | 复核《基线冻结清单》全表「字节 + SHA-256」一致性 + 覆盖性 |
+
+```powershell
+# 跑全部门禁（node 用 managed 版本，勿用裸 node）
+& "C:\Users\herma\.workbuddy\binaries\node\versions\22.22.2-3\node.exe" tests\tools\gate.mjs
+
+# 只跑指定几道（快速回归）
+& "...\node.exe" tests\tools\gate.mjs --only lint,test-api
+& "...\node.exe" tests\tools\gate.mjs --list          # 列出 12 道步骤
+& "...\node.exe" tests\tools\verify-manifest.mjs      # 复核基线清单
+```
+
+**原理**：不经过 pnpm，直接把各包 `node_modules/.bin` 的 `.CMD` shim 塞进 `PATH`，再用 `spawnSync(cmd, {shell:true})` 调用。
+共享包改动后必须先重建 dist（`gate.mjs` 的前两步已包含 `build-shared-types` / `build-shared-utils`）。
+
+> 若在**别的机器**（pnpm 正常）上开发，直接用上表的 `pnpm xxx` 即可，本小节可忽略。
+
 **Git 钩子（husky）**：`pnpm install` 会自动装钩子（`prepare` → `scripts/setup-husky.mjs`）。
 装完后每次提交会：
 
@@ -349,5 +376,5 @@ DB 用「元」（DECIMAL），微信接口用「分」。转换只允许出现�
 
 ---
 
-*文档结束 · ABox 一盒 · 本地开发手册 v1.1 · 2026-09-14*
+*文档结束 · ABox 一盒 · 本地开发手册 v1.0 · 2026-09-16*
 *(v1.1：新增 build:shared 前置步骤、本地链路自测、当前进度实况、4 条跨库/构建类 FAQ)*
