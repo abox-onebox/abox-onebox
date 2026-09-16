@@ -32,6 +32,57 @@ export class Supplier {
   @Column({ name: 'food_license', type: 'varchar', length: 256, nullable: true })
   foodLicense?: string | null;
 
+  /**
+   * 资质审核状态（D26 落点）· pending 待审 / approved 通过 / rejected 驳回
+   *
+   * ⚠️ 与 `status`（合作中/停用）**正交**：审核回答「有没有合规资格」，
+   *    停用回答「平台现在要不要合作」。驳回不自动停用 ——
+   *    审核是事实判定，停用是经营决策。但出餐前置校验读本列，未通过即 50001。
+   */
+  @Column({
+    name: 'audit_status',
+    type: 'varchar',
+    length: 16,
+    default: 'pending',
+    comment: 'pending待审 / approved通过 / rejected驳回（D26）',
+  })
+  auditStatus!: string;
+
+  /** 审核意见（驳回时必填，便于运营答复商家） */
+  @Column({ name: 'audit_remark', type: 'varchar', length: 256, nullable: true })
+  auditRemark?: string | null;
+
+  @Column({ name: 'audited_at', type: 'datetime', precision: 3, nullable: true })
+  auditedAt?: Date | null;
+
+  /** 审核人（ab_admin_user.id；自动拦截器无法表达「审谁」，故显式落库） */
+  @Column({ name: 'audited_by', type: 'bigint', transformer: bigintTransformer, nullable: true })
+  auditedBy?: number | null;
+
+  /**
+   * 食品经营许可证有效期（D26 入参 · 原型 P33「资质到期」列）
+   *
+   * ⚠️ 为何必须有：123 号令要求平台核验入网商户证照，**证照过期即不得出餐**。
+   *    没有本列，「资质 30 天内到期 / 已过期」两个 KPI 与到期联动下架都无从算起
+   *    （原型 P33 已明确展示该列表说明了联动行为）。可空 = 兼容历史行，不是「可以不登记」。
+   */
+  @Column({ name: 'license_expire_at', type: 'date', nullable: true })
+  licenseExpireAt?: string | null;
+
+  /** 发票抬头（D28 入参；与展示名 `name` 可能不同，故独立成列） */
+  @Column({ name: 'invoice_title', type: 'varchar', length: 128, nullable: true })
+  invoiceTitle?: string | null;
+
+  /**
+   * 外卖平台店铺链接（原型 P33「外卖平台店铺链接配置」· 美团/淘宝/京东）
+   *
+   * 结构固定（3 平台 + 可选推荐），且**不参与任何结算计算** → 用一列 JSON 而非独立表，
+   * 换掉一整张表与一套 CRUD。用途仅限用户端 P38 溯源页的外卖跳转。
+   * ⚠️ C8：能跳转 ≠ 是合作伙伴，平台永不下发「备选商家」概念。
+   */
+  @Column({ name: 'takeout_links', type: 'json', nullable: true })
+  takeoutLinks?: Record<string, { url: string | null; shopId?: string | null }> | null;
+
   @Column({ type: 'varchar', length: 32, nullable: true, comment: '主营：川菜/粤菜/汤/面点' })
   category?: string | null;
 

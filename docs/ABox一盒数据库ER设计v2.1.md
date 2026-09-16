@@ -2,6 +2,7 @@
 
 > 基于 ER v2.0 增量修订，回填《MVP 优化交接包 v1.1》C2/C3/C4/C6/C9 裁决（2026-09-14）
 > 前置：v1.0 ER 设计（已废弃）；核心差异见 § 一
+> **工程增量（2026-09-15 ~ 09-16）**：§5.1 M3 补丁 · §5.3 M3-4 `ab_refund.order_status_before` · §5.4 M3-5 零 DDL · **§5.5 M3-6 `ab_supplier` 补 7 列**
 
 ---
 
@@ -46,7 +47,7 @@
 | `ab_user` | `phone` 改可选；删除 `company_id`、`floor` 必填 |
 | `ab_set_meal` | 删除 `uk_set_meal_date`（同一天可以有多个套餐分配给不同楼群） |
 | `ab_set_meal_item` | `supplier_id` 不再唯一约束（可重复，前期一人多菜） |
-| `ab_supplier` | 增加 `type` 字段（出餐型/集散型/混合型） |
+| `ab_supplier` | 增加 `type` 字段（出餐型/集散型/混合型）；**增加资质审核五列 `audit_status` / `audit_remark` / `audited_at` / `audited_by` + 证照有效期 `license_expire_at`（D26 落点 · 2026-09-16 补）**；**增加 `invoice_title`（D28 发票抬头）与 `takeout_links`（JSON · 外卖跳转 · 不参与结算）** |
 | `ab_team_leader` | 增加 `balance` 字段（余额账户）；`level` 等级字段（C2）；`signed_at` 改为 `agreed_at` 勾选协议（C3）；**增加 `floor` 楼层维度（2026-09-15 裁定② 恢复）**；**增加收款方式三字段 `payout_type` / `payout_account`（脱敏存储）/ `payout_name`（C11 · 提现前置条件，2026-09-15 补）** |
 | `ab_refund` | 增加代退三段式字段：`apply_source`、`apply_reason`、`apply_by_leader_id`、`approve_admin_id`、`approve_at`（C6）；**增加 `order_status_before`（申请前订单状态 · D42 驳回回退的唯一依据，2026-09-15 补）** |
 | `ab_balance_log` | **增加出款字段 `payout_channel` / `payout_batch_no` / `tax_withheld_amount`（P2-5 · C11，2026-09-15 补）** |
@@ -412,6 +413,14 @@ CREATE TABLE `ab_supplier` (
   `contact_phone`   VARCHAR(20)  NOT NULL,
   `business_license` VARCHAR(256) DEFAULT NULL,
   `food_license`    VARCHAR(256) DEFAULT NULL,
+  `license_expire_at` DATE       DEFAULT NULL COMMENT '食品经营许可证有效期（M3-6 · 123 号令核验项）',
+  `audit_status`    VARCHAR(16) NOT NULL DEFAULT 'pending'
+                    COMMENT 'pending待审 / approved通过 / rejected驳回（M3-6 · D26 落点）',
+  `audit_remark`    VARCHAR(256) DEFAULT NULL COMMENT '审核意见（驳回必填 · M3-6）',
+  `audited_at`      DATETIME(3) DEFAULT NULL COMMENT '审核时间（M3-6）',
+  `audited_by`      BIGINT UNSIGNED DEFAULT NULL COMMENT '审核人 ab_admin_user.id（M3-6）',
+  `invoice_title`   VARCHAR(128) DEFAULT NULL COMMENT '发票抬头（M3-6 · C10）',
+  `takeout_links`   JSON         DEFAULT NULL COMMENT '外卖平台店铺链接（M3-6 · 不参与结算）',
   `category`        VARCHAR(32)  DEFAULT NULL,
   `share_rate`      DECIMAL(5,4) NOT NULL DEFAULT 0.0000,
   `wx_sub_mch_id`   VARCHAR(64)  DEFAULT NULL,
@@ -616,6 +625,36 @@ ALTER TABLE `ab_operation_log`
 | D22 资质补录 | `status` · `agreed_at` · `agree_version` + `ab_user.team_leader_id` | 停用同时清归属，与 L20 退出团长同一处理 |
 
 ⚠️ **没有「微信号」列**：原型 P32 申请流水表格里的「微信号」在数据模型里**无对应字段**（L17 申请表单只收 姓名 / 手机号 / 楼层 / 办公楼 / 协议）。本期以 `ab_user.nickname` + `openid` 后 6 位代替，并在接口出参 `notes.wechatId` 里如实标注偏差 —— 若要真实微信号，须改 L17 表单并**新增列**（届时本表会出现在 §四）。
+
+### 5.5 M3-6 后台供应商管理：`ab_supplier` 补 7 列（**有 DDL 变更**）
+
+> M3-6（D23–D32 · 原型 P33 · 模块 M34-01~04）的唯一结构变更。**为什么非加不可**：D26 是「资质审核」接口，而 `ab_supplier` 原本只有 `business_license` / `food_license` 两个**存证照编号的字符串**，没有任何地方记录「审没审过、谁审的、什么时候审的」—— 没有落点，审核就只是把请求丢掉。
+> 同时补齐原型 P33 明确展示的「资质到期」列：123 号令要求平台核验入网商户证照，**证照过期即不得出餐**，没有到期日就既算不出「30 天内到期」KPI，也做不了到期联动下架。
+
+```sql
+ALTER TABLE `ab_supplier`
+  ADD COLUMN `audit_status`      varchar(16) NOT NULL DEFAULT 'pending'
+             COMMENT 'pending待审 / approved通过 / rejected驳回（D26 落点）',
+  ADD COLUMN `audit_remark`     varchar(256) NULL COMMENT '审核意见（驳回必填，便于运营答复商家）',
+  ADD COLUMN `audited_at`       datetime(3)  NULL COMMENT '审核时间',
+  ADD COLUMN `audited_by`       bigint       NULL COMMENT '审核人 ab_admin_user.id',
+  ADD COLUMN `license_expire_at` date        NULL COMMENT '食品经营许可证有效期（123 号令核验项）',
+  ADD COLUMN `invoice_title`    varchar(128) NULL COMMENT '发票抬头（C10 人工对公转账用，与展示名可能不同）',
+  ADD COLUMN `takeout_links`    json         NULL COMMENT '外卖平台店铺链接（美团/淘宝闪购/京东，仅用户端溯源跳转，不参与结算）';
+```
+
+| 列 | 关键口径 | 理由 |
+| --- | --- | --- |
+| `audit_status` | 与 `status`（1 合作中 / 0 停用）**正交** | 审核回答「有没有合规资格」，停用回答「平台现在要不要合作」。驳回**不自动停用** —— 审核是事实判定，停用是经营决策；若混在一起，「驳回」会变成不可逆的经营动作 |
+| `audit_status` 默认值 | `pending`（新建即待审） | 资质未核验前 `canServe=false`，S2 出餐前置校验会拦（50001）。默认给 `approved` 等于「默认放行」 |
+| `audited_by` | 显式落库，**不靠操作日志反查** | 操作日志的 `targetId` 只能表达「审了哪个对象」，表达不了「审谁」；合规场景要能直接 `SELECT` 出审核人 |
+| `license_expire_at` | `DATE`，可空 | 可空 = 兼容历史行，不是「可以不登记」—— D26 `approved` 要求该值**未过期**，缺值即 50001 |
+| `invoice_title` | 独立列，**不复用 `name`** | 展示名与开票名不一致是常态（个体户尤其） |
+| `takeout_links` | `JSON`，**不建独立表** | 结构固定（3 平台 + 可选推荐）且**不参与任何结算**；换掉一整张表与一套 CRUD。用途仅限用户端 P38 溯源页跳转（C8：能跳转 ≠ 是合作伙伴） |
+
+⚠️ **派生值不落库**：`licenseState`（`normal`/`expiring`/`expired`/`unknown`）与 `canServe` 都是**服务端现算**。落库就要有定时任务去刷，算错一次就是一整批脏数据。
+
+⚠️ **集散中心（`ab_distribution_center`）零 DDL 变更**：D29–D32 复用的列在 v1.0 已齐备（`rice_fee` / `pack_fee` 默认 0 · `service_groups` JSON · `supplier_id` · `status` · `deleted_at`）。软删靠既有 `deleted_at`，无需新增 —— D32 的两道前置（历史应付 / 被分配引用）是**校验逻辑**，不是结构。
 
 ---
 

@@ -37,11 +37,16 @@ export const ADMIN_MENU_KEYS = [
   '/building/groups',
   '/building/leader-binding',
   '/building/delivery-map',
+  // 供应商（平台端 P33 · M34）—— ⚠️ `/supplier/dishes` 与 `/supplier/edit` 是**商家端**
+  // P23/P24/P26 的 key（与 `SUPPLIER_MENU_KEYS` 重叠，属脚手架遗留）；平台端的
+  // 菜品库与供应商表单另起 `/supplier/dish-library`、`/supplier/form`，避免两角色撞页。
   '/supplier/list',
-  '/supplier/edit',
-  '/supplier/dishes',
+  '/supplier/form',
+  '/supplier/dish-library',
   '/supplier/distribution-center',
   '/supplier/takeout-links',
+  '/supplier/edit',
+  '/supplier/dishes',
   '/finance/overview',
   '/finance/commission',
   '/finance/supplier-share',

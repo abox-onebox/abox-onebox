@@ -156,6 +156,12 @@ export enum ErrorCode {
   WITHDRAW_BALANCE_NOT_ENOUGH = 50004,
   /** 扩展：出款通道异常（C11 灵活用工平台） */
   PAYOUT_CHANNEL_ERROR = 50005,
+  /** 扩展（M3-6）：供应商不存在 / 已停用 */
+  SUPPLIER_NOT_FOUND = 50006,
+  /** 扩展（M3-6）：集散中心不存在 / 已停用 */
+  DISTRIBUTION_CENTER_NOT_FOUND = 50007,
+  /** 扩展（M3-6）：类型与关联集散中心冲突（D27 改类型会把集散中心指向「不出餐也不集散」的供应商） */
+  SUPPLIER_TYPE_CONFLICT = 50008,
 
   /** ---- 9xxxx 系统 ---- */
   INTERNAL_ERROR = 90001,
@@ -218,6 +224,9 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',
   [ErrorCode.WITHDRAW_BALANCE_NOT_ENOUGH]: '可提现余额不足',
   [ErrorCode.PAYOUT_CHANNEL_ERROR]: '出款通道异常',
+  [ErrorCode.SUPPLIER_NOT_FOUND]: '供应商不存在或已停用',
+  [ErrorCode.DISTRIBUTION_CENTER_NOT_FOUND]: '集散中心不存在或已停用',
+  [ErrorCode.SUPPLIER_TYPE_CONFLICT]: '供应商类型与关联集散中心冲突',
   [ErrorCode.INTERNAL_ERROR]: '系统繁忙，请稍后再试',
   [ErrorCode.SERVICE_UNAVAILABLE]: '服务暂不可用',
 };

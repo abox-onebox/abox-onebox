@@ -62,21 +62,33 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/leader/detail.vue'),
       },
 
-      // 供应商管理 M34 · P33
+      // ───────────────────────── 供应商相关（⚠️ 两角色共用本 SPA，路径必须分家） ─────────────────────────
+      //
+      // 平台端（role=admin/operator，P33 供应商管理 · M34）：list / form / dish-library /
+      //   distribution-center / takeout-links —— 组件调 `/admin/*`。
+      // 商家端（role=supplier，P23/P24/P26 · M22/M24）：dishes / edit —— 将来组件调 `/supplier/*`。
+      //
+      // ⚠️ 为什么必须分开：`/supplier/dishes`、`/supplier/edit` 两个 key 同时在
+      //    `admin-role.ts` 的 `ADMIN_MENU_KEYS` 与 `SUPPLIER_MENU_KEYS` 里（脚手架遗留）。
+      //    若平台页占住这两个 path，商家点「我的菜品」会进入一个调 `/admin/dishes` 的页面，
+      //    拿 10003（`JwtAuthGuard` 按 `typ` 拒绝）——页面直接坏掉。
+      //    故平台端新增页一律另起非冲突 path；商家端两个 path 保留给 P23/P24/P26。
+
+      // 平台端 P33
       {
         path: 'supplier/list',
         name: 'SupplierList',
         component: () => import('@/views/supplier/list.vue'),
       },
       {
-        path: 'supplier/edit',
-        name: 'SupplierEdit',
-        component: () => import('@/views/supplier/edit.vue'),
+        path: 'supplier/form',
+        name: 'SupplierForm',
+        component: () => import('@/views/supplier/form.vue'),
       },
       {
-        path: 'supplier/dishes',
-        name: 'SupplierDishes',
-        component: () => import('@/views/supplier/dishes.vue'),
+        path: 'supplier/dish-library',
+        name: 'SupplierDishLibrary',
+        component: () => import('@/views/supplier/dish-library.vue'),
       },
       {
         path: 'supplier/distribution-center',
@@ -87,6 +99,18 @@ export const routes: RouteRecordRaw[] = [
         path: 'supplier/takeout-links',
         name: 'TakeoutLinks',
         component: () => import('@/views/supplier/takeout-links.vue'),
+      },
+
+      // 商家端 P23 / P24 / P26（占位 · 待 M3-7+ 实装）
+      {
+        path: 'supplier/edit',
+        name: 'SupplierEdit',
+        component: () => import('@/views/supplier/edit.vue'),
+      },
+      {
+        path: 'supplier/dishes',
+        name: 'SupplierDishes',
+        component: () => import('@/views/supplier/dishes.vue'),
       },
 
       // 办公楼管理 M33 · P37（5 视图）

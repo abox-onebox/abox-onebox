@@ -73,7 +73,9 @@ export class OperationLogInterceptor implements NestInterceptor {
       const data = await new Promise<unknown>((resolve, reject) => {
         next.handle().subscribe({ next: resolve, error: reject });
       });
-      await this.write(subject, meta, targetId, req, requestData, data, null);
+      // 请求里没有 id 的（新建类）拿响应里的新对象 id 兜底，见下方注释
+      const finalTargetId = targetId ?? this.resolveTargetIdFromResponse(data);
+      await this.write(subject, meta, finalTargetId, req, requestData, data, null);
       return of(data);
     } catch (err) {
       await this.write(subject, meta, targetId, req, requestData, null, err);
@@ -112,6 +114,33 @@ export class OperationLogInterceptor implements NestInterceptor {
       if (v !== undefined && v !== null && v !== '') return String(v);
     }
     return null;
+  }
+
+  /**
+   * 新建类接口的兜底：从**响应体**里取新对象的 id
+   *
+   * ⚠️ 为什么需要：`POST /admin/suppliers` 这类「创建」接口，请求 `params` 与
+   *    `body` 里**都没有 id**（id 由服务端生成）—— 只看请求必然拿到
+   *    `targetId = null`。这条日志就再也挂不到那个对象上了：日后要查「这家
+   *    供应商是谁建的」只能靠翻 `request_data` 全文比对名字，审计等于半残。
+   *
+   * 只认 `id` 与 `data.id` 两种形状（统一响应会包一层），**不深挖**：
+   * 猜得越深越容易把子对象的 id 当成目标（响应里同时有 `order.id` 与 `user.id`
+   * 时，选错一个就把「改了这单」记成「改了这个用户」）。
+   * 个别接口需要精确指定时，仍用 `@OperationLog({ targetParam })` 显式声明。
+   */
+  private resolveTargetIdFromResponse(data: unknown): string | null {
+    if (!data || typeof data !== 'object') return null;
+    const pickId = (v: unknown): string | null => {
+      if (v === null || v === undefined || v === '') return null;
+      return typeof v === 'number' || typeof v === 'string' ? String(v) : null;
+    };
+    const outer = data as Record<string, unknown>;
+    const inner =
+      outer.data && typeof outer.data === 'object' && !Array.isArray(outer.data)
+        ? (outer.data as Record<string, unknown>)
+        : outer;
+    return pickId(inner.id);
   }
 
   /** 递归脱敏 + 截断 */

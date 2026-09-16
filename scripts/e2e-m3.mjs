@@ -3251,6 +3251,880 @@ async function main() {
   );
 
   // ==========================================================================
+  // §18 M3-6 供应商管理 + 集散（D23–D32）
+  // ==========================================================================
+  log('\n§18 M3-6 供应商管理 / 集散（D23–D32）');
+
+  /** 拼查询串：只带上真有值的参数，空值一律不发（避免 `?type=` 被当成筛选条件） */
+  const qs = (o) =>
+    Object.entries(o)
+      .filter(([, v]) => v !== undefined && v !== null && v !== '')
+      .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
+      .join('&');
+
+  // ---------------------------------------------------------- 前置：自造夹具
+  // 供应商是小体量主数据：用**带时间戳**的名称/手机号新建，重复跑不撞唯一约束，
+  // 也不与种子（4 出餐 + 6 备选）以及其他 § 的写入互相覆盖。
+  const supA = `e2e供A_${stamp}`;
+  const supB = `e2e供B_${stamp}`;
+  const mkPhone = (n) => `139${stamp.slice(0, 4)}${String(n).padStart(4, '0')}`;
+  const pastDate = addDaysStr(bjToday(), -10);
+  const soonDate = addDaysStr(bjToday(), 10);
+  const futureDate = addDaysStr(bjToday(), 365);
+
+  // 权限夹具：§9 已把 §7 的 operator（userA）停用并吊销其令牌，此处必须另起账号
+  const supOpUser = `e2e_supop_${stamp}`;
+  const supViewUser = `e2e_supview_${stamp}`;
+  await call('POST', '/admin/system/accounts', {
+    token: adminToken,
+    body: { username: supOpUser, password: PWD, role: 'operator', realName: 'e2e 供应商运营' },
+  });
+  await call('POST', '/admin/system/accounts', {
+    token: adminToken,
+    body: { username: supViewUser, password: PWD, role: 'viewer', realName: 'e2e 供应商只读' },
+  });
+  const supOpLogin = await adminLogin(supOpUser, PWD);
+  const supViewLogin = await adminLogin(supViewUser, PWD);
+  const finLogin2 = await adminLogin('finance', 'finance123');
+  const supOpToken = supOpLogin.token;
+  const supViewToken = supViewLogin.token;
+  const finToken2 = finLogin2.token;
+  ok(
+    '前置：§18 账号夹具就位（operator / viewer / finance）',
+    `op=${supOpLogin.code} viewer=${supViewLogin.code} finance=${finLogin2.code}`,
+  );
+
+  // ======================================================== A · D23 名录
+  const sList = await call('GET', `/admin/suppliers?${qs({ pageSize: 100 })}`, { token: adminToken });
+  const sRows = sList.body?.data?.list ?? [];
+  const sSum = sList.body?.data?.summary ?? {};
+  const sTotal = sList.body?.data?.total;
+
+  assert(
+    sList.body?.code === 0 && Array.isArray(sRows) && sTotal >= 10,
+    'D23 名录返回成功，且至少含种子 10 家（4 出餐 + 6 备选）',
+    `code=${sList.body?.code} total=${sTotal}`,
+  );
+  assert(
+    sSum.totalCount === sTotal,
+    'D23 summary 按**同一过滤条件的全量**统计（翻页不跳 KPI：totalCount 恒等于 total，与本页条数无关）',
+    `summary=${sSum.totalCount} total=${sTotal} 本页=${sRows.length}`,
+  );
+  assert(
+    sRows.every((r) => r.licenseState && r.licenseStateLabel && r.statusLabel),
+    'D23 每行带派生值 licenseState / licenseStateLabel / statusLabel（文案由服务端统一，端上不维护第二份）',
+    `sample=${JSON.stringify(sRows[0]?.licenseState)}/${sRows[0]?.licenseStateLabel}`,
+  );
+  assert(
+    new Set(sRows.map((r) => r.licenseState)).has('unknown'),
+    'D23 种子供应商未登记证照有效期 → licenseState=unknown（**未登记 ≠ 已过期**，后置收集是合法的）',
+    `states=${JSON.stringify([...new Set(sRows.map((r) => r.licenseState))])}`,
+  );
+  assert(
+    sRows.every((r) => !String(r.contactPhoneMasked ?? '').includes('0000')),
+    'D23 列表手机号**一律脱敏**（形如 139****0001，中间位不在响应里）',
+    `sample=${sRows[0]?.contactPhoneMasked}`,
+  );
+  assert(
+    sRows.every((r) => r.contactPhone === undefined),
+    'D23 列表**不回真实手机号**（连字段都不出现；只有详情才给，见 B 段）',
+    `keys=${Object.keys(sRows[0] ?? {}).filter((k) => /phone/i.test(k)).join(',')}`,
+  );
+  assert(
+    (sList.body?.data?.typeOptions ?? []).length === 3 &&
+      (sList.body?.data?.auditStatusOptions ?? []).length === 3 &&
+      (sList.body?.data?.statusOptions ?? []).length === 2,
+    'D23 下发三个枚举选择器（类型 3 / 审核状态 3 / 合作状态 2）',
+    `type=${sList.body?.data?.typeOptions?.length} audit=${sList.body?.data?.auditStatusOptions?.length}`,
+  );
+  assert(
+    (sList.body?.data?.categoryOptions ?? []).some((o) => o.value === '本帮菜'),
+    'D23 categoryOptions 来自**真实数据去重**（不是写死的枚举）：种子里「本帮菜」必须在列',
+    `cats=${JSON.stringify((sList.body?.data?.categoryOptions ?? []).map((o) => o.value).slice(0, 6))}`,
+  );
+  assert(
+    sList.body?.data?.actions?.canManage === true,
+    'D23 actions.canManage=true（super_admin）；该判据由服务端下发，前端不自己判角色',
+    `canManage=${sList.body?.data?.actions?.canManage}`,
+  );
+
+  const onlyBoth = await call('GET', `/admin/suppliers?${qs({ type: 'both', pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  assert(
+    onlyBoth.body?.code === 0 &&
+      (onlyBoth.body?.data?.list ?? []).length > 0 &&
+      (onlyBoth.body?.data?.list ?? []).every((r) => r.type === 'both'),
+    'D23 按类型筛选有效（both 全命中，且返回行的 type 逐条一致）',
+    `count=${onlyBoth.body?.data?.list?.length}`,
+  );
+
+  const onlyExpired = await call('GET', `/admin/suppliers?${qs({ licenseState: 'expired', pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  assert(
+    onlyExpired.body?.code === 0 &&
+      (onlyExpired.body?.data?.list ?? []).every((r) => r.licenseState === 'expired'),
+    'D23 按证照有效期筛选有效（expired 档**逐条复核**，不是「拿筛选当装饰」）',
+    `count=${onlyExpired.body?.data?.list?.length}`,
+  );
+
+  const kwByName = await call('GET', `/admin/suppliers?${qs({ keyword: '三味屋' })}`, {
+    token: adminToken,
+  });
+  assert(
+    kwByName.body?.code === 0 && (kwByName.body?.data?.list ?? []).some((r) => r.id === 1),
+    'D23 关键词命中供应商名（三味屋 · id=1）',
+    `names=${JSON.stringify((kwByName.body?.data?.list ?? []).map((r) => r.name))}`,
+  );
+  const kwByDc = await call('GET', `/admin/suppliers?${qs({ keyword: '集散中心 1' })}`, {
+    token: adminToken,
+  });
+  assert(
+    kwByDc.body?.code === 0 && (kwByDc.body?.data?.list ?? []).some((r) => r.id === 1),
+    'D23 关键词**跨表命中集散中心名**（搜「集散中心 1」能找回三味屋 —— 运营是按场地找供应商的）',
+    `ids=${JSON.stringify((kwByDc.body?.data?.list ?? []).map((r) => r.id))}`,
+  );
+
+  const filterOpts = await call('GET', '/admin/suppliers/filter-options', { token: adminToken });
+  assert(
+    filterOpts.body?.code === 0 && (filterOpts.body?.data?.typeOptions ?? []).length === 3,
+    'D23 filter-options 未被 `:id` 参数路由吃掉（**静态路由必须声明在参数路由之前**）',
+    `code=${filterOpts.body?.code} typeOptions=${filterOpts.body?.data?.typeOptions?.length}`,
+  );
+
+  const noSuch = await call('GET', '/admin/suppliers/999999', { token: adminToken });
+  assert(
+    noSuch.body?.code === 50006,
+    'D23 详情查不存在的供应商 → 50006（不是 500；错误码要能区分「不存在」与「系统挂了」）',
+    `code=${noSuch.body?.code}`,
+  );
+
+  // ======================================================== B · D23 详情
+  const detSup1 = await call('GET', '/admin/suppliers/1', { token: adminToken });
+  const detSup1d = detSup1.body?.data ?? {};
+  assert(
+    detSup1.body?.code === 0 &&
+      !!detSup1d.supplier &&
+      !!detSup1d.bank &&
+      Array.isArray(detSup1d.dishes) &&
+      Array.isArray(detSup1d.distributionCenters) &&
+      Array.isArray(detSup1d.recentShares) &&
+      Array.isArray(detSup1d.operationLogs) &&
+      !!detSup1d.takeout,
+    'D23 详情一次性带齐 7 块（档案 / 银行 / 菜品 / 集散 / 近 30 条分账 / 日志 / 外卖链接）',
+    `keys=${Object.keys(detSup1d).join(',')}`,
+  );
+  assert(
+    detSup1d.contactPhone === '13900000001' && detSup1d.contactPhoneMasked === '139****0001',
+    'D23 详情**才**回真实手机号（与列表脱敏形成对照；两个字段同时给出，端上不必自己脱敏）',
+    `phone=${detSup1d.contactPhone} masked=${detSup1d.contactPhoneMasked}`,
+  );
+  assert(
+    detSup1d.bank.bankAccountMasked === null,
+    'D23 种子供应商未登记对公账号 → bankAccountMasked=null（**不是空串**，前端据此显示「未登记」）',
+    `masked=${JSON.stringify(detSup1d.bank.bankAccountMasked)}`,
+  );
+  assert(
+    detSup1d.dishes.length >= 4 &&
+      detSup1d.dishes.every((d) => d.supplierId === 1) &&
+      detSup1d.supplier.dishCount === detSup1d.dishes.length,
+    'D23 详情菜品全属本家，且 dishCount 与列表口径一致（两处若不同源，就会「列表 4 道、详情 3 道」）',
+    `dishes=${detSup1d.dishes.length} dishCount=${detSup1d.supplier.dishCount}`,
+  );
+  assert(
+    detSup1d.supplier.dcCount === detSup1d.distributionCenters.length,
+    'D23 详情集散中心数与 dcCount 一致',
+    `dc=${detSup1d.distributionCenters.length} dcCount=${detSup1d.supplier.dcCount}`,
+  );
+
+  // ================================================ C · D24 新增 / D25 编辑
+  const cSupA = await call('POST', '/admin/suppliers', {
+    token: adminToken,
+    body: {
+      name: supA,
+      type: 'both',
+      contactName: 'e2e 联系人A',
+      contactPhone: mkPhone(1),
+      category: '测试品类',
+      address: '朝阳区测试路 1 号',
+      capacityPerDay: 300,
+      payeeType: 'corporate',
+    },
+  });
+  const supAId = Number(cSupA.body?.data?.id ?? 0);
+  assert(
+    cSupA.body?.code === 0 && supAId > 0,
+    'D24 新增供应商成功',
+    `id=${supAId}`,
+  );
+  assert(
+    cSupA.body?.data?.auditStatus === 'pending' && cSupA.body?.data?.status === 1,
+    'D24 新建即 `audit_status=pending` 且 `status=1`（**创建 ≠ 可出餐**：资质未核验前 canServe=false）',
+    `audit=${cSupA.body?.data?.auditStatus} status=${cSupA.body?.data?.status}`,
+  );
+  const supADb = readDb('SELECT audit_status, status, payee_type FROM ab_supplier WHERE id = ?', [supAId]);
+  assert(
+    supADb?.audit_status === 'pending' && Number(supADb?.status) === 1,
+    'D24 落库值与出参一致（接口回什么，库里就是什么）',
+    `db=${JSON.stringify(supADb)}`,
+  );
+
+  const cSupB = await call('POST', '/admin/suppliers', {
+    token: adminToken,
+    body: {
+      name: supB,
+      type: 'dish',
+      contactName: 'e2e 联系人B',
+      contactPhone: mkPhone(2),
+      category: '测试品类',
+      payeeType: 'personal',
+    },
+  });
+  const supBId = Number(cSupB.body?.data?.id ?? 0);
+  assert(cSupB.body?.code === 0 && supBId > 0, 'D24 第二家（出餐型）新建成功', `id=${supBId}`);
+
+  const uSupA = await call('PUT', `/admin/suppliers/${supAId}`, {
+    token: adminToken,
+    body: { name: `${supA}改`, capacityPerDay: 520 },
+  });
+  assert(
+    uSupA.body?.code === 0 && uSupA.body?.data?.unpublishedDishCount === 0,
+    'D25 编辑（改名 + 产能）成功，且未触发联动下架时 `unpublishedDishCount=0`（**显式回报「没发生」**，与不回报是两回事）',
+    `code=${uSupA.body?.code} unpublished=${uSupA.body?.data?.unpublishedDishCount}`,
+  );
+  const uSupADb = readDb('SELECT name, capacity_per_day FROM ab_supplier WHERE id = ?', [supAId]);
+  assert(
+    uSupADb?.name === `${supA}改` && Number(uSupADb?.capacity_per_day) === 520,
+    'D25 编辑落库（部分更新：只改传了的字段）',
+    `db=${JSON.stringify(uSupADb)}`,
+  );
+
+  // 给 A 建两道菜，供「证照过期 → 联动下架」使用
+  const mkDish = async (supplierId, name, fen, category = 'main') =>
+    call('POST', '/admin/dishes', {
+      token: adminToken,
+      body: { supplierId, name, category, costPriceFen: fen, description: 'e2e 菜品' },
+    });
+  const dA1 = await mkDish(supAId, `e2e菜A1_${stamp}`, 750);
+  const dA2 = await mkDish(supAId, `e2e菜A2_${stamp}`, 300, 'veg');
+  const dA1Id = Number(dA1.body?.data?.id ?? 0);
+  const dA2Id = Number(dA2.body?.data?.id ?? 0);
+  assert(
+    dA1.body?.code === 0 && dA2.body?.code === 0 && dA1Id > 0 && dA2Id > 0,
+    '前置：为 A 建两道菜（供 D25 联动下架与 G 段批量操作使用）',
+    `ids=${dA1Id},${dA2Id}`,
+  );
+
+  const uExpired = await call('PUT', `/admin/suppliers/${supAId}`, {
+    token: adminToken,
+    body: { licenseExpireAt: pastDate },
+  });
+  assert(
+    uExpired.body?.code === 0 &&
+      uExpired.body?.data?.licenseState === 'expired' &&
+      uExpired.body?.data?.unpublishedDishCount === 2,
+    'D25 把证照有效期改成**过去** → 同步下架关联菜品，并回报 `unpublishedDishCount=2`（不做「偷偷改了却不说」）',
+    `state=${uExpired.body?.data?.licenseState} unpublished=${uExpired.body?.data?.unpublishedDishCount}`,
+  );
+  const dishAfterExpire = readRows('SELECT id, status FROM ab_dish WHERE supplier_id = ?', [supAId]);
+  assert(
+    dishAfterExpire.length === 2 && dishAfterExpire.every((d) => Number(d.status) === 0),
+    'D25 联动下架**真的落库**（123 号令：证照过期不得出餐 —— 不是只改个标记给前端看）',
+    `dishes=${JSON.stringify(dishAfterExpire)}`,
+  );
+  assert(
+    uExpired.body?.data?.canServe === false,
+    'D25 证照过期后 canServe=false（合作中 ∧ 资质通过 ∧ 证照未过期，三项缺一即否）',
+    `canServe=${uExpired.body?.data?.canServe}`,
+  );
+
+  // ======================================================== D · D26 资质审核
+  const auditNoLicense = await call('POST', `/admin/suppliers/${supBId}/audit`, {
+    token: adminToken,
+    body: { result: 'approved' },
+  });
+  assert(
+    auditNoLicense.body?.code === 50001,
+    'D26 通过审核但**无任何证照有效期** → 50001（C11 允许银行账户后置收集，但**证照有效期不能后置**）',
+    `code=${auditNoLicense.body?.code} msg=${auditNoLicense.body?.message}`,
+  );
+  const auditPast = await call('POST', `/admin/suppliers/${supBId}/audit`, {
+    token: adminToken,
+    body: { result: 'approved', licenseExpireAt: pastDate },
+  });
+  assert(
+    auditPast.body?.code === 50001,
+    'D26 通过审核但证照**已过期** → 50001（不能明知过期还放行出餐）',
+    `code=${auditPast.body?.code} msg=${auditPast.body?.message}`,
+  );
+  const auditSoon = await call('POST', `/admin/suppliers/${supBId}/audit`, {
+    token: adminToken,
+    body: { result: 'approved', licenseExpireAt: soonDate, remark: 'e2e 资质通过' },
+  });
+  assert(
+    auditSoon.body?.code === 0 &&
+      auditSoon.body?.data?.auditStatus === 'approved' &&
+      auditSoon.body?.data?.licenseState === 'expiring',
+    'D26 有效期在 30 天内 → 审核通过，且 licenseState=expiring（派生值实时算，不落库）',
+    `audit=${auditSoon.body?.data?.auditStatus} state=${auditSoon.body?.data?.licenseState}`,
+  );
+  assert(
+    auditSoon.body?.data?.status === 1,
+    'D26 **审核不影响合作状态**：通过审核后 status 仍为 1（审核是事实判定，停用是经营决策）',
+    `status=${auditSoon.body?.data?.status}`,
+  );
+  assert(
+    auditSoon.body?.data?.canServe === true,
+    'D26 三项齐备后 canServe=true（合作中 ∧ 资质通过 ∧ 未过期）',
+    `canServe=${auditSoon.body?.data?.canServe}`,
+  );
+  const auditDb = readDb(
+    'SELECT audit_status, audit_remark, audited_at, audited_by FROM ab_supplier WHERE id = ?',
+    [supBId],
+  );
+  assert(
+    auditDb?.audit_status === 'approved' &&
+      auditDb?.audit_remark === 'e2e 资质通过' &&
+      !!auditDb?.audited_at &&
+      Number(auditDb?.audited_by) > 0,
+    'D26 审核三件套落库：状态 / 意见 / 审核时刻 + 审核人（「谁批的」必须留痕，不能只记「批了」）',
+    `db=${JSON.stringify(auditDb)}`,
+  );
+  const rejectNoRemark = await call('POST', `/admin/suppliers/${supBId}/audit`, {
+    token: adminToken,
+    body: { result: 'rejected' },
+  });
+  assert(
+    rejectNoRemark.body?.code === 10001,
+    'D26 驳回但未填审核意见 → 10001（驳回要能给商家一个理由）',
+    `code=${rejectNoRemark.body?.code}`,
+  );
+  const rejectOk = await call('POST', `/admin/suppliers/${supBId}/audit`, {
+    token: adminToken,
+    body: { result: 'rejected', remark: 'e2e 营业执照与线上主体不一致' },
+  });
+  assert(
+    rejectOk.body?.code === 0 &&
+      rejectOk.body?.data?.auditStatus === 'rejected' &&
+      rejectOk.body?.data?.status === 1 &&
+      rejectOk.body?.data?.canServe === false,
+    'D26 驳回后 **status 仍为 1（不自动停用）**、canServe=false —— 阈值分开：审核管资格，停用管合作',
+    `audit=${rejectOk.body?.data?.auditStatus} status=${rejectOk.body?.data?.status}`,
+  );
+
+  // ============================================ E · D27 设置类型 / D28 结算账户
+  const setTypeConflict = await call('PUT', '/admin/suppliers/1/type', {
+    token: adminToken,
+    body: { type: 'dish' },
+  });
+  assert(
+    setTypeConflict.body?.code === 50008,
+    'D27 三味屋（both）名下有集散中心 → 不能降级为 dish → 50008（否则集散中心会挂在「不出餐也不集散」的主体下）',
+    `code=${setTypeConflict.body?.code} msg=${setTypeConflict.body?.message}`,
+  );
+  const setTypeSame = await call('PUT', '/admin/suppliers/1/type', {
+    token: adminToken,
+    body: { type: 'both' },
+  });
+  assert(
+    setTypeSame.body?.code === 10001,
+    'D27 目标态重复操作 → 10001（**不是幂等成功**：要点得动「确实改了」和「点重了」）',
+    `code=${setTypeSame.body?.code} msg=${setTypeSame.body?.message}`,
+  );
+  const setTypeBad = await call('PUT', `/admin/suppliers/${supAId}/type`, {
+    token: adminToken,
+    body: { type: 'not-a-type' },
+  });
+  assert(
+    setTypeBad.body?.code === 10001,
+    'D27 非法类型 → 10001（枚举白名单在 DTO 层就拦，不进服务层）',
+    `code=${setTypeBad.body?.code}`,
+  );
+  const setTypeOk = await call('PUT', `/admin/suppliers/${supAId}/type`, {
+    token: adminToken,
+    body: { type: 'distribute' },
+  });
+  assert(
+    setTypeOk.body?.code === 0 &&
+      setTypeOk.body?.data?.type === 'distribute' &&
+      setTypeOk.body?.data?.typeLabel === '集散型',
+    'D27 改为集散型成功并回带中文标签（文案由 shared-types 统一，端上不维护第二份）',
+    `type=${setTypeOk.body?.data?.type} label=${setTypeOk.body?.data?.typeLabel}`,
+  );
+
+  const settleNoAccount = await call('PUT', `/admin/suppliers/${supAId}/settle-account`, {
+    token: adminToken,
+    body: { payeeType: 'corporate' },
+  });
+  assert(
+    settleNoAccount.body?.code === 10001,
+    'D28 选「对公」却不给开户行/账号 → 10001（服务层校验，不是 DTO 硬顶：否则结算单生成了却无处可付）',
+    `code=${settleNoAccount.body?.code} msg=${settleNoAccount.body?.message}`,
+  );
+  const settleOk = await call('PUT', `/admin/suppliers/${supAId}/settle-account`, {
+    token: adminToken,
+    body: {
+      payeeType: 'corporate',
+      bankName: '中国银行北京分行',
+      bankAccount: '6217000000001234',
+      invoiceTitle: `${supA}（发票抬头）`,
+    },
+  });
+  assert(
+    settleOk.body?.code === 0 &&
+      settleOk.body?.data?.bankAccountMasked === '**** **** **** 1234' &&
+      !JSON.stringify(settleOk.body?.data ?? {}).includes('6217000000001234'),
+    'D28 **回带即脱敏**：响应里绝不含账号原文（连刚填过也不给，防日志/截图泄露）',
+    `masked=${settleOk.body?.data?.bankAccountMasked}`,
+  );
+  const detA = await call('GET', `/admin/suppliers/${supAId}`, { token: adminToken });
+  assert(
+    detA.body?.data?.bank?.bankAccountMasked === '**** **** **** 1234' &&
+      detA.body?.data?.bank?.bankName === '中国银行北京分行' &&
+      !JSON.stringify(detA.body?.data ?? {}).includes('6217000000001234'),
+    'D28 详情里账号同样只有脱敏号（**账号原文任何后台接口都不回**，付款登记由财务线下核对）',
+    `detail=${detA.body?.data?.bank?.bankAccountMasked}`,
+  );
+  const settlePersonal = await call('PUT', `/admin/suppliers/${supBId}/settle-account`, {
+    token: adminToken,
+    body: { payeeType: 'personal' },
+  });
+  assert(
+    settlePersonal.body?.code === 0,
+    'D28 对私可不填账号（C11 允许信息后置收集 —— 只有「选了对公」才强制成对）',
+    `code=${settlePersonal.body?.code}`,
+  );
+
+  // ============================================ F · 扩展 · 外卖平台店铺链接
+  const tk1 = await call('PUT', `/admin/suppliers/${supAId}/takeout-links`, {
+    token: adminToken,
+    body: { meituan: { url: 'pages/shop/index?shop_id=e2e', shopId: 'e2e-mt' }, recommended: 'meituan' },
+  });
+  assert(
+    tk1.body?.code === 0 &&
+      (tk1.body?.data?.links ?? []).length === 3 &&
+      tk1.body?.data?.configuredCount === 1,
+    '外卖链接：**三个平台一律返回**（未入驻的 configured=false），而不是把未配置项筛掉 —— 否则「缺京东」这件事在界面上看不见',
+    `links=${tk1.body?.data?.links?.length} configured=${tk1.body?.data?.configuredCount}`,
+  );
+  assert(
+    tk1.body?.data?.recommended === 'meituan',
+    '外卖链接：推荐平台可设（`recommended` 回带的是**平台 key**，不是 URL）',
+    `recommended=${tk1.body?.data?.recommended}`,
+  );
+  const tk2 = await call('PUT', `/admin/suppliers/${supAId}/takeout-links`, {
+    token: adminToken,
+    body: { taobao: { url: 'pages/shop/index?shop_id=e2e-tb' } },
+  });
+  const mtAfter = (tk2.body?.data?.links ?? []).find((l) => l.platform === 'meituan');
+  assert(
+    tk2.body?.code === 0 && mtAfter?.configured === true && tk2.body?.data?.configuredCount === 2,
+    '外卖链接：**未传的保持原值**（只想改一家不必把另外两家回传一遍；否则漏传=静默清空）',
+    `configured=${tk2.body?.data?.configuredCount}`,
+  );
+  const tk3 = await call('PUT', `/admin/suppliers/${supAId}/takeout-links`, {
+    token: adminToken,
+    body: { meituan: { url: '' } },
+  });
+  assert(
+    tk3.body?.code === 0 &&
+      tk3.body?.data?.configuredCount === 1 &&
+      tk3.body?.data?.recommended === null,
+    '外卖链接：显式传空串 = 清空该平台（「未入驻」是合法状态），且**推荐被自动撤销** —— 悬空推荐比没有推荐更糟',
+    `configured=${tk3.body?.data?.configuredCount} recommended=${JSON.stringify(tk3.body?.data?.recommended)}`,
+  );
+  const tkBad = await call('PUT', `/admin/suppliers/${supAId}/takeout-links`, {
+    token: adminToken,
+    body: { recommended: 'pinduoduo' },
+  });
+  assert(
+    tkBad.body?.code === 10001,
+    '外卖链接：不存在的平台作为推荐 → 10001（枚举白名单）',
+    `code=${tkBad.body?.code}`,
+  );
+  const supplierTakeout = readDb('SELECT takeout_links FROM ab_supplier WHERE id = ?', [supAId]);
+  assert(
+    !!supplierTakeout?.takeout_links &&
+      !String(supplierTakeout.takeout_links).includes('__recommended'),
+    '外卖链接：悬空推荐**已从库里删掉**（不是只在出参里过滤 —— 那会让下个读的人又看到它）',
+    `json=${String(supplierTakeout?.takeout_links).slice(0, 80)}`,
+  );
+
+  // ================================================ G · 扩展 · 菜品库
+  const dishList = await call('GET', `/admin/dishes?${qs({ pageSize: 100 })}`, { token: adminToken });
+  const dSum = dishList.body?.data?.summary ?? {};
+  assert(
+    dishList.body?.code === 0 && Array.isArray(dishList.body?.data?.list),
+    '菜品库列表可用',
+    `total=${dishList.body?.data?.total}`,
+  );
+  assert(
+    dSum.totalCount === dishList.body?.data?.total &&
+      dSum.onSaleCount + dSum.offSaleCount === dSum.totalCount,
+    '菜品库 summary 同过滤条件全量，且「上架 + 下架 = 总数」（两个 KPI 加不齐就是漏统计）',
+    `total=${dSum.totalCount} on=${dSum.onSaleCount} off=${dSum.offSaleCount}`,
+  );
+  assert(
+    (dishList.body?.data?.categoryOptions ?? []).length === 5,
+    '菜品库下发 5 个档位（main/half/veg/soup/staple）',
+    `cats=${JSON.stringify((dishList.body?.data?.categoryOptions ?? []).map((o) => o.value))}`,
+  );
+  assert(
+    typeof dishList.body?.data?.notes?.category === 'string' &&
+      dishList.body?.data?.notes.category.includes('DishSlot'),
+    '菜品库出参**显式标注**档位与套餐槽位 DishSlot 是两套枚举（写在契约里，而不是留给下一个人去猜）',
+    `note=${dishList.body?.data?.notes?.category?.slice(0, 30)}…`,
+  );
+  assert(
+    (dishList.body?.data?.list ?? []).every((d) => !!d.costPriceYuan && !!d.categoryLabel),
+    '菜品行同时给「分」与「元串」与中文档位（元串专供输入框回填，避免端上各写一遍 /100）',
+    `sample=${(dishList.body?.data?.list ?? [])[0]?.costPriceFen}/${(dishList.body?.data?.list ?? [])[0]?.costPriceYuan}`,
+  );
+
+  const dishBySup = await call('GET', `/admin/dishes?${qs({ supplierId: supAId, pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  assert(
+    dishBySup.body?.code === 0 &&
+      (dishBySup.body?.data?.list ?? []).length === 2 &&
+      (dishBySup.body?.data?.list ?? []).every((d) => d.supplierId === supAId),
+    '菜品库按供应商筛选有效（且只返回本家的菜）',
+    `count=${dishBySup.body?.data?.list?.length}`,
+  );
+
+  const dishDb = readDb('SELECT cost_price FROM ab_dish WHERE id = ?', [dA1Id]);
+  assert(
+    Math.abs(Number(dishDb?.cost_price) - 7.5) < 1e-9,
+    '菜品供价以「分」入参 → 落库为 **7.50 元整**（750 分 ÷ 100，不出现 7.4999…）',
+    `cost_price=${JSON.stringify(dishDb?.cost_price)} typeof=${typeof dishDb?.cost_price}`,
+  );
+
+  const dishUpdate = await call('PUT', `/admin/dishes/${dA1Id}`, {
+    token: adminToken,
+    body: { costPriceFen: 880, category: 'half' },
+  });
+  assert(
+    dishUpdate.body?.code === 0 &&
+      dishUpdate.body?.data?.costPriceFen === 880 &&
+      dishUpdate.body?.data?.categoryLabel === '半荤',
+    '菜品改供价 + 改档位成功（供价是 C9 等式的输入项，改一个数字就改了供应商应付与平台毛利）',
+    `fen=${dishUpdate.body?.data?.costPriceFen} cat=${dishUpdate.body?.data?.categoryLabel}`,
+  );
+
+  const batchNoReason = await call('POST', '/admin/dishes/batch-status', {
+    token: adminToken,
+    body: { ids: [dA1Id], status: 0 },
+  });
+  assert(
+    batchNoReason.body?.code === 10001,
+    '批量下架**必填原因** → 缺原因 10001（批量下架是「一道菜在多个楼群同时消失」，复盘要能回答为什么）',
+    `code=${batchNoReason.body?.code}`,
+  );
+  const batchUp = await call('POST', '/admin/dishes/batch-status', {
+    token: adminToken,
+    body: { ids: [dA1Id, dA2Id], status: 1, reason: 'e2e 恢复上架' },
+  });
+  assert(
+    batchUp.body?.code === 0 &&
+      batchUp.body?.data?.changed === 2 &&
+      batchUp.body?.data?.skipped === 0 &&
+      batchUp.body?.data?.changed + batchUp.body?.data?.skipped === batchUp.body?.data?.requested,
+    '批量上架：两道都从下架→上架，changed=2 且 **changed + skipped = requested**（运营才能核对）',
+    `changed=${batchUp.body?.data?.changed} skipped=${batchUp.body?.data?.skipped}`,
+  );
+  const batchMixed = await call('POST', '/admin/dishes/batch-status', {
+    token: adminToken,
+    body: { ids: [dA1Id, dA2Id], status: 0, reason: 'e2e 批量下架' },
+  });
+  assert(
+    batchMixed.body?.code === 0 && batchMixed.body?.data?.changed === 2,
+    '批量下架：原因齐备时正常执行',
+    `changed=${batchMixed.body?.data?.changed}`,
+  );
+  const batchSame = await call('POST', '/admin/dishes/batch-status', {
+    token: adminToken,
+    body: { ids: [dA1Id, dA2Id], status: 0, reason: 'e2e 重复下架' },
+  });
+  assert(
+    batchSame.body?.code === 10001,
+    '批量操作**全部已是目标态** → 10001（与 D27 同一纪律：目标态重复 ≠ 幂等成功）',
+    `code=${batchSame.body?.code} msg=${batchSame.body?.message}`,
+  );
+  const batchGhost = await call('POST', '/admin/dishes/batch-status', {
+    token: adminToken,
+    body: { ids: [dA1Id, 99999999], status: 1, reason: 'e2e 含不存在' },
+  });
+  assert(
+    batchGhost.body?.code === 10004,
+    '批量操作含不存在 id → **整体拒绝**（10004 不存在），不做「部分成功」—— 否则运营会以为全成功了',
+    `code=${batchGhost.body?.code}`,
+  );
+  const dishStill = readDb('SELECT status FROM ab_dish WHERE id = ?', [dA1Id]);
+  assert(
+    Number(dishStill?.status) === 0,
+    '批量整体拒绝时**一行都没改**（不是「改了一半再报错」）',
+    `status=${dishStill?.status}`,
+  );
+
+  // ==================================================== H · D29–D32 集散中心
+  const dcList = await call('GET', `/admin/distribution-centers?${qs({ pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  const dcRows = dcList.body?.data?.list ?? [];
+  const dcSum = dcList.body?.data?.summary ?? {};
+  assert(
+    dcList.body?.code === 0 && dcSum.totalCount === dcList.body?.data?.total,
+    'D29 集散中心列表可用，summary 与 total 同源',
+    `total=${dcSum.totalCount}`,
+  );
+  assert(
+    dcSum.totalRiceFeeFen === 0 && dcSum.totalPackFeeFen === 0,
+    'D29 种子集散中心**场地费与打包费全为 0**（C9：复用供应商场地 + 平台兼职打包，非 0 才是异常）',
+    `rice=${dcSum.totalRiceFeeFen} pack=${dcSum.totalPackFeeFen}`,
+  );
+  assert(
+    dcRows.every((r) => !!r.statusLabel && Array.isArray(r.serviceGroups) && Array.isArray(r.serviceGroupNames)),
+    'D29 行内带状态文案、服务楼群 id 与**名称**（端上显示名字，不显示 #3）',
+    `sample=${JSON.stringify(dcRows[0]?.serviceGroupNames)}`,
+  );
+  assert(
+    dcRows.every((r) => typeof r.canDelete === 'boolean' && typeof r.shareAmountFen === 'number'),
+    'D29 两道删除前置（历史应付 / 被分配引用）合成 `canDelete` 下发 —— 前端据此禁用按钮，而不是点了才知道不行',
+    `canDelete=${dcRows.filter((r) => r.canDelete).length}/${dcRows.length}`,
+  );
+  const dcByGroup = await call('GET', `/admin/distribution-centers?${qs({ groupId: 1, pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  assert(
+    dcByGroup.body?.code === 0 &&
+      (dcByGroup.body?.data?.list ?? []).length > 0 &&
+      (dcByGroup.body?.data?.list ?? []).every((r) => r.serviceGroups.includes(1)),
+    'D29 按服务楼群筛选有效（**在服务端内存完成**：JSON 列跨库字符串连接语义不同，但对外行为与 SQL 筛选一致）',
+    `count=${dcByGroup.body?.data?.list?.length}`,
+  );
+  const dcByKw = await call('GET', `/admin/distribution-centers?${qs({ keyword: '建国路' })}`, {
+    token: adminToken,
+  });
+  assert(
+    dcByKw.body?.code === 0 && (dcByKw.body?.data?.list ?? []).some((r) => r.id === 1),
+    'D29 集散中心关键词命中地址',
+    `ids=${JSON.stringify((dcByKw.body?.data?.list ?? []).map((r) => r.id))}`,
+  );
+
+  const dcUnderDish = await call('POST', '/admin/distribution-centers', {
+    token: adminToken,
+    body: { name: `e2e错挂_${stamp}`, supplierId: supBId, address: '朝阳区测试路 9 号' },
+  });
+  assert(
+    dcUnderDish.body?.code === 50008,
+    'D30 往**出餐型**供应商名下挂集散中心 → 50008（纯出餐商家名下挂集散中心是自相矛盾的主数据）',
+    `code=${dcUnderDish.body?.code} msg=${dcUnderDish.body?.message}`,
+  );
+
+  const dcCreated = await call('POST', '/admin/distribution-centers', {
+    token: adminToken,
+    body: {
+      name: `e2e集散_${stamp}`,
+      supplierId: supAId,
+      address: '朝阳区测试路 2 号',
+      contactName: 'e2e 场地',
+      contactPhone: mkPhone(3),
+      serviceGroups: [1, 2],
+    },
+  });
+  const dcId = Number(dcCreated.body?.data?.id ?? 0);
+  assert(
+    dcCreated.body?.code === 0 && dcId > 0 && dcCreated.body?.data?.status === 1,
+    'D30 新建集散中心成功（挂到集散型主体下）',
+    `id=${dcId}`,
+  );
+  const dcDb = readDb('SELECT rice_fee, pack_fee, service_groups FROM ab_distribution_center WHERE id = ?', [
+    dcId,
+  ]);
+  assert(
+    Number(dcDb?.rice_fee) === 0 && Number(dcDb?.pack_fee) === 0,
+    'D30 场地费 / 打包费**不填即为 0**（C9 默认，不是「必须显式传 0」）',
+    `db=${JSON.stringify(dcDb)}`,
+  );
+
+  const dcUpdate = await call('PUT', `/admin/distribution-centers/${dcId}`, {
+    token: adminToken,
+    body: { serviceGroups: [3], riceFeeFen: 200 },
+  });
+  assert(
+    dcUpdate.body?.code === 0 &&
+      JSON.stringify(dcUpdate.body?.data?.serviceGroups) === '[3]' &&
+      dcUpdate.body?.data?.riceFeeFen === 200,
+    'D31 编辑：`serviceGroups` 是**整体替换**语义（传 [3] 后只剩 3，不是追加）',
+    `groups=${JSON.stringify(dcUpdate.body?.data?.serviceGroups)} fee=${dcUpdate.body?.data?.riceFeeFen}`,
+  );
+  const dcClear = await call('PUT', `/admin/distribution-centers/${dcId}`, {
+    token: adminToken,
+    body: { serviceGroups: [] },
+  });
+  assert(
+    dcClear.body?.code === 0 && JSON.stringify(dcClear.body?.data?.serviceGroups) === '[]',
+    'D31 **传空数组即清空**（若实现成「空值=保持原值」，运营会以为解绑了、实际还挂着）',
+    `groups=${JSON.stringify(dcClear.body?.data?.serviceGroups)}`,
+  );
+  const dcMoveBad = await call('PUT', `/admin/distribution-centers/${dcId}`, {
+    token: adminToken,
+    body: { supplierId: supBId },
+  });
+  assert(
+    dcMoveBad.body?.code === 50008,
+    'D31 改挂到出餐型供应商 → 50008（与 D30 是同一规则的两个入口，都得拦）',
+    `code=${dcMoveBad.body?.code}`,
+  );
+
+  const dcSuspend = await call('PUT', `/admin/distribution-centers/${dcId}`, {
+    token: adminToken,
+    body: { status: 0 },
+  });
+  assert(
+    dcSuspend.body?.code === 0 && dcSuspend.body?.data?.status === 0,
+    'D31 `status=0` 即**停用**（保留记录、退出新分配、随时可恢复）',
+    `status=${dcSuspend.body?.data?.status}`,
+  );
+  const dcAfterSuspend = await call('GET', `/admin/distribution-centers?${qs({ status: 0, pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  assert(
+    (dcAfterSuspend.body?.data?.list ?? []).some((r) => r.id === dcId),
+    'D31 **停用 ≠ 删除**：停用后仍出现在列表里（这才是「可恢复」的前提）',
+    `ids=${(dcAfterSuspend.body?.data?.list ?? []).map((r) => r.id).join(',')}`,
+  );
+
+  // 制造「有历史应付」的前置：插一条集散中心应付流水（财务域夹具，非被测接口自身写入的字段）
+  writeDb(
+    'INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, quantity, unit_price, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [`E2E${stamp}${dcId}`, bjToday(), bjToday(), 'distribution_center', dcId, 100, '0.00', '0.00'],
+  );
+  const dcLocked = await call('DELETE', `/admin/distribution-centers/${dcId}`, { token: adminToken });
+  assert(
+    dcLocked.body?.code === 50002,
+    'D32 删除**有历史应付**的集散中心 → 50002，且错误信息给出「改用停用」的出路（不是只说不行）',
+    `code=${dcLocked.body?.code} msg=${dcLocked.body?.message?.slice(0, 40)}…`,
+  );
+  const dcStillThere = readDb('SELECT deleted_at, status FROM ab_distribution_center WHERE id = ?', [dcId]);
+  assert(
+    dcStillThere?.deleted_at === null,
+    'D32 被拒绝时**没有落 deleted_at**（软删标记只在两道前置都通过时才写）',
+    `deleted_at=${JSON.stringify(dcStillThere?.deleted_at)}`,
+  );
+
+  const dcFresh = await call('POST', '/admin/distribution-centers', {
+    token: adminToken,
+    body: { name: `e2e临时_${stamp}`, supplierId: supAId, address: '朝阳区测试路 3 号' },
+  });
+  const dcFreshId = Number(dcFresh.body?.data?.id ?? 0);
+  const dcDeleted = await call('DELETE', `/admin/distribution-centers/${dcFreshId}`, { token: adminToken });
+  assert(
+    dcDeleted.body?.code === 0 && dcDeleted.body?.data?.deleted === true,
+    'D32 无历史应付、未被引用的「建错了」记录可软删（这才是 DELETE 的用武之地）',
+    `deleted=${dcDeleted.body?.data?.deleted}`,
+  );
+  const dcGone = await call('GET', `/admin/distribution-centers?${qs({ keyword: `e2e临时_${stamp}` })}`, {
+    token: adminToken,
+  });
+  assert(
+    dcGone.body?.code === 0 && (dcGone.body?.data?.list ?? []).length === 0,
+    'D32 软删后不再出现在任何列表（`deleted_at IS NULL` 是列表的硬条件）',
+    `count=${dcGone.body?.data?.list?.length}`,
+  );
+
+  // ======================================================== I · 权限边界
+  const opRead = await call('GET', `/admin/suppliers?${qs({ pageSize: 5 })}`, { token: supOpToken });
+  assert(
+    opRead.body?.code === 0 && opRead.body?.data?.actions?.canManage === false,
+    '两级白名单①：operator **能读**名录，但 `actions.canManage=false` —— 权限按「能不能动钱」分层，不按页面分层',
+    `code=${opRead.body?.code} canManage=${opRead.body?.data?.actions?.canManage}`,
+  );
+  const beforeName = readDb('SELECT name FROM ab_supplier WHERE id = ?', [supBId]);
+  const opWrite = await call('PUT', `/admin/suppliers/${supBId}`, {
+    token: supOpToken,
+    body: { name: 'e2e 越权改名' },
+  });
+  assert(
+    opWrite.body?.code === 10003,
+    '两级白名单②：operator 改供应商档案 → 10003（供应商档案决定「钱付给谁」，属资金动作）',
+    `code=${opWrite.body?.code}`,
+  );
+  const opCreate = await call('POST', '/admin/suppliers', {
+    token: supOpToken,
+    body: { name: 'e2e 越权新建', type: 'dish', contactName: 'x', contactPhone: mkPhone(4) },
+  });
+  assert(
+    opCreate.body?.code === 10003 && !readDb('SELECT id FROM ab_supplier WHERE name = ?', ['e2e 越权新建']),
+    '两级白名单③：operator 新建被拒**且库里没有这条记录**—— @Roles 挡在业务层之前，不是「先执行再回滚」',
+    `code=${opCreate.body?.code}`,
+  );
+  const afterName = readDb('SELECT name FROM ab_supplier WHERE id = ?', [supBId]);
+  assert(
+    beforeName?.name === afterName?.name,
+    '两级白名单④：operator 越权编辑被拒后**字段一字未改**（越权请求必须零副作用）',
+    `name=${afterName?.name}`,
+  );
+  const opDc = await call('POST', '/admin/distribution-centers', {
+    token: supOpToken,
+    body: { name: 'e2e 越权集散', supplierId: supAId, address: 'x' },
+  });
+  assert(
+    opDc.body?.code === 10003,
+    '两级白名单⑤：operator 新增集散中心 → 10003（集散中心决定「哪些楼群的餐从哪发」，改它等于改履约路线）',
+    `code=${opDc.body?.code}`,
+  );
+  const viewerRead = await call('GET', '/admin/suppliers', { token: supViewToken });
+  assert(
+    viewerRead.body?.code === 10003,
+    '两级白名单⑥：viewer 连名录都读不到 → 10003（只读观察者仅看板）',
+    `code=${viewerRead.body?.code}`,
+  );
+  const finRead = await call('GET', '/admin/suppliers', { token: finToken2 });
+  assert(
+    finRead.body?.code === 10003,
+    '两级白名单⑦：finance 也读不到 → 10003（菜单矩阵里财务本就没有 /supplier/*；若 API 放行而菜单没有，会变成「能调但进不去」的诡异状态）',
+    `code=${finRead.body?.code}`,
+  );
+  const miniRead = await call('GET', '/admin/suppliers', { token: u.token });
+  assert(
+    miniRead.body?.code === 10003,
+    '双主体隔离：小程序 token 打 /admin/suppliers → 10003（两套账号表 id 各自自增，不隔离就是静默越权）',
+    `code=${miniRead.body?.code}`,
+  );
+  const opDish = await call('POST', '/admin/dishes', {
+    token: supOpToken,
+    body: { supplierId: supAId, name: 'e2e 越权菜品', category: 'main', costPriceFen: 100 },
+  });
+  assert(
+    opDish.body?.code === 10003 && !readDb('SELECT id FROM ab_dish WHERE name = ?', ['e2e 越权菜品']),
+    '两级白名单⑧：operator 改菜品（供价是 C9 输入项）→ 10003 且无记录',
+    `code=${opDish.body?.code}`,
+  );
+
+  // ======================================================== J · 操作日志
+  const supLogs = await call('GET', `/admin/system/logs?${qs({ pageSize: 100 })}`, { token: adminToken });
+  const supLogRows = supLogs.body?.data?.list ?? [];
+  assert(
+    supLogRows.some((l) => l.action === '新增供应商' && String(l.targetId) === String(supAId)),
+    'D24 自动落操作日志，且 `targetId` = **新供应商 id** —— 新建接口的请求里没有 id（服务端生成），只靠 params/body 会记成 null，日志就再也挂不到这家供应商上',
+    `hit=${supLogRows.filter((l) => l.action === '新增供应商').length} targetIds=${JSON.stringify(
+      supLogRows.filter((l) => l.action === '新增供应商').map((l) => l.targetId),
+    )} 期望含 ${supAId}`,
+  );
+  assert(
+    supLogRows.some((l) => l.action === '供应商资质审核' && String(l.targetId) === String(supBId)),
+    'D26 资质审核留痕（`targetId` = 供应商 id；审核是合规动作，必须能回答「谁在什么时候批的」）',
+    `hit=${supLogRows.filter((l) => l.action === '供应商资质审核').length}`,
+  );
+  assert(
+    supLogRows.some((l) => l.action === '删除集散中心' && String(l.targetId) === String(dcFreshId)),
+    'D32 软删留痕（`targetId` = 集散中心 id）',
+    `hit=${supLogRows.filter((l) => l.action === '删除集散中心').length}`,
+  );
+
+  // ==========================================================================
   // 汇总
   // ==========================================================================
   await stopApiServer(server, PORT);
