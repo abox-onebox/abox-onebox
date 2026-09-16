@@ -6202,12 +6202,48 @@ async function main() {
         '复购用户 = 区间内有效单 ≥2 次者（u1 两单）；u2 的第二单是 cancelled → 不算复购',
         `ΔrepeatUserCount=${d('repeatUserCount')}`,
       );
-      assert(
-        d('activeLeaderCount') === 1,
-        '活跃团长去重：`refund_applying` 那单 `team_leader_id` 为空 → 不虚增',
-        `ΔactiveLeaderCount=${d('activeLeaderCount')}`,
+      // ⚠️ 下面两条**刻意不写增量 Δ**：Δ 隐含前提「这些主体在本节之前**不活跃**」，而
+      //    e2e:m1 / m2（以及本节之前的章节）会在同一 7d 区间留下**同一** leader / 楼栋的
+      //    有效单 → Δ 被吃掉，于是「`seed → e2e:m3` 单跑全绿、`verify`（seed→m1→m2→m3）
+      //    串跑两条红」—— 一条与被测产物完全无关的**顺序脆弱型假红**（实测 Δ 由 1/2 变成
+      //    0/1）。改成**库内对照**：用同一条口径的 SQL 在库里独立算一遍当 oracle，等式两侧
+      //    同源，与「之前活跃与否」无关。⚠️ 断言仍必须能钉住原来的缺陷 —— 右侧的
+      //    `IS NOT NULL` 正是「`team_leader_id` 为空的那单不虚增」的判据。
+      const NOT_VALID = `'pending_pay','cancelled','refunded'`;
+      const oracleLeaders = readDb(
+        `SELECT COUNT(DISTINCT team_leader_id) AS c FROM ab_order
+          WHERE meal_date BETWEEN ? AND ? AND status NOT IN (${NOT_VALID})
+            AND team_leader_id IS NOT NULL`,
+        [addDaysStr(D0, -6), D0],
       );
-      assert(d('activeBuildingCount') === 2, '活跃楼栋去重 = 2', `Δ=${d('activeBuildingCount')}`);
+      const oracleBuildings = readDb(
+        `SELECT COUNT(DISTINCT building_id) AS c FROM ab_order
+          WHERE meal_date BETWEEN ? AND ? AND status NOT IN (${NOT_VALID})`,
+        [addDaysStr(D0, -6), D0],
+      );
+      assert(
+        g.activeLeaderCount === Number(oracleLeaders?.c ?? -1),
+        '⭐ 活跃团长去重 = **库内独立算一遍**（oracle 对照，不用增量 Δ —— 增量对串跑顺序脆弱）—— 右侧 `IS NOT NULL` 同时钉住「`team_leader_id` 为空的那单不虚增」',
+        `api=${g.activeLeaderCount} oracle=${oracleLeaders?.c}`,
+      );
+      assert(
+        g.activeBuildingCount === Number(oracleBuildings?.c ?? -1),
+        '⭐ 活跃楼栋去重 = **库内独立算一遍**（oracle 对照，同上）—— 楼栋**不排除空值**（订单必有取餐楼），少判一次就少一栋',
+        `api=${g.activeBuildingCount} oracle=${oracleBuildings?.c}`,
+      );
+      // 覆盖实质约束：若夹具没贡献「2 栋不同楼栋 + 1 名团长」，上面两条 oracle 等式两边
+      // 同为 0 也能过 —— 所以补一条只针对**本节夹具**的结构断言，保证等式有约束力。
+      const fixtureScope = readDb(
+        `SELECT COUNT(DISTINCT building_id) AS b,
+                COUNT(DISTINCT CASE WHEN team_leader_id IS NOT NULL THEN team_leader_id END) AS l
+           FROM ab_order WHERE order_no LIKE ?`,
+        [`${PREFIX}%`],
+      );
+      assert(
+        Number(fixtureScope?.b ?? 0) === 2 && Number(fixtureScope?.l ?? 0) === 1,
+        '⭐ 本节夹具自身贡献 **2 栋不同楼栋 + 1 名团长**（其中一单 `team_leader_id` 为空）—— 这条保证上面两条 oracle 等式对「去重」有实质约束',
+        `buildings=${fixtureScope?.b} leaders=${fixtureScope?.l}`,
+      );
 
       // ---------------------------------------------------------- E. 结构不变量（比率 / 均价 / 等式闭合）
       assert(
