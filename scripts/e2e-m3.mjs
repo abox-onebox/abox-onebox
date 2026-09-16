@@ -66,6 +66,33 @@
  *           viewer / finance / supplier 一律 10003；小程序 token 打 `/admin/leaders` → 10003
  *   · 越权被拒**无副作用**：没建档、没改字段（`@Roles` 挡在业务层之前，不是「执行了再回滚」）
  *
+ * ## M3-7 办公楼 / 楼群批次新增（§19 · D13–D18）
+ *   · D13 `GET  /admin/buildings`          —— 列表（楼群/状态/覆盖缺口/团长归属/关键词过滤 ·
+ *                                             summary 不受分页影响）· **状态三态**（1 营业中 / 2 待开通 /
+ *                                             3 已暂停，修复旧数据「2 一值两义」）· 派生 `gap` 三成因
+ *                                             （no_group / no_center / all_center_disabled）· `canOrder`
+ *                                             = 营业中 ∧ 已归群 · **主/备集散中心与路线号实时派生**
+ *                                             （真源是 M3-6 的 `ab_distribution_center.service_groups`）
+ *   · D14 `POST /admin/buildings`          —— 新增（重名 60005 · 楼群不存在 60002）·
+ *                                             出参 `warnings` 逐条说明「还差什么才能开团」
+ *   · D15 `PUT  /admin/buildings/:id`      —— 部分更新 · `buildingGroupId: null` = **移出楼群** ·
+ *                                             空变更 10001 · **刻意不收 `leaderId`**（→ 10001）：
+ *                                             改团长只有 D20/D21 一个入口，避免绕过 20012 撞车闸门
+ *   · D16 `GET  /admin/building-groups`    —— 楼群列表（成员楼 / 主备集散 / 覆盖状态 / 当日次日套餐）
+ *   · D17 `POST /admin/building-groups`    —— 新建（重名 60004 · 成员含不存在楼 60001）
+ *   · D18 `PUT  /admin/building-groups/:id`—— **成员楼整体替换**（传 `[]` 即清空）·
+ *                                             停用非空楼群 → 60003（成员楼会静默失去开团能力，且列表看不出来）·
+ *                                             **先搬楼再判闸门**（一次请求内「清空 + 停用」放行）
+ *   · 视图聚合：`/overview`（主数据健康度）与 `/delivery-map`（路线派生）**与 D13 同源**；
+ *              配送映射**不返回距离与单段时长**（无地图数据，原型值是演示值）
+ *   · 跨批次联动：新建集散中心挂上楼群 → 楼栋 gap 立刻由 no_center 翻成 none；停用它 → all_center_disabled
+ *   · 权限：operator 可读不可写（10003）；viewer / finance 类级 10003；小程序 token → 10003
+ *
+ * ⚠️ **§19 不依赖下单窗口**（办公楼 / 楼群是纯主数据），且整节包在**独立块作用域**里 ——
+ *    `bList` / `gRows` / `finRead` 这类通用名前 18 节大概率已用过，块作用域是语法级隔离。
+ *    夹具**全部自造**（带时间戳的楼名 / 楼群名），且**不往种子楼群里塞楼**
+ *    （种子楼群成员数被 §14/§17 依赖，动它会连坐）。
+ *
  * ⚠️ **§17 不依赖下单窗口**（团长域是主数据），任何时刻都能跑；
  *    夹具**全部自造**（3 名 `dev:` 新用户 + 动态挑空楼 + 带时间戳的手机号），
  *    避免与 §15/§16 以及 `e2e-m1` / `e2e-m2` 的写入互相污染 —— 那正是
@@ -86,6 +113,11 @@
  *    `[T-1 14:00, T-1 23:00)` 这个窗口内下单 —— 与 `e2e-m1` / `e2e-m2` 同一约束。
  *    因此 §15/§16 **需在北京时间 14:00–23:00 之间运行**，窗口外各给出唯一的
  *    可读失败而非连锁红（**§17 不受此限**：团长域与订单链路无关）。
+ *    **§1 的 D4「可见性开关往返」已做窗口感知**（`inOrderWindowBj`）：窗口内断言
+ *    `canOrder=true`，窗口外改判「后台 active ∧ 前端回落到『待开团』」—— 同一件事的
+ *    等价证据，避免每天 00:00–14:00 出现一条与被测行为无关的假红。
+ *    ⚠️ §15/§16 窗口外的失败**是刻意保留的信号**（提示「本次运行未覆盖这两组」），
+ *    与 D4 的假红性质不同，不要一并改掉。
  * ⚠️ **一个用户同一出餐日只能下一单**（U6 → 30004）：§15 用 1001/1002/1005，
  *    §16 用 1003/1004/1040，改夹具时别撞车。
  *
@@ -125,6 +157,25 @@ function assert(cond, name, detail = '') {
 }
 
 const call = makeCall(BASE);
+
+/**
+ * 北京时间当前是否处在**下单窗口**内：`isOrderable(T)` = `[T-1 14:00, T-1 23:00)`。
+ *
+ * 为什么不一律用 API 探测（`/home/daily` 的 `canOrder`）：§15/§16 没有把「被测单元格本身」
+ * 当信号，探测没问题；但 D4「可见性开关往返」的被测对象**就是**那一格 —— 拿它的 `canOrder`
+ * 去反推窗口开合，等于循环论证（永远为真）。
+ *
+ * ⚠️ 本函数只用于**选择断言分支**，不放松任何断言：
+ *    窗口内断言 `canOrder === true`；窗口外断言「后台 active ∧ 前端回落到『待开团』而非『未开团』」
+ *    —— 后者才是「未上架」的样子，同样能证明可见性开关闭环。
+ *    否则本套件每天 00:00–14:00 恒红，真回归会被这 11 小时的假红淹没。
+ *
+ * 实现用 UTC+8 显式偏移，不依赖 ICU 时区库（与 `time.ts` 同一思路）。
+ */
+function inOrderWindowBj() {
+  const h = new Date(Date.now() + 8 * 60 * 60 * 1000).getUTCHours();
+  return h >= 14 && h < 23;
+}
 
 function readDb(sql, params = []) {
   if (!existsSync(DB_PATH)) return null;
@@ -1055,12 +1106,20 @@ async function main() {
     body: { action: 'publish' },
   });
   const uDailyOn = await call('GET', `/home/daily?mealDate=${dPlus1}`, { token: u.token });
+  // ⚠️ 窗口感知（见 `inOrderWindowBj`）：窗口内看 `canOrder`，窗口外看「是否回到可下单前态」。
+  //    两种分支都在证明同一件事 —— 上架后那一格**重新可见**（不是「今日未开团」）。
+  const windowOpen = inOrderWindowBj();
+  const onReason = String(uDailyOn.body?.data?.reason ?? '');
+  const repubVisible = windowOpen
+    ? uDailyOn.body?.data?.canOrder === true
+    : uDailyOn.body?.data?.canOrder === false && /开团/.test(onReason) && !/未开团/.test(onReason);
   assert(
     repubSeed.body?.code === 0 &&
       repubSeed.body?.data?.status === 'active' &&
-      uDailyOn.body?.data?.canOrder === true,
+      repubVisible,
     'D4 重新上架 → 用户端 canOrder=true（可见性开关闭环，且已还原种子状态）',
-    `canOrder=${uDailyOn.body?.data?.canOrder} countdown=${uDailyOn.body?.data?.countdownSec}s`,
+    `canOrder=${uDailyOn.body?.data?.canOrder} reason=${onReason} bjWindow=${windowOpen}` +
+      ` countdown=${uDailyOn.body?.data?.countdownSec}s`,
   );
 
   // ---------------------------------------------------------- D5 批量复制
@@ -4123,6 +4182,535 @@ async function main() {
     'D32 软删留痕（`targetId` = 集散中心 id）',
     `hit=${supLogRows.filter((l) => l.action === '删除集散中心').length}`,
   );
+
+  // ==========================================================================
+  // §19 M3-7 办公楼 / 楼群（D13–D18）
+  //
+  // ⚠️ **不依赖下单窗口**：办公楼与楼群是纯主数据，任何时刻都能跑。
+  //
+  // ⚠️ 夹具纪律：楼名 / 楼群名一律带 `stamp`（重复跑不撞重名校验 60005/60004），
+  //    且**不往种子楼群里塞楼** —— 种子 5 个楼群的成员数被 §14/§17 依赖，
+  //    动它会连坐前面几节的断言。本节的楼一律挂在本节自建的楼群上。
+  //
+  // ⚠️ 整节包在**独立块作用域**里：`bList` / `gRows` / `finRead` 这类通用名在前 18 节
+  //    大概率已用过，`const` 重复声明是语法错误。用块把名字关起来，比给 60 个变量
+  //    逐个加前缀更不容易出错，也让「本节自带的夹具不泄漏到后面」成为语法保证。
+  // ==========================================================================
+  {
+    log('\n§19 M3-7 办公楼 / 楼群（D13–D18）');
+
+  const bldA = `e2e楼A_${stamp}`;
+  const bldB = `e2e楼B_${stamp}`;
+  const grpA = `e2e群A_${stamp}`;
+  const grpB = `e2e群B_${stamp}`;
+
+  // ---------------------------------------------------------- A · D13 列表
+  const bList = await call('GET', `/admin/buildings?${qs({ pageSize: 100 })}`, { token: adminToken });
+  const bRows = bList.body?.data?.list ?? [];
+  const bSum = bList.body?.data?.summary ?? {};
+  const bTotal = bList.body?.data?.total;
+  const bById = new Map(bRows.map((b) => [b.id, b]));
+
+  assert(
+    bList.body?.code === 0 && Array.isArray(bRows) && bTotal >= 12,
+    'D13 办公楼列表返回成功，且至少含种子 12 栋',
+    `code=${bList.body?.code} total=${bTotal}`,
+  );
+  assert(
+    bSum.totalCount === bTotal,
+    'D13 summary 按**同一过滤条件的全量**统计（翻页不跳 KPI：totalCount 恒等于 total）',
+    `summary=${bSum.totalCount} total=${bTotal} 本页=${bRows.length}`,
+  );
+  assert(
+    bRows.every((b) => b.statusLabel && b.gapLabel),
+    'D13 每行带派生文案 statusLabel / gapLabel（文案由服务端统一，端上不维护第二份）',
+    `sample=${JSON.stringify(bRows[0]?.statusLabel)}/${JSON.stringify(bRows[0]?.gapLabel)}`,
+  );
+
+  // 三态修复：M3-7 之前「待开通」与「已暂停」都写成 status=2（一值两义）
+  assert(
+    bById.get(3)?.status === 2 && bById.get(3)?.statusLabel === '待开通',
+    'D13 种子「国贸三期 C 座」= status 2 **待开通**（三态扩展：2 待开通 ≠ 3 已暂停）',
+    `status=${bById.get(3)?.status} label=${bById.get(3)?.statusLabel}`,
+  );
+  assert(
+    bById.get(10)?.status === 3 && bById.get(10)?.statusLabel === '已暂停',
+    'D13 种子「华贸 3 号楼」= status 3 **已暂停** —— 与 C 座区分开（旧数据两者都是 2）',
+    `status=${bById.get(10)?.status} label=${bById.get(10)?.statusLabel}`,
+  );
+
+  // 派生：种子 4 个集散中心覆盖 1–5 全部楼群 → 种子楼无缺口
+  assert(
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].every((id) => bById.get(id)?.gap === 'none'),
+    'D13 覆盖缺口派生：种子 5 个楼群均被集散中心覆盖 → 12 栋种子楼 gap 全部为 none',
+    `gaps=${JSON.stringify([...new Set(bRows.slice(0, 12).map((b) => b.gap))])}`,
+  );
+  assert(
+    bById.get(1)?.mainDcName === '集散中心 1（国贸/建外）' && bById.get(1)?.routeNo === 'R1',
+    'D13 主集散中心与路线号**由「集散中心 → 服务楼群」实时派生**（主 = 服务该楼群、启用中 id 最小者）',
+    `main=${bById.get(1)?.mainDcName} route=${bById.get(1)?.routeNo}`,
+  );
+  assert(
+    bById.get(4)?.backupDcName === '集散中心 3（国贸/远洋）',
+    'D13 备用集散中心 = 服务同一楼群的其他启用集散中心（国贸三期组被 DC1 与 DC3 同时服务）',
+    `backup=${bById.get(4)?.backupDcName}`,
+  );
+  assert(
+    bRows.every((b) => b.canOrder === (b.status === 1 && b.buildingGroupId !== null)),
+    'D13 `canOrder` = 营业中 ∧ 已归群 —— 未归群的楼无法分配套餐，不能算「可开团」',
+    `mismatch=${JSON.stringify(bRows.filter((b) => b.canOrder !== (b.status === 1 && b.buildingGroupId !== null)).map((b) => b.id))}`,
+  );
+
+  const bActive = await call('GET', `/admin/buildings?${qs({ status: 1, pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  assert(
+    (bActive.body?.data?.list ?? []).every((b) => b.status === 1) &&
+      (bActive.body?.data?.list ?? []).length > 0,
+    'D13 状态筛选生效（status=1 只回营业中）',
+    `count=${(bActive.body?.data?.list ?? []).length}`,
+  );
+  const bVacant = await call('GET', `/admin/buildings?${qs({ leaderState: 'unassigned', pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  assert(
+    (bVacant.body?.data?.list ?? []).every((b) => b.leaderId === null) &&
+      (bVacant.body?.data?.list ?? []).length > 0,
+    'D13 团长归属筛选生效（unassigned 只回无在职团长的楼）',
+    `count=${(bVacant.body?.data?.list ?? []).length}`,
+  );
+  const bKw = await call('GET', `/admin/buildings?${qs({ keyword: '国贸', pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  assert(
+    (bKw.body?.data?.list ?? []).length > 0 &&
+      (bKw.body?.data?.list ?? []).every((b) => b.name.includes('国贸') || b.address.includes('国贸')),
+    'D13 关键词命中楼名或地址',
+    `count=${(bKw.body?.data?.list ?? []).length}`,
+  );
+  const bPaged = await call('GET', `/admin/buildings?${qs({ pageSize: 3, page: 1 })}`, {
+    token: adminToken,
+  });
+  assert(
+    (bPaged.body?.data?.list ?? []).length === 3 && bPaged.body?.data?.summary.totalCount === bSum.totalCount,
+    'D13 分页只影响本页条数，summary 仍是全量（与 D8/D19/D23 同一约定）',
+    `本页=${(bPaged.body?.data?.list ?? []).length} summary=${bPaged.body?.data?.summary?.totalCount}`,
+  );
+
+  // ---------------------------------------------------------- B · D14 新增
+  const grpACreate = await call('POST', '/admin/building-groups', {
+    token: adminToken,
+    body: { name: grpA, description: 'e2e 办公楼夹具楼群' },
+  });
+  const grpAId = grpACreate.body?.data?.id;
+  assert(
+    grpACreate.body?.code === 0 && grpAId > 0,
+    'D17 新建空楼群成功',
+    `code=${grpACreate.body?.code} id=${grpAId}`,
+  );
+  assert(
+    grpACreate.body?.data?.coverageState === 'empty',
+    'D17 空楼群 coverageState=empty（**空不是异常**：新群还没挂楼）',
+    `state=${grpACreate.body?.data?.coverageState}`,
+  );
+
+  const bldACreate = await call('POST', '/admin/buildings', {
+    token: adminToken,
+    body: { name: bldA, address: 'e2e 测试路 1 号', population: 300, buildingGroupId: grpAId },
+  });
+  const bldAId = bldACreate.body?.data?.id;
+  assert(
+    bldACreate.body?.code === 0 && bldAId > 0 && bldACreate.body?.data?.buildingGroupId === grpAId,
+    'D14 新增办公楼（已归群）成功',
+    `code=${bldACreate.body?.code} id=${bldAId} group=${bldACreate.body?.data?.buildingGroupId}`,
+  );
+  assert(
+    bldACreate.body?.data?.gap === 'no_center' &&
+      (bldACreate.body?.data?.warnings ?? []).some((w) => w.includes('集散中心')),
+    'D14 新建楼群尚无集散中心服务 → gap=no_center，且出参 warnings **逐条说明**「还差什么才能开团」',
+    `gap=${bldACreate.body?.data?.gap} warnings=${JSON.stringify(bldACreate.body?.data?.warnings)}`,
+  );
+
+  const bldBCreate = await call('POST', '/admin/buildings', {
+    token: adminToken,
+    body: { name: bldB, address: 'e2e 测试路 2 号', population: 200 },
+  });
+  const bldBId = bldBCreate.body?.data?.id;
+  assert(
+    bldBCreate.body?.code === 0 && bldBCreate.body?.data?.buildingGroupId === null,
+    'D14 不传 buildingGroupId 即「未归群」（楼能建档，但不参与任何套餐分配）',
+    `group=${bldBCreate.body?.data?.buildingGroupId}`,
+  );
+  assert(
+    bldBCreate.body?.data?.canOrder === false && bldBCreate.body?.data?.gap === 'no_group',
+    'D14 未归群楼 canOrder=false 且 gap=no_group（未归群与「楼群无集散」是两种成因，不能合并）',
+    `canOrder=${bldBCreate.body?.data?.canOrder} gap=${bldBCreate.body?.data?.gap}`,
+  );
+
+  const bDup = await call('POST', '/admin/buildings', {
+    token: adminToken,
+    body: { name: bldA, address: 'e2e 测试路 9 号' },
+  });
+  assert(
+    bDup.body?.code === 60005,
+    'D14 楼名重复 → 60005（同名楼会让「按楼筛选」变成歧义操作）',
+    `code=${bDup.body?.code}`,
+  );
+  const bBadGroup = await call('POST', '/admin/buildings', {
+    token: adminToken,
+    body: { name: `e2e楼C_${stamp}`, address: 'e2e 测试路 3 号', buildingGroupId: 999999 },
+  });
+  assert(
+    bBadGroup.body?.code === 60002,
+    'D14 楼群不存在 → 60002（不静默落成「未归群」：运营以为挂上了，实际没挂）',
+    `code=${bBadGroup.body?.code}`,
+  );
+
+  // ---------------------------------------------------------- C · D15 编辑
+  const bNoop = await call('PUT', `/admin/buildings/${bldAId}`, {
+    token: adminToken,
+    body: { name: bldA },
+  });
+  assert(
+    bNoop.body?.code === 10001,
+    'D15 空变更 → 10001（不写库、不写日志；否则审计里全是「改了但什么都没改」）',
+    `code=${bNoop.body?.code}`,
+  );
+  assert(
+    bNoop.body?.code === 10001 || readRows('SELECT id FROM ab_building WHERE name = ?', [bldA]).length === 1,
+    'D15 空变更不产生重复记录',
+    `rows=${readRows('SELECT id FROM ab_building WHERE name = ?', [bldA]).length}`,
+  );
+
+  const bLeaderField = await call('PUT', `/admin/buildings/${bldAId}`, {
+    token: adminToken,
+    body: { leaderId: 1 },
+  });
+  assert(
+    bLeaderField.body?.code === 10001,
+    'D15 **刻意不收 leaderId** → 10001（改团长只有 D20/D21 一个入口，避免绕过 20012 撞车闸门）',
+    `code=${bLeaderField.body?.code}`,
+  );
+
+  const bRename = await call('PUT', `/admin/buildings/${bldAId}`, {
+    token: adminToken,
+    body: { name: `${bldA}_改`, population: 350 },
+  });
+  assert(
+    bRename.body?.code === 0 && bRename.body?.data?.name === `${bldA}_改`,
+    'D15 部分更新生效（改名 + 改覆盖人数）',
+    `code=${bRename.body?.code} name=${bRename.body?.data?.name}`,
+  );
+
+  const bDetach = await call('PUT', `/admin/buildings/${bldAId}`, {
+    token: adminToken,
+    body: { buildingGroupId: null },
+  });
+  assert(
+    bDetach.body?.code === 0 &&
+      bDetach.body?.data?.buildingGroupId === null &&
+      bDetach.body?.data?.gap === 'no_group',
+    'D15 `buildingGroupId: null` = **移出楼群**（否则永远无法把楼摘出去，只能建空壳楼群当垃圾桶）',
+    `code=${bDetach.body?.code} group=${bDetach.body?.data?.buildingGroupId} gap=${bDetach.body?.data?.gap}`,
+  );
+  assert(
+    readDb('SELECT id FROM ab_building WHERE id = ? AND building_group_id IS NULL', [bldAId]) !== null,
+    'D15 移出楼群落库为 NULL（不是 0，也不是保持原值）',
+    `hit=${readDb('SELECT id FROM ab_building WHERE id = ? AND building_group_id IS NULL', [bldAId]) ? 'yes' : 'no'}`,
+  );
+
+  const bReattach = await call('PUT', `/admin/buildings/${bldAId}`, {
+    token: adminToken,
+    body: { buildingGroupId: grpAId },
+  });
+  assert(
+    bReattach.body?.code === 0 && bReattach.body?.data?.buildingGroupId === grpAId,
+    'D15 重新归群生效',
+    `group=${bReattach.body?.data?.buildingGroupId}`,
+  );
+
+  const bMissing = await call('PUT', '/admin/buildings/99999999', {
+    token: adminToken,
+    body: { population: 1 },
+  });
+  assert(
+    bMissing.body?.code === 60001,
+    'D15 楼栋不存在 → 60001',
+    `code=${bMissing.body?.code}`,
+  );
+
+  // ---------------------------------------------------------- D · D16 楼群列表
+  const gList = await call('GET', `/admin/building-groups?${qs({ pageSize: 100 })}`, { token: adminToken });
+  const gRows = gList.body?.data?.list ?? [];
+  const gSum = gList.body?.data?.summary ?? {};
+  assert(
+    gList.body?.code === 0 && gRows.length >= 5 && gList.body?.data?.total >= 5,
+    'D16 楼群列表返回成功，且至少含种子 5 个',
+    `code=${gList.body?.code} total=${gList.body?.data?.total}`,
+  );
+  assert(
+    gSum.totalCount === gList.body?.data?.total,
+    'D16 summary 为全量统计（翻页不跳 KPI）',
+    `summary=${gSum.totalCount} total=${gList.body?.data?.total}`,
+  );
+  const gA = gRows.find((g) => g.id === grpAId);
+  assert(
+    gA?.memberCount === 1 && (gA?.members ?? []).length === 1,
+    'D16 `memberCount` 与 `members` 数组**同一次查询得出**（分两处算必然出现「列表 2 栋、详情 1 栋」）',
+    `memberCount=${gA?.memberCount} members=${(gA?.members ?? []).length}`,
+  );
+  assert(
+    gA?.coverageState === 'uncovered' && gA?.mainDcName === null,
+    'D16 覆盖状态派生：有成员楼但无集散中心服务 → uncovered（**下单能成立、履约断链**）',
+    `state=${gA?.coverageState} main=${gA?.mainDcName}`,
+  );
+  const gSeed1 = gRows.find((g) => g.id === 1);
+  assert(
+    gSeed1?.mainDcName === '集散中心 1（国贸/建外）' &&
+      gSeed1?.backupDcName === '集散中心 3（国贸/远洋）' &&
+      gSeed1?.coverageState === 'covered',
+    'D16 种子楼群主/备集散中心派生正确（国贸三期组：主 DC1 / 备 DC3）',
+    `main=${gSeed1?.mainDcName} backup=${gSeed1?.backupDcName} state=${gSeed1?.coverageState}`,
+  );
+  const gKw = await call('GET', `/admin/building-groups?${qs({ keyword: bldA, pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  assert(
+    (gKw.body?.data?.list ?? []).some((g) => g.id === grpAId),
+    'D16 关键词可命中**成员楼名**（运营记得楼名、未必记得楼群名）',
+    `hits=${(gKw.body?.data?.list ?? []).map((g) => g.id).join(',')}`,
+  );
+
+  // ---------------------------------------------------------- E · D17 / D18
+  const gDup = await call('POST', '/admin/building-groups', {
+    token: adminToken,
+    body: { name: grpA },
+  });
+  assert(gDup.body?.code === 60004, 'D17 楼群名重复 → 60004', `code=${gDup.body?.code}`);
+
+  const gBadMember = await call('POST', '/admin/building-groups', {
+    token: adminToken,
+    body: { name: grpB, buildingIds: [99999999] },
+  });
+  assert(
+    gBadMember.body?.code === 60001,
+    'D17 `buildingIds` 含不存在的楼 → 60001（不静默跳过：运营以为挂上了 3 栋，实际只挂上 2 栋）',
+    `code=${gBadMember.body?.code}`,
+  );
+
+  const gBCreate = await call('POST', '/admin/building-groups', {
+    token: adminToken,
+    body: { name: grpB, buildingIds: [bldBId] },
+  });
+  const grpBId = gBCreate.body?.data?.id;
+  assert(
+    gBCreate.body?.code === 0 && gBCreate.body?.data?.memberCount === 1,
+    'D17 新建楼群并**整体设置**初始成员楼',
+    `code=${gBCreate.body?.code} id=${grpBId} members=${gBCreate.body?.data?.memberCount}`,
+  );
+  assert(
+    readDb('SELECT building_group_id AS g FROM ab_building WHERE id = ?', [bldBId])?.g === grpBId,
+    'D17 成员楼落库：`ab_building.building_group_id` 指向新楼群（一楼一群，单值即覆盖）',
+    `dbG=${readDb('SELECT building_group_id AS g FROM ab_building WHERE id = ?', [bldBId])?.g}`,
+  );
+
+  const gStopNonEmpty = await call('PUT', `/admin/building-groups/${grpBId}`, {
+    token: adminToken,
+    body: { status: 2 },
+  });
+  assert(
+    gStopNonEmpty.body?.code === 60003,
+    'D18 停用**仍有成员楼**的楼群 → 60003 —— 停用会让成员楼静默失去开团能力，而楼自身状态仍是「营业中」，列表上看不出异常（fail-closed）',
+    `code=${gStopNonEmpty.body?.code} remaining=${gStopNonEmpty.body?.data?.remaining}`,
+  );
+  assert(
+    readDb('SELECT status FROM ab_building_group WHERE id = ?', [grpBId])?.status === 1,
+    'D18 被 60003 拦下时**零副作用**（状态没被动成 2 —— 「先改再校验」会留下停了一半的楼群）',
+    `dbStatus=${readDb('SELECT status FROM ab_building_group WHERE id = ?', [grpBId])?.status}`,
+  );
+
+  const gClearAndStop = await call('PUT', `/admin/building-groups/${grpBId}`, {
+    token: adminToken,
+    body: { buildingIds: [], status: 2 },
+  });
+  assert(
+    gClearAndStop.body?.code === 0 &&
+      gClearAndStop.body?.data?.memberCount === 0 &&
+      gClearAndStop.body?.data?.status === 2,
+    'D18 **一次请求内「清空成员 + 停用」应当放行**（先搬楼再判闸门；否则运营必须分两次调用，中间态毫无意义）',
+    `code=${gClearAndStop.body?.code} members=${gClearAndStop.body?.data?.memberCount} status=${gClearAndStop.body?.data?.status}`,
+  );
+  assert(
+    readDb('SELECT building_group_id AS g FROM ab_building WHERE id = ?', [bldBId])?.g === null,
+    'D18 整体替换语义：传 `[]` = 清空成员楼（不是「保持原值」—— 那样运营会以为解绑了、实际还挂着）',
+    `dbG=${readDb('SELECT building_group_id AS g FROM ab_building WHERE id = ?', [bldBId])?.g}`,
+  );
+
+  const gMissing = await call('PUT', '/admin/building-groups/99999999', {
+    token: adminToken,
+    body: { name: 'e2e 不存在群' },
+  });
+  assert(gMissing.body?.code === 60002, 'D18 楼群不存在 → 60002', `code=${gMissing.body?.code}`);
+
+  // ---------------------------------------------------------- F · 派生联动 + 视图聚合
+  // 给 grpA 挂一个**新建**集散中心 → 覆盖状态应由 uncovered 翻成 covered（跨批次联动：M3-6 D30/D31 → M3-7 派生）
+  const supForDc = await call('GET', `/admin/suppliers?${qs({ pageSize: 100 })}`, { token: adminToken });
+  const dcSupplier = (supForDc.body?.data?.list ?? []).find((s) => s.type !== 'dish') ?? {};
+  const dcCreate = await call('POST', '/admin/distribution-centers', {
+    token: adminToken,
+    body: {
+      name: `e2e集散_${stamp}`,
+      supplierId: dcSupplier.id,
+      address: 'e2e 集散地址',
+      serviceGroups: [grpAId],
+      status: 1,
+    },
+  });
+  const dcxId = dcCreate.body?.data?.id;
+  assert(
+    dcCreate.body?.code === 0 && dcxId > 0,
+    'D30 新建集散中心并服务本节的楼群（跨批次夹具：M3-6 的配置驱动 M3-7 的派生）',
+    `code=${dcCreate.body?.code} id=${dcxId}`,
+  );
+
+  const bAfterDc = await call('GET', `/admin/buildings?${qs({ groupId: grpAId, pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  const bA2 = (bAfterDc.body?.data?.list ?? []).find((b) => b.id === bldAId);
+  assert(
+    bA2?.gap === 'none' && bA2?.mainDcName === `e2e集散_${stamp}` && bA2?.routeNo !== null,
+    'D13 派生随配置**实时变化**：集散中心挂上该楼群后，该楼的 gap 立刻由 no_center 翻成 none（不是落库快照）',
+    `gap=${bA2?.gap} main=${bA2?.mainDcName} route=${bA2?.routeNo}`,
+  );
+  assert(
+    bA2?.canOrder === true,
+    'D13 覆盖补齐后 canOrder=true（营业中 ∧ 已归群）',
+    `canOrder=${bA2?.canOrder}`,
+  );
+
+  const dcDisable = await call('PUT', `/admin/distribution-centers/${dcxId}`, {
+    token: adminToken,
+    body: { status: 0 },
+  });
+  assert(dcDisable.body?.code === 0, 'D31 停用（非删除）集散中心', `code=${dcDisable.body?.code}`);
+
+  const bAfterDisable = await call('GET', `/admin/buildings?${qs({ groupId: grpAId, pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  const bA3 = (bAfterDisable.body?.data?.list ?? []).find((b) => b.id === bldAId);
+  assert(
+    bA3?.gap === 'all_center_disabled' && bA3?.mainDcName === null,
+    'D13 「集散中心已停用」是**第三种**覆盖缺口（≠ 楼群无集散中心）—— 三种成因三种修法，合成一个「未覆盖」运营只能猜',
+    `gap=${bA3?.gap} main=${bA3?.mainDcName}`,
+  );
+
+  // 视图聚合一致性：overview / delivery-map 与 D13 必须同源
+  const ovw = await call('GET', '/admin/buildings/overview', { token: adminToken });
+  const ovwData = ovw.body?.data ?? {};
+  assert(
+    ovw.body?.code === 0 && ovwData.buildings?.totalCount >= 12,
+    'P37 总览接口返回成功（主数据健康度聚合）',
+    `code=${ovw.body?.code} total=${ovwData.buildings?.totalCount}`,
+  );
+  const gapFiltered = await call('GET', `/admin/buildings?${qs({ gap: 'no_group', pageSize: 100 })}`, {
+    token: adminToken,
+  });
+  const gapRows2 = gapFiltered.body?.data?.list ?? [];
+  assert(
+    gapRows2.every((b) => b.gap === 'no_group') && gapRows2.length > 0,
+    'D13 覆盖缺口筛选生效（gap=no_group 只回未归群的楼）',
+    `count=${gapRows2.length}`,
+  );
+  assert(
+    (ovwData.uncoveredBuildings ?? []).some((b) => b.id === bldAId) &&
+      !(ovwData.uncoveredBuildings ?? []).some((b) => b.gap === 'none'),
+    'P37 总览的「未覆盖楼栋」清单与 D13 的 gap 判定**同源**（总览不另算一套）',
+    `uncovered=${(ovwData.uncoveredBuildings ?? []).length}`,
+  );
+  assert(
+    ovwData.groupDistribution?.find((g) => g.groupId === grpAId)?.coverageState === 'uncovered',
+    'P37 总览的楼群分布沿用 D16 的覆盖状态派生（停用集散中心后该楼群回到 uncovered）',
+    `state=${ovwData.groupDistribution?.find((g) => g.groupId === grpAId)?.coverageState}`,
+  );
+
+  const dmap = await call('GET', '/admin/buildings/delivery-map', { token: adminToken });
+  const dm = dmap.body?.data ?? {};
+  const dmStops = (dm.routes ?? []).flatMap((r) => r.stops ?? []);
+  assert(dmap.body?.code === 0 && Array.isArray(dm.routes), '配送映射接口返回成功', `code=${dmap.body?.code}`);
+  assert(
+    dm.summary?.coveredBuildingCount + dm.summary?.uncoveredBuildingCount === dm.summary?.totalBuildingCount,
+    '配送映射守恒：已覆盖楼栋 + 未覆盖楼栋 = 楼栋总数（派生视图最容易在这里漏行）',
+    `covered=${dm.summary?.coveredBuildingCount} uncovered=${dm.summary?.uncoveredBuildingCount} total=${dm.summary?.totalBuildingCount}`,
+  );
+  assert(
+    (dm.unassigned ?? []).some((u) => u.buildingId === bldAId && u.gap === 'all_center_disabled'),
+    '配送映射的「未分配」清单带上**缺口原因**（让运营知道去改哪里，而不是只看到「未分配」）',
+    `unassigned=${(dm.unassigned ?? []).map((u) => u.buildingId).join(',')}`,
+  );
+  assert(
+    dmStops.every((s) => typeof s.seq === 'number' && s.buildingName) &&
+      (dm.routes ?? []).every((r) => (r.stops ?? []).every((x, i) => x.seq === i + 1)),
+    '配送映射：站点序号在**同一路线内**从 1 递增（路线内顺序 = 楼栋 id 升序）',
+    `maxSeq=${Math.max(0, ...dmStops.map((s) => s.seq))}`,
+  );
+  assert(
+    dmStops.every((s) => s.distanceKm === undefined && s.durationMin === undefined) &&
+      (dm.routes ?? []).every((r) => r.distanceKm === undefined),
+    '配送映射**不返回距离与单段时长**（需地图与真实路况数据，一期不具备；原型上的 km/分钟是演示值，不当成交付口径）',
+    `keys=${Object.keys(dmStops[0] ?? {}).join(',')}`,
+  );
+  assert(
+    (dm.routes ?? []).every((r) => new Set((r.stops ?? []).map((s) => s.buildingId)).size === (r.stops ?? []).length),
+    '配送映射：一条路线内不出现重复楼栋',
+    `routes=${(dm.routes ?? []).length}`,
+  );
+
+  // ---------------------------------------------------------- G · 权限（两级白名单）
+  const opRead = await call('GET', `/admin/buildings?${qs({ pageSize: 5 })}`, { token: supOpToken });
+  assert(opRead.body?.code === 0, '两级白名单①：operator 可读办公楼列表', `code=${opRead.body?.code}`);
+  const opWrite = await call('POST', '/admin/buildings', {
+    token: supOpToken,
+    body: { name: `e2e越权楼_${stamp}`, address: 'e2e 越权地址' },
+  });
+  assert(
+    opWrite.body?.code === 10003 &&
+      readRows('SELECT id FROM ab_building WHERE name = ?', [`e2e越权楼_${stamp}`]).length === 0,
+    '两级白名单②：operator 新建办公楼 → 10003 且**无记录**（守卫挡在业务层之前，不是「执行了再回滚」）',
+    `code=${opWrite.body?.code}`,
+  );
+  const viewRead = await call('GET', '/admin/buildings', { token: supViewToken });
+  assert(
+    viewRead.body?.code === 10003,
+    '两级白名单③：viewer 类级就不放（菜单矩阵里没有 /building/*，API 放行会出现「能调但进不去」的诡异状态）',
+    `code=${viewRead.body?.code}`,
+  );
+  const finRead = await call('GET', '/admin/building-groups', { token: finToken2 });
+  assert(
+    finRead.body?.code === 10003,
+    '两级白名单④：finance 同样收窄（财务不改楼栋主数据）',
+    `code=${finRead.body?.code}`,
+  );
+
+  // ---------------------------------------------------------- H · 主体隔离 + 日志
+  const miniBld = await call('GET', '/admin/buildings', { token: u.token });
+  assert(
+    miniBld.body?.code === 10003,
+    '双主体隔离：小程序 token 打 /admin/buildings → 10003',
+    `code=${miniBld.body?.code}`,
+  );
+  const bldLogs = await call('GET', `/admin/system/logs?${qs({ pageSize: 100 })}`, { token: adminToken });
+  const bldLogRows = bldLogs.body?.data?.list ?? [];
+  assert(
+    bldLogRows.some((l) => l.action === '新增办公楼' && String(l.targetId) === String(bldAId)),
+    'D14 自动落操作日志且 `targetId` = **新楼 id**（新建接口请求里没有 id，靠响应体兜底取得 —— 否则日志永远挂不到这栋楼上）',
+    `targetIds=${JSON.stringify(bldLogRows.filter((l) => l.action === '新增办公楼').map((l) => l.targetId))} 期望含 ${bldAId}`,
+  );
+  assert(
+    bldLogRows.some((l) => l.action === '编辑楼群' && String(l.targetId) === String(grpBId)),
+    'D18 编辑楼群留痕（`targetId` = 楼群 id）',
+    `hit=${bldLogRows.filter((l) => l.action === '编辑楼群').length}`,
+  );
+  }
 
   // ==========================================================================
   // 汇总

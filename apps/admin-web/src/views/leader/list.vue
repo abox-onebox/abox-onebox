@@ -454,7 +454,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
@@ -471,6 +471,7 @@ import {
 import { ApiError } from '@/api/request';
 import { displayOr, fenToCny, formatDateTime } from '@/utils/format';
 
+const route = useRoute();
 const router = useRouter();
 
 const loading = ref(false);
@@ -757,6 +758,11 @@ async function doAudit(): Promise<void> {
 }
 
 onMounted(async () => {
+  // 从「办公楼管理 → 团长绑定」跳过来时带上 `?buildingId=`，此处预选办公楼筛选 ——
+  // 让运营点过来之后不必再自己找一遍楼。参数非法（非数字）则忽略，不影响正常进入本页。
+  const pre = Number(route.query.buildingId);
+  if (Number.isFinite(pre) && pre > 0) query.buildingId = pre;
+
   try {
     Object.assign(options, await fetchLeaderFilterOptions());
   } catch {

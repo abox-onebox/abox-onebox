@@ -656,6 +656,32 @@ ALTER TABLE `ab_supplier`
 
 ⚠️ **集散中心（`ab_distribution_center`）零 DDL 变更**：D29–D32 复用的列在 v1.0 已齐备（`rice_fee` / `pack_fee` 默认 0 · `service_groups` JSON · `supplier_id` · `status` · `deleted_at`）。软删靠既有 `deleted_at`，无需新增 —— D32 的两道前置（历史应付 / 被分配引用）是**校验逻辑**，不是结构。
 
+### 5.6 M3-7 后台办公楼与楼群：`ab_building` 增 1 列 + 状态三态（**有 DDL 变更 · 无新表**）
+
+> M3-7（D13–D18 · 原型 P37 五视图 · 模块 M33-01/02）的结构变更。**为什么非加不可**：
+> ① 原型 P37 列表逐行显示「约 520 人」，而 `ab_building` 只有 `floor_count`（楼层数）—— 备料量测算与楼栋容量评估需要的是**人数**，不是层数，且层数推不出人数。
+> ② `status` 原注释「1 合作中 / 2 停用」而种子把「待开通」与「已暂停」**都写成 `2`** —— 一值两义：运营既分不清「还没上线」和「已暂停合作」，也做不了「停用后恢复」的状态机。
+
+```sql
+ALTER TABLE `ab_building`
+  ADD COLUMN `population` int NULL COMMENT '覆盖人数（运营估算，非实时统计）',
+  MODIFY COLUMN `status` tinyint NOT NULL DEFAULT 1 COMMENT '1营业中 2待开通 3已暂停',
+  ADD INDEX `idx_building_status` (`status`);
+```
+
+| 列 | 关键口径 | 理由 |
+| --- | --- | --- |
+| `population` | `INT NULL`，**运营录入的估算值** | 真实就餐人数看订单量；混用会让「覆盖率」类指标失去意义。可空 = 兼容历史行、允许「还没估」 |
+| `status` 三态 | `1` 营业中 / `2` 待开通 / `3` 已暂停，`tinyint` **值域扩展** | 只扩值域、不动类型；`1` 的语义**不变**（旧数据无需迁移）。旧值 `2` 归「待开通」—— 保守处理：合作状态未确认的按未开通算 |
+| `status` 唯一可开团值 | **只有 `1`** | 套餐编排的楼栋多选把 2/3 一律禁选；`canOrder` 亦要求 `1` |
+| `idx_building_status` | 新增单列索引 | D13 列表按状态筛选、P37 总览统计各状态楼栋数是高频路径 |
+
+⚠️ **`ab_building_group` 零 DDL 变更**：`status`（1 启用 / 2 停用）**刻意保持二态**，不沿用楼栋三态 —— 楼群是纯组织维度，没有「待开通」这个中间态；多一个值只会让筛选器多一个永远为 0 的选项。
+
+⚠️ **「主/备集散中心 + 路线号」不落库**：`delivery-map` 视图与 D13/D16 出参里的 `mainDcId` / `backupDcId` / `routeNo` 全部由 `ab_distribution_center.service_groups`（M3-6）**实时派生**，楼栋上不存副本。落库就要有定时任务去刷，改一次集散配置就会造出「配置已改、楼栋还显示老集散」的不一致。
+
+⚠️ **DDL 总量**：25 张表不变（M2 的 `ab_withdraw` 之后**无新增表**）；`ab_building` 是本批次唯一被改的表。
+
 ---
 
 ## 六、关键索引设计

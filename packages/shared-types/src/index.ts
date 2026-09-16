@@ -3,6 +3,7 @@ export * from './enums/leader-level';
 export * from './enums/leader-status';
 export * from './enums/leader-admin';
 export * from './enums/supplier-admin';
+export * from './enums/building-admin';
 export * from './enums/payout-channel';
 export * from './enums/role';
 export * from './enums/dish-slot';

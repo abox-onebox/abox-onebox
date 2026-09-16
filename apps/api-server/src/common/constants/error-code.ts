@@ -12,6 +12,7 @@
  *   3xxxx  套餐与下单
  *   4xxxx  支付 / 退款 / 出款
  *   5xxxx  财务 / 结算 / 供应商
+ *   6xxxx  主数据（办公楼 / 楼群）
  *   9xxxx  系统
  *
  * 【HTTP 状态码口径】
@@ -163,6 +164,25 @@ export enum ErrorCode {
   /** 扩展（M3-6）：类型与关联集散中心冲突（D27 改类型会把集散中心指向「不出餐也不集散」的供应商） */
   SUPPLIER_TYPE_CONFLICT = 50008,
 
+  /** ---- 6xxxx 主数据（办公楼 / 楼群）---- */
+  /** 扩展（M3-7）：办公楼不存在（D13/D14/D15 目标 id 非法或已软删） */
+  BUILDING_NOT_FOUND = 60001,
+  /** 扩展（M3-7）：楼群不存在（D16/D17/D18 目标 id 非法或已软删） */
+  BUILDING_GROUP_NOT_FOUND = 60002,
+  /**
+   * 扩展（M3-7）：楼群下仍有办公楼，不能停用（D18）
+   *
+   * ⚠️ fail-closed 的理由：停用楼群 = 该群退出套餐分配。若成员楼还挂着，
+   *    那些楼会**静默**失去开团能力 —— 用户端「该办公楼今日未开团」，
+   *    而运营在 P37 上看不出任何异常（楼还在、状态还是营业中）。
+   *    要求先把楼搬走再停群，让「哪些楼被影响」是一个显式动作。
+   */
+  BUILDING_GROUP_NOT_EMPTY = 60003,
+  /** 扩展（M3-7）：楼群名已存在（D17/D18） */
+  BUILDING_GROUP_NAME_TAKEN = 60004,
+  /** 扩展（M3-7）：办公楼名已存在（D14/D15）—— 同名楼会让「按楼筛选」变成歧义操作 */
+  BUILDING_NAME_TAKEN = 60005,
+
   /** ---- 9xxxx 系统 ---- */
   INTERNAL_ERROR = 90001,
   SERVICE_UNAVAILABLE = 90002,
@@ -227,6 +247,11 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.SUPPLIER_NOT_FOUND]: '供应商不存在或已停用',
   [ErrorCode.DISTRIBUTION_CENTER_NOT_FOUND]: '集散中心不存在或已停用',
   [ErrorCode.SUPPLIER_TYPE_CONFLICT]: '供应商类型与关联集散中心冲突',
+  [ErrorCode.BUILDING_NOT_FOUND]: '办公楼不存在',
+  [ErrorCode.BUILDING_GROUP_NOT_FOUND]: '楼群不存在',
+  [ErrorCode.BUILDING_GROUP_NOT_EMPTY]: '楼群下仍有办公楼，请先移出成员楼',
+  [ErrorCode.BUILDING_GROUP_NAME_TAKEN]: '楼群名已存在',
+  [ErrorCode.BUILDING_NAME_TAKEN]: '办公楼名已存在',
   [ErrorCode.INTERNAL_ERROR]: '系统繁忙，请稍后再试',
   [ErrorCode.SERVICE_UNAVAILABLE]: '服务暂不可用',
 };

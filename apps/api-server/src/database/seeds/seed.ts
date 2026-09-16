@@ -424,6 +424,9 @@ async function main(): Promise<void> {
   ]);
 
   // ---------- 6. 办公楼（12 栋） ----------
+  // ⚠️ 状态三态（M3-7）：1 营业中 / 2 待开通 / 3 已暂停 —— 见 BuildingStatus。
+  //    M3-7 之前「待开通」与「已暂停」都写成 2，一值两义；本批次拆开。
+  // ⚠️ population 是**运营估算的覆盖人数**（原型 P37 列表「约 N 人」），非实时统计。
   const bRepo = dataSource.getRepository(Building);
   await bRepo.clear();
   await bRepo.save([
@@ -434,6 +437,7 @@ async function main(): Promise<void> {
       address: '建国门外大街 1 号 A 座',
       city: '北京',
       district: '朝阳区',
+      population: 520,
       status: 1,
     },
     {
@@ -443,6 +447,7 @@ async function main(): Promise<void> {
       address: '建国门外大街 1 号 B 座',
       city: '北京',
       district: '朝阳区',
+      population: 480,
       status: 1,
     },
     {
@@ -452,6 +457,7 @@ async function main(): Promise<void> {
       address: '建国门外大街 1 号 C 座',
       city: '北京',
       district: '朝阳区',
+      population: 310,
       status: 2,
     },
     {
@@ -461,6 +467,7 @@ async function main(): Promise<void> {
       address: '建国门外大街 1 号 D 座',
       city: '北京',
       district: '朝阳区',
+      population: 250,
       status: 1,
     },
     {
@@ -470,6 +477,7 @@ async function main(): Promise<void> {
       address: '东三环中路 39 号',
       city: '北京',
       district: '朝阳区',
+      population: 480,
       status: 1,
     },
     {
@@ -479,6 +487,7 @@ async function main(): Promise<void> {
       address: '建国门外大街 2 号 1 栋',
       city: '北京',
       district: '朝阳区',
+      population: 360,
       status: 1,
     },
     {
@@ -488,6 +497,7 @@ async function main(): Promise<void> {
       address: '建国门外大街 2 号 2 栋',
       city: '北京',
       district: '朝阳区',
+      population: 320,
       status: 1,
     },
     {
@@ -497,6 +507,7 @@ async function main(): Promise<void> {
       address: '建国路 79 号 1 号楼',
       city: '北京',
       district: '朝阳区',
+      population: 380,
       status: 1,
     },
     {
@@ -506,6 +517,7 @@ async function main(): Promise<void> {
       address: '建国路 79 号 2 号楼',
       city: '北京',
       district: '朝阳区',
+      population: 280,
       status: 1,
     },
     {
@@ -515,7 +527,8 @@ async function main(): Promise<void> {
       address: '建国路 79 号 3 号楼',
       city: '北京',
       district: '朝阳区',
-      status: 2,
+      population: 260,
+      status: 3,
     },
     {
       id: 11,
@@ -524,6 +537,7 @@ async function main(): Promise<void> {
       address: '光华路 9 号 AB 座',
       city: '北京',
       district: '朝阳区',
+      population: 320,
       status: 1,
     },
     {
@@ -533,6 +547,7 @@ async function main(): Promise<void> {
       address: '光华路 9 号 C 座',
       city: '北京',
       district: '朝阳区',
+      population: 200,
       status: 1,
     },
   ]);
