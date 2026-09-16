@@ -602,6 +602,21 @@ ALTER TABLE `ab_operation_log`
 | 缺失如何处理 | **fail-closed → 40014**：缺列值（历史数据/脏写）时**拒绝驳回**，而不是回退到某个默认状态。宁可让运营走人工，也不静默把订单状态写错 |
 | 可空性 | 允许为 `NULL`（历史行），但 D42 读到 `NULL` 即报 40014 —— 可空是兼容，不是「可以不写」 |
 
+### 5.4 M3-5 后台团长管理：**零 DDL 变更**
+
+> M3-5（D19–D22 · 原型 P32）**不动任何表结构** —— 这是刻意的结果，不是「还没来得及」。
+
+| 能力 | 复用的既有列 | 说明 |
+| --- | --- | --- |
+| D19 名录（等级 / 费率 / 月单 / 推荐数 / 余额 / 冻结） | `ab_team_leader.level` · `commission_rate` · `month_orders` · `invited_formal_count` · `total_commission` · `pending_amount` · `floor` | M2 已把团长侧数据打全，后台只做读聚合（`ab_balance` 取余额真源） |
+| D19 申请流水 | `ab_team_leader.created_at`（＝申请时间）+ `ab_leader_invite.channel` | C3 申请即生效 → 流水**即终态**，没有 `pending` 审核态列（`pendingAuditCount` 恒为 0 是**口径表达**） |
+| D19 裂变链 | `ab_leader_invite.inviter_leader_id` · `invitee_user_id` · `invitee_leader_id` · `is_formal` · `formal_at` | 上行（谁推荐他）与下行（他推荐了谁）共用这一张表 |
+| D20 任命 / 转交 | `ab_team_leader.status`（现任置 2）+ `ab_user.building_id` | 继任者**新建行**而非改写原行，故不需要「交接历史」列 —— 历史佣金与推荐关系天然留在原行 |
+| D21 变更 | `level` + `commission_rate`（**联动**）· `building_id` · `floor` · `level_updated_at` | 费率联动是 M2 既有约定，D21 只是补上后台入口 |
+| D22 资质补录 | `status` · `agreed_at` · `agree_version` + `ab_user.team_leader_id` | 停用同时清归属，与 L20 退出团长同一处理 |
+
+⚠️ **没有「微信号」列**：原型 P32 申请流水表格里的「微信号」在数据模型里**无对应字段**（L17 申请表单只收 姓名 / 手机号 / 楼层 / 办公楼 / 协议）。本期以 `ab_user.nickname` + `openid` 后 6 位代替，并在接口出参 `notes.wechatId` 里如实标注偏差 —— 若要真实微信号，须改 L17 表单并**新增列**（届时本表会出现在 §四）。
+
 ---
 
 ## 六、关键索引设计

@@ -15,3 +15,15 @@ export enum LeaderStatus {
   /** 停职：后台停用，或见习 30 天未促单自动取消资格（C2） */
   SUSPENDED = 2,
 }
+
+/**
+ * 在职状态文案（M3-5 · D19 名录 / 筛选器 / 操作日志共用）
+ *
+ * ⚠️ 文案必须与 P32 原型一致：原型用「在职 / 停职」而非「启用 / 停用」——
+ *    后者是**账号**口径（D53），团长是**任职关系**，混用会让运营以为
+ *    「停用」等于注销账号，从而不敢操作。
+ */
+export const LEADER_STATUS_LABEL: Record<LeaderStatus, string> = {
+  [LeaderStatus.ACTIVE]: '在职',
+  [LeaderStatus.SUSPENDED]: '停职',
+};

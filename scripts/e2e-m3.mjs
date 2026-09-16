@@ -50,6 +50,27 @@
  *           viewer 10003；小程序 token 10003；finance 有权限（拿到业务层 40013 而非 10003）
  *   · 操作日志：通过 / 驳回均自动落库，`targetId = 退款单 id`
  *
+ * ## M3-5 后台团长管理批次新增（§17 · D19–D22）
+ *   · D19 `GET  /admin/leaders`            —— 名录（等级/楼群/状态/关键词过滤 · summary 不受分页影响 ·
+ *                                              手机号脱敏 · actions 与下拉下发）/ 申请流水（`view=applications`，
+ *                                              **C3 申请即生效 → pendingAuditCount 恒为 0**，且**不返回微信号**）/
+ *                                              `filter-options`（路由顺序）/ 详情（裂变链上下行 + 佣金 + 双键日志）
+ *   · D20 `POST /admin/leaders`            —— 任命默认**见习 8%** · 非注册用户 20011 · 撞号 20004 ·
+ *                                              目标楼被占 20012（附 occupiedBy）· 显式确认后转交
+ *                                              （现任**停职而非删除**，历史佣金/推荐关系不抹）
+ *   · D21 `PUT  /admin/leaders/:id`        —— 改等级**同步写费率**（等级是标签、费率才是钱）· 换楼撞车 20012 ·
+ *                                              空变更 10001 · **刻意不吃 status**（停用只有 D22 一个入口）
+ *   · D22 `POST /admin/leaders/:id/audit`  —— 例外停用（**同时清 `ab_user.team_leader_id`**）/
+ *                                              恢复在职（**不重置等级**）/ 协议补签 / 备注 · 目标态重复操作 20013
+ *   · 权限：**两级白名单** —— operator 能读（`actions.canManage=false`）但任命/变更/补录一律 10003；
+ *           viewer / finance / supplier 一律 10003；小程序 token 打 `/admin/leaders` → 10003
+ *   · 越权被拒**无副作用**：没建档、没改字段（`@Roles` 挡在业务层之前，不是「执行了再回滚」）
+ *
+ * ⚠️ **§17 不依赖下单窗口**（团长域是主数据），任何时刻都能跑；
+ *    夹具**全部自造**（3 名 `dev:` 新用户 + 动态挑空楼 + 带时间戳的手机号），
+ *    避免与 §15/§16 以及 `e2e-m1` / `e2e-m2` 的写入互相污染 —— 那正是
+ *    「单跑绿、串跑红」的典型来源（m2 的 L20/L22 会改 `ab_team_leader`）。
+ *
  * ## 三类安全断言（这是本批次的核心价值）
  *   1. **主体隔离**：小程序 token 打 `/admin/*` → 10003；后台 token 打 `/orders` → 10002
  *      （两套账号表的 id 各自自增，不做隔离就是**静默越权**，见 jwt-auth.guard.ts）
@@ -63,8 +84,8 @@
  *
  * ⚠️ **时间窗前提**：§15 订单中心与 §16 退款审批都要造真实订单，而 U6 只能在
  *    `[T-1 14:00, T-1 23:00)` 这个窗口内下单 —— 与 `e2e-m1` / `e2e-m2` 同一约束。
- *    因此**整套需在北京时间 14:00–23:00 之间运行**，窗口外 §15/§16 各给出唯一的
- *    可读失败而非连锁红。
+ *    因此 §15/§16 **需在北京时间 14:00–23:00 之间运行**，窗口外各给出唯一的
+ *    可读失败而非连锁红（**§17 不受此限**：团长域与订单链路无关）。
  * ⚠️ **一个用户同一出餐日只能下一单**（U6 → 30004）：§15 用 1001/1002/1005，
  *    §16 用 1003/1004/1040，改夹具时别撞车。
  *
@@ -2467,6 +2488,767 @@ async function main() {
       `reason=${detAfter.body?.data?.actions?.refundBlockReason}`,
     );
   }
+
+  // ==========================================================================
+  // §17 M3-5 团长名录 / 任命 / 变更 / 资质补录（D19–D22）
+  // ==========================================================================
+  log('\n§17 M3-5 后台团长管理（D19–D22）');
+
+  /**
+   * 本组**不依赖下单窗口** —— 团长域是主数据，与订单链路无关，故随时可跑。
+   *
+   * 【夹具为何全部自造】`verify` 串跑时 `e2e-m1` / `e2e-m2` 已经写过库
+   *   （m2 的 L20 退出团长会改 `ab_team_leader.status`，L22 会改 `invited_formal_count`），
+   *   若拿种子团长做**写**操作的断言，「单跑绿、串跑红」几乎必然发生。
+   *   因此本组：
+   *     · 名册/详情/筛选只读种子（`李明`/`王芳` 等人的档案不会被 m1/m2 改）；
+   *     · 一切写操作（任命 / 转交 / 改级 / 停用 / 恢复）都落在**自造**的团长身上；
+   *     · 断言只用「自己造出来的数据」与**相对变化**，不硬编码总数。
+   *
+   * 【为什么不用固定手机号】`ab_team_leader.phone` 唯一 —— 写死 `13900000001`
+   *   在第二次跑（不重新 seed）时会撞上上一轮留下的团长 → 20004 假红。
+   *   故手机号用 `139${stamp}` 这类「11 位 + 时间戳」拼法，天然幂等。
+   */
+  const lAdmin = adminToken;
+  const tag = `e2e_ld_${stamp}`;
+
+  // ---------------------------------------------------------- 前置：挑两栋空楼
+  const emptyBuildings = readRows(
+    `SELECT b.id, b.name, b.building_group_id AS gid FROM ab_building b
+      WHERE b.status = 1 AND b.deleted_at IS NULL
+        AND b.id NOT IN (
+          SELECT building_id FROM ab_team_leader WHERE status = 1 AND deleted_at IS NULL
+        )
+      ORDER BY b.id`,
+  );
+  const emptyA = Number(emptyBuildings[0]?.id ?? 0);
+  const emptyB = Number(emptyBuildings[1]?.id ?? 0);
+  assert(
+    emptyA > 0 && emptyB > 0 && emptyA !== emptyB,
+    '§17 前置：存在至少 2 栋「在用且无在职团长」的办公楼（D20 任命与 D21 换楼的靶子）',
+    `A=${emptyA}(${emptyBuildings[0]?.name}) B=${emptyB}(${emptyBuildings[1]?.name})`,
+  );
+  // 另取一栋**已有在职团长**的楼（断言 20012 用；动态取，避免依赖种子团长仍是在职）
+  const occupied = readDb(
+    `SELECT building_id AS bid, id AS lid, real_name AS name FROM ab_team_leader
+      WHERE status = 1 AND deleted_at IS NULL AND building_id NOT IN (?, ?)
+      ORDER BY id LIMIT 1`,
+    [emptyA, emptyB],
+  );
+
+  // ======================================================== A · D19 名录
+  const rosterAll = await call('GET', '/admin/leaders?pageSize=100', { token: lAdmin });
+  const rosterData = rosterAll.body?.data ?? {};
+  assert(
+    rosterAll.body?.code === 0 && rosterData.view === 'roster' && Array.isArray(rosterData.list),
+    'D19 默认视图 = roster（团长名册），返回 list / summary / 选项下发',
+    `code=${rosterAll.body?.code} view=${rosterData.view} n=${rosterData.list?.length}`,
+  );
+
+  const sumA = rosterData.summary ?? {};
+  assert(
+    sumA.totalCount >= 5 &&
+      sumA.activeCount + sumA.suspendedCount === sumA.totalCount &&
+      sumA.traineeCount + sumA.formalCount + sumA.goldCount + sumA.chiefCount === sumA.totalCount,
+    'D19 summary 口径自洽：在职+停职 = 总数，四级人数之和 = 总数（写死数字会被串跑打翻）',
+    `total=${sumA.totalCount} 在职=${sumA.activeCount} 停职=${sumA.suspendedCount} 等级和=${
+      sumA.traineeCount + sumA.formalCount + sumA.goldCount + sumA.chiefCount
+    }`,
+  );
+  assert(
+    sumA.pendingAuditCount === 0,
+    'D19 **C3 口径表达**：pendingAuditCount 恒为 0 —— 团长「申请即生效」，不存在待审核队列',
+    `pending=${sumA.pendingAuditCount}`,
+  );
+
+  const rosterPaged = await call('GET', '/admin/leaders?page=1&pageSize=1', { token: lAdmin });
+  assert(
+    rosterPaged.body?.data?.summary?.totalCount === sumA.totalCount &&
+      (rosterPaged.body?.data?.list ?? []).length === 1,
+    'D19 summary 是**同一过滤条件的全量**，不受分页影响（翻页时 KPI 卡不跳）',
+    `分页后 summary=${rosterPaged.body?.data?.summary?.totalCount} / 全量=${sumA.totalCount}`,
+  );
+
+  const row0 = rosterData.list?.[0] ?? {};
+  assert(
+    /^\d{3}\*{4}\d{4}$/.test(String(row0.phoneMasked)) && !/\d{11}/.test(JSON.stringify(row0)),
+    'D19 手机号**一律脱敏**（运营看名录不需要完整号；去 D12 导出才给全号且留痕）',
+    `phoneMasked=${row0.phoneMasked}`,
+  );
+  assert(
+    typeof row0.levelLabel === 'string' &&
+      row0.levelLabel.length > 0 &&
+      /%$/.test(String(row0.commissionRateText)),
+    "D19 行内自带文案：levelLabel + commissionRateText（如 '12%'），端上不拼字符串",
+    `level=${row0.level}/${row0.levelLabel} rate=${row0.commissionRate} → ${row0.commissionRateText}`,
+  );
+  assert(
+    rosterData.actions?.canManage === true && rosterData.actions?.canAudit === true,
+    'D19 按钮可用性口径唯一在服务端：admin 下发 canManage/canAudit = true',
+    `actions=${JSON.stringify(rosterData.actions)}`,
+  );
+  assert(
+    (rosterData.levelOptions ?? []).length === 4 &&
+      (rosterData.statusOptions ?? []).length === 2 &&
+      (rosterData.levelOptions ?? []).every((o) => o.rateText && o.monthlyOrders !== undefined),
+    'D19 下拉下发：四级各带费率与 C2 双条件（月单 + 介绍转正数），端上不维护第二份',
+    `levels=${(rosterData.levelOptions ?? []).map((o) => `${o.key}/${o.rateText}`).join(',')}`,
+  );
+
+  const byLevel = await call('GET', '/admin/leaders?level=chief&pageSize=100', { token: lAdmin });
+  const chiefRows = byLevel.body?.data?.list ?? [];
+  assert(
+    byLevel.body?.code === 0 &&
+      chiefRows.length > 0 &&
+      chiefRows.every((r) => r.level === 'chief') &&
+      byLevel.body?.data?.summary?.totalCount === chiefRows.length &&
+      byLevel.body?.data?.summary?.chiefCount === chiefRows.length,
+    'D19 等级过滤：命中行全是该等级，且 summary 同步收窄（汇总跟着筛选走，不是全量汇总）',
+    `n=${chiefRows.length} summary.total=${byLevel.body?.data?.summary?.totalCount}`,
+  );
+
+  const byGroup = await call('GET', '/admin/leaders?groupId=1&pageSize=100', { token: lAdmin });
+  const g1Rows = byGroup.body?.data?.list ?? [];
+  assert(
+    byGroup.body?.code === 0 &&
+      g1Rows.length > 0 &&
+      g1Rows.every((r) => Number(r.groupId) === 1) &&
+      g1Rows.length === byGroup.body?.data?.summary?.totalCount,
+    'D19 楼群过滤：经 ab_building.building_group_id 归属（子查询而非 JOIN，避免 total 虚高）',
+    `n=${g1Rows.length} groups=${JSON.stringify([...new Set(g1Rows.map((r) => r.groupId))])}`,
+  );
+
+  const bySuspended = await call('GET', '/admin/leaders?status=2&pageSize=100', { token: lAdmin });
+  assert(
+    bySuspended.body?.code === 0 &&
+      (bySuspended.body?.data?.list ?? []).every((r) => r.status === 2) &&
+      bySuspended.body?.data?.summary?.activeCount === 0,
+    'D19 状态过滤：只出停职，且过滤后 activeCount = 0（汇总与列表同源同过滤）',
+    `n=${bySuspended.body?.data?.list?.length} active=${bySuspended.body?.data?.summary?.activeCount}`,
+  );
+
+  const byKwName = await call('GET', `/admin/leaders?keyword=${encodeURIComponent('李明')}`, {
+    token: lAdmin,
+  });
+  assert(
+    (byKwName.body?.data?.list ?? []).some((r) => r.realName === '李明'),
+    'D19 关键词命中**姓名**',
+    `n=${byKwName.body?.data?.list?.length}`,
+  );
+  const byKwPhone = await call('GET', '/admin/leaders?keyword=18600000001', { token: lAdmin });
+  assert(
+    (byKwPhone.body?.data?.list ?? []).some((r) => Number(r.userId) === 1001),
+    'D19 关键词命中**完整手机号**（库里存明文，脱敏只发生在出参）',
+    `n=${byKwPhone.body?.data?.list?.length}`,
+  );
+  const byKwNick = await call('GET', `/admin/leaders?keyword=${encodeURIComponent('微信用户')}`, {
+    token: lAdmin,
+  });
+  const nickTotal = await call('GET', '/admin/leaders?pageSize=1', { token: lAdmin });
+  assert(
+    byKwNick.body?.code === 0 &&
+      (byKwNick.body?.data?.summary?.totalCount ?? 0) <=
+        (nickTotal.body?.data?.summary?.totalCount ?? 0),
+    'D19 关键词也可命中**微信昵称**（子查询 ab_user，只列允许字段）',
+    `昵称命中=${byKwNick.body?.data?.summary?.totalCount} 全量=${nickTotal.body?.data?.summary?.totalCount}`,
+  );
+
+  const badStatus = await call('GET', '/admin/leaders?status=9', { token: lAdmin });
+  const badLevel = await call('GET', '/admin/leaders?level=nope', { token: lAdmin });
+  const badView = await call('GET', '/admin/leaders?view=xxx', { token: lAdmin });
+  assert(
+    badStatus.body?.code === 10001 && badLevel.body?.code === 10001 && badView.body?.code === 10001,
+    'D19 DTO 白名单：status / level / view 非法值一律 10001（挡在业务层之前）',
+    `status=${badStatus.body?.code} level=${badLevel.body?.code} view=${badView.body?.code}`,
+  );
+
+  const opts = await call('GET', '/admin/leaders/filter-options', { token: lAdmin });
+  assert(
+    opts.body?.code === 0 &&
+      (opts.body?.data?.groups ?? []).length > 0 &&
+      (opts.body?.data?.buildings ?? []).length > 0 &&
+      opts.body?.data?.id === undefined,
+    '路由顺序：GET /admin/leaders/filter-options 未被 GET :id 吞掉；筛选器自带楼群/楼（不反向依赖 M3-6）',
+    `code=${opts.body?.code} groups=${opts.body?.data?.groups?.length} buildings=${opts.body?.data?.buildings?.length}`,
+  );
+
+  // ================================================ B · D19 申请流水
+  const apps = await call('GET', '/admin/leaders?view=applications&days=90&pageSize=100', {
+    token: lAdmin,
+  });
+  const appRows = apps.body?.data?.list ?? [];
+  assert(
+    apps.body?.code === 0 && apps.body?.data?.view === 'applications' && appRows.length > 0,
+    'D19 view=applications 申请流水（与名册同一接口，靠 view 分流而非另开一个端点）',
+    `code=${apps.body?.code} n=${appRows.length}`,
+  );
+  assert(
+    appRows.every((r) => !('wechatId' in r) && !('wechat_id' in r)) &&
+      appRows.some((r) => r.openidTail),
+    'D19 申请流水**不返回微信号**（数据模型从未采集）—— 造假值比留空更危险',
+    `keys=${JSON.stringify(Object.keys(appRows[0] ?? {}))}`,
+  );
+  assert(
+    typeof apps.body?.data?.notes?.wechatId === 'string' &&
+      apps.body?.data?.notes?.wechatId.length > 10 &&
+      apps.body?.data?.summary?.pendingAuditCount === 0,
+    'D19 notes.wechatId 如实写明偏差（本期以昵称 + openid 后 6 位代替，界面不得假装有微信号）',
+    `note=${String(apps.body?.data?.notes?.wechatId).slice(0, 24)}…`,
+  );
+  assert(
+    appRows.some((r) => r.inviterText && r.inviterText !== '—（直接申请）') &&
+      appRows.some((r) => r.inviterText === '—（直接申请）'),
+    'D19 流水带推荐人（C2 晋级审计的原始依据），无邀请人时显示「直接申请」',
+    `sample=${JSON.stringify([...new Set(appRows.map((r) => r.inviterText))].slice(0, 3))}`,
+  );
+  const apps1 = await call('GET', '/admin/leaders?view=applications&days=1&pageSize=100', {
+    token: lAdmin,
+  });
+  assert(
+    apps1.body?.code === 0 &&
+      (apps1.body?.data?.list ?? []).length <= appRows.length &&
+      apps1.body?.data?.summary?.days === 1,
+    'D19 days 回溯天数生效（days=1 的结果是 days=90 的子集）',
+    `d1=${apps1.body?.data?.list?.length} d90=${appRows.length}`,
+  );
+
+  // ======================================================== C · D19 详情
+  const det1 = await call('GET', '/admin/leaders/1', { token: lAdmin });
+  const p1 = det1.body?.data?.profile ?? {};
+  assert(
+    det1.body?.code === 0 &&
+      p1.realName === '李明' &&
+      Number(p1.commissionRate).toFixed(4) === '0.1200' &&
+      p1.commissionRateText === '12%',
+    'D19 详情：档案含等级与费率（首次席 12%）—— 费率是钱，等级只是标签',
+    `code=${det1.body?.code} name=${p1.realName} rate=${p1.commissionRate} → ${p1.commissionRateText}`,
+  );
+  assert(
+    (det1.body?.data?.invitees ?? []).length >= 3,
+    'D19 详情含**裂变链下行**（李明推荐了王芳/张磊/赵静 —— 种子 3 条邀请关系）',
+    `invitees=${det1.body?.data?.invitees?.length}`,
+  );
+  assert(
+    Array.isArray(det1.body?.data?.commissions) &&
+      Array.isArray(det1.body?.data?.operationLogs) &&
+      p1.payoutBound !== undefined,
+    'D19 详情含佣金流水（含反向冲销负行）、操作日志、收款绑定状态',
+    `commissions=${det1.body?.data?.commissions?.length} logs=${det1.body?.data?.operationLogs?.length}`,
+  );
+  const det3 = await call('GET', '/admin/leaders/3', { token: lAdmin });
+  assert(
+    det3.body?.code === 0 &&
+      Number(det3.body?.data?.inviter?.leaderId) === 1 &&
+      det3.body?.data?.inviteChannel === 'link',
+    'D19 详情含**裂变链上行**（张磊由李明以「分享链接」推荐 —— channel 落 qrcode/link/poster/self）',
+    `inviter=${JSON.stringify(det3.body?.data?.inviter)} channel=${det3.body?.data?.inviteChannel}`,
+  );
+  const detMiss = await call('GET', '/admin/leaders/9999999', { token: lAdmin });
+  assert(
+    detMiss.body?.code === 10004,
+    'D19 不存在的团长 → 10004（NOT_FOUND，不是 500）',
+    `code=${detMiss.body?.code}`,
+  );
+
+  // ==================================================== D · D20 任命 / 转交
+  const lxU = await userLogin(`dev:${tag}_x`);
+  const lyU = await userLogin(`dev:${tag}_y`);
+  const lzU = await userLogin(`dev:${tag}_z`);
+  assert(
+    !!lxU.userId && !!lyU.userId && !!lzU.userId && lxU.userId !== lyU.userId,
+    '§17 夹具：3 名新注册用户（`dev:` 前缀 → 稳定 openid，反复跑得到同一账号）',
+    `x=${lxU.userId} y=${lyU.userId} z=${lzU.userId}`,
+  );
+  const phoneX = `139${stamp}`;
+  const phoneY = `138${stamp}`;
+  const phoneZ = `137${stamp}`;
+
+  const apX = await call('POST', '/admin/leaders', {
+    token: lAdmin,
+    body: {
+      userId: lxU.userId,
+      buildingId: emptyA,
+      realName: `${tag} · 甲`,
+      phone: phoneX,
+      floor: '9F',
+      reason: '新任楼长（e2e）',
+    },
+  });
+  const lx = apX.body?.data?.leader ?? {};
+  assert(
+    apX.body?.code === 0 &&
+      Number(lx.userId) === lxU.userId &&
+      lx.status === 1 &&
+      lx.level === 'trainee' &&
+      lx.commissionRateText === '8%',
+    'D20 任命成功：默认**见习 8%** —— 后台不替 C2 双条件做决定，不会一上任就给高费率',
+    `code=${apX.body?.code} level=${lx.level} rate=${lx.commissionRateText}`,
+  );
+  const lxLeaderRow = readDb(
+    'SELECT id, building_id, status, commission_rate FROM ab_team_leader WHERE user_id = ?',
+    [lxU.userId],
+  );
+  const lxUserRow = readDb('SELECT building_id FROM ab_user WHERE id = ?', [lxU.userId]);
+  const lxLeaderId = Number(lxLeaderRow?.id ?? 0);
+  assert(
+    Number(lxLeaderRow?.building_id) === emptyA && Number(lxUserRow?.building_id) === emptyA,
+    'D20 落库**两边同步**：ab_team_leader.building_id 与 ab_user.building_id（后者决定下单归属团长）',
+    `leader=${lxLeaderRow?.building_id} user=${lxUserRow?.building_id} target=${emptyA}`,
+  );
+
+  const apAgain = await call('POST', '/admin/leaders', {
+    token: lAdmin,
+    body: {
+      userId: lxU.userId,
+      buildingId: emptyB,
+      realName: `${tag} · 甲`,
+      phone: phoneX,
+      reason: '重复任命（e2e）',
+    },
+  });
+  assert(
+    apAgain.body?.code === 20007,
+    'D20 已是在职团长再任命 → 20007（不静默改档案：改档案走 D21，两件事不能混）',
+    `code=${apAgain.body?.code}`,
+  );
+
+  const apGhost = await call('POST', '/admin/leaders', {
+    token: lAdmin,
+    body: {
+      userId: 9999999,
+      buildingId: emptyA,
+      realName: '幽灵用户',
+      phone: `136${stamp}`,
+      reason: '不存在的用户（e2e）',
+    },
+  });
+  assert(
+    apGhost.body?.code === 20011,
+    'D20 被任命者不是已注册用户 → 20011（团长是叠加身份：没有 ab_user 就收不到提醒、登不进小程序）',
+    `code=${apGhost.body?.code}`,
+  );
+
+  const apClosed = await call('POST', '/admin/leaders', {
+    token: lAdmin,
+    body: {
+      userId: lyU.userId,
+      buildingId: 3,
+      realName: `${tag} · 乙`,
+      phone: phoneY,
+      reason: '停用楼（e2e）',
+    },
+  });
+  assert(
+    apClosed.body?.code === 10004,
+    'D20 目标办公楼未开通（楼 3 status=2）→ 10004',
+    `code=${apClosed.body?.code}`,
+  );
+
+  const apOccupy = await call('POST', '/admin/leaders', {
+    token: lAdmin,
+    body: {
+      userId: lyU.userId,
+      buildingId: emptyA,
+      realName: `${tag} · 乙`,
+      phone: phoneY,
+      reason: '试图顶替（e2e）',
+    },
+  });
+  assert(
+    apOccupy.body?.code === 20012 &&
+      Number(apOccupy.body?.data?.occupiedBy?.leaderId) === lxLeaderId,
+    'D20 目标楼已有在职团长且未确认 → 20012 并回带 occupiedBy（先让端上弹出「现任是谁」）',
+    `code=${apOccupy.body?.code} occupiedBy=${JSON.stringify(apOccupy.body?.data?.occupiedBy)}`,
+  );
+
+  const apStale = await call('POST', '/admin/leaders', {
+    token: lAdmin,
+    body: {
+      userId: lyU.userId,
+      buildingId: emptyA,
+      realName: `${tag} · 乙`,
+      phone: phoneY,
+      transferFromLeaderId: 999999,
+      reason: '传错现任 id（e2e）',
+    },
+  });
+  assert(
+    apStale.body?.code === 20012,
+    'D20 转交确认传**旧值 / 错值** → 仍 20012（防「看到的是 A、确认时已变成 B」）',
+    `code=${apStale.body?.code}`,
+  );
+
+  const apTransfer = await call('POST', '/admin/leaders', {
+    token: lAdmin,
+    body: {
+      userId: lyU.userId,
+      buildingId: emptyA,
+      realName: `${tag} · 乙`,
+      phone: phoneY,
+      transferFromLeaderId: lxLeaderId,
+      reason: '原团长调岗，转交（e2e）',
+    },
+  });
+  assert(
+    apTransfer.body?.code === 0 &&
+      Number(apTransfer.body?.data?.transferredFrom?.leaderId) === lxLeaderId &&
+      Number(apTransfer.body?.data?.leader?.userId) === lyU.userId,
+    'D20 显式确认后转交成功（回带 transferredFrom，写清「从谁手上接的」）',
+    `code=${apTransfer.body?.code} from=${apTransfer.body?.data?.transferredFrom?.leaderId}`,
+  );
+  const lxAfter = readDb('SELECT status, total_commission FROM ab_team_leader WHERE id = ?', [
+    lxLeaderId,
+  ]);
+  assert(
+    Number(lxAfter?.status) === 2 && lxAfter?.total_commission !== undefined,
+    'D20 转交落库：原团长 status=2（**停职而非删除** —— 历史佣金 / 推荐关系仍在他名下，换人不抹账）',
+    `status=${lxAfter?.status} totalCommission=${lxAfter?.total_commission}`,
+  );
+
+  const apPhone = await call('POST', '/admin/leaders', {
+    token: lAdmin,
+    body: {
+      userId: lzU.userId,
+      buildingId: emptyB,
+      realName: `${tag} · 丙`,
+      phone: phoneX,
+      reason: '撞号（e2e）',
+    },
+  });
+  assert(
+    apPhone.body?.code === 20004,
+    'D20 手机号已被**另一位团长**占用 → 20004（到楼提醒靠它找人，不能一号两人）',
+    `code=${apPhone.body?.code}`,
+  );
+
+  // ======================================================== E · D21 变更
+  /**
+   * ⚠️ D21/D22 的靶子换成**转交后的继任者** `lyLeaderId`，而不是 D20 里被顶掉的那位：
+   *    转交已把原团长置为**停职**（这正是「转交」的语义），而 D21/D22 验的是
+   *    「对**在职**团长的常规变更与例外处理」。拿停职者当靶子，D22 的 suspend
+   *    会直接撞 20013 —— 首轮就是这两条红的。
+   */
+  const lyLeaderRow = readDb('SELECT id FROM ab_team_leader WHERE user_id = ?', [lyU.userId]);
+  const lyLeaderId = Number(lyLeaderRow?.id ?? 0);
+  assert(
+    lyLeaderId > 0 && lyLeaderId !== lxLeaderId,
+    '§17 夹具：继任者**单独建档**（转交不改写原档案，故两者 id 不同）',
+    `lyId=${lyLeaderId} lxId=${lxLeaderId}`,
+  );
+
+  const upLevel = await call('PUT', `/admin/leaders/${lyLeaderId}`, {
+    token: lAdmin,
+    body: { level: 'gold', reason: '金牌考核达标（e2e）' },
+  });
+  assert(
+    upLevel.body?.code === 0 &&
+      upLevel.body?.data?.leader?.level === 'gold' &&
+      upLevel.body?.data?.leader?.commissionRateText === '10%' &&
+      (upLevel.body?.data?.changes ?? []).some((c) => String(c).includes('等级')),
+    'D21 改等级**同步写费率**（8% → 10%）—— 只改标签不改费率，佣金会按旧费率算且界面看不出矛盾',
+    `code=${upLevel.body?.code} rate=${upLevel.body?.data?.leader?.commissionRateText} changes=${JSON.stringify(
+      upLevel.body?.data?.changes,
+    )}`,
+  );
+  const upRateRow = readDb('SELECT level, commission_rate FROM ab_team_leader WHERE id = ?', [
+    lyLeaderId,
+  ]);
+  assert(
+    upRateRow?.level === 'gold' && Number(upRateRow?.commission_rate).toFixed(4) === '0.1000',
+    'D21 费率**落库**校验（不是只改内存对象后原样返回 —— M2 踩过「算出来了没落库」）',
+    `level=${upRateRow?.level} rate=${upRateRow?.commission_rate}`,
+  );
+
+  const upBuilding = await call('PUT', `/admin/leaders/${lyLeaderId}`, {
+    token: lAdmin,
+    body: { buildingId: emptyB, reason: '换楼（e2e）' },
+  });
+  const lxUserAfterMove = readDb('SELECT building_id FROM ab_user WHERE id = ?', [lyU.userId]);
+  assert(
+    upBuilding.body?.code === 0 &&
+      Number(upBuilding.body?.data?.leader?.buildingId) === emptyB &&
+      Number(lxUserAfterMove?.building_id) === emptyB,
+    'D21 换楼同步 ab_user.building_id（用户今后的归属跟着变；回带 before/changes 便于审计）',
+    `code=${upBuilding.body?.code} building=${upBuilding.body?.data?.leader?.buildingId}`,
+  );
+
+  const upOccupied = occupied
+    ? await call('PUT', `/admin/leaders/${lyLeaderId}`, {
+        token: lAdmin,
+        body: { buildingId: Number(occupied.bid), reason: '撞楼（e2e）' },
+      })
+    : { body: { code: 20012, data: { occupiedBy: { leaderId: Number(occupied?.lid) } } } };
+  assert(
+    !!occupied &&
+      upOccupied.body?.code === 20012 &&
+      Number(upOccupied.body?.data?.occupiedBy?.leaderId) === Number(occupied?.lid),
+    'D21 换到已有在职团长的楼 → 20012（与 D20 同一闸门同一错误码，提示改走转交）',
+    `code=${upOccupied.body?.code} target=${occupied?.bid}(${occupied?.name}) occupiedBy=${upOccupied.body?.data?.occupiedBy?.leaderId}`,
+  );
+
+  const upNoop = await call('PUT', `/admin/leaders/${lyLeaderId}`, {
+    token: lAdmin,
+    body: { level: 'gold', reason: '空变更（e2e）' },
+  });
+  assert(
+    upNoop.body?.code === 10001,
+    'D21 空变更 → 10001（不写库也不写日志，否则审计里全是「改了但什么都没改」）',
+    `code=${upNoop.body?.code}`,
+  );
+
+  const upStatusAttempt = await call('PUT', `/admin/leaders/${lyLeaderId}`, {
+    token: lAdmin,
+    body: { status: 2, reason: '试图从 D21 停用（e2e）' },
+  });
+  assert(
+    upStatusAttempt.body?.code === 10001,
+    'D21 **刻意不吃 status**：停用/复职只有 D22 一个入口（forbidNonWhitelisted 直接拒，不给第二个入口）',
+    `code=${upStatusAttempt.body?.code}`,
+  );
+
+  // ==================================================== F · D22 资质补录
+  const auNote = await call('POST', `/admin/leaders/${lyLeaderId}/audit`, {
+    token: lAdmin,
+    body: { action: 'note', reason: '资质材料待补（e2e）' },
+  });
+  assert(
+    auNote.body?.code === 0 &&
+      auNote.body?.data?.actionLabel === '资质备注' &&
+      auNote.body?.data?.before?.status === auNote.body?.data?.after?.status,
+    'D22 note 只留痕不动字段（审计链上留一条「有人看过这份档案」）',
+    `code=${auNote.body?.code} label=${auNote.body?.data?.actionLabel}`,
+  );
+
+  const auSign = await call('POST', `/admin/leaders/${lyLeaderId}/audit`, {
+    token: lAdmin,
+    body: { action: 'sign_agreement', agreementVersion: 'v1.1', reason: '协议升级重签（e2e）' },
+  });
+  const auSignRow = readDb('SELECT agree_version FROM ab_team_leader WHERE id = ?', [lyLeaderId]);
+  assert(
+    auSign.body?.code === 0 &&
+      auSign.body?.data?.after?.agreeVersion === 'v1.1' &&
+      auSignRow?.agree_version === 'v1.1',
+    'D22 协议补签写 agreed_at / agree_version（历史团长未留痕 / 协议升级重签都靠它）',
+    `code=${auSign.body?.code} ver=${auSignRow?.agree_version}`,
+  );
+  const auSignNoVer = await call('POST', `/admin/leaders/${lyLeaderId}/audit`, {
+    token: lAdmin,
+    body: { action: 'sign_agreement', reason: '缺版本号（e2e）' },
+  });
+  assert(
+    auSignNoVer.body?.code === 10001,
+    'D22 协议补签缺版本号 → 10001（参数缺失，与「状态不支持」的 20013 区分开）',
+    `code=${auSignNoVer.body?.code}`,
+  );
+
+  // 「停用要清 user.team_leader_id」——先造出「他归属于某位团长」这一事实（真实场景：团长由上级推荐加入）
+  const inviterL = readDb(
+    'SELECT id FROM ab_team_leader WHERE status = 1 AND deleted_at IS NULL AND id <> ? ORDER BY id LIMIT 1',
+    [lyLeaderId],
+  );
+  writeDb('UPDATE ab_user SET team_leader_id = ? WHERE id = ?', [
+    Number(inviterL?.id ?? 0),
+    lyU.userId,
+  ]);
+  const boundBefore = readDb('SELECT team_leader_id FROM ab_user WHERE id = ?', [lyU.userId]);
+  const auSuspend = await call('POST', `/admin/leaders/${lyLeaderId}/audit`, {
+    token: lAdmin,
+    body: { action: 'suspend', reason: '连续 3 次无故爽约（e2e）' },
+  });
+  const auSuspendRow = readDb('SELECT status FROM ab_team_leader WHERE id = ?', [lyLeaderId]);
+  const auSuspendUser = readDb('SELECT team_leader_id FROM ab_user WHERE id = ?', [lyU.userId]);
+  assert(
+    boundBefore?.team_leader_id !== null &&
+      auSuspend.body?.code === 0 &&
+      auSuspend.body?.data?.after?.status === 2 &&
+      Number(auSuspendRow?.status) === 2,
+    'D22 例外停用 → status=2（停职后无法接单、无法访问团长端）',
+    `code=${auSuspend.body?.code} status=${auSuspendRow?.status}`,
+  );
+  assert(
+    auSuspendUser?.team_leader_id === null,
+    'D22 停用**同时清 ab_user.team_leader_id**（撤销「我归属于某团长」，与 L20 退出同一处理）',
+    `teamLeaderId=${auSuspendUser?.team_leader_id}（停用前=${boundBefore?.team_leader_id}）`,
+  );
+  const auSuspendAgain = await call('POST', `/admin/leaders/${lyLeaderId}/audit`, {
+    token: lAdmin,
+    body: { action: 'suspend', reason: '重复停用（e2e）' },
+  });
+  assert(
+    auSuspendAgain.body?.code === 20013,
+    'D22 对已停职者再停 → 20013（**不是幂等成功**：审计链上要能分清「是谁停的」）',
+    `code=${auSuspendAgain.body?.code}`,
+  );
+
+  const auRestore = await call('POST', `/admin/leaders/${lyLeaderId}/audit`, {
+    token: lAdmin,
+    body: { action: 'restore', reason: '复核后恢复（e2e）' },
+  });
+  const auRestoreRow = readDb(
+    'SELECT status, level, commission_rate FROM ab_team_leader WHERE id = ?',
+    [lyLeaderId],
+  );
+  assert(
+    auRestore.body?.code === 0 &&
+      Number(auRestoreRow?.status) === 1 &&
+      auRestoreRow?.level === 'gold' &&
+      Number(auRestoreRow?.commission_rate).toFixed(4) === '0.1000',
+    'D22 恢复在职且**不重置等级**（纠错 ≠ 重新入行：L17 停职者重新申请才重置为见习）',
+    `code=${auRestore.body?.code} level=${auRestoreRow?.level} rate=${auRestoreRow?.commission_rate}`,
+  );
+  const auRestoreAgain = await call('POST', `/admin/leaders/${lyLeaderId}/audit`, {
+    token: lAdmin,
+    body: { action: 'restore', reason: '重复恢复（e2e）' },
+  });
+  assert(
+    auRestoreAgain.body?.code === 20013,
+    'D22 对已在职者再恢复 → 20013（两个方向都拦，不只是单向）',
+    `code=${auRestoreAgain.body?.code}`,
+  );
+
+  // ======================================================== G · 权限边界
+  const opL = `e2e_ldop_${stamp}`;
+  const vwL = `e2e_ldvw_${stamp}`;
+  await call('POST', '/admin/system/accounts', {
+    token: lAdmin,
+    body: { username: opL, password: PWD, role: 'operator', realName: 'e2e 团长运营' },
+  });
+  await call('POST', '/admin/system/accounts', {
+    token: lAdmin,
+    body: { username: vwL, password: PWD, role: 'viewer', realName: 'e2e 团长观察者' },
+  });
+  const opTokenL = (await adminLogin(opL, PWD)).token;
+  const vwTokenL = (await adminLogin(vwL, PWD)).token;
+
+  const opReadL = await call('GET', '/admin/leaders?pageSize=1', { token: opTokenL });
+  assert(
+    opReadL.body?.code === 0 && opReadL.body?.data?.actions?.canManage === false,
+    'D19 **类级白名单含 operator**：运营能看名录与流水，但 actions.canManage=false（看得见、点不了）',
+    `code=${opReadL.body?.code} actions=${JSON.stringify(opReadL.body?.data?.actions)}`,
+  );
+  const opAppointL = await call('POST', '/admin/leaders', {
+    token: opTokenL,
+    body: {
+      userId: lzU.userId,
+      buildingId: emptyB,
+      realName: `${tag} · 丙`,
+      phone: phoneZ,
+      reason: '运营越权任命（e2e）',
+    },
+  });
+  const opUpdateL = await call('PUT', `/admin/leaders/${lyLeaderId}`, {
+    token: opTokenL,
+    body: { floor: '20F', reason: '运营越权改档（e2e）' },
+  });
+  const opAuditL = await call('POST', `/admin/leaders/${lyLeaderId}/audit`, {
+    token: opTokenL,
+    body: { action: 'note', reason: '运营越权补录（e2e）' },
+  });
+  assert(
+    opAppointL.body?.code === 10003 &&
+      opUpdateL.body?.code === 10003 &&
+      opAuditL.body?.code === 10003,
+    'D20/D21/D22 **方法级收窄到 super_admin/admin**：operator 一律 10003（任命决定「谁拿哪个楼的佣金」）',
+    `D20=${opAppointL.body?.code} D21=${opUpdateL.body?.code} D22=${opAuditL.body?.code}`,
+  );
+  // 越权被拒后不应留下任何副作用
+  const lzStillFree = readDb('SELECT id FROM ab_team_leader WHERE user_id = ?', [lzU.userId]);
+  const floorAfterDeny = readDb('SELECT floor FROM ab_team_leader WHERE id = ?', [lyLeaderId]);
+  assert(
+    lzStillFree === null && floorAfterDeny?.floor !== '20F',
+    '越权请求被守卫**拦在业务层之前**：没建档、没改字段（不是「执行了再回滚」）',
+    `丙的团长档案=${lzStillFree ? '已存在(异常)' : '无'} floor=${floorAfterDeny?.floor}`,
+  );
+
+  const vwReadL = await call('GET', '/admin/leaders', { token: vwTokenL });
+  const finL = await adminLogin('finance', 'finance123');
+  const supL = await adminLogin('sanweiwu', 'supplier123');
+  const finReadL = await call('GET', '/admin/leaders', { token: finL.token });
+  const supReadL = await call('GET', '/admin/leaders', { token: supL.token });
+  assert(
+    vwReadL.body?.code === 10003 &&
+      finReadL.body?.code === 10003 &&
+      supReadL.body?.code === 10003,
+    'D19 viewer / finance / supplier 都不进团长域 → 10003（财务管钱不管人；供应商更不该看见同业名录）',
+    `viewer=${vwReadL.body?.code} finance=${finReadL.body?.code} supplier=${supReadL.body?.code}`,
+  );
+  const userReadL = await call('GET', '/admin/leaders', { token: u.token });
+  assert(
+    userReadL.body?.code === 10003,
+    '双主体隔离：小程序 token 打 /admin/leaders → 10003（与 C 端 /leader/* 名字像、权限天差地别）',
+    `code=${userReadL.body?.code}`,
+  );
+
+  // ======================================================== H · 操作日志
+  const lLogs = await call('GET', '/admin/system/logs?module=leader&page=1&pageSize=50', {
+    token: lAdmin,
+  });
+  const lActions = (lLogs.body?.data?.list ?? []).map((r) => r.action);
+  assert(
+    lActions.some((a) => String(a).includes('任命或转交团长')) &&
+      lActions.some((a) => String(a).includes('变更团长档案')) &&
+      lActions.some((a) => String(a).includes('团长资质补录/例外处理')),
+    'D20/D21/D22 声明式 @OperationLog() 全部生效（业务模块零侵入，连 reason 一起落库）',
+    `actions=${JSON.stringify([...new Set(lActions)])}`,
+  );
+  const apLog = (lLogs.body?.data?.list ?? []).find(
+    (r) => String(r.action).includes('任命或转交团长') && String(r.targetId) === String(lxU.userId),
+  );
+  assert(
+    !!apLog,
+    'D20 日志 targetId = **被任命用户 id**（请求体里没有团长 id，拦截器只能取到它）',
+    `targetId=${apLog?.targetId} 期望=${lxU.userId}`,
+  );
+  const auLog = (lLogs.body?.data?.list ?? []).find(
+    (r) =>
+      String(r.action).includes('团长资质补录/例外处理') &&
+      String(r.targetId) === String(lyLeaderId),
+  );
+  assert(
+    !!auLog && !!auLog.requestData,
+    'D22 日志 targetId = 团长 id 且带 requestData（含 reason —— 事后可复核「为什么停的他」）',
+    `targetId=${auLog?.targetId} requestData=${JSON.stringify(auLog?.requestData)?.slice(0, 60)}`,
+  );
+
+  // ============================================ I · 与名录 / 详情交叉回看
+  const rosterX = await call(
+    'GET',
+    `/admin/leaders?keyword=${encodeURIComponent(tag)}&pageSize=50`,
+    { token: lAdmin },
+  );
+  const xRows = rosterX.body?.data?.list ?? [];
+  assert(
+    xRows.some((r) => Number(r.userId) === lxU.userId) &&
+      xRows.some((r) => Number(r.userId) === lyU.userId),
+    '交叉：新造的两位团长都落在名录里（含已转交停职的那位）—— 停职不等于消失',
+    `n=${xRows.length} names=${JSON.stringify(xRows.map((r) => r.realName))}`,
+  );
+  const detLx = await call('GET', `/admin/leaders/${lyLeaderId}`, { token: lAdmin });
+  assert(
+    (detLx.body?.data?.operationLogs ?? []).some(
+      (o) => String(o.targetId) === String(lyU.userId),
+    ),
+    'D19 详情**双键查日志**：D20 转交那条日志的 targetId 是**继任者用户 id**，只按团长 id 查会漏掉「他是怎么上任的」',
+    `logs=${JSON.stringify((detLx.body?.data?.operationLogs ?? []).map((o) => o.targetId))}`,
+  );
+  assert(
+    Number(detLx.body?.data?.profile?.buildingId) === emptyB &&
+      detLx.body?.data?.profile?.level === 'gold',
+    '交叉：详情反映 D21 变更后的最终状态（换到空楼 B + 金牌）',
+    `building=${detLx.body?.data?.profile?.buildingId} level=${detLx.body?.data?.profile?.level}`,
+  );
+  const lyLeaders = readRows(
+    'SELECT id, status, building_id FROM ab_team_leader WHERE user_id = ?',
+    [lyU.userId],
+  );
+  assert(
+    lyLeaders.length === 1 &&
+      Number(lyLeaders[0].status) === 1 &&
+      Number(lyLeaders[0].id) !== lxLeaderId &&
+      Number(lyLeaders[0].building_id) === emptyB,
+    '交叉：转交是**新建继任者档案**而非改写原档案（原团长保留自己的历史，两人 id 不同）',
+    `ly=${JSON.stringify(lyLeaders)} 原档案 id=${lxLeaderId}`,
+  );
 
   // ==========================================================================
   // 汇总

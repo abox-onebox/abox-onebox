@@ -51,6 +51,30 @@ export enum ErrorCode {
   ADMIN_USERNAME_TAKEN = 20009,
   /** 扩展（M3）：该后台账号受保护，不能停用 / 降级（自己 / 最后一个超级管理员） */
   ADMIN_ACCOUNT_PROTECTED = 20010,
+  /**
+   * 扩展（M3-5）：任命对象不是可用用户（D20）
+   *
+   * 团长是**叠加在用户之上的身份**（L10），任命必须挂到一个已注册的 `ab_user` 上。
+   * 传一个不存在的 userId 若被静默放过，会造出一条**没有微信身份的团长档案** ——
+   * 该团长永远收不到取餐提醒、也没法登录小程序，是纯粹的脏数据。
+   */
+  LEADER_APPOINT_USER_INVALID = 20011,
+  /**
+   * 扩展（M3-5）：目标办公楼已有在职团长，转交需显式确认（D20）
+   *
+   * 附 `data.occupiedBy`（现任姓名与 id）供端上弹确认框。
+   * 不默认顶替的理由：一次误点就把别人经营中的楼换了人，而对方的历史佣金、
+   * 推荐关系、待结算佣金都还挂在他名下 —— 这种操作必须让人**看见对方是谁**再点。
+   */
+  BUILDING_LEADER_OCCUPIED = 20012,
+  /**
+   * 扩展（M3-5）：团长档案当前状态不支持该操作（D22 例外处理）
+   *
+   * 与 40013（退款单状态不允许）同一哲学：**对已处于目标态的档案重复操作是错误，
+   * 不是幂等成功**。若返回成功，运营会以为「刚刚停用了他」，而其实他早就被停用了 ——
+   * 审计链上就分不清是谁停的。
+   */
+  LEADER_STATUS_ILLEGAL = 20013,
 
   /** ---- 3xxxx 套餐与下单 ---- */
   /** 截单窗口外下单（U6 校验第 1 步） */
@@ -157,6 +181,9 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.LEADER_QUIT_BLOCKED]: '暂不能退出：请先结清余额并等待提现到账',
   [ErrorCode.ADMIN_USERNAME_TAKEN]: '登录名已被占用',
   [ErrorCode.ADMIN_ACCOUNT_PROTECTED]: '该账号受保护，不能停用或降级',
+  [ErrorCode.LEADER_APPOINT_USER_INVALID]: '被任命的用户不存在或不可用',
+  [ErrorCode.BUILDING_LEADER_OCCUPIED]: '该办公楼已有在职团长，转交需确认',
+  [ErrorCode.LEADER_STATUS_ILLEGAL]: '团长当前状态不支持该操作',
   [ErrorCode.ORDER_CUTOFF]: '今日 24:00 已截单，明日请早',
   [ErrorCode.QUANTITY_EXCEED]: '份数超出单次上限',
   [ErrorCode.ORDER_STATUS_ILLEGAL]: '当前订单状态不支持该操作',
