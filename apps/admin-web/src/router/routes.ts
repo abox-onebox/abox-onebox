@@ -194,6 +194,11 @@ export const routes: RouteRecordRaw[] = [
         name: 'FinanceReconciliation',
         component: () => import('@/views/finance/reconciliation.vue'),
       },
+      {
+        path: 'finance/invoices',
+        name: 'FinanceInvoices',
+        component: () => import('@/views/finance/invoices.vue'),
+      },
 
       // 数据统计 M36 · P35
       {

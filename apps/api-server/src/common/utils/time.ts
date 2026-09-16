@@ -22,6 +22,25 @@ export const isDateStr = (v: unknown): v is string =>
   typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
 /**
+ * 是否**真实存在**的日历日（`'2026-02-30'` / `'2026-13-01'` → `false`）
+ *
+ * ⚠️ 为什么必须有它：`isDateStr` 只校验**格式**。而 `Date.UTC(2026, 12, 1)`
+ *    会**静默滚动**成 `2027-01-01`、`Date.UTC(2026, 1, 30)` 滚成 `2026-03-02`
+ *    —— 调用方拿到的是「另一个日期」且**没有任何报错**：运营以为在看「13 月」
+ *    的数据，实际是次年 1 月；期末对账选错一整天也不会有任何提示。
+ *
+ * 判据：解析后**回读三个字段必须与输入一致**（滚动会让至少一个字段变化）。
+ * 与 `isDateStr` 分开两个函数：格式校验用于 DTO（成本低、报错信息清晰），
+ * 真实日期校验用于服务层兜底（DTO 的正则挡得住 `13` 月，挡不住 `02-30`）。
+ */
+export function isRealDate(v: unknown): v is string {
+  if (!isDateStr(v)) return false;
+  const [y, m, d] = v.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+}
+
+/**
  * 把 `'12h'` / `'7d'` / `'30m'` / `'45s'` 这类时长字符串换算为秒。
  *
  * 用途：JWT 的 `expiresIn` 支持人类可读写法，但**出参契约要秒数**

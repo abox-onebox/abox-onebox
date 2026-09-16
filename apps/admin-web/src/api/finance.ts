@@ -11,8 +11,7 @@ import type { PageResult } from './system';
  *   · **C6 三段式第二段** —— 退款审批（D40 流水 / D41 通过 / D42 驳回）
  *   · **M3-13** —— D33 资金总览 / D34 佣金结算明细 / D35 佣金入账（补跑）
  *   · **M3-14** —— D38 余额账户管理 / D39 余额调整（资金动作 · 必带幂等键）
- *
- * 尚未落点：D43（微信对账）、D44（发票管理）。
+ *   · **M3-15** —— D43 微信支付对账（差异清单）/ D44 发票管理（进项票台账）
  *
  * ⚠️ 金额一律**整数分**（`Fen` 结尾）；端上只做展示换算，绝不参与口径计算
  *    —— 「可退多少」由服务端重算并下发，端上算错时会退错钱。
@@ -458,3 +457,161 @@ export const adjustFinanceBalance = (payload: AdjustBalancePayload, idempotencyK
   http.post<AdjustBalanceResult>('/admin/finance/balances/adjust', payload, {
     headers: { [HEADER.IDEMPOTENCY_KEY]: idempotencyKey },
   });
+
+/* ========================================================================= *
+ * M3-15 · D43 微信支付对账 / D44 发票管理
+ * ========================================================================= */
+
+// ------------------------------------------------------------------ D43 对账
+
+/** 差异类型（**刻意与「哪一侧缺数据」直白对应**，便于 3 秒内判断该找谁） */
+export type ReconDiffType =
+  | 'order_paid_no_log'
+  | 'log_success_no_order'
+  | 'amount_mismatch'
+  | 'duplicate_transaction'
+  | 'no_transaction_id';
+
+export interface ReconDiffRow {
+  type: ReconDiffType;
+  typeText: string;
+  orderId: number | null;
+  orderNo: string | null;
+  /** 订单侧金额（分）；不适用为 `null` */
+  orderFen: number | null;
+  /** 流水侧金额（分）；不适用为 `null` */
+  logFen: number | null;
+  /** 差额（分，`orderFen − logFen`）；不适用为 `null` */
+  diffFen: number | null;
+  transactionId: string | null;
+  paidAt: string | null;
+  statusText: string;
+  /** ⭐ 服务端下发的**下一步动作**（人话，含「不要做什么」）—— 端上不自造 */
+  nextAction: string;
+}
+
+export interface ReconSummary {
+  orderFen: number;
+  logFen: number;
+  /** `orderFen − logFen`：**正常必须为 0** */
+  diffFen: number;
+  refundFen: number;
+  /** `orderFen − refundFen` 净入账 */
+  netFen: number;
+  orderCount: number;
+  logCount: number;
+  refundCount: number;
+  matchedCount: number;
+  diffCount: number;
+  /** ⭐ 同时要求**金额相等**与**无结构差异** —— 金额一样但凭证重复也是「未平」 */
+  balanced: boolean;
+}
+
+/**
+ * ⭐⭐ 渠道信息（**必须原样展示**）
+ *
+ * 一期 `source='local_only'` + `billAvailable=false`：本页只对了**本地三头**
+ * （订单 ↔ 支付流水 ↔ 退款），**不等于已与微信侧对平**。若把它渲染成
+ * 「已与微信对账通过」，运营就会停止怀疑 —— 而真正的差异（微信收了钱、
+ * 系统不知道）恰恰只能靠账单比对发现。故 `note` 必须可见。
+ */
+export interface ReconChannel {
+  source: 'local_only' | 'bill';
+  billAvailable: boolean;
+  label: string;
+  note: string;
+}
+
+export interface ReconciliationView extends PageResult<ReconDiffRow> {
+  date: string;
+  /** 恒 `'paidAt'` —— 提醒「这里的 date 不是出餐日」 */
+  anchor: 'paidAt';
+  anchorLabel: string;
+  channel: ReconChannel;
+  summary: ReconSummary;
+  diffTypeStats: Array<{ type: ReconDiffType; label: string; count: number }>;
+  note: string;
+}
+
+export interface ReconciliationQuery {
+  /** **支付日**（北京时间 YYYY-MM-DD，锚在 `paid_at`）；缺省今日 */
+  date?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+/** D43 微信支付对账（按**支付日**） */
+export const fetchReconciliation = (params: ReconciliationQuery = {}) =>
+  http.get<ReconciliationView>('/admin/finance/reconciliation', params);
+
+// ------------------------------------------------------------------ D44 发票
+
+/** 开票状态（**派生值**） */
+export type InvoiceStatusValue = 'none' | 'partial' | 'full';
+
+/** 发票台账行（**供应商 × 月份**） */
+export interface InvoiceRow {
+  payeeId: number;
+  supplierName: string;
+  /** 开票抬头（D28 独立成列）；未登记为 `null` */
+  invoiceTitle: string | null;
+  /** 抬头未登记 → 端上引导去 D28 补（没有抬头票开不出来） */
+  titleMissing: boolean;
+  /** 应付单生成月 `YYYY-MM` */
+  month: string;
+  rowCount: number;
+  paidRowCount: number;
+  unpaidRowCount: number;
+  /** 已付款应付额（**开票分母**） */
+  paidAmountFen: number;
+  invoicedFen: number;
+  /** 其中未开票金额（**该催的**） */
+  uninvoicedFen: number;
+  /** 尚未付款的应付额（不进状态判定） */
+  unpaidAmountFen: number;
+  /** 当月纠错冲销额（负数）—— 需另行换票 */
+  reversalFen: number;
+  invoiceNos: string[];
+  status: InvoiceStatusValue;
+  statusText: string;
+  firstPaidAt: string | null;
+  lastPaidAt: string | null;
+  overdueDays: number | null;
+  overdue: boolean;
+}
+
+export interface InvoiceSummary {
+  monthCount: number;
+  supplierCount: number;
+  paidAmountFen: number;
+  invoicedFen: number;
+  uninvoicedFen: number;
+  unpaidAmountFen: number;
+  reversalFen: number;
+  noneCount: number;
+  partialCount: number;
+  fullCount: number;
+  overdueCount: number;
+  overdueDays: number;
+  statusOptions: Array<{ value: string; label: string }>;
+}
+
+export interface InvoiceListView extends PageResult<InvoiceRow> {
+  /** **筛选后全量**（不受分页影响） */
+  summary: InvoiceSummary;
+  note: string;
+}
+
+export interface InvoiceListQuery {
+  /** 按**应付单生成月**筛选（YYYY-MM） */
+  month?: string;
+  supplierId?: number;
+  status?: InvoiceStatusValue;
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+/** D44 发票管理（进项票台账 · 派生视图） */
+export const fetchInvoices = (params: InvoiceListQuery = {}) =>
+  http.get<InvoiceListView>('/admin/finance/invoices', params);

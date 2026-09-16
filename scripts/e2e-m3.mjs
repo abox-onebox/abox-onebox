@@ -8108,6 +8108,470 @@ async function main() {
     }
   }
 
+
+  // §27 M3-15 对账 D43 + 发票 D44（后台 P34 · 模块 M35-06 / M35-07）
+  //
+  // ⚠️ 本节不依赖下单窗口（同 §18–§26 纪律）：订单 / 支付流水 / 退款 / 应付单夹具**全部直插**。
+  //
+  // ⚠️ 本节使用**隔离支付日**（`bjToday() − 200 天`）：该日不可能有其它章节的数据，
+  //    故汇总类断言可以取**绝对值**（不必用 Δ）。代价是必须**彻底还原**（见节末）。
+  //
+  // 本节钉死五条**不变量**：
+  //   ① ⭐ 三角恒等式 `diffFen === orderFen − logFen`，且**五类差异逐类可被检出**
+  //      （只报「不平」而不说「哪一类」，运营无从下手）。
+  //   ② ⭐ `balanced` 同时要求**金额相等**与**无结构差异** —— 重复交易号 / 缺交易号
+  //      可能不影响合计金额，却是重复入账的前兆。
+  //   ③ ⭐ `date` 锚 = **支付日**（`anchor='paidAt'`），不是出餐日（对账对象是微信账单）。
+  //   ④ ⭐⭐ **一期不许假装已与微信对平**：`channel.source='local_only'` +
+  //      `billAvailable=false` + note 明说「不等于已与微信侧对平」。若把它报成
+  //      「已对平」，真正的差异（微信收了钱、系统不知道）将永远不可见。
+  //   ⑤ ⭐ D44 三态（`none`/`partial`/`full`）+ 开票分母**只含已付款行**。
+  {
+    log('\n§27 M3-15 对账 D43 + 发票 D44');
+
+    const D27 = addDaysStr(bjToday(), -200);
+    const PREFIX27 = `E2E27${stamp}`;
+    const FIN27 = '/admin/finance';
+    /**
+     * ⚠️ 直插 datetime 必须是 **UTC 格式** `YYYY-MM-DD HH:mm:ss.SSS`：
+     *    TypeORM 的 `DateUtils.mixedDateToUtcDatetimeString` 按 UTC 落库、
+     *    查询参数也走同一函数。夹具若写北京时间会整体错 8 小时（本地看着「对」，
+     *    换驱动或跨零点时才炸）。`02:00:00.000` UTC = 北京 10:00。
+     */
+    const AT27 = `${D27} 02:00:00.000`;
+    /** 下一个月（`YYYY-MM`），用于 D44 的隔离月份 */
+    const nextMon27 = (ym) => {
+      const [y, m] = ym.split('-').map(Number);
+      return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+    };
+    const MON27A = D27.slice(0, 7);
+    const MON27B = nextMon27(MON27A);
+    const MON27C = nextMon27(MON27B);
+
+    // ---------------------------------------------------------- A. 夹具原料
+    const l27 = readDb('SELECT id, user_id FROM ab_team_leader ORDER BY id LIMIT 1');
+    const b27 = readDb(
+      'SELECT id, building_group_id FROM ab_building WHERE building_group_id IS NOT NULL ORDER BY id LIMIT 1',
+    );
+    const m27 = readDb('SELECT id FROM ab_set_meal ORDER BY id LIMIT 1');
+    const a27 = readDb('SELECT id FROM ab_meal_assignment ORDER BY id LIMIT 1');
+    const s27 = readDb('SELECT id, invoice_title FROM ab_supplier ORDER BY id LIMIT 1');
+    const ready27 = !!l27 && !!b27 && !!m27 && !!a27 && !!s27;
+
+    assert(
+      ready27,
+      '§27 前置：对账 / 发票夹具原料齐备（1 团长 / 1 有楼群的楼 / 1 套餐 / 1 分配行 / 1 供应商）',
+      `leader=${!!l27} building=${!!b27} meal=${!!m27} assign=${!!a27} supplier=${!!s27}`,
+    );
+
+    if (ready27) {
+      const uid27 = Number(l27.user_id);
+      const supId27 = Number(s27.id);
+
+      const INS_O27 =
+        'INSERT INTO ab_order (order_no, user_id, team_leader_id, building_id, building_group_id, set_meal_id, assignment_id, meal_date, quantity, unit_price, total_amount, balance_used, discount_amount, pay_amount, status, version, paid_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, 0, ?, ?, 0, ?, ?, ?)';
+      const INS_P27 =
+        'INSERT INTO ab_payment_log (order_id, order_no, transaction_id, pay_amount, pay_method, status, paid_at, created_at, updated_at) VALUES (?, ?, ?, ?, \'wxpay_jsapi\', ?, ?, ?, ?)';
+      const INS_R27 =
+        'INSERT INTO ab_refund (refund_no, order_id, order_no, user_id, team_leader_id, apply_source, amount, reason_type, reason, status, reversed, version, refunded_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, \'leader\', ?, \'quality\', \'e2e 对账夹具\', \'refunded\', 0, 0, ?, ?, ?)';
+      const INS_S27 =
+        'INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, quantity, unit_price, amount, type, channel, status, invoice_no, paid_at, created_at, updated_at) VALUES (?, ?, ?, \'supplier\', ?, 10, ?, ?, ?, \'manual\', ?, ?, ?, ?, ?)';
+
+      /** 造一张「已付款」订单并返回其 id */
+      const mkOrder27 = (no, payAmount) => {
+        writeDb(INS_O27, [
+          no,
+          uid27,
+          Number(l27.id),
+          Number(b27.id),
+          Number(b27.building_group_id),
+          Number(m27.id),
+          Number(a27.id),
+          D27,
+          '25.80',
+          '25.80',
+          payAmount,
+          'completed',
+          AT27,
+          AT27,
+          AT27,
+        ]);
+        return Number(readDb('SELECT id FROM ab_order WHERE order_no = ?', [no])?.id ?? 0);
+      };
+      /** 造一条成功支付流水 */
+      const mkPay27 = (orderId, no, amount, txn) =>
+        writeDb(INS_P27, [orderId, no, txn, amount, 'success', AT27, AT27, AT27]);
+
+      // ---- 六张订单，覆盖五类差异 + 一条「完全匹配」的对照组 ----
+      // A1 匹配（不该出现在差异清单里）；B1 无流水；C1 少收 ¥5.80；
+      // D1 缺交易号；E1/E2 共享同一交易号（重复）；F 流水无对应订单。
+      const o27A = mkOrder27(`${PREFIX27}A`, '25.80');
+      const o27B = mkOrder27(`${PREFIX27}B`, '25.80');
+      const o27C = mkOrder27(`${PREFIX27}C`, '25.80');
+      const o27D = mkOrder27(`${PREFIX27}D`, '25.80');
+      const o27E1 = mkOrder27(`${PREFIX27}E1`, '25.80');
+      const o27E2 = mkOrder27(`${PREFIX27}E2`, '25.80');
+
+      mkPay27(o27A, `${PREFIX27}A`, '25.80', `${PREFIX27}TXA`);
+      // B 故意不建流水
+      mkPay27(o27C, `${PREFIX27}C`, '20.00', `${PREFIX27}TXC`);
+      mkPay27(o27D, `${PREFIX27}D`, '25.80', null);
+      mkPay27(o27E1, `${PREFIX27}E1`, '25.80', `${PREFIX27}TXDUP`);
+      mkPay27(o27E2, `${PREFIX27}E2`, '25.80', `${PREFIX27}TXDUP`);
+      // F：流水指向一个**不存在**的订单（微信收了钱、系统没有这笔单）
+      mkPay27(999000027, `${PREFIX27}F`, '25.80', `${PREFIX27}TXF`);
+
+      // 一笔当日已退款（只为验证退款侧被纳入 `refundFen` / `netFen`）
+      writeDb(INS_R27, [
+        `${PREFIX27}R1`,
+        o27A,
+        `${PREFIX27}A`,
+        uid27,
+        Number(l27.id),
+        '25.80',
+        AT27,
+        AT27,
+        AT27,
+      ]);
+
+      // ---- D44 应付单夹具：三个隔离月份 × 三态 + 一行未付款 + 一行纠错冲销 ----
+      const mkShare27 = (no, date, type, status, invoiceNo, paidAt = AT27) =>
+        writeDb(INS_S27, [
+          no,
+          date,
+          date,
+          supId27,
+          '7.50',
+          type === 'reversal' ? '-75.00' : '75.00',
+          type,
+          status,
+          invoiceNo,
+          paidAt,
+          `${date} 02:00:00.000`,
+          `${date} 02:00:00.000`,
+        ]);
+
+      // A 月：两行全开票 → full（另加一行 reversal，只作换票提示）
+      mkShare27(`${PREFIX27}SA1`, `${MON27A}-05`, 'normal', 'success', `${PREFIX27}INV-A1`);
+      mkShare27(`${PREFIX27}SA2`, `${MON27A}-06`, 'normal', 'success', `${PREFIX27}INV-A2`);
+      mkShare27(`${PREFIX27}SAR`, `${MON27A}-07`, 'reversal', 'success', null);
+      // B 月：一行开票、一行未开 → partial（**按行展示时完全看不出来的那个状态**）
+      mkShare27(`${PREFIX27}SB1`, `${MON27B}-05`, 'normal', 'success', `${PREFIX27}INV-B1`);
+      mkShare27(`${PREFIX27}SB2`, `${MON27B}-06`, 'normal', 'success', null);
+      // C 月：两行都没票 → none；再加一行**未付款**（不得进开票分母）
+      mkShare27(`${PREFIX27}SC1`, `${MON27C}-05`, 'normal', 'success', null);
+      mkShare27(`${PREFIX27}SC2`, `${MON27C}-06`, 'normal', 'success', null);
+      writeDb(INS_S27, [
+        `${PREFIX27}SC3`,
+        `${MON27C}-07`,
+        `${MON27C}-07`,
+        supId27,
+        '7.50',
+        '75.00',
+        'normal',
+        'pending',
+        null,
+        null,
+        `${MON27C}-07 02:00:00.000`,
+        `${MON27C}-07 02:00:00.000`,
+      ]);
+
+      const fix27 = readDb(
+        "SELECT (SELECT COUNT(*) FROM ab_order WHERE order_no LIKE ?) AS o, (SELECT COUNT(*) FROM ab_payment_log WHERE order_no LIKE ?) AS p, (SELECT COUNT(*) FROM ab_supplier_share WHERE share_no LIKE ?) AS sh",
+        [`${PREFIX27}%`, `${PREFIX27}%`, `${PREFIX27}%`],
+      );
+      assert(
+        Number(fix27?.o ?? 0) === 6 && Number(fix27?.p ?? 0) === 6 && Number(fix27?.sh ?? 0) === 8,
+        '§27 夹具：6 张订单 + 6 条支付流水（含 1 条指向不存在订单）+ 8 行应付单已入库',
+        `order=${fix27?.o} pay=${fix27?.p} share=${fix27?.sh}`,
+      );
+
+      // 权限矩阵账号（固定名 —— 每天重跑只累积 2 个）
+      const ok27Op = 'e2e_s27op';
+      const ok27View = 'e2e_s27view';
+      await call('POST', '/admin/system/accounts', {
+        token: adminToken,
+        body: { username: ok27Op, password: PWD, role: 'operator', realName: 'e2e 对账运营' },
+      });
+      await call('POST', '/admin/system/accounts', {
+        token: adminToken,
+        body: { username: ok27View, password: PWD, role: 'viewer', realName: 'e2e 对账只读' },
+      });
+      const t27Op = (await adminLogin(ok27Op, PWD)).token;
+      const t27View = (await adminLogin(ok27View, PWD)).token;
+      const t27Fin = (await adminLogin('finance', 'finance123')).token;
+
+      // ================================================== B. D43 汇总与恒等式
+      const rec27 = (await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: adminToken }))
+        .body;
+      const r27 = rec27?.data;
+      const sum27 = r27?.summary ?? {};
+      /** 6 单 × ¥25.80 */
+      const ORDER_FEN27 = 6 * 2580;
+      /** A1 + C1(¥20.00) + D1 + E1 + E2 + F */
+      const LOG_FEN27 = 2580 + 2000 + 2580 + 2580 + 2580 + 2580;
+
+      assert(
+        rec27?.code === 0 &&
+          r27?.date === D27 &&
+          r27?.anchor === 'paidAt' &&
+          r27?.anchorLabel === '支付日',
+        '⭐ D43 `date` 锚 = **支付日**（`anchor=\'paidAt\'` + `anchorLabel=\'支付日\'`）—— 对账对象是微信账单、微信按支付日切日。**这是财务域里唯一一个 `date` 不指出餐日的端点**，故必须显式回显，否则运营会拿它对 D33/D34/D36 的出餐日数字（两个时间轴，不是 bug）',
+        `code=${rec27?.code} date=${r27?.date} anchor=${r27?.anchor}`,
+      );
+      assert(
+        Number(sum27.orderFen) === ORDER_FEN27 && Number(sum27.orderCount) === 6,
+        `D43 订单侧 = 6 单 × ¥25.80 = ${ORDER_FEN27} 分`,
+        `orderFen=${sum27.orderFen} count=${sum27.orderCount}`,
+      );
+      assert(
+        Number(sum27.logFen) === LOG_FEN27 && Number(sum27.logCount) === 6,
+        `D43 流水侧 = 6 笔成功流水（含 F 那笔**无订单**的）= ${LOG_FEN27} 分`,
+        `logFen=${sum27.logFen} count=${sum27.logCount}`,
+      );
+      assert(
+        Number(sum27.diffFen) === ORDER_FEN27 - LOG_FEN27 &&
+          Number(sum27.diffFen) === Number(sum27.orderFen) - Number(sum27.logFen),
+        '⭐⭐ D43 三角恒等式：`diffFen === orderFen − logFen`（= ¥5.80：B1 缺流水 +¥25.80、C1 少收 −¥5.80、F 多收 −¥25.80）—— 差额不是「算出来的另一个数」，而是两侧的直接差',
+        `diffFen=${sum27.diffFen} order−log=${Number(sum27.orderFen) - Number(sum27.logFen)}`,
+      );
+      assert(
+        Number(sum27.refundFen) === 2580 &&
+          Number(sum27.refundCount) === 1 &&
+          Number(sum27.netFen) === ORDER_FEN27 - 2580 &&
+          Number(sum27.netFen) === Number(sum27.orderFen) - Number(sum27.refundFen),
+        'D43 退款侧被纳入：`refundFen` = ¥25.80（按 `refunded_at` 切日）、`netFen` = 订单侧 − 退款（**收款与退款分开列**，净额才是真正落袋）',
+        `refundFen=${sum27.refundFen} netFen=${sum27.netFen}`,
+      );
+      assert(
+        Number(sum27.matchedCount) === 4 && Number(sum27.diffCount) === 6,
+        'D43 逐笔匹配 4 单（A1 / D1 / E1 / E2 —— 金额一致即算匹配，**凭证类差异另行单独报**）· 差异 6 条（B1 + C1 + D1 + E1 + E2 + F）',
+        `matched=${sum27.matchedCount} diff=${sum27.diffCount}`,
+      );
+      assert(
+        sum27.balanced === false && Number(sum27.diffFen) !== 0,
+        '⭐ `balanced=false`：金额有差（¥5.80）**且**存在结构差异 —— 两者**同时**要求才判平',
+        `balanced=${sum27.balanced}`,
+      );
+
+      // ================================================== C. ⭐⭐ 渠道诚实标注
+      assert(
+        r27?.channel?.source === 'local_only' &&
+          r27?.channel?.billAvailable === false &&
+          /不等于已与微信侧对平/.test(String(r27?.channel?.note)) &&
+          /微信支付账单下载/.test(String(r27?.channel?.note)),
+        '⭐⭐ D43 **不许假装已与微信对平**：`channel.source=\'local_only\'` + `billAvailable=false` + note **明写**「本页只对了本地三头、**不等于已与微信侧对平**」。一期无商户号 → 拿不到微信账单；若实现成「内部两表对平 → balanced=true」，运营会以为微信侧也平了，而真正的差异（微信收了钱、系统不知道）将**永远不可见**',
+        `source=${r27?.channel?.source} billAvailable=${r27?.channel?.billAvailable}`,
+      );
+
+      // ================================================== D. 五类差异逐类命中
+      const list27 = r27?.list ?? [];
+      const hit27 = (no) => list27.filter((x) => x.orderNo === no);
+      const stat27 = (t) => Number((r27?.diffTypeStats ?? []).find((x) => x.type === t)?.count ?? -1);
+
+      assert(
+        hit27(`${PREFIX27}B`).length === 1 &&
+          hit27(`${PREFIX27}B`)[0]?.type === 'order_paid_no_log' &&
+          hit27(`${PREFIX27}B`)[0]?.orderFen === 2580 &&
+          hit27(`${PREFIX27}B`)[0]?.logFen === null &&
+          stat27('order_paid_no_log') === 1,
+        '⭐ 差异①`order_paid_no_log`（订单说付了、账上没有）：B1 命中，`logFen=null` —— 微信回调丢失时**最该抓**的一类（钱可能真的没到，或者到了系统不知道）',
+        `hits=${hit27(`${PREFIX27}B`).length} type=${hit27(`${PREFIX27}B`)[0]?.type}`,
+      );
+      assert(
+        hit27(`${PREFIX27}C`).length === 1 &&
+          hit27(`${PREFIX27}C`)[0]?.type === 'amount_mismatch' &&
+          hit27(`${PREFIX27}C`)[0]?.diffFen === 580,
+        '⭐ 差异②`amount_mismatch`：C1 应付 ¥25.80 / 实收 ¥20.00，`diffFen=580`（**带符号差额**，方向与 `summary.diffFen` **一致**（订单侧 − 流水侧）：正数 = 少收）',
+        `diff=${hit27(`${PREFIX27}C`)[0]?.diffFen}`,
+      );
+      assert(
+        hit27(`${PREFIX27}D`).length === 1 &&
+          hit27(`${PREFIX27}D`)[0]?.type === 'no_transaction_id' &&
+          hit27(`${PREFIX27}D`)[0]?.logFen === 2580,
+        '⭐ 差异③`no_transaction_id`：D1 本地记成功但**无微信交易号** —— 金额对得上，但缺的是**凭证**（不能作为税前扣除凭证）',
+        `type=${hit27(`${PREFIX27}D`)[0]?.type}`,
+      );
+      assert(
+        hit27(`${PREFIX27}E1`).length === 1 &&
+          hit27(`${PREFIX27}E2`).length === 1 &&
+          hit27(`${PREFIX27}E1`)[0]?.type === 'duplicate_transaction' &&
+          hit27(`${PREFIX27}E2`)[0]?.type === 'duplicate_transaction' &&
+          stat27('duplicate_transaction') === 2,
+        '⭐ 差异④`duplicate_transaction`：E1/E2 共享同一微信交易号，**两条都被列出**（每条一个 `transactionId` 冗余、可直接对账）—— 金额完全一致却仍未平：这正是「只比金额」会漏掉、而「重复入账」一定会留下痕迹的那类',
+        `e1=${hit27(`${PREFIX27}E1`)[0]?.type} e2=${hit27(`${PREFIX27}E2`)[0]?.type}`,
+      );
+      assert(
+        list27.filter((x) => x.type === 'log_success_no_order').length === 1 &&
+          list27.find((x) => x.type === 'log_success_no_order')?.orderFen === null &&
+          stat27('log_success_no_order') === 1,
+        '⭐ 差异⑤`log_success_no_order`：F 那笔成功流水指向**不存在的订单**（微信收了钱、系统没有这笔单）—— `orderFen=null` 表明它只存在于账的一侧',
+        `count=${stat27('log_success_no_order')}`,
+      );
+      assert(
+        hit27(`${PREFIX27}A`).length === 0,
+        '⭐ 对照组：A1（金额一致 + 有交易号 + 交易号唯一）**不出现在差异清单里** —— 「只列差异」是这一页的全部价值（否则就是又一个流水列表）',
+        `hits=${hit27(`${PREFIX27}A`).length}`,
+      );
+      assert(
+        list27.length > 0 && list27.every((x) => typeof x.nextAction === 'string' && x.nextAction.length > 10),
+        '每条差异都带服务端下发的 `nextAction`（**人话的下一步**）—— 「对账不平」四个字无法执行，「去商户平台按订单号查该笔是否真实收款」可以',
+        `list=${list27.length}`,
+      );
+      assert(
+        typeof r27?.note === 'string' &&
+          /不提供「一键平账」/.test(r27.note) &&
+          /支付日/.test(r27.note),
+        'D43 `note` 明写「**刻意不提供一键平账**」（对账的作用是暴露差异，不是把差异抹掉）与「`date` 是支付日」',
+        '',
+      );
+
+      // ================================================== E. D43 权限与入参
+      assert(
+        (await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: t27Fin })).body?.code === 0,
+        'D43 类级白名单含 `finance`（财务做对账是本职）',
+        '',
+      );
+      assert(
+        (await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: t27Op })).body?.code === 0,
+        'D43 类级白名单含 `operator`（运营要能跟进「今天哪几笔对不上」）—— 且它是**纯读**接口，不额外收窄（不改一分钱）',
+        '',
+      );
+      assert(
+        (await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: t27View })).body?.code ===
+          10003,
+        'D43 `viewer` → 10003（`admin-role.ts` 里 viewer 的菜单只有 4 个看板页）',
+        '',
+      );
+      assert(
+        (await call('GET', `${FIN27}/reconciliation`, {})).body?.code === 10002,
+        'D43 未登录 → 10002',
+        '',
+      );
+      const sup27 = await adminLogin('sanweiwu', 'supplier123');
+      assert(
+        (await call('GET', `${FIN27}/reconciliation`, { token: sup27.token })).body?.code === 10003,
+        '双主体隔离：供应商 token 打 `/admin/finance/reconciliation` → 10003',
+        '',
+      );
+      assert(
+        (await call('GET', `${FIN27}/reconciliation?date=2026-13-01`, { token: adminToken })).body
+          ?.code === 10001,
+        'D43 非法日期（`2026-13-01`）→ 10001（**不是**静默当成今天 —— 那样运营会以为自己在看 13 月的数据）',
+        '',
+      );
+
+      // ================================================== F. D44 发票三态
+      const inv27 = async (qs) => (await call('GET', `${FIN27}/invoices?${qs}`, { token: adminToken })).body;
+      const invA = await inv27(`supplierId=${supId27}&month=${MON27A}`);
+      const rowA = invA?.data?.list?.[0];
+      assert(
+        invA?.code === 0 &&
+          rowA?.status === 'full' &&
+          rowA?.statusText === '已开票' &&
+          rowA?.paidAmountFen === 15000 &&
+          rowA?.invoicedFen === 15000 &&
+          rowA?.uninvoicedFen === 0 &&
+          rowA?.invoiceNos?.length === 2 &&
+          rowA?.reversalFen === -7500,
+        '⭐⭐ D44 三态之 `full`：A 月两行应付**全开票** → `已开票`、`uninvoicedFen=0`、`invoiceNos` 两条；⭐ 同时下发的 `reversalFen=-7500` 是当月纠错冲销额（**冲销行不进开票分母**，但必须提示「若已按原金额开票需另行换票」）',
+        `status=${rowA?.status} paid=${rowA?.paidAmountFen} inv=${rowA?.invoicedFen} rev=${rowA?.reversalFen}`,
+      );
+      const invB = await inv27(`supplierId=${supId27}&month=${MON27B}`);
+      const rowB = invB?.data?.list?.[0];
+      assert(
+        rowB?.status === 'partial' &&
+          rowB?.statusText === '部分开票' &&
+          rowB?.invoicedFen === 7500 &&
+          rowB?.uninvoicedFen === 7500,
+        '⭐⭐ D44 三态之 `partial`（**本页存在的理由**）：B 月两行只开了一张票 → `部分开票`。⚠️ 若按**单条应付行**展示，运营看到的是「同一发票号重复出现」，**完全看不出**「这家这个月只开了一半」',
+        `status=${rowB?.status} inv=${rowB?.invoicedFen} unin=${rowB?.uninvoicedFen}`,
+      );
+      const invC = await inv27(`supplierId=${supId27}&month=${MON27C}`);
+      const rowC = invC?.data?.list?.[0];
+      assert(
+        rowC?.status === 'none' &&
+          rowC?.statusText === '未开票' &&
+          rowC?.paidAmountFen === 15000 &&
+          rowC?.uninvoicedFen === 15000 &&
+          rowC?.paidRowCount === 2 &&
+          rowC?.unpaidRowCount === 1 &&
+          rowC?.unpaidAmountFen === 7500,
+        '⭐⭐ D44 三态之 `none` + **分母只含已付款**：C 月两行已付全未开票 → `未开票`；第三行是 **pending（未付款）**，只进 `unpaidAmountFen` / `unpaidRowCount`，**不进开票分母** —— 未付款就要票供应商不会给，且让它进分母会把「刚出单的日子」渲染成满屏未开票，把真正该催的欠票淹没',
+        `status=${rowC?.status} paid=${rowC?.paidAmountFen} unpaid=${rowC?.unpaidAmountFen}`,
+      );
+      assert(
+        rowC?.paidAmountFen === rowC?.invoicedFen + rowC?.uninvoicedFen &&
+          invC?.data?.summary?.paidAmountFen ===
+            Number(invC?.data?.summary?.invoicedFen) + Number(invC?.data?.summary?.uninvoicedFen),
+        'D44 恒等式：`paidAmountFen === invoicedFen + uninvoicedFen`（行内 + 汇总两侧都自洽）',
+        `行=${rowC?.paidAmountFen}/${rowC?.invoicedFen}/${rowC?.uninvoicedFen}`,
+      );
+      assert(
+        rowA?.titleMissing === (rowA?.invoiceTitle === null) &&
+          typeof rowA?.overdue === 'boolean' &&
+          Number(invA?.data?.summary?.overdueDays) > 0,
+        'D44 下发 `titleMissing`（未登记开票抬头 → 引导去 D28 补，**没有抬头票开不出来**）、`overdue` 与 `overdueDays`（已付超 N 天仍无票 = 税务风险）',
+        `title=${rowA?.invoiceTitle} missing=${rowA?.titleMissing} overdueDays=${invA?.data?.summary?.overdueDays}`,
+      );
+      const invP1 = await inv27(`supplierId=${supId27}&month=${MON27C}&pageSize=1`);
+      assert(
+        Number(invP1?.data?.summary?.uninvoicedFen) === Number(invC?.data?.summary?.uninvoicedFen) &&
+          Number(invP1?.data?.summary?.paidAmountFen) === Number(invC?.data?.summary?.paidAmountFen),
+        'D44 `summary` 取**筛选后全量**、不受 `pageSize` 影响（与 D8/D34/D36/D40 同一约定）—— 否则运营翻到第 2 页会发现合计变小',
+        `p1=${invP1?.data?.summary?.uninvoicedFen} 全量=${invC?.data?.summary?.uninvoicedFen}`,
+      );
+      assert(
+        (await inv27(`supplierId=${supId27}&month=${MON27C}&status=partial`)).data?.list?.length === 0 &&
+          (await inv27(`supplierId=${supId27}&month=${MON27B}&status=partial`)).data?.list?.length === 1,
+        'D44 `status` 是**派生值**（库里只有 pending/success），故**必须先聚合后筛**：C 月筛 `partial` → 0 行、B 月筛 `partial` → 1 行',
+        '',
+      );
+      assert(
+        (await call('GET', `${FIN27}/invoices?status=nope`, { token: adminToken })).body?.code ===
+          10001 &&
+          (await call('GET', `${FIN27}/invoices?month=2026-13`, { token: adminToken })).body?.code ===
+            10001,
+        'D44 非法枚举 / 非法月份 → 10001（**不静默回落成「全部」** —— 回落会让运营以为自己看的是「未开票」，实际是全部，从而漏催一批票）',
+        '',
+      );
+      assert(
+        (await call('GET', `${FIN27}/invoices`, { token: t27Fin })).body?.code === 0 &&
+          (await call('GET', `${FIN27}/invoices`, { token: t27Op })).body?.code === 0 &&
+          (await call('GET', `${FIN27}/invoices`, { token: t27View })).body?.code === 10003 &&
+          (await call('GET', `${FIN27}/invoices`, {})).body?.code === 10002 &&
+          (await call('GET', `${FIN27}/invoices`, { token: sup27.token })).body?.code === 10003,
+        'D44 权限矩阵与 D43 一致（finance / operator 可读 · viewer 10003 · 未登录 10002 · 供应商 10003）—— 催票是 `finance` 角色的日常工作，故 `/finance/invoices` 同时进了 `ADMIN_MENU_KEYS` 与 finance 角色菜单',
+        '',
+      );
+
+      // ================================================== G. 夹具还原
+      //
+      // ⚠️ D27 是**隔离日**，但夹具必须清干净：`ab_supplier_share` 的隔离月份行若不删，
+      //    下次重跑时「同一供应商 × 同一月」的组会与本轮数据混在一起，`full`/`partial`
+      //    /`none` 三种状态全部串味（比如此轮的 `partial` 行会让下轮的 `full` 变成 `partial`）。
+      writeDb('DELETE FROM ab_payment_log WHERE order_no LIKE ? OR order_id = ?', [
+        `${PREFIX27}%`,
+        999000027,
+      ]);
+      writeDb('DELETE FROM ab_refund WHERE refund_no LIKE ?', [`${PREFIX27}%`]);
+      writeDb('DELETE FROM ab_order WHERE order_no LIKE ?', [`${PREFIX27}%`]);
+      writeDb('DELETE FROM ab_supplier_share WHERE share_no LIKE ?', [`${PREFIX27}%`]);
+      const left27 = readDb(
+        'SELECT (SELECT COUNT(*) FROM ab_order WHERE order_no LIKE ?) AS o, (SELECT COUNT(*) FROM ab_payment_log WHERE order_no LIKE ? OR order_id = ?) AS p, (SELECT COUNT(*) FROM ab_refund WHERE refund_no LIKE ?) AS r, (SELECT COUNT(*) FROM ab_supplier_share WHERE share_no LIKE ?) AS s',
+        [`${PREFIX27}%`, `${PREFIX27}%`, 999000027, `${PREFIX27}%`, `${PREFIX27}%`],
+      );
+      assert(
+        Number(left27?.o ?? -1) === 0 &&
+          Number(left27?.p ?? -1) === 0 &&
+          Number(left27?.r ?? -1) === 0 &&
+          Number(left27?.s ?? -1) === 0,
+        '§27 夹具还原：订单 / 支付流水 / 退款 / 应付单全部清除 —— 应付单不删，下一次重跑三种开票状态会互相串味（本轮 `partial` 会把下轮 `full` 拉成 `partial`）',
+        `o=${left27?.o} p=${left27?.p} r=${left27?.r} s=${left27?.s}`,
+      );
+    }
+  }
+
   // ==========================================================================
   // 汇总
   // ==========================================================================

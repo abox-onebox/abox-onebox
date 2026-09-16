@@ -93,6 +93,8 @@ export const ADMIN_NAV = [
       { path: '/finance/supplier-share', title: '应付结算', page: 'P34 / P25', module: 'M35-03' },
       { path: '/finance/refund', title: '退款审批', page: 'P34', module: 'M35-05' },
       { path: '/finance/reconciliation', title: '微信对账', page: 'P34', module: 'M35-06' },
+      // M3-15：发票管理（进项票台账）—— 与 `admin-role.ts` 的 `ADMIN_MENU_KEYS` 同源
+      { path: '/finance/invoices', title: '发票管理', page: 'P34', module: 'M35-07' },
       { path: '/stats/core-metrics', title: '数据看板', page: 'P35', module: 'M36' },
     ],
   },

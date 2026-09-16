@@ -410,3 +410,145 @@ export class AdminAdjustBalanceDto {
   @MaxLength(128, { message: 'reason 最长 128 字' })
   reason!: string;
 }
+
+/* ========================================================================= *
+ * M3-15 后台财务（D43 微信对账 · D44 发票管理）
+ * ========================================================================= */
+
+/**
+ * D43 · 对账**差异类型**取值
+ *
+ * ⭐ 每一类都对应一个**可执行的下一步**（出参 `nextAction` 下发中文提示）：
+ *    「对账不平」这四个字对运营毫无用处 —— 他需要知道是去催微信回执、
+ *    去补订单状态、还是这条数据本身坏了要查库。
+ *
+ * ⚠️ 类型名**刻意与「哪一侧缺数据」直白对应**（`order_paid_no_log` = 订单说付了、
+ *    流水里没有），不写成 `missing` / `mismatch` 这类需要再去查文档的抽象词 ——
+ *    对账清单是运营在 3 秒内要判断「该找谁」的界面。
+ */
+export const RECON_DIFF_TYPES = [
+  'order_paid_no_log',
+  'log_success_no_order',
+  'no_transaction_id',
+  'amount_mismatch',
+  'duplicate_transaction',
+] as const;
+export type ReconDiffType = (typeof RECON_DIFF_TYPES)[number];
+
+/**
+ * D43 · 微信支付对账查询
+ *
+ * ⚠️⭐ **`date` 的口径是「支付日」（`paid_at` 的北京日），不是出餐日**：
+ *    对账对象是**微信账单**，而微信账单**按支付日切日**（钱什么时候进微信账户）。
+ *    这是本项目财务域里**唯一**一个 `date` 不指出餐日的端点，故出参显式回显
+ *    `anchor='paidAt'` + `anchorLabel='支付日'` —— 否则运营会拿它去对
+ *    D33 / D34 / D36 的出餐日数字，然后得出「对账对不上」的结论，
+ *    而实际只是两个时间轴（同 M3-13「同一句话在两页指两个区间」的同类陷阱）。
+ *
+ * ⚠️ 本接口**不收 `includeMatched` 之类的布尔开关**：query 里的布尔串经
+ *    `@Type(() => Boolean)` 会把 `'false'` 转成 `true`（非空字符串一律为真），
+ *    是「传了 false 却筛出全部」的经典陷阱（同 D38 `accountType` 的教训）。
+ *    对账页的价值本来就是「只列差异」，已匹配的行看 `summary.matchedCount` 即可。
+ */
+export class AdminReconciliationQueryDto {
+  @ApiPropertyOptional({
+    description: '**支付日**（北京时间 YYYY-MM-DD，锚在 `paid_at`；缺省今日）',
+    example: '2026-09-15',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, {
+    message: 'date 需为 YYYY-MM-DD（月 01–12 / 日 01–31）',
+  })
+  date?: string;
+
+  @ApiPropertyOptional({ description: '页码，默认 1（差异清单分页）' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({ description: '每页条数，默认 20，上限 100' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number;
+}
+
+/**
+ * D44 · 开票状态（**派生值，不落库**）
+ *
+ * ⭐ `partial`（部分开票）是这张表存在的**核心理由**：发票实务上按
+ *    「供应商 × 月份」开一张，若按单条应付行展示，运营看到的是
+ *    「一张发票号重复出现在 30 行里」，**完全看不出**「这家这个月只开了一半」。
+ *    按月聚合 + 三态，才让这个真相暴露出来。
+ */
+export const INVOICE_STATUS_KEYS = ['none', 'partial', 'full'] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUS_KEYS)[number];
+
+/** D44 开票状态中文文案（服务端唯一来源，端上不自造） */
+export const INVOICE_STATUS_LABEL: Record<InvoiceStatus, string> = {
+  none: '未开票',
+  partial: '部分开票',
+  full: '已开票',
+};
+
+const INVOICE_STATUS_HINT = 'none(未开票) / partial(部分开票) / full(已开票)';
+
+/**
+ * D44 · 发票管理查询（**进项票**：供应商开给 ABox 的增值税发票）
+ *
+ * ⚠️ `month` 是**开票周期锚点**（`YYYY-MM`），筛的是**付款日所在月**：
+ *    发票按月开，财务核对「这个月这家到底开没开票」是月度动作。
+ *    `page` 是接口规范原写入参；`month` / `supplierId` / `status` / `keyword`
+ *    为 M3-15 登记的**扩展入参**（不给筛选就只能翻页找某一家）。
+ *
+ * ⚠️ 非法枚举 → `10001`（**不静默回落成「全部」** —— 回落会让运营以为
+ *    自己看的是「未开票」，实际是全部，从而漏催一批票）。
+ */
+export class AdminInvoicesQueryDto {
+  @ApiPropertyOptional({
+    description: '按付款日所在月筛选（YYYY-MM）',
+    example: '2026-09',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'month 需为 YYYY-MM' })
+  month?: string;
+
+  @ApiPropertyOptional({ description: '按供应商过滤（`ab_supplier.id`）', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  supplierId?: number;
+
+  @ApiPropertyOptional({ description: `按开票状态过滤：${INVOICE_STATUS_HINT}` })
+  @IsOptional()
+  @IsIn(INVOICE_STATUS_KEYS as unknown as string[], {
+    message: `status 需为：${INVOICE_STATUS_HINT}`,
+  })
+  status?: string;
+
+  @ApiPropertyOptional({ description: '关键词：供应商名称（模糊匹配）', example: '鲜' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  keyword?: string;
+
+  @ApiPropertyOptional({ description: '页码，默认 1' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({ description: '每页条数，默认 20，上限 100' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number;
+}

@@ -53,6 +53,8 @@ export const ADMIN_MENU_KEYS = [
   '/finance/supplier-share',
   '/finance/refund',
   '/finance/reconciliation',
+  // M3-15：D44 发票管理（进项票台账 · 纯读派生视图）
+  '/finance/invoices',
   '/stats/core-metrics',
   '/stats/building-rank',
   '/stats/dish-heat',
@@ -100,6 +102,8 @@ export const ROLE_MENUS: Record<string, readonly string[]> = {
     '/finance/supplier-share',
     '/finance/refund',
     '/finance/reconciliation',
+    // M3-15：财务要催票 —— 发票管理是 finance 角色的核心日常工作（D44）
+    '/finance/invoices',
     '/order/list',
     '/order/detail',
     '/stats/core-metrics',

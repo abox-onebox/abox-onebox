@@ -9,7 +9,7 @@ import {
   SupplierShare,
 } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
-import { Order, Refund } from '../../database/entities/order.entity';
+import { Order, PaymentLog, Refund } from '../../database/entities/order.entity';
 import { Dish, Supplier, SupplierDishDaily } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
@@ -19,7 +19,9 @@ import { BalanceAdminService } from './balance-admin.service';
 import { CommissionService } from './commission.service';
 import { FinanceAdminController } from './finance-admin.controller';
 import { FinanceService } from './finance.service';
+import { InvoiceService } from './invoice.service';
 import { LeaderFinanceController } from './leader-finance.controller';
+import { ReconciliationService } from './reconciliation.service';
 import { RefundAdminController } from './refund-admin.controller';
 import { RefundAdminService } from './refund-admin.service';
 import { RefundService } from './refund.service';
@@ -50,8 +52,14 @@ import { WithdrawService } from './withdraw.service';
  *    ⭐ 负债合计直接调 `FinanceService.loadLiability()`（**与 D33 同函数**，不另算一套）。
  *    D39 是资金动作 → 方法级白名单收窄 + 必带幂等键 + 乐观锁。
  *
- * 后台侧仍待写：D43（微信对账）、D44（发票管理）。
- *   提现审批 D45/D46 一期由 `WithdrawService` + 团长侧路由承载，后台审批页在 M4 补。
+ *  · **M3-15 `ReconciliationService` —— D43 微信对账** / **`InvoiceService` —— D44 发票管理**
+ *    （同挂 `FinanceAdminController`）。两者都是**纯读**视图、**零 DDL**：
+ *    D43 = 订单 ↔ 支付流水 ↔ 退款三头核对（差异清单，`date` 是**支付日**）；
+ *    D44 = 从 `ab_supplier_share` 派生的「供应商 × 月份」开票台账（三态）。
+ *    ⚠️ D43 一期**拿不到微信账单**（无商户号），出参强制标注 `channel.source='local_only'`
+ *    —— 绝不报「已与微信对平」（那会让真正的差异永远不可见）。
+ *
+ * 后台侧仍待写：无（D45/D46 提现审批一期由 `WithdrawService` + 团长侧路由承载，后台审批页在 M4 补）。
  *
  * ⚠️ 依赖方向：`OrderModule → FinanceModule`（取 Refund/Reversal），单向无循环。
  *    `OrderModule` 自身也持有 `Refund` 实体（历史原因：`RefundService` 曾住在
@@ -75,6 +83,8 @@ import { WithdrawService } from './withdraw.service';
       TeamLeader,
       Order,
       Refund,
+      // M3-15：D43 对账要读**支付流水**（本地微信支付落痕）—— 与订单/退款三头核对
+      PaymentLog,
       User,
       // M3-9 应付结算（S9）读取口径所需
       Supplier,
@@ -98,6 +108,9 @@ import { WithdrawService } from './withdraw.service';
     CommissionService,
     FinanceService,
     BalanceAdminService,
+    // M3-15：D43 微信对账 / D44 发票管理（均为纯读视图，零 DDL）
+    ReconciliationService,
+    InvoiceService,
     WithdrawService,
     RefundService,
     ReversalService,
