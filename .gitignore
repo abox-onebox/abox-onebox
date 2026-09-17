@@ -6,6 +6,10 @@ node_modules/
 dist/
 build/
 unpackage/
+# 小程序「用户端 H5 版」的产物（本地内部测试用，见 scripts/local-test.mjs）。
+# ⚠️ 刻意**不放在 `dist/` 里**：`dist/` 归 `gate.mjs build:mp` 所有（构建前整个改名挪走），
+#    放进去的话**每次跑门禁都会把 H5 产物清掉**，手机测试环境随即失效。
+dist-h5/
 *.tsbuildinfo
 
 # unplugin 自动生成的类型声明（构建期产物；当前未被 tsconfig include 消费）
