@@ -92,6 +92,13 @@ export class TeamLeader {
   })
   totalAmount!: string;
 
+  /**
+   * 累计佣金（**事实累计**，非余额）
+   *
+   * ⚠️ 与下面三列（`withdrawn_amount` / `pending_amount` / `balance`）**性质不同**：
+   *    本列由 `CommissionService.creditCommissions()` 在**入账**时累加，是活的；
+   *    那三列**从种子之后全仓没有任何写点**（M4-4 修复 · 《缺陷与陷阱》#69）。
+   */
   @Column({
     name: 'total_commission',
     type: 'decimal',
@@ -102,6 +109,22 @@ export class TeamLeader {
   })
   totalCommission!: string;
 
+  /**
+   * ⚠️ **历史字段（M4-4 起停用）· 列保留 · 新逻辑不读不写**
+   *
+   * 语义本应是「累计已提现」，但**全仓从未有过写点** —— 一次都没有。
+   * 页面按它展示的「已提现」永远是种子值（示例数据里是 ¥575.86）或 0。
+   *
+   * 真源改为派生：`SUM(ab_withdraw.actual_amount WHERE status='success')`
+   * （**到账口径** —— 平台代扣的个税没到团长手里，不能算进「已提现」），
+   * 读取口统一走 `LeaderMoneyService.snapshotOf()`。
+   *
+   * ⚠️ 为什么**不留着它当快照继续写**：让每个资金写点都顺手更新一遍就是
+   *    **第二份真相** —— 漏掉任一个写点（佣金入账 / 下单抵扣 / 退款回退 /
+   *    D39 调账 / 提现冻结…）都会让它与真源悄悄分叉，而分叉的表现是
+   *    「某个页面显示旧数字」，不报错、无告警。与 M4-0 的
+   *    `ab_distribution_center.supplier_id` / `ab_supplier.type` 同一处理。
+   */
   @Column({
     name: 'withdrawn_amount',
     type: 'decimal',
@@ -112,6 +135,14 @@ export class TeamLeader {
   })
   withdrawnAmount!: string;
 
+  /**
+   * ⚠️ **历史字段（M4-4 起停用）· 列保留 · 新逻辑不读不写**
+   *
+   * 语义本应是「待入账佣金」，同样**从未被写过** → 页面恒 0。
+   * 真源改为派生：`SUM(ab_commission.amount WHERE status='pending' AND type='normal')`
+   * （⭐ 必须排除 `type='reversal'` —— 那是退款冲销的**负额**行，
+   * 一起累加会把「待入账」算小甚至算成负数）。
+   */
   @Column({
     name: 'pending_amount',
     type: 'decimal',
@@ -122,13 +153,31 @@ export class TeamLeader {
   })
   pendingAmount!: string;
 
+  /**
+   * ⚠️⚠️ **历史字段（M4-4 起停用）· 列保留 · 新逻辑不读不写**
+   *
+   * 列注释原写「可用余额」，但它**只在种子数据里被赋过值，全仓没有任何写点**
+   * —— 于是登录 / 团长资料 / 退出三处出参展示的「余额」是**种子里写死的数字**
+   * （示例数据里李明是 ¥575.86），而「余额明细」页走 L11（`ab_balance`）显示真值：
+   * **同一个人在同一时刻看到两个不同的余额**，两边都不报错；
+   * 他去提现时被 `50004 可提现余额不足` 挡下，而页面上明明写着有几百块。
+   *
+   * ⭐ **余额的唯一真源是 `ab_balance.balance`**（用户维度；用户与团长共用同一身份，
+   *    佣金入账与下单抵扣是同一条余额链路）。所有读点统一走
+   *    `LeaderMoneyService.accountOf() / snapshotOf()`（`common/services/leader-money.service.ts`）。
+   *
+   * 本列**不做迁移删除**（与 M4-0 的 `ab_distribution_center.supplier_id`、
+   * `ab_supplier.type` 同一处理）：删列会让生产库的迁移与回滚风险陡增，
+   * 而「列留着但没人读」不会产生任何错误的口径。
+   * ⚠️ **不要再往这里写值** —— 那会让第二份真相复活。
+   */
   @Column({
     type: 'decimal',
     transformer: moneyTransformer,
     precision: 12,
     scale: 2,
     default: 0,
-    comment: '可用余额',
+    comment: '[历史字段·已停用] 原「可用余额」；真源见 ab_balance（M4-4 #69）',
   })
   balance!: string;
 

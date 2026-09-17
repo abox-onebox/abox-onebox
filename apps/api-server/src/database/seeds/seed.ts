@@ -648,7 +648,6 @@ async function main(): Promise<void> {
       totalOrders: 186,
       invitedFormalCount: 5,
       totalCommission: '575.86',
-      balance: '575.86',
       agreedAt: new Date('2026-06-01T10:00:00Z'),
     },
     {
@@ -665,7 +664,6 @@ async function main(): Promise<void> {
       totalOrders: 78,
       invitedFormalCount: 3,
       totalCommission: '201.24',
-      balance: '201.24',
       agreedAt: new Date('2026-06-15T10:00:00Z'),
     },
     {
@@ -682,7 +680,6 @@ async function main(): Promise<void> {
       totalOrders: 42,
       invitedFormalCount: 1,
       totalCommission: '97.52',
-      balance: '97.52',
       agreedAt: new Date('2026-07-01T10:00:00Z'),
     },
     {
@@ -699,7 +696,6 @@ async function main(): Promise<void> {
       totalOrders: 30,
       invitedFormalCount: 0,
       totalCommission: '69.66',
-      balance: '69.66',
       agreedAt: new Date('2026-07-10T10:00:00Z'),
     },
     {
@@ -716,7 +712,6 @@ async function main(): Promise<void> {
       totalOrders: 8,
       invitedFormalCount: 0,
       totalCommission: '16.51',
-      balance: '16.51',
       agreedAt: new Date('2026-09-01T10:00:00Z'),
     },
   ]);

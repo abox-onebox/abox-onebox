@@ -10,8 +10,17 @@ export interface LeaderInfo {
   level: LeaderLevel;
   /** 佣金费率，DECIMAL(5,4) 的字符串形式，如 "0.1200"（首席 12%） */
   commissionRate: string;
-  /** 佣金余额（元，两位小数字符串，如 "575.86"） */
+  /**
+   * ⚠️ **已废弃 · 元 · 字符串** —— M4-4 起服务端已把它改为取 `ab_balance` 真值
+   *    （此前长期是 `ab_team_leader.balance` 这一「从未被写过」的列，
+   *    展示的是种子里写死的数字 → 与 L11 余额页显示两个不同的余额）。
+   *    新代码请用 `balanceFen`（**整数分**）。
+   */
   balance: string;
+  /** ⭐ 可用余额（**整数分**）· 真源 = `ab_balance` */
+  balanceFen: number;
+  /** 冻结额（**整数分**）· 提现占用 + 后台手工冻结 */
+  frozenFen: number;
 }
 
 /**

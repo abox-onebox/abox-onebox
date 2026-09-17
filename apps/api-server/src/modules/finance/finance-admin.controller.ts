@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Post, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { HEADER } from '@abox/shared-types';
@@ -16,34 +25,47 @@ import {
 import { CommissionService } from './commission.service';
 import {
   AdminAdjustBalanceDto,
+  AdminApproveWithdrawDto,
   AdminBalancesQueryDto,
   AdminCommissionsQueryDto,
+  AdminFailWithdrawDto,
   AdminInvoicesQueryDto,
+  AdminPaidWithdrawDto,
   AdminReconciliationQueryDto,
+  AdminRejectWithdrawDto,
   AdminSettleCommissionsDto,
+  AdminWithdrawalsQueryDto,
   FinanceOverviewQueryDto,
+  WithdrawIdParamDto,
 } from './dto/finance.dto';
+import { FUND_ACTION_ROLES } from './finance.constants';
 import { FinanceService } from './finance.service';
 import { InvoiceService } from './invoice.service';
 import { ReconciliationService } from './reconciliation.service';
+import { WithdrawAdminService } from './withdraw-admin.service';
 
 /**
  * 后台 · 财务结算（《接口规范 v1.0》§6.5 · 原型 P34 · 模块 M35）
  *
  * 本控制器承载 **D33 资金总览 / D34 佣金结算明细 / D35 佣金入账 / D38 余额账户 /
- * D39 余额调整 / D43 微信对账 / D44 发票管理**；
+ * D39 余额调整 / D43 微信对账 / D44 发票管理 / D45 提现审批列表 /
+ * D46 批准 · D46a 驳回 · D46b 到账回执 · D46c 打款失败**；
  * 同域其余端点在相邻控制器：
  *   · D36/D37 应付结算 → `supplier-share-admin.controller.ts`（`admin/supplier-shares`）
  *   · D40–D42 退款审批 → `refund-admin.controller.ts`（`admin/finance/refunds`）
  *
  * ⚠️ **两级白名单**（与 D40/D41 同一处理）：
- *   类级（`FINANCE_VIEW_ROLES`）含 `operator` —— 运营要能看资金总览、佣金明细、
- *   余额账户与对账差异（跟进「为什么佣金没结」「这个用户余额为什么是负的」
- *   「今天哪几笔对不上」）；
- *   **方法级（`BALANCE_ADJUST_ROLES`）收窄到 `super_admin`/`admin`/`finance`** 的有两处：
- *   D35（把佣金记进团长余额）与 **D39（直接改用户余额）** —— 都是资金动作，运营不该拍板
+ *   类级（`FINANCE_READ_ROLES`）含 `operator` —— 运营要能看资金总览、佣金明细、
+ *   余额账户、对账差异与**提现队列**（跟进「为什么佣金没结」「这个用户余额为什么是负的」
+ *   「今天哪几笔对不上」「这笔提现怎么还没到账」）；
+ *   **方法级（`FUND_ACTION_ROLES`）收窄到 `super_admin`/`admin`/`finance`** 的有五处：
+ *   D35（把佣金记进团长余额）· **D39（直接改用户余额）** · **D46 系列四个动作
+ *   （批准 / 驳回 / 到账 / 打款失败）** —— 都是资金动作，运营不该拍板
  *   （同 D41「决定钱退不退」）。
- *   ⭐ D43/D44 **均为纯读**（GET），故不额外收窄 —— 它们不改一分钱。
+ *   ⭐ 这两个集合在 `finance.constants.ts` **各只有一份定义** —— 此前 D35 / D39 / D41/D42
+ *   四处各写着字面量，那种副本的后果不是编译失败而是**静默漂移**
+ *   （「按钮亮着、点了 `10003`」或更糟的「按钮灰着、其实有权限」）。
+ *   ⭐ D43/D44/D45 **均为纯读**（GET），故不额外收窄 —— 它们不改一分钱。
  *
  * ⚠️ 白名单与菜单同源：`admin-role.ts` 里 `/finance/*` 只出现在 `admin` / `operator` /
  *   `finance` 的菜单中，`viewer` 没有财务页 —— 故此处**不含 `viewer`**
@@ -51,8 +73,10 @@ import { ReconciliationService } from './reconciliation.service';
  *   漏了就整个角色不可用）。
  *
  * ⚠️ **路由顺序**：本控制器全是静态段（`overview` / `commissions(+/settle)` /
- *   `balances(+/adjust)` / `reconciliation` / `invoices`），不存在 `:id` 吃路径的问题。
- *   若将来加详情页（如 `balances/:userId`），静态段仍必须声明在参数路由之前。
+ *   `balances(+/adjust)` / `reconciliation` / `invoices` /
+ *   `withdrawals` 与其 `:id/{approve|reject|paid|fail}`）——
+ *   `withdrawals` 是**静态首段**，`{id}` 只在段中，故不存在参数路由吃掉静态路径的问题。
+ *   若将来加 `withdrawals/:id` 详情，仍必须声明在 `withdrawals/export` 之类的静态段之前。
  */
 @ApiTags('后台·财务结算')
 @ApiBearerAuth()
@@ -66,6 +90,7 @@ export class FinanceAdminController {
     private readonly balance: BalanceAdminService,
     private readonly reconciliation: ReconciliationService,
     private readonly invoice: InvoiceService,
+    private readonly withdraw: WithdrawAdminService,
   ) {}
 
   // ------------------------------------------------------------ D33 资金总览
@@ -104,7 +129,7 @@ export class FinanceAdminController {
   // ------------------------------------------------------------ D35 佣金入账（资金动作 · 收窄）
 
   @Post('commissions/settle')
-  @Roles('super_admin', 'admin', 'finance')
+  @Roles(...FUND_ACTION_ROLES)
   @OperationLog({ module: 'finance', action: '佣金入账补跑' })
   @ApiOperation({
     summary: 'D35 佣金入账（幂等 · 手动触发 / 补跑）',
@@ -231,5 +256,129 @@ export class FinanceAdminController {
   })
   listInvoices(@Query() q: AdminInvoicesQueryDto) {
     return this.invoice.list(q);
+  }
+
+  // ------------------------------------------------------------ D45 提现审批列表
+
+  @Get('withdrawals')
+  @ApiOperation({
+    summary: 'D45 提现审批列表（P34 · M35-08）',
+    description:
+      '跨团长的提现单队列（L12 申请出来的单子在这里被处理）。`tab` 三分对应运营每天' +
+      '真正要做的三件事：`review` 待审批 / `payout` 待打款 / `done` 已终态；' +
+      '也可用 `status` 精确过滤（`status` 优先于 `tab`）。\n\n' +
+      '⭐ **在途量是时点量**：`pending*` / `approved*` / `frozenByWithdrawFen` **取全量、' +
+      '不随筛选变化** ——「平台此刻因提现占用了用户多少钱」不该因为运营搜了个姓名就变小；' +
+      '`frozenByWithdrawFen` 可与 `ab_balance.frozen` 的**增量**互相验算（后者还含 D39 手工冻结）。' +
+      '`paid*` / `released*` 则取**同一过滤条件的全量**（不受分页影响）。\n\n' +
+      '每行带团长资产快照（`leader.balanceFen` / `frozenFen` / `pendingCommissionFen`）' +
+      '—— 驳回前用它印证「确实冻结着这笔钱」；收款账号**已是脱敏存储**，手机号同样脱敏。\n\n' +
+      '`actions.canAudit` 按当前登录角色下发（`super_admin`/`admin`/`finance` 为 `true`），' +
+      '**判定权威仍在服务端 `@Roles`**，两者共用 `FUND_ACTION_ROLES`。',
+  })
+  listWithdrawals(@Query() q: AdminWithdrawalsQueryDto, @CurrentAdmin('role') role: string) {
+    return this.withdraw.list(q, role);
+  }
+
+  // ------------------------------------------------------------ D46 批准（资金动作 · 收窄）
+
+  @Post('withdrawals/:id/approve')
+  @Roles(...FUND_ACTION_ROLES)
+  @OperationLog({ module: 'finance', action: '提现审批通过', targetParam: 'id' })
+  @ApiOperation({
+    summary: 'D46 提现审批通过（台账口径）',
+    description:
+      '`pending → approved`：写审批人 / 时间 / 备注，并登记**出款批次号**。\n\n' +
+      '⭐ **批准不动钱**（余额早在 L12 申请时就已从可用挪入冻结），本步只改状态 —— ' +
+      '出参 `moneyMoved=false` 明写这一点，避免运营以为「点完钱就发出去了」。\n\n' +
+      '⭐ `payoutBatchNo` 缺省 = **审批日批次**（`PB{yyyyMMdd}`）：一期人工通道下' +
+      '「今天批的钱是一批」，运营把该批次筛出来导出清单、提交灵活用工平台一次即可。' +
+      '需要一天内分批提交时显式传入（批次号**不是**资金主键，提现单号才是，故不加锁）。\n\n' +
+      '仅 `pending` 可批准，否则 `40017`；并发重复批准以 `WHERE status=pending` 的 ' +
+      '`affected` 判定后拒绝，不会重复写审批人。',
+  })
+  approveWithdrawal(
+    @Param() p: WithdrawIdParamDto,
+    @Body() dto: AdminApproveWithdrawDto,
+    @CurrentAdmin('sub') operatorId: number,
+    @CurrentAdmin('username') operatorName: string,
+  ) {
+    return this.withdraw.approve(p.id, dto, operatorId, operatorName);
+  }
+
+  // ------------------------------------------------------------ D46a 驳回（资金动作 · 收窄）
+
+  @Post('withdrawals/:id/reject')
+  @Roles(...FUND_ACTION_ROLES)
+  @OperationLog({ module: 'finance', action: '提现审批驳回', targetParam: 'id' })
+  @ApiOperation({
+    summary: 'D46a 提现审批驳回 → **原路解冻**',
+    description:
+      '`pending → rejected`：`balance +X` / `frozen −X`，' +
+      '**`total_in`/`total_out` 都不动**（钱没进出平台，只是从「冻结」挪回「可用」）。\n\n' +
+      '⭐ 解冻**前**先校验冻结额充足，`frozen < 申请额` 时 fail-closed `40015` ' +
+      '—— 那是「冻结账对不上」的账实不符信号（有人绕过了冻结口径），' +
+      '硬扣会让 `frozen` 变负并在下一个用户身上表现为「冻结额凭空多了」。\n\n' +
+      '`reason` 必填 ≥2 字并写入 `audit_remark`：这是唯一能回答「为什么把我这笔打回来」的地方。\n\n' +
+      '⚠️ 缺本端点时，L12 申请出去的钱**永远回不来**（`frozen` 只增不减），' +
+      '且 C3 退团守卫会以「有未完成的提现」把团长**永久困住**。',
+  })
+  rejectWithdrawal(
+    @Param() p: WithdrawIdParamDto,
+    @Body() dto: AdminRejectWithdrawDto,
+    @CurrentAdmin('sub') operatorId: number,
+    @CurrentAdmin('username') operatorName: string,
+  ) {
+    return this.withdraw.reject(p.id, dto, operatorId, operatorName);
+  }
+
+  // ------------------------------------------------------------ D46b 到账回执（资金动作 · 收窄）
+
+  @Post('withdrawals/:id/paid')
+  @Roles(...FUND_ACTION_ROLES)
+  @OperationLog({ module: 'finance', action: '提现到账登记', targetParam: 'id' })
+  @ApiOperation({
+    summary: 'D46b 到账回执登记（一期人工通道的**唯一收口**）',
+    description:
+      '`approved|paying → success`：登记 `tax_withheld_amount` / `actual_amount` / `paid_at`。\n\n' +
+      '⭐⭐ **`total_out` 按「申请金额」而非「实付」累加**：申请时已从可用余额扣掉 X，' +
+      '到账只是把这笔冻结的钱正式记为支出。若按实付记，`total_in − total_out` 与 ' +
+      '`balance + frozen` 之间会**永久**留下一个等于代扣税额的缺口 —— 账面上像「平台多留了钱」，' +
+      '而实际那笔税是**平台代扣代缴给税务**的，不是平台留存。\n\n' +
+      '代扣与实付**必须自洽**（`申请额 − 代扣 = 实付`），两者都传却不自洽 → `10001`；' +
+      "都缺省则视为无代扣，并在出参标 `taxSource='assumed_zero'`（让「系统替你假设了 0」可见）。\n\n" +
+      '⭐ 本步**不写** `ab_balance_log`：该表的语义是「**可用余额**的每一次变化」，' +
+      '而到账时可用余额不变（钱在申请时就已扣走）。`frozen` / `total_out` 的变化' +
+      '**从来**不由流水解释（D39 的 `freeze` 行即先例），到账事件由 `ab_withdraw` 自身完整承载。',
+  })
+  markWithdrawalPaid(
+    @Param() p: WithdrawIdParamDto,
+    @Body() dto: AdminPaidWithdrawDto,
+    @CurrentAdmin('sub') operatorId: number,
+    @CurrentAdmin('username') operatorName: string,
+  ) {
+    return this.withdraw.markPaid(p.id, dto, operatorId, operatorName);
+  }
+
+  // ------------------------------------------------------------ D46c 打款失败（资金动作 · 收窄）
+
+  @Post('withdrawals/:id/fail')
+  @Roles(...FUND_ACTION_ROLES)
+  @OperationLog({ module: 'finance', action: '提现打款失败', targetParam: 'id' })
+  @ApiOperation({
+    summary: 'D46c 打款失败登记 → **原路解冻**',
+    description:
+      '`approved|paying → failed`：与 D46a 一样原路解冻（`balance +X / frozen −X`），' +
+      '但状态语义**相反** —— 驳回是「平台认为不该发」，失败是「平台尝试发了但没成功」' +
+      '（账号不存在 / 户名不符 / 平台额度不足）。分开是为了让运营看到成因分布：' +
+      '某批次里 `failed` 集中 → 收款信息质检有问题；`rejected` 集中 → 审批口径有问题。\n\n' +
+      '`failReason` 必填 ≥2 字（写入 `fail_reason`）。',
+  })
+  markWithdrawalFailed(
+    @Param() p: WithdrawIdParamDto,
+    @Body() dto: AdminFailWithdrawDto,
+    @CurrentAdmin('sub') operatorId: number,
+  ) {
+    return this.withdraw.markFailed(p.id, dto, operatorId);
   }
 }

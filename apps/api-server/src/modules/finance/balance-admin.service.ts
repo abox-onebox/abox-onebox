@@ -13,6 +13,7 @@ import { TeamLeader } from '../../database/entities/leader.entity';
 import { User } from '../../database/entities/user.entity';
 import { BALANCE_LOG_TYPE_LABEL, levelLabel } from './commission.service';
 import { AdminAdjustBalanceDto, AdminBalancesQueryDto } from './dto/finance.dto';
+import { FINANCE_READ_ROLES, FUND_ACTION_ROLES } from './finance.constants';
 import { FinanceService } from './finance.service';
 
 /**
@@ -466,8 +467,11 @@ export class BalanceAdminService {
  *
  * 含 `operator`：运营要能看资金总览、佣金明细与余额账户，跟进「为什么佣金没结」
  * 「这个用户余额为什么是负的」。`viewer` 刻意不含 —— 它的菜单只有 4 个看板页。
+ *
+ * ⚠️ 定义已上移到 `finance.constants.ts`（域级概念，不属于本 service）；此处保留
+ *    同名导出以免改动散落在各控制器与文档里的既有引用。**不要再写第二份。**
  */
-export const FINANCE_VIEW_ROLES = ['super_admin', 'admin', 'finance', 'operator'] as const;
+export const FINANCE_VIEW_ROLES = FINANCE_READ_ROLES;
 
 /**
  * 可**调账**的角色（D39 方法级白名单）
@@ -478,8 +482,12 @@ export const FINANCE_VIEW_ROLES = ['super_admin', 'admin', 'finance', 'operator'
  * ⚠️ 为什么要共用：这两处一旦各写一份，就会漂移成「按钮亮着、点了 `10003`」
  *    或「按钮灰着、其实有权限」。项目里既有写法（如 `leader-admin.service.ts` 的
  *    `canManage`）是两处硬编码 + 注释对齐 —— 本批改为常量，从结构上消除这个风险。
+ *
+ * ⚠️ M4-4：真正的定义已收敛到 `finance.constants.ts` 的 `FUND_ACTION_ROLES`
+ *    （D35 / D39 / D41 / D42 / D46 系列**共用同一个「资金动作」概念**，
+ *    此前四处各写一份字面量）。此处保留别名，语义更贴 D39 的场景。
  */
-export const BALANCE_ADJUST_ROLES = ['super_admin', 'admin', 'finance'] as const;
+export const BALANCE_ADJUST_ROLES = FUND_ACTION_ROLES;
 
 /** D39 动作 → 中文文案（服务端唯一来源，端上不自造） */
 export const BALANCE_ADJUST_ACTION_LABEL: Record<string, string> = {

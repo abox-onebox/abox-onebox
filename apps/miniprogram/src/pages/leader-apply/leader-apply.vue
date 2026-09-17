@@ -263,7 +263,11 @@ async function submit(): Promise<void> {
       realName: res.leader.realName,
       level: res.leader.level,
       commissionRate: res.leader.commissionRate,
+      // ⚠️ M4-4：展示用 `balanceFen`（整数分，真源 `ab_balance`）。
+      //    新上任的人还没有余额账户 → 必然是 0，这是**如实**的，不是缺数据。
       balance: res.leader.balance,
+      balanceFen: res.leader.balanceFen,
+      frozenFen: res.leader.frozenFen,
     });
 
     uni.showToast({ title: '已生效，团长入口已开启', icon: 'success', duration: 1600 });

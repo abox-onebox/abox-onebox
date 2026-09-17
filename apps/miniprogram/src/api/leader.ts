@@ -164,10 +164,18 @@ export interface LeaderProfile {
   monthOrders: number;
   invitedFormalCount: number;
   /**
-   * ⚠️ **元 · 字符串**（如 `"0.00"`），且是 `ab_team_leader` 上的**统计快照**，
-   *    不保证与真实可用余额同步 —— 展示「可用余额」请走 L11 `balanceFen`。
+   * ⚠️ **已废弃 · 元 · 字符串**（如 `"0.00"`）。
+   *
+   * M4-4 起服务端已把它改为**取的 `ab_balance` 真值**（此前长期是
+   * `ab_team_leader.balance` 这一「从未被写过」的列 → 显示种子里的死数字）。
+   * 新代码请直接用下面的 `balanceFen`（**整数分**，与项目金额出参纪律一致），
+   * 不要再用本字段做展示或判断。
    */
   balance: string;
+  /** ⭐ 可用余额（**整数分**）· 真源 = `ab_balance` */
+  balanceFen: number;
+  /** 冻结额（**整数分**）· 提现占用 + 后台手工冻结 */
+  frozenFen: number;
   totalOrders: number;
   /** ⚠️ **元 · 字符串** */
   totalCommission: string;

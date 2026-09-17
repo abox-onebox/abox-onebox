@@ -97,6 +97,9 @@ export const ADMIN_NAV = [
       { path: '/finance/balance', title: '余额账户', page: 'P34', module: 'M35-04' },
       { path: '/finance/supplier-share', title: '应付结算', page: 'P34 / P25', module: 'M35-03' },
       { path: '/finance/refund', title: '退款审批', page: 'P34', module: 'M35-05' },
+      // M4-4：提现审批（D45/D46）—— 团长侧 L12 提交后**唯一**能推进它的地方。
+      //    在此之前该页不存在，提现单永远停在 pending、冻结额只增不减。
+      { path: '/finance/withdrawal', title: '提现审批', page: 'P34', module: 'M35-08' },
       { path: '/finance/reconciliation', title: '微信对账', page: 'P34', module: 'M35-06' },
       // M3-15：发票管理（进项票台账）—— 与 `admin-role.ts` 的 `ADMIN_MENU_KEYS` 同源
       { path: '/finance/invoices', title: '发票管理', page: 'P34', module: 'M35-07' },

@@ -105,7 +105,7 @@ export function fetchCommissions(
 // ---------------------------------------------------------------------------
 
 export interface LeaderBalanceData {
-  /** 可用余额（整数分）—— 真源 `ab_balance`（`ab_team_leader.balance` 仅为快照，勿用） */
+  /** 可用余额（整数分）—— 真源 `ab_balance`（`ab_team_leader.balance` 已于 M4-4 停用为历史字段） */
   balanceFen: number;
   /** 冻结金额（整数分）：提现申请即冻结，终态才释放 */
   frozenFen: number;

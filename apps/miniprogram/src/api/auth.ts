@@ -28,8 +28,16 @@ export interface LoginLeaderBrief {
   level: LeaderLevel;
   /** DECIMAL(5,4) 字符串，如 "0.1200" */
   commissionRate: string;
-  /** 佣金余额（元，字符串） */
+  /**
+   * ⚠️ **已废弃 · 元 · 字符串** —— M4-4 起取 `ab_balance` 真值（此前是
+   * `ab_team_leader.balance` 这一从未被写过的列，显示的是种子死数字）。
+   * 新代码用 `balanceFen`。
+   */
   balance: string;
+  /** ⭐ 可用余额（**整数分**）· 真源 = `ab_balance` */
+  balanceFen: number;
+  /** 冻结额（**整数分**） */
+  frozenFen: number;
 }
 
 export interface LoginResult {

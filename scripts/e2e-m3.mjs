@@ -10246,6 +10246,653 @@ async function main() {
   }
 
   // ==========================================================================
+  // §31 M4-4 提现审批 D45 / D46–D46c（后台 P34 · 模块 M35-08）
+  // ==========================================================================
+  //
+  // ## 这一节测的不是「后台多了个页面」，而是**资金链的收口**
+  //
+  // L12 从 M2 起就把钱冻住了：申请一瞬 `balance −X / frozen +X`。而在 M4-4 之前
+  // **没有任何端点能把这张单子往前推** —— 提现单永远停在 `pending`。三个后果
+  // 都是用户直接看得见的：
+  //   ① 团长的钱被永久锁死（`frozen` 只增不减，无任何界面/接口能让它下降）；
+  //   ② `collectQuitBlockers` 以 `WITHDRAW_FROZEN_STATUS` 判定「有提现正在处理中」
+  //      → **提过一次现就再也不能退出团长**，而错误文案还写着「等待提现到账」
+  //      （等一个永远不会发生的到账）；
+  //   ③ `ab_leader.withdrawn_amount` 永远是种子值（无写点 #69）。
+  //
+  // ## 钉死的七条不变量
+  //   ① ⭐⭐ **状态机 fail-closed**：四动作各有前置状态，越界一律 `40017`
+  //      （**不复用** `40002`/`40014`：那是别的域的语义，混用会把排查入口埋掉）
+  //   ② ⭐⭐ **驳回 / 打款失败 = 原路解冻精确复原**：`balance +X / frozen −X`，
+  //      且 `total_in` / `total_out` **都不动**（钱没进出平台，只换了位置）
+  //   ③ ⭐⭐ **到账按申请额计支出**：`frozen −X` + `total_out +X`，其中
+  //      **X = 申请额（不是实付）** —— 按实付记会永久留下一个等于代扣税额的缺口，
+  //      而那个缺口看着像「平台多留了钱」，实则那笔税是平台**代缴给税务**的
+  //   ④ ⭐ **到账不写 `ab_balance_log`**：该表语义是「**可用余额**每次变化」，
+  //      到账那刻可用余额不变 → 条数不变是**声明**，不是漏写（e2e 把「为什么没有」钉住）
+  //   ⑤ ⭐ **代扣 / 实付自洽**：两栏都传却不自洽 → `10001`；只传一栏 → 推出另一栏；
+  //      都不传 → `taxSource='assumed_zero'`（把「系统替你假设了什么」显式说出来）
+  //   ⑥ ⭐ **会计恒等式** `total_in − total_out === balance + frozen` 在每一步都成立
+  //      —— 这一条能同时抓到「忘了减 frozen」与「把实付记进 total_out」两类错账
+  //   ⑦ ⭐ **两级白名单**：读含 `operator`（不含 viewer）· 写**不含 operator** ·
+  //      未登录 `10002` · 未知单号 `40016`
+  //
+  // ⚠️ 本节**不依赖下单窗口**（提现与出餐日无关），故无需隔离日期。
+  // ⚠️ 全局量（`frozenByWithdrawFen` / `pendingCount` …）一律用 **Δ** ——
+  //    别的章节与种子也会动 `ab_withdraw`（#108 教训：共享维度不能用绝对值）。
+  // ==========================================================================
+  {
+    log('\n§31 M4-4 提现审批 D45 / D46–D46c（资金链收口）');
+
+    const FIN31 = '/admin/finance';
+    const WD31 = `${FIN31}/withdrawals`;
+    const PREFIX31 = `E2E31${stamp}`;
+    const fen31 = (v) => Math.round(Number(v ?? 0) * 100);
+
+    const base31 = readDb(
+      `SELECT b.id AS bid
+         FROM ab_building b
+        WHERE b.status = 1 AND b.building_group_id IS NOT NULL
+        ORDER BY b.id LIMIT 1`,
+    );
+    assert(
+      !!base31,
+      '§31 前置：夹具原料齐备（1 个「在营 + 有楼群」的楼用于挂团长）',
+      `bid=${Number(base31?.bid)}`,
+    );
+
+    if (base31) {
+      const B31 = Number(base31.bid);
+      const CODE31 = `${PREFIX31}l`;
+      const OPENID31 = `mock_openid_${CODE31}`;
+      const NAME31 = `${PREFIX31}提现团长`;
+      const AT31 = `${bjToday()} 11:00:00`;
+
+      /**
+       * 专用账号。**不能借既有团长** —— 别人账上已有余额 / 提现单会让
+       * 「解冻精确复原」「余额不变」这类断言因为别人的钱而**假绿**
+       * （§26 / §29 / §30 同一条教训）。
+       */
+      writeDb(
+        'INSERT INTO ab_user (openid, nickname, gender, status, version, created_at, updated_at) VALUES (?, ?, 0, 1, 0, ?, ?)',
+        [OPENID31, NAME31, AT31, AT31],
+      );
+      const uid31 = Number(readDb('SELECT id FROM ab_user WHERE openid = ?', [OPENID31])?.id ?? 0);
+      writeDb(
+        'INSERT INTO ab_team_leader (user_id, building_id, phone, real_name, level, commission_rate, status, total_orders, total_commission, payout_type, payout_account, payout_name, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0.00, ?, ?, ?, 0, ?, ?)',
+        [
+          uid31,
+          B31,
+          '1380014****',
+          NAME31,
+          'gold',
+          '0.1000',
+          'bank',
+          '6222****4321',
+          NAME31,
+          AT31,
+          AT31,
+        ],
+      );
+      const lid31 = Number(
+        readDb('SELECT id FROM ab_team_leader WHERE user_id = ?', [uid31])?.id ?? 0,
+      );
+      const l31 = await userLogin(`dev:${CODE31}`);
+
+      const acct31 = () =>
+        readDb('SELECT balance, frozen, total_in, total_out FROM ab_balance WHERE user_id = ?', [
+          uid31,
+        ]);
+      /** 会计恒等式：`total_in − total_out === balance + frozen` */
+      const identity31 = () => {
+        const r = acct31();
+        if (!r) return false;
+        return (
+          fen31(r.total_in) - fen31(r.total_out) === fen31(r.balance) + fen31(r.frozen)
+        );
+      };
+      const logCount31 = () =>
+        Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_balance_log WHERE user_id = ?', [uid31])?.c ?? -1,
+        );
+      const wdRow31 = (id) =>
+        readDb(
+          'SELECT status, amount, tax_withheld_amount, actual_amount, payout_batch_no, auditor_id, audit_remark, fail_reason, paid_at FROM ab_withdraw WHERE id = ?',
+          [id],
+        );
+      const list31 = async (qs = '') =>
+        (await call('GET', `${WD31}${qs}`, { token: adminToken })).body;
+      const rowOf31 = (res, no) =>
+        (res?.data?.list ?? []).find((w) => w.withdrawNo === no) ?? null;
+      /**
+       * L12 申请。
+       *
+       * ⚠️ **幂等键必填**（`@Idempotent({ scope:'withdraw' })` + `Idempotency-Key`）——
+       *    提现是资金操作，缺键一律 `10001`。每笔申请必须用**不同的键**
+       *    （同键第二次会命中缓存返回首次结果 → 拿到同一张单，本节会当场红）。
+       */
+      let seq31 = 0;
+      const apply31 = async (amount) =>
+        (
+          await call('POST', '/leader/withdraw', {
+            token: l31.token,
+            idem: `${PREFIX31}wd-${++seq31}`,
+            body: { amount },
+          })
+        ).body;
+      const act31 = async (verb, id, body) =>
+        (await call('POST', `${WD31}/${id}/${verb}`, { token: adminToken, body })).body;
+
+      // 权限矩阵账号（固定名 —— 每天重跑只累积 2 个，不翻倍）
+      const op31 = 'e2e_s31op';
+      const view31 = 'e2e_s31view';
+      await call('POST', '/admin/system/accounts', {
+        token: adminToken,
+        body: { username: op31, password: PWD, role: 'operator', realName: 'e2e 提现运营' },
+      });
+      await call('POST', '/admin/system/accounts', {
+        token: adminToken,
+        body: { username: view31, password: PWD, role: 'viewer', realName: 'e2e 提现只读' },
+      });
+      const t31Op = (await adminLogin(op31, PWD)).token;
+      const t31View = (await adminLogin(view31, PWD)).token;
+      const t31Fin = (await adminLogin('finance', 'finance123')).token;
+      const t31Sup = (await adminLogin('sanweiwu', 'supplier123')).token;
+
+      assert(
+        uid31 > 0 && lid31 > 0 && !!l31.token,
+        '§31 夹具：专用团长（含已绑定收款方式）就位，且可登录 `/leader/*`',
+        `uid=${uid31} lid=${lid31} 登录=${!!l31.token}`,
+      );
+
+      if (uid31 > 0 && lid31 > 0 && l31.token) {
+        // ---------------------------------------------------- A. 备资金（D39 充值建户）
+        const recharge31 = await call('POST', `${FIN31}/balances/adjust`, {
+          token: adminToken,
+          idem: `${PREFIX31}seed`,
+          body: {
+            userId: uid31,
+            action: 'recharge',
+            amountFen: 10000,
+            reason: `${PREFIX31} 提现链路夹具充值`,
+          },
+        });
+        assert(
+          recharge31.body?.code === 0 && fen31(acct31()?.balance) === 10000,
+          '§31 前置：用 **D39 充值**（HTTP，不直写库）给专用团长备 ¥100.00 —— 顺带验证「只有充值能自动建户」：新用户此前没有任何资金往来',
+          `code=${recharge31.body?.code} balance=${acct31()?.balance}`,
+        );
+
+        const acct0 = acct31();
+
+        // ---------------------------------------------------- B. D45 默认 Tab = 待审批
+        const l0 = await list31('?keyword=' + encodeURIComponent(PREFIX31));
+        assert(
+          l0?.code === 0 &&
+            l0?.data?.tab === 'review' &&
+            Array.isArray(l0?.data?.list) &&
+            l0?.data?.list.length === 0 &&
+            l0?.data?.actions?.canAudit === true,
+          '⭐ D45 缺省 `tab=review`（**不是 all**）—— 运营每天打开这页的动作是「清空队列」；新团长尚无提现单 → 空列表；`actions.canAudit=true` 对 `admin`',
+          `code=${l0?.code} tab=${l0?.data?.tab} 条数=${l0?.data?.list?.length} canAudit=${l0?.data?.actions?.canAudit}`,
+        );
+        assert(
+          (l0?.data?.statusOptions ?? []).length === 6 &&
+            (l0?.data?.tabOptions ?? []).map((t) => t.value).join(',') ===
+              'review,payout,done,all',
+          '§31 枚举映射由**服务端下发**（6 个状态 + 4 个 Tab）—— 端上不维护第二份，就不会出现「后台加了状态、下拉框里没有」的静默漂移',
+          `statusOptions=${(l0?.data?.statusOptions ?? []).length} tabOptions=${(l0?.data?.tabOptions ?? []).map((t) => t.value).join(',')}`,
+        );
+
+        // ---------------------------------------------------- C. L12 申请 → 冻结
+        const noKey31 = await call('POST', '/leader/withdraw', {
+          token: l31.token,
+          body: { amount: 30 },
+        });
+        assert(
+          noKey31.body?.code === 10001,
+          '⭐ L12 提现**缺幂等键 → `10001`**（资金操作不接受「可能重复提交」的请求）：没有业务单号可供判重时，缺键就是缺保险 —— 宁可拒收，也不能让一次网络重试变成两笔出款',
+          `code=${noKey31.body?.code} msg=${noKey31.body?.message}`,
+        );
+
+        const f0 = Number((await list31()).data?.summary?.frozenByWithdrawFen ?? 0);
+        const a1 = await apply31(30);
+        const w1Id = Number(a1?.data?.id ?? 0);
+        const w1No = a1?.data?.withdrawNo;
+        const acctA = acct31();
+        assert(
+          a1?.code === 0 && w1Id > 0 && a1?.data?.status === 'pending',
+          '§31 L12 提现申请 → 建单 `pending`（拿到本节的被测主单 W1）',
+          `code=${a1?.code} id=${w1Id} no=${w1No} status=${a1?.data?.status} msg=${a1?.message}`,
+        );
+        assert(
+          fen31(acctA?.balance) === 7000 && fen31(acctA?.frozen) === 3000,
+          '⭐ L12 申请即**冻结**：`balance 100.00 → 70.00` / `frozen 0 → 30.00` —— 这就是 M4-4 之前「只增不减」的那个冻结额',
+          `balance=${acctA?.balance} frozen=${acctA?.frozen}`,
+        );
+
+        const s1 = (await list31()).data?.summary ?? {};
+        assert(
+          Number(s1.frozenByWithdrawFen ?? 0) - f0 === 3000 &&
+            Number(s1.pendingCount ?? 0) >= 1,
+          '⭐⭐ D45 `frozenByWithdrawFen` **恰好增加 3000 分**（Δ 口径 —— 全局量不能用绝对值）且它 = 三占用状态之和：这一项让运营能把「提现占用的冻结」与 `ab_balance.frozen` 的增量互相验算',
+          `Δfrozen=${Number(s1.frozenByWithdrawFen ?? 0) - f0} pending=${s1.pendingCount}`,
+        );
+        assert(
+          Number(s1.payingCount ?? 0) === 0,
+          '⭐ 一期 `payingCount` **恒 0** —— 它是二期 `FLEX_API` 自动通道的中间态；一期人工通道没有任何动作会置 `paying`。造一个只有「多点一次按钮」没有别的效果的空状态，只会让运维以为漏了一步',
+          `paying=${s1.payingCount}`,
+        );
+
+        // ---------------------------------------------------- D. 守卫：在途提现挡住退出
+        //
+        // ⚠️ L20 的 `@Idempotent({scope:'leader-quit'})` **要求幂等键**（缺键 `10001`），
+        //    两次调用刻意用**两个不同键**：这不是为了绕过幂等，而是不让「守卫判定」
+        //    与「幂等缓存」两件事混在一起（同键第二次会命中缓存，证明不了守卫又跑了一遍）。
+        const qa = await call('POST', '/leader/quit', {
+          token: l31.token,
+          idem: `${PREFIX31}quit-a`,
+          body: { reason: 'e2e 验证在途提现闸门' },
+        });
+        const qaCodes = (qa.body?.data?.blockers ?? []).map((b) => b.code);
+        assert(
+          qa.body?.code === 20008 && qaCodes.includes('WITHDRAW_IN_FLIGHT'),
+          '⭐⭐ 在途提现**确实把「退出团长」挡住**（`20008` + `blockers[].code=WITHDRAW_IN_FLIGHT`）—— 这正是 M4-4 之前那条死锁：单子永远推不动 → 这道闸门永远不放手，团长的账户被自己的余额困住',
+          `code=${qa.body?.code} blockers=${qaCodes.join(',') || '无'}`,
+        );
+
+        // ---------------------------------------------------- E. D45 待审批行 + 按钮口径
+        const rev31 = await list31('?tab=review&keyword=' + encodeURIComponent(PREFIX31));
+        const r1 = rowOf31(rev31, w1No);
+        assert(
+          !!r1 &&
+            r1.status === 'pending' &&
+            r1.statusText === '待审批' &&
+            r1.canApprove === true &&
+            r1.canReject === true &&
+            r1.canMarkPaid === false &&
+            r1.canMarkFailed === false &&
+            r1.blockReason === null,
+          '⭐ D45 待审批行：四动作可用性**唯一由服务端判定**（`canApprove/canReject=true`、`canMarkPaid/canMarkFailed=false`、`blockReason=null`）—— 端上照 `can*` 渲染按钮，不自己判状态，否则前端判断与后端守卫两套口径必然漂移，且漂移表现是「按钮能点、点了报错」',
+          `status=${r1?.status} canApprove=${r1?.canApprove} canMarkPaid=${r1?.canMarkPaid}`,
+        );
+        assert(
+          r1?.amountFen === 3000 &&
+            r1?.actualKnown === false &&
+            r1?.taxKnown === false &&
+            r1?.payoutChannel === 'FLEX_MANUAL' &&
+            !!r1?.payoutChannelText &&
+            !!r1?.receiveTypeText &&
+            String(r1?.receiveAccount ?? '').includes('*') &&
+            !!r1?.leader?.levelText &&
+            typeof r1?.leader?.frozenFen === 'number',
+          '⭐⭐ D45 未到账行**必须标注「实付未知」**（`actualKnown=false`）：库里 `actual_amount` 在到账登记前仍是 `apply()` 写的初值（= 申请额），若直接当结论展示，运营会以为「这笔个税为 0」。同时下发团长资产快照（驳回前用它印证确实冻结着这笔钱）+ 通道/收款方式文案，收款账号**已是脱敏存储**',
+          `actualKnown=${r1?.actualKnown} channel=${r1?.payoutChannel}/${r1?.payoutChannelText} 账号=${r1?.receiveAccount} frozen=${r1?.leader?.frozenFen}`,
+        );
+
+        // ---------------------------------------------------- F. 权限矩阵（读 / 写）
+        const finGet31 = await call('GET', WD31, { token: t31Fin });
+        const opGet31 = await call('GET', WD31, { token: t31Op });
+        const viewGet31 = await call('GET', WD31, { token: t31View });
+        const supGet31 = await call('GET', WD31, { token: t31Sup });
+        const anonGet31 = await call('GET', WD31, {});
+        assert(
+          finGet31.body?.code === 0 && opGet31.body?.code === 0,
+          '⭐ D45 类级白名单含 `finance` 与 `operator`（`FINANCE_READ_ROLES`）—— 运营要能看「这个团长的钱为什么卡住了」',
+          `finance=${finGet31.body?.code} operator=${opGet31.body?.code}`,
+        );
+        assert(
+          opGet31.body?.data?.actions?.canAudit === false,
+          '⭐⭐ `operator` **可读不可批**：`actions.canAudit=false`。它与 D46 系列四个端点的 `@Roles(...FUND_ACTION_ROLES)` **共用同一角色常量**（`finance.constants.ts` 单一真相）—— 结构上不可能出现「按钮亮着、点了 10003」或「按钮灰着、其实有权限」',
+          `canAudit=${opGet31.body?.data?.actions?.canAudit}`,
+        );
+        assert(
+          viewGet31.body?.code === 10003 &&
+            supGet31.body?.code === 10003 &&
+            anonGet31.body?.code === 10002,
+          '⭐ D45 白名单**不含 `viewer`**（与 D47–D50 看板刻意相反：那边是业务汇总，只读角色本就该看；这里是**逐笔资金明细**，含收款人与余额快照，多一个可见者就多一处泄露面）· 供应商 `10003` · 未登录 `10002`',
+          `viewer=${viewGet31.body?.code} supplier=${supGet31.body?.code} anon=${anonGet31.body?.code}`,
+        );
+
+        const opAct31 = await call('POST', `${WD31}/${w1Id}/approve`, {
+          token: t31Op,
+          body: {},
+        });
+        const suppAct31 = await call('POST', `${WD31}/${w1Id}/approve`, {
+          token: t31Sup,
+          body: {},
+        });
+        const anonAct31 = await call('POST', `${WD31}/${w1Id}/approve`, { body: {} });
+        assert(
+          opAct31.body?.code === 10003 &&
+            suppAct31.body?.code === 10003 &&
+            anonAct31.body?.code === 10002,
+          '⭐⭐ D46 写端点**收窄去掉 `operator`**（`FUND_ACTION_ROLES`）：他看得见队列但不能动钱 —— 这与「读宽写窄」的两级白名单纪律一致；供应商 `10003`、未登录 `10002`',
+          `operator=${opAct31.body?.code} supplier=${suppAct31.body?.code} anon=${anonAct31.body?.code}`,
+        );
+        const notFound31 = await act31('approve', 999999999, {});
+        assert(
+          notFound31?.code === 40016,
+          '⭐ 未知单号 → `40016`（**不复用 `404`/`10001`**）：提现审批的所有失败都必须能区分「单子不存在」与「状态不对」，否则运营在深夜排查时只能靠猜',
+          `code=${notFound31?.code}`,
+        );
+
+        // ---------------------------------------------------- G. D46 批准（不动钱）
+        const ap31 = await act31('approve', w1Id, { remark: 'e2e §31 批准' });
+        const rowAp31 = wdRow31(w1Id);
+        const acctAp = acct31();
+        assert(
+          ap31?.code === 0 &&
+            ap31?.data?.status === 'approved' &&
+            ap31?.data?.moneyMoved === false &&
+            /^PB\d{8}$/.test(String(ap31?.data?.payoutBatchNo ?? '')) &&
+            !!ap31?.data?.nextStep,
+          '⭐⭐ D46 批准**不动钱**（`moneyMoved=false`）：钱早在申请时就冻结了，批准只是「同意纳入出款批次」。批次号缺省按**审批日**聚合生成 `PB{yyyyMMdd}`（**不带随机位** —— 与单号生成器刻意区分：批次是给人对着清单核的，不是用来判重的）',
+          `code=${ap31?.code} status=${ap31?.data?.status} moved=${ap31?.data?.moneyMoved} batch=${ap31?.data?.payoutBatchNo}`,
+        );
+        assert(
+          fen31(acctAp?.balance) === fen31(acct0?.balance) - 3000 &&
+            fen31(acctAp?.frozen) === fen31(acct0?.frozen) + 3000 &&
+            fen31(acctAp?.total_out) === 0 &&
+            identity31(),
+          '⭐⭐ 批准前后**四个金额字段逐一不变**（balance/frozen/total_in/total_out）—— 用「批准后仍等于申请后的快照」钉死「批准不动钱」；同时会计恒等式成立',
+          `balance=${acctAp?.balance} frozen=${acctAp?.frozen} out=${acctAp?.total_out}`,
+        );
+        assert(
+          Number(rowAp31?.auditor_id ?? 0) > 0 && !!rowAp31?.payout_batch_no,
+          '§31 批准留痕落库：`auditor_id`（审批人）+ `audit_at` + `payout_batch_no` —— 事后「谁批的、进了哪个批次」必须能查',
+          `auditor=${rowAp31?.auditor_id} batch=${rowAp31?.payout_batch_no}`,
+        );
+        const reAp31 = await act31('approve', w1Id, {});
+        assert(
+          reAp31?.code === 40017 && /已批准/.test(String(reAp31?.message ?? '')),
+          '⭐⭐ 重复批准 → `40017`，且消息里**带当前状态中文名**（「当前状态「已批准」不支持批准」）—— 每个越界动作的后果都是**再动一次钱**，故必须给出能直接照着排查的话，而不是笼统的「操作失败」',
+          `code=${reAp31?.code} msg=${reAp31?.message}`,
+        );
+        const rejAp31 = await act31('reject', w1Id, { reason: 'e2e 已批准不应可驳回' });
+        assert(
+          rejAp31?.code === 40017,
+          '⭐⭐ 对 `approved` 单子驳回 → `40017`（驳回只收 `pending`）—— 否则会在「已批准」语义下把钱解冻，出现「批准了但钱回来了」的幽灵单',
+          `code=${rejAp31?.code}`,
+        );
+
+        // ---------------------------------------------------- H. D45 待打款 Tab
+        const pay31 = await list31('?tab=payout&keyword=' + encodeURIComponent(PREFIX31));
+        const p1 = rowOf31(pay31, w1No);
+        assert(
+          !!p1 &&
+            p1.canApprove === false &&
+            p1.canMarkPaid === true &&
+            p1.canMarkFailed === true &&
+            Number(pay31?.data?.summary?.approvedAmountFen ?? 0) >= 3000,
+          '⭐ D45 `tab=payout`（已批准 + 打款中）正确收进 W1，且按钮组**切换**为到账登记 / 打款失败 —— 同一行在两段里露出的动作集合不同，正是状态机在界面上的投影',
+          `canMarkPaid=${p1?.canMarkPaid} canMarkFailed=${p1?.canMarkFailed} approvedAmount=${pay31?.data?.summary?.approvedAmountFen}`,
+        );
+
+        // ---------------------------------------------------- I. D46a 驳回（原路解冻）
+        const a2 = await apply31(20);
+        const w2Id = Number(a2?.data?.id ?? 0);
+        const acctB = acct31();
+        const logB = logCount31();
+        assert(
+          a2?.code === 0 && fen31(acctB?.balance) === 5000 && fen31(acctB?.frozen) === 5000,
+          '§31 第二笔申请 W2 ¥20.00 → `balance 70.00→50.00` / `frozen 30.00→50.00`（W1 的冻结与 W2 的冻结并存）',
+          `balance=${acctB?.balance} frozen=${acctB?.frozen}`,
+        );
+        const rj31 = await act31('reject', w2Id, { reason: '收款信息与实名不符' });
+        const acctC = acct31();
+        const rowRj = wdRow31(w2Id);
+        assert(
+          rj31?.code === 0 &&
+            rj31?.data?.status === 'rejected' &&
+            rj31?.data?.moneyMoved === true &&
+            rj31?.data?.balanceFen === 7000 &&
+            rj31?.data?.frozenFen === 3000,
+          '⭐⭐ D46a 驳回 → **原路解冻精确复原**：`balance 50.00→70.00` / `frozen 50.00→30.00`，出参直接回带动作后快照（运营不用去余额页核对）',
+          `code=${rj31?.code} status=${rj31?.data?.status} balanceFen=${rj31?.data?.balanceFen} frozenFen=${rj31?.data?.frozenFen}`,
+        );
+        assert(
+          fen31(acctC?.total_in) === fen31(acct0?.total_in) &&
+            fen31(acctC?.total_out) === 0 &&
+            fen31(acctC?.frozen) === 3000 &&
+            identity31(),
+          '⭐⭐⭐ 驳回**不动** `total_in` / `total_out`：钱根本没进出平台，只是从「冻结」挪回「可用」—— 若误把解冻记成 `total_out` 减少，账面会显示「平台收回了钱」，而这笔钱其实还在用户的可用余额里',
+          `in=${acctC?.total_in} out=${acctC?.total_out} frozen=${acctC?.frozen}`,
+        );
+        assert(
+          logCount31() === logB + 1 && rowRj?.status === 'rejected',
+          '⭐ 驳回**写一条** `ab_balance_log`（`type=withdraw_refund`、`direction=1`）：只有它改变了**可用余额**；`related_id` = 提现单号 → 一笔提现的「冻结」与「解冻」两条流水可对着看',
+          `Δ流水=${logCount31() - logB} status=${rowRj?.status}`,
+        );
+        const failOnRejected31 = await act31('fail', w2Id, {
+          failReason: 'e2e 已驳回不应可登记失败',
+        });
+        assert(
+          failOnRejected31?.code === 40017,
+          '⭐ 对 `rejected` 单子登记打款失败 → `40017` —— 驳回与失败**都解冻**，但两者**刻意分开**（成因不同：前者「平台认为不该发」，后者「尝试发了没成功」）；若能互相覆盖，运营就再也看不出问题出在审批口径还是收款信息',
+          `code=${failOnRejected31?.code}`,
+        );
+
+        // ---------------------------------------------------- J. D46c 打款失败（原路解冻）
+        const a3 = await apply31(40);
+        const w3Id = Number(a3?.data?.id ?? 0);
+        const acctD = acct31();
+        assert(
+          a3?.code === 0 && fen31(acctD?.balance) === 3000 && fen31(acctD?.frozen) === 7000,
+          '§31 第三笔申请 W3 ¥40.00 → `balance 30.00` / `frozen 70.00`',
+          `balance=${acctD?.balance} frozen=${acctD?.frozen}`,
+        );
+        await act31('approve', w3Id, {});
+        const fl31 = await act31('fail', w3Id, {
+          failReason: '平台回执：收款账号户名不符',
+        });
+        const acctE = acct31();
+        const rowFl = wdRow31(w3Id);
+        assert(
+          fl31?.code === 0 &&
+            fl31?.data?.status === 'failed' &&
+            fl31?.data?.balanceFen === 7000 &&
+            fl31?.data?.frozenFen === 3000 &&
+            !!fl31?.data?.failReason,
+          '⭐⭐ D46c 打款失败 → 同样**原路解冻精确复原**（`balance 30.00→70.00` / `frozen 70.00→30.00`），`failReason` 落库 —— 团长可据此重新申请（这是与「驳回」并列的第二条退回路径）',
+          `code=${fl31?.code} status=${fl31?.data?.status} balanceFen=${fl31?.data?.balanceFen}`,
+        );
+        assert(
+          fen31(acctE?.total_out) === 0 && fen31(acctE?.total_in) === fen31(acct0?.total_in) && identity31(),
+          '⭐⭐ 失败解冻与驳回**同口径**：`total_in` / `total_out` 都不动（钱没出平台）。三路（驳回/到账/失败）走**同一个** `releaseFrozen()` —— 各写一份的后果不是重复代码，而是**其中一路漏掉某个字段**：例如「到账忘了减 frozen」，该用户的冻结额永久虚高，而其余提现看起来都正常',
+          `in=${acctE?.total_in} out=${acctE?.total_out}`,
+        );
+        assert(
+          String(rowFl?.fail_reason ?? '').includes('户名不符') && !!rowFl?.payout_batch_no,
+          '§31 失败留痕落库：`fail_reason`（照抄平台回执原话）+ 沿用批准时登记的批次号',
+          `reason=${rowFl?.fail_reason} batch=${rowFl?.payout_batch_no}`,
+        );
+
+        // ---------------------------------------------------- K. D46b 到账（钱正式出平台）
+        const logK = logCount31();
+        const paid31 = await act31('paid', w1Id, {
+          taxWithheldFen: 500,
+          actualFen: 2500,
+          remark: 'e2e §31 回执 PLAT-2026-0917-A',
+        });
+        const acctK = acct31();
+        assert(
+          paid31?.code === 0 &&
+            paid31?.data?.status === 'success' &&
+            paid31?.data?.taxWithheldFen === 500 &&
+            paid31?.data?.actualFen === 2500 &&
+            paid31?.data?.taxSource === 'explicit' &&
+            paid31?.data?.frozenFen === 0,
+          '⭐⭐ D46b 到账登记：申请 ¥30.00 − 代扣 ¥5.00 = 实付 ¥25.00，两栏同传且自洽 → `taxSource=explicit`，并发动作后快照（`frozenFen=0`）',
+          `code=${paid31?.code} tax=${paid31?.data?.taxWithheldFen} actual=${paid31?.data?.actualFen} src=${paid31?.data?.taxSource}`,
+        );
+        assert(
+          fen31(acctK?.frozen) === 0 &&
+            fen31(acctK?.total_out) === 3000 &&
+            fen31(acctK?.balance) === 7000,
+          '⭐⭐⭐ **`total_out` 按「申请额」而非「实付」累加**：`frozen 30.00→0` + `total_out 0→30.00`（**不是 25.00**）。按实付记会永久留下一个等于代扣税额的缺口，账面上看像「平台多留了钱」—— 而实际上那 ¥5.00 是平台**代扣代缴给税务**的，不是平台留存。这条断言是整节的核心',
+          `frozen=${acctK?.frozen} total_out=${acctK?.total_out} balance=${acctK?.balance}`,
+        );
+        assert(
+          logCount31() === logK,
+          '⭐⭐ 到账**不写** `ab_balance_log`（条数不变）：该表语义是「**可用余额**的每一次变化」，而到账那刻可用余额**不变**（钱早在申请时就被扣走了）。这不是「账本与快照不同源」—— `frozen` 与 `total_out` 的变化**从来**不由流水解释（D39 的 `freeze` 行就是先例）。到账这一事件由 `ab_withdraw` 自身完整记录（`paid_at`/`tax_withheld_amount`/`actual_amount`）。**把「为什么没有」变成声明**，而不是让后来人以为漏写了',
+          `Δ流水=${logCount31() - logK}（应 0）`,
+        );
+        assert(
+          paid31?.data?.totalInFen - paid31?.data?.totalOutFen ===
+            paid31?.data?.balanceFen + paid31?.data?.frozenFen && identity31(),
+          '⭐⭐ 到账后会计恒等式仍成立：`total_in − total_out === balance + frozen`（10000 − 3000 = 7000 = 7000 + 0）—— 这一条能同时抓到「忘了减 frozen」与「把实付记进 total_out」两类错账，是本域最省事的体检项',
+          `in=${acctK?.total_in} out=${acctK?.total_out} balance=${acctK?.balance} frozen=${acctK?.frozen}`,
+        );
+        const rePaid31 = await act31('paid', w1Id, {});
+        assert(
+          rePaid31?.code === 40017,
+          '⭐⭐ 重复到账 → `40017` —— 这是**最危险的一条**：重复登记会让 `frozen` 被扣两次（变负）并把 `total_out` 再加一遍。故到账只收 `approved` / `paying`，`success` 一律拒',
+          `code=${rePaid31?.code} msg=${rePaid31?.message}`,
+        );
+        const rowPaid31 = wdRow31(w1Id);
+        assert(
+          fen31(rowPaid31?.tax_withheld_amount) === 500 &&
+            fen31(rowPaid31?.actual_amount) === 2500 &&
+            !!rowPaid31?.paid_at,
+          '§31 到账落库：`tax_withheld_amount=5.00` / `actual_amount=25.00` / `paid_at` 齐备 —— 提现单自身就是这笔出款的完整凭证（这也是「不写余额流水」不丢信息的原因）',
+          `tax=${fen31(rowPaid31?.tax_withheld_amount)} actual=${fen31(rowPaid31?.actual_amount)} paidAt=${!!rowPaid31?.paid_at}`,
+        );
+
+        // ---------------------------------------------------- L. 代扣 / 实付自洽校验
+        const a4 = await apply31(15);
+        const w4Id = Number(a4?.data?.id ?? 0);
+        await act31('approve', w4Id, {});
+        const bad31 = await act31('paid', w4Id, { taxWithheldFen: 200, actualFen: 1000 });
+        const neg31 = await act31('paid', w4Id, { actualFen: 2000 });
+        assert(
+          bad31?.code === 10001 && /不自洽/.test(String(bad31?.message ?? '')),
+          '⭐⭐ 两栏都传却**不自洽** → `10001`「申请 ¥15.00 − 代扣 ¥2.00 ≠ 实付 ¥10.00」—— 若允许两处各记一套，账上必然出现「代扣记 2.00、实付按另一套算」的双真相，事后无从判断哪个才是回执上的数字',
+          `code=${bad31?.code} msg=${bad31?.message}`,
+        );
+        assert(
+          neg31?.code === 10001,
+          '⭐ 只传「实付 ¥20.00」> 申请 ¥15.00 → 推出的代扣为负 → `10001` —— 反推的中间值也要校验，不能推出一个负数再落库',
+          `code=${neg31?.code} msg=${neg31?.message}`,
+        );
+        const logL = logCount31();
+        const acctL0 = acct31();
+        assert(
+          fen31(acctL0?.frozen) === 1500 && fen31(acctL0?.total_out) === 3000,
+          '⭐ 两次非法提交**一个字段都没动**（`frozen` 仍 15.00、`total_out` 仍 30.00）—— 校验必须在事务内、落账之前；写成「先减 frozen 再校验」会让一次填错就把冻结额打歪',
+          `frozen=${acctL0?.frozen} out=${acctL0?.total_out}`,
+        );
+        const assumed31 = await act31('paid', w4Id, {});
+        const acctL = acct31();
+        assert(
+          assumed31?.code === 0 &&
+            assumed31?.data?.taxSource === 'assumed_zero' &&
+            assumed31?.data?.taxWithheldFen === 0 &&
+            assumed31?.data?.actualFen === 1500,
+          '⭐⭐ 两栏**都不传** → `taxSource=assumed_zero`：系统替你假设了「无代扣」，并把**这个假设显式下发**。一期人工通道下运营很可能只填实付就提交，若不标明来源，「个税为 0」会被当成结论写进对账表',
+          `src=${assumed31?.data?.taxSource} tax=${assumed31?.data?.taxWithheldFen} actual=${assumed31?.data?.actualFen}`,
+        );
+        assert(
+          fen31(acctL?.frozen) === 0 &&
+            fen31(acctL?.total_out) === 4500 &&
+            fen31(acctL?.balance) === 5500 &&
+            logCount31() === logL &&
+            identity31(),
+          '⭐⭐ 到账 ¥15.00 后终态自洽：`balance 55.00` / `frozen 0` / `total_in 100.00` / `total_out 45.00`（= 3000 + 1500，**按申请额**），流水条数不变，恒等式成立',
+          `balance=${acctL?.balance} frozen=${acctL?.frozen} out=${acctL?.total_out} Δ流水=${logCount31() - logL}`,
+        );
+
+        // ---------------------------------------------------- M. 守卫腿真正闭合
+        const qb = await call('POST', '/leader/quit', {
+          token: l31.token,
+          idem: `${PREFIX31}quit-b`,
+          body: { reason: 'e2e 验证提现闸门已闭合' },
+        });
+        const qbCodes = (qb.body?.data?.blockers ?? []).map((b) => b.code);
+        assert(
+          qb.body?.code === 20008 &&
+            !qbCodes.includes('WITHDRAW_IN_FLIGHT') &&
+            qbCodes.includes('BALANCE_NOT_CLEARED'),
+          '⭐⭐⭐ **守卫的提现腿真的闭合了**：全部提现单到终态后 `WITHDRAW_IN_FLIGHT` 消失，只剩「可用余额未清零」（他确实还有 ¥55.00）—— 这一对「同一接口、同一键、两种结果」才是 M4-4 的**真正交付物**：钱推得动了，C3 退出团长的死锁随之解除',
+          `blockers=${qbCodes.join(',') || '无'}`,
+        );
+
+        // ---------------------------------------------------- N. 终态行 + 汇总
+        const fEnd = Number((await list31()).data?.summary?.frozenByWithdrawFen ?? 0);
+        const done31 = await list31('?tab=done&keyword=' + encodeURIComponent(PREFIX31));
+        const all31 = await list31('?tab=all&keyword=' + encodeURIComponent(PREFIX31));
+        const fin1 = rowOf31(done31, w1No);
+        assert(
+          fEnd === f0,
+          '⭐ 全部单子到终态后 `frozenByWithdrawFen` **回到基线**（Δ=0）—— 提现占用的冻结额是可回收的；若它单调不降，就是本节开头说的「钱被永久锁死」又回来了',
+          `Δfrozen=${fEnd - f0}`,
+        );
+        assert(
+          done31?.data?.list?.length === 4 &&
+            all31?.data?.list?.length === 4 &&
+            fin1?.canMarkPaid === false &&
+            fin1?.canMarkFailed === false &&
+            fin1?.blockReason !== null,
+          '⭐ D45 `tab=done`（已到账 + 已驳回 + 打款失败）**恰好收进本节 4 笔**，且终态行四动作全灰 + `blockReason` 说明为什么（「已终态，无需处理」）—— 否则运营会以为按钮坏了而反复刷新',
+          `done=${done31?.data?.list?.length} all=${all31?.data?.list?.length} block=${fin1?.blockReason}`,
+        );
+        const w1St = wdRow31(w1Id)?.status;
+        const w2St = wdRow31(w2Id)?.status;
+        const w3St = wdRow31(w3Id)?.status;
+        const w4St = wdRow31(w4Id)?.status;
+        assert(
+          w1St === 'success' && w2St === 'rejected' && w3St === 'failed' && w4St === 'success',
+          '§31 四笔单子最终落三个不同终态（`success` ×2 / `rejected` / `failed` 各就各位）—— 四条动作路径全部走到，没有一条被别的动作覆盖（覆盖就意味着某条路径其实没生效）',
+          `W1=${w1St} W2=${w2St} W3=${w3St} W4=${w4St}`,
+        );
+
+        // ---------------------------------------------------- O. 夹具还原
+        writeDb("DELETE FROM ab_operation_log WHERE module = 'finance' AND target_id IN (?, ?, ?, ?)", [
+          w1Id,
+          w2Id,
+          w3Id,
+          w4Id,
+        ]);
+        writeDb('DELETE FROM ab_admin_user WHERE username IN (?, ?)', [op31, view31]);
+        writeDb('DELETE FROM ab_balance_log WHERE user_id = ?', [uid31]);
+        writeDb('DELETE FROM ab_withdraw WHERE leader_id = ?', [lid31]);
+        writeDb('DELETE FROM ab_balance WHERE user_id = ?', [uid31]);
+        writeDb('DELETE FROM ab_team_leader WHERE id = ?', [lid31]);
+        writeDb('DELETE FROM ab_user WHERE id = ?', [uid31]);
+        const left31 = {
+          w: Number(
+            readDb('SELECT COUNT(*) AS c FROM ab_withdraw WHERE leader_id = ?', [lid31])?.c ?? -1,
+          ),
+          b: Number(
+            readDb('SELECT COUNT(*) AS c FROM ab_balance WHERE user_id = ?', [uid31])?.c ?? -1,
+          ),
+          g: Number(
+            readDb('SELECT COUNT(*) AS c FROM ab_balance_log WHERE user_id = ?', [uid31])?.c ?? -1,
+          ),
+          l: Number(
+            readDb('SELECT COUNT(*) AS c FROM ab_team_leader WHERE id = ?', [lid31])?.c ?? -1,
+          ),
+          u: Number(readDb('SELECT COUNT(*) AS c FROM ab_user WHERE id = ?', [uid31])?.c ?? -1),
+          o: Number(
+            readDb('SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = ? AND target_id IN (?, ?, ?, ?)', [
+              'finance',
+              w1Id,
+              w2Id,
+              w3Id,
+              w4Id,
+            ])?.c ?? -1,
+          ),
+        };
+        assert(
+          Object.values(left31).every((v) => v === 0),
+          '§31 夹具还原：提现单 / 余额 / 流水 / 团长 / 用户 / 操作日志全部清除 —— 不还原会把「多出来的钱」与在途提现留给下一次重跑，让 D38↔D33 的对账断言与守卫断言双双假绿',
+          `w=${left31.w} b=${left31.b} g=${left31.g} l=${left31.l} u=${left31.u} o=${left31.o}`,
+        );
+      }
+    }
+  }
+
+  // ==========================================================================
   // 汇总
   // ==========================================================================
   await stopApiServer(server, PORT);

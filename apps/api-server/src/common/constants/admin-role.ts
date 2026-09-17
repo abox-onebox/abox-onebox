@@ -52,6 +52,8 @@ export const ADMIN_MENU_KEYS = [
   '/finance/balance',
   '/finance/supplier-share',
   '/finance/refund',
+  // M4-4：D45/D46 提现审批（L12 打开的资金链在后台的收口点）
+  '/finance/withdrawal',
   '/finance/reconciliation',
   // M3-15：D44 发票管理（进项票台账 · 纯读派生视图）
   '/finance/invoices',
@@ -108,6 +110,9 @@ export const ROLE_MENUS: Record<string, readonly string[]> = {
     '/finance/balance',
     '/finance/supplier-share',
     '/finance/refund',
+    // M4-4：提现审批是**财务的日常动作**（每天导出清单 → 提交平台 → 登记回执），
+    // 且 `FUND_ACTION_ROLES` 本就含 finance，故菜单必须给入口（授权了就必须有入口）。
+    '/finance/withdrawal',
     '/finance/reconciliation',
     // M3-15：财务要催票 —— 发票管理是 finance 角色的核心日常工作（D44）
     '/finance/invoices',

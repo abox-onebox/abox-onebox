@@ -156,6 +156,17 @@ export enum ErrorCode {
    *    要查的是数据结构而不是让人去充钱。合成一个码会把这条线索埋掉。
    */
   BALANCE_FROZEN_NOT_ENOUGH = 40015,
+  /** 扩展（M4-4）：提现单不存在（D45/D46 系列） */
+  WITHDRAW_NOT_FOUND = 40016,
+  /**
+   * 扩展（M4-4）：提现单当前状态不支持该操作（D46 系列）
+   *
+   * ⚠️ 刻意**不复用** `40013 REFUND_STATUS_ILLEGAL`：两者虽然形态相同，
+   *    但**排查入口不同** —— 退款单去 D40 看，提现单去 D45 看，运营拿到一个码
+   *    就知道该去哪个页面找这张单。合成一个码会让「这是哪张单的子状态机报的」
+   *    在一堆日志里失去线索（与 40015 复用 `40002` 的取舍同理）。
+   */
+  WITHDRAW_STATUS_ILLEGAL = 40017,
 
   /** ---- 5xxxx 财务 / 结算 / 供应商 ---- */
   SUPPLIER_NOT_QUALIFIED = 50001,
@@ -295,6 +306,8 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.REFUND_STATUS_ILLEGAL]: '退款单当前状态不支持该操作',
   [ErrorCode.REFUND_ORIGIN_UNKNOWN]: '退款申请缺少原状态记录，无法驳回',
   [ErrorCode.BALANCE_FROZEN_NOT_ENOUGH]: '冻结余额不足',
+  [ErrorCode.WITHDRAW_NOT_FOUND]: '提现单不存在',
+  [ErrorCode.WITHDRAW_STATUS_ILLEGAL]: '提现单当前状态不支持该操作',
   [ErrorCode.SUPPLIER_NOT_QUALIFIED]: '供应商资质未通过审核',
   [ErrorCode.DISTRIBUTION_CENTER_LOCKED]: '集散中心配置不可删除（存在历史结算）',
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',

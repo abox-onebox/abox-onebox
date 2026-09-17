@@ -12,6 +12,7 @@ import {
 } from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
+import { LeaderMoneyService } from '../../common/services/leader-money.service';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { maskPhone } from '../../common/utils/crypto';
 import { toFen } from '../../common/utils/money';
@@ -80,6 +81,8 @@ export class LeaderAdminService {
     @InjectRepository(Commission) private readonly commissionRepo: Repository<Commission>,
     @InjectRepository(OperationLog) private readonly opLogRepo: Repository<OperationLog>,
     private readonly dataSource: DataSource,
+    /** M4-4：已提现 / 待入账佣金 / 余额的唯一真源读取口（#69） */
+    private readonly leaderMoney: LeaderMoneyService,
   ) {}
 
   // ==========================================================================
@@ -248,31 +251,35 @@ export class LeaderAdminService {
 
     const userId = Number(leader.userId);
 
-    const [building, user, account, invite, invitees, commissionRows, logs] = await Promise.all([
-      this.buildingRepo.findOne({ where: { id: leader.buildingId } }),
-      this.userRepo.findOne({ where: { id: userId } }),
-      this.balanceRepo.findOne({ where: { userId } }),
-      this.inviteRepo.findOne({ where: { inviteeUserId: userId } }),
-      this.inviteRepo.find({ where: { inviterLeaderId: Number(leader.id) } }),
-      this.commissionRepo.find({
-        where: { teamLeaderId: Number(leader.id) },
-        order: { id: 'DESC' },
-        take: 20,
-      }),
-      /**
-       * ⚠️ D20（任命）的操作日志 `targetId` 是**被任命用户 id** ——
-       *    `/admin/leaders` 的路径里没有团长 id，请求体里也只有 `userId`，
-       *    拦截器只能取到它。而 D21/D22 的 targetId 是团长 id。
-       *    故这里两者一起查：否则详情页看不到「他是怎么被任命的」这条最关键的记录。
-       */
-      this.opLogRepo
-        .createQueryBuilder('o')
-        .where('o.module = :m', { m: 'leader' })
-        .andWhere('o.target_id IN (:...ids)', { ids: [String(leader.id), String(userId)] })
-        .orderBy('o.id', 'DESC')
-        .take(20)
-        .getMany(),
-    ]);
+    const [building, user, account, invite, invitees, commissionRows, logs, snapshots] =
+      await Promise.all([
+        this.buildingRepo.findOne({ where: { id: leader.buildingId } }),
+        this.userRepo.findOne({ where: { id: userId } }),
+        this.balanceRepo.findOne({ where: { userId } }),
+        this.inviteRepo.findOne({ where: { inviteeUserId: userId } }),
+        this.inviteRepo.find({ where: { inviterLeaderId: Number(leader.id) } }),
+        this.commissionRepo.find({
+          where: { teamLeaderId: Number(leader.id) },
+          order: { id: 'DESC' },
+          take: 20,
+        }),
+        /**
+         * ⚠️ D20（任命）的操作日志 `targetId` 是**被任命用户 id** ——
+         *    `/admin/leaders` 的路径里没有团长 id，请求体里也只有 `userId`，
+         *    拦截器只能取到它。而 D21/D22 的 targetId 是团长 id。
+         *    故这里两者一起查：否则详情页看不到「他是怎么被任命的」这条最关键的记录。
+         */
+        this.opLogRepo
+          .createQueryBuilder('o')
+          .where('o.module = :m', { m: 'leader' })
+          .andWhere('o.target_id IN (:...ids)', { ids: [String(leader.id), String(userId)] })
+          .orderBy('o.id', 'DESC')
+          .take(20)
+          .getMany(),
+        /** M4-4：已提现 / 待入账佣金真源（见列表处说明） */
+        this.leaderMoney.snapshotOf([{ id: Number(leader.id), userId }]),
+      ]);
+    const snap = snapshots.get(Number(leader.id));
 
     const group = building?.buildingGroupId
       ? await this.groupRepo.findOne({ where: { id: building.buildingGroupId } })
@@ -322,8 +329,10 @@ export class LeaderAdminService {
         balanceFen: toFen(Number(account?.balance ?? 0)),
         frozenFen: toFen(Number(account?.frozen ?? 0)),
         totalCommissionFen: toFen(Number(leader.totalCommission)),
-        withdrawnAmountFen: toFen(Number(leader.withdrawnAmount)),
-        pendingAmountFen: toFen(Number(leader.pendingAmount)),
+        /** ⭐ 真源派生（到账实付合计）—— 不再读 `ab_team_leader.withdrawn_amount` */
+        withdrawnAmountFen: snap?.withdrawnFen ?? 0,
+        /** ⭐ 真源派生（待入账佣金合计）—— 不再读 `ab_team_leader.pending_amount` */
+        pendingAmountFen: snap?.pendingCommissionFen ?? 0,
         agreedAt: toBjIso(leader.agreedAt),
         agreeVersion: leader.agreeVersion ?? null,
         payoutType: leader.payoutType ?? null,
@@ -721,7 +730,7 @@ export class LeaderAdminService {
     const buildingIds = [...new Set(rows.map((r) => Number(r.buildingId)))];
     const userIds = [...new Set(rows.map((r) => Number(r.userId)))];
 
-    const [buildings, users, balances] = await Promise.all([
+    const [buildings, users, balances, snapshots] = await Promise.all([
       buildingIds.length
         ? this.buildingRepo.find({ where: { id: In(buildingIds) } })
         : Promise.resolve([] as Building[]),
@@ -731,6 +740,16 @@ export class LeaderAdminService {
       userIds.length
         ? this.balanceRepo.find({ where: { userId: In(userIds) } })
         : Promise.resolve([] as Balance[]),
+      /**
+       * ⚠️ M4-4：`withdrawnAmountFen` / `pendingAmountFen` 原取
+       *    `ab_team_leader.withdrawn_amount` / `pending_amount` —— 这两列
+       *    **从种子之后就没有任何写点**，页面上永远是 0（或种子值）。
+       *    改从真源派生：已提现 = `ab_withdraw(status='success').actual_amount` 合计；
+       *    待入账 = `ab_commission(status='pending' ∧ type='normal').amount` 合计。
+       */
+      this.leaderMoney.snapshotOf(
+        rows.map((l) => ({ id: Number(l.id), userId: Number(l.userId) })),
+      ),
     ]);
 
     const groupIds = [
@@ -750,6 +769,7 @@ export class LeaderAdminService {
       const group = building?.buildingGroupId ? groupById.get(building.buildingGroupId) : null;
       const user = userById.get(Number(l.userId));
       const account = balanceByUserId.get(Number(l.userId));
+      const snap = snapshots.get(Number(l.id));
 
       return {
         id: Number(l.id),
@@ -775,7 +795,10 @@ export class LeaderAdminService {
         balanceFen: toFen(Number(account?.balance ?? 0)),
         frozenFen: toFen(Number(account?.frozen ?? 0)),
         totalCommissionFen: toFen(Number(l.totalCommission)),
-        pendingAmountFen: toFen(Number(l.pendingAmount)),
+        /** ⭐ 真源派生（`ab_withdraw` 到账实付合计）—— 不再读 `ab_team_leader.withdrawn_amount` */
+        withdrawnAmountFen: snap?.withdrawnFen ?? 0,
+        /** ⭐ 真源派生（`ab_commission` 待入账合计）—— 不再读 `ab_team_leader.pending_amount` */
+        pendingAmountFen: snap?.pendingCommissionFen ?? 0,
         agreedAt: toBjIso(l.agreedAt),
         agreeVersion: l.agreeVersion ?? null,
         payoutBound: Boolean(l.payoutType && l.payoutAccount && l.payoutName),

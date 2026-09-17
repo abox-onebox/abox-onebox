@@ -194,6 +194,14 @@ export const routes: RouteRecordRaw[] = [
         name: 'FinanceRefund',
         component: () => import('@/views/finance/refund.vue'),
       },
+      // M4-4：提现审批（D45/D46）—— 与退款审批是**两条独立的钱流**：
+      //   退款是「用户的钱往回走」，提现是「团长的钱往外走」（C11 灵活用工出款）。
+      //   合并成一页会让两类审批互相淹没，故同域下并列。
+      {
+        path: 'finance/withdrawal',
+        name: 'FinanceWithdrawal',
+        component: () => import('@/views/finance/withdrawal.vue'),
+      },
       {
         path: 'finance/reconciliation',
         name: 'FinanceReconciliation',

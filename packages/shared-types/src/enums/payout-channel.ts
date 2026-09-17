@@ -8,14 +8,24 @@
  * 因此微信「商家转账到零钱」不再需要。本枚举把出款通道抽象出来，
  * 使「一期清单导出 + 回执登记」与「二期平台 API 直连」可平滑切换，
  * 且不阻塞 M1 开发（产品形态始终是「佣金余额 → 提现」，仅通道不同）。
+ *
+ * ⚠️ **2026-09-17（M4-4）修正：枚举值一律用大写，与落库值一致。**
+ *    本枚举原先写成小写（`'flex_manual'`），而**实际链路上全是大写**：
+ *    `ab_withdraw.payout_channel` 的列默认值、`BizConfigService.payoutChannel()`
+ *    的缺省值、e2e-m2 的断言全是 `'FLEX_MANUAL'`。此前因为本枚举
+ *    **全仓零消费点**（没人 import）才没炸；一旦有人照它写
+ *    `row.payoutChannel === PayoutChannel.FLEX_MANUAL`，比较会**恒为 false**
+ *    且不报错 —— 这类「不报错的错」最难查。故把枚举改成真实取值，
+ *    让「照枚举写」与「照库写」指向同一个字符串。
+ *    （登记于《缺陷与陷阱》#70）
  */
 export enum PayoutChannel {
   /** 灵活用工平台 · 人工导出清单 + 回执登记（一期默认） */
-  FLEX_MANUAL = 'flex_manual',
+  FLEX_MANUAL = 'FLEX_MANUAL',
   /** 灵活用工平台 · API 直连（二期） */
-  FLEX_API = 'flex_api',
+  FLEX_API = 'FLEX_API',
   /** 微信「商家转账到零钱」——C11 后停用，仅兼容历史流水 */
-  WECHAT_TRANSFER = 'wechat_transfer',
+  WECHAT_TRANSFER = 'WECHAT_TRANSFER',
 }
 
 export const PAYOUT_CHANNEL_META: Record<

@@ -11,7 +11,9 @@ import {
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
+import { LeaderMoneyService } from '../../common/services/leader-money.service';
 import { maskAccount } from '../../common/utils/crypto';
+import { money, toYuan } from '../../common/utils/money';
 import { toBjIso } from '../../common/utils/time';
 import { Building } from '../../database/entities/building.entity';
 import { Balance, Commission } from '../../database/entities/finance.entity';
@@ -61,6 +63,8 @@ export class TeamLeaderService {
     private readonly dataSource: DataSource,
     // M4-3：申请成为团长后的「提交确认」通知（场景 `leader_apply`）
     private readonly message: MessageService,
+    // M4-4：团长「余额 / 冻结 / 待入账佣金 / 累计已提现」的唯一真源读取口（#69）
+    private readonly leaderMoney: LeaderMoneyService,
   ) {}
 
   /**
@@ -278,6 +282,11 @@ export class TeamLeaderService {
         `${dto.reason ? `，原因：${dto.reason}` : ''}`,
     );
 
+    const snapshot = await this.leaderMoney.snapshotOf([
+      { id: Number(leader.id), userId: Number(leader.userId) },
+    ]);
+    const snap = snapshot.get(Number(leader.id));
+
     return {
       /** 端上据此把底部导航重渲染回 4 项（C3 反向） */
       isLeader: false,
@@ -285,11 +294,18 @@ export class TeamLeaderService {
       level: leader.level,
       levelLabel: LEADER_LEVEL_META[leader.level as LeaderLevel]?.label ?? leader.level,
       quitAt: result.quitAt,
-      /** 历史资产仍保留，可在「我的」继续查看 */
+      /**
+       * 历史资产仍保留，可在「我的」继续查看。
+       *
+       * ⚠️ `balance` 原先取 `ab_team_leader.balance` —— 那列**从种子之后就没有写点**，
+       *    故退出时展示的是一个死数字。M4-4 起改取 `ab_balance` 真值（#69）。
+       */
       kept: {
         totalOrders: Number(leader.totalOrders),
         totalCommission: leader.totalCommission,
-        balance: leader.balance,
+        balance: snap ? money(toYuan(snap.balanceFen)) : '0.00',
+        balanceFen: snap?.balanceFen ?? 0,
+        frozenFen: snap?.frozenFen ?? 0,
       },
       tips: '已退出团长身份。历史佣金与订单记录仍保留；如需重新担任，可再次提交申请。',
     };
@@ -391,6 +407,12 @@ export class TeamLeaderService {
       (await this.buildingRepo.findOne({ where: { id: leader.buildingId } }))?.name ??
       null;
 
+    /**
+     * ⚠️ 余额取 `ab_balance` 真值（M4-4 · #69），**不取** `ab_team_leader.balance`
+     *    —— 后者从种子之后就没有写点，展示它会让「我的」页与 L11 余额页显示两个不同的数。
+     */
+    const snap = await this.leaderMoney.accountOf(Number(leader.userId));
+
     return {
       id: leader.id,
       userId: leader.userId,
@@ -405,7 +427,11 @@ export class TeamLeaderService {
       status: leader.status,
       monthOrders: leader.monthOrders,
       invitedFormalCount: leader.invitedFormalCount,
-      balance: leader.balance,
+      /** @deprecated 用 `balanceFen`（整数分）；值已改取 `ab_balance` */
+      balance: money(toYuan(snap.balanceFen)),
+      /** 可用余额（整数分）· 真源 `ab_balance` */
+      balanceFen: snap.balanceFen,
+      frozenFen: snap.frozenFen,
       totalOrders: leader.totalOrders,
       totalCommission: leader.totalCommission,
       agreedAt: leader.agreedAt ?? null,

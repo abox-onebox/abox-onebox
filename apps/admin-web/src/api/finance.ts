@@ -12,6 +12,8 @@ import type { PageResult } from './system';
  *   · **M3-13** —— D33 资金总览 / D34 佣金结算明细 / D35 佣金入账（补跑）
  *   · **M3-14** —— D38 余额账户管理 / D39 余额调整（资金动作 · 必带幂等键）
  *   · **M3-15** —— D43 微信支付对账（差异清单）/ D44 发票管理（进项票台账）
+ *   · **M4-4** —— D45 提现审批列表 / D46 批准 · D46a 驳回 · D46b 到账回执 ·
+ *     D46c 打款失败（L12 打开的资金链在后台收口）
  *
  * ⚠️ 金额一律**整数分**（`Fen` 结尾）；端上只做展示换算，绝不参与口径计算
  *    —— 「可退多少」由服务端重算并下发，端上算错时会退错钱。
@@ -616,3 +618,280 @@ export interface InvoiceListQuery {
 /** D44 发票管理（进项票台账 · 派生视图） */
 export const fetchInvoices = (params: InvoiceListQuery = {}) =>
   http.get<InvoiceListView>('/admin/finance/invoices', params);
+
+/* ========================================================================= *
+ * M4-4 · D45 提现审批列表 / D46–D46c 四动作（原型 P34 · 模块 M35-08）
+ * ========================================================================= */
+
+/**
+ * 提现状态（与 `@abox/shared-types` 的 `WithdrawStatus` 同源）
+ *
+ * ⚠️ `paying`（打款中）**一期不会出现**：它是二期 `FLEX_API` 自动通道的中间态。
+ *    一期是人工通道，四个动作里没有任何一个会把状态置成 `paying`；
+ *    但 `approved` / `paying` 两者都接受「到账登记」与「打款失败」
+ *    —— 二期接上 API 后前端无需改动。
+ */
+export type WithdrawStatusValue =
+  'pending' | 'approved' | 'paying' | 'success' | 'rejected' | 'failed';
+
+/** Tab（语义糖，服务端展开成状态集合 —— 端上不自己拼） */
+export type WithdrawTabValue = 'review' | 'payout' | 'done' | 'all';
+
+export interface WithdrawRow {
+  id: number;
+  withdrawNo: string;
+
+  /** 申请金额（分）—— **一切解冻都以它为准** */
+  amountFen: number;
+  /** 平台代扣个税（分） */
+  taxWithheldFen: number;
+  /** 实付（分） */
+  actualFen: number;
+  /**
+   * ⭐ 到账前 `taxWithheldAmount` / `actualAmount` 在库里仍是 `apply()` 写入的
+   *    初值（申请金额 / 0），**不代表结论**。故服务端只在**已到账**时把这两项
+   *    标记为已知；未到账时端上必须显示「待登记」而不是「¥0.00 个税」。
+   */
+  actualKnown: boolean;
+  taxKnown: boolean;
+
+  status: WithdrawStatusValue;
+  statusText: string;
+  /** `FLEX_MANUAL` 一期人工通道 / `FLEX_API` 二期自动通道 */
+  payoutChannel: string;
+  /** 通道中文名（服务端下发，端上不自造） */
+  payoutChannelText: string;
+  payoutBatchNo: string | null;
+
+  receiveType: string;
+  /** 收款方式中文名（服务端下发） */
+  receiveTypeText: string;
+  /** ⚠️ **已是脱敏存储**（申请时 `maskAccount`），原样展示即可，不要再脱一次 */
+  receiveAccount: string;
+  receiveName: string;
+
+  user: { id: number; nickname: string | null; phoneMasked: string | null };
+  leader: {
+    id: number;
+    realName: string | null;
+    level: string;
+    levelText: string;
+    /** 该团长**此刻**的资产快照 —— 驳回前用它印证「确实冻结着这笔钱」 */
+    balanceFen: number;
+    frozenFen: number;
+    /** 还有多少佣金待入账（两段式下天天产生）—— 回答「驳回后他是不是马上又能提」 */
+    pendingCommissionFen: number;
+  } | null;
+
+  auditorId: number | null;
+  auditAt: string | null;
+  auditRemark: string | null;
+  failReason: string | null;
+  paidAt: string | null;
+  createdAt: string;
+
+  /** 按钮可用性口径唯一在服务端（同 D9 / D40） */
+  canApprove: boolean;
+  canReject: boolean;
+  canMarkPaid: boolean;
+  canMarkFailed: boolean;
+  blockReason: string | null;
+}
+
+/**
+ * 汇总
+ *
+ * ⚠️ 两类量**刻意分开**（同 D38）：
+ *   · **在途量（时点量）** —— `pending*` / `approved*` / `paying*` /
+ *     `frozenByWithdrawFen` 取**全量**，**不随筛选变化**。
+ *     「平台此刻因提现占用了用户多少钱」不该因为搜索框里敲了个姓名就变小。
+ *   · **历史量** —— `paid*` / `released*` 取**同一过滤条件的全量**（不受分页影响）。
+ */
+export interface WithdrawSummary {
+  /** 快照时刻（时点量必须能被复现） */
+  asOf: string;
+  pendingCount: number;
+  pendingAmountFen: number;
+  approvedCount: number;
+  approvedAmountFen: number;
+  /** 一期恒 0（见 `WithdrawStatusValue` 的说明） */
+  payingCount: number;
+  payingAmountFen: number;
+  /** ⭐ 提现占用的冻结额（待审批 + 已批准 + 打款中）= 可与 `ab_balance.frozen` 的增量互相验算 */
+  frozenByWithdrawFen: number;
+  paidCount: number;
+  paidAmountFen: number;
+  /** 已驳回 + 打款失败（两者都已原路解冻） */
+  releasedCount: number;
+  releasedAmountFen: number;
+  /** 本页命中数（= 分页的 `total`，与上面两类都不同） */
+  scopedTotal: number;
+}
+
+export interface WithdrawListQuery {
+  status?: WithdrawStatusValue;
+  tab?: WithdrawTabValue;
+  payoutBatchNo?: string;
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface WithdrawListView extends PageResult<WithdrawRow> {
+  tab: WithdrawTabValue;
+  summary: WithdrawSummary;
+  /** 服务端下发的枚举映射（端上不维护第二份，避免漂移） */
+  statusOptions: Array<{ value: string; label: string }>;
+  tabOptions: Array<{ value: string; label: string }>;
+  /**
+   * 端上可用动作（**判定权威在服务端 `@Roles`**）
+   *
+   * `canAudit` 与 D46 系列四个端点的 `@Roles(...FUND_ACTION_ROLES)`
+   * **共用同一角色常量** —— 不可能出现「按钮亮着、点了 `10003`」。
+   */
+  actions: { canAudit: boolean };
+}
+
+/** 审批（驳回 / 到账 / 失败）四个动作的共用出参：动作后的余额快照 */
+export interface WithdrawMoneySnapshot {
+  balanceBeforeFen: number;
+  frozenBeforeFen: number;
+  balanceFen: number;
+  frozenFen: number;
+  totalInFen: number;
+  totalOutFen: number;
+}
+
+export interface ApproveWithdrawPayload {
+  /** 缺省由服务端生成 `PB{yyyyMMdd}`（按**审批日**聚合） */
+  payoutBatchNo?: string;
+  remark?: string;
+}
+
+export interface ApproveWithdrawResult {
+  id: number;
+  withdrawNo: string;
+  status: WithdrawStatusValue;
+  statusText: string;
+  amountFen: number;
+  payoutBatchNo: string;
+  auditorId: number;
+  auditorName: string;
+  /** 恒 `false`：批准**不动钱**（余额已在申请时就冻结） */
+  moneyMoved: false;
+  /** 下一步该做什么（服务端下发人话，端上不自造） */
+  nextStep: string;
+}
+
+export interface RejectWithdrawResult extends WithdrawMoneySnapshot {
+  id: number;
+  withdrawNo: string;
+  status: WithdrawStatusValue;
+  statusText: string;
+  amountFen: number;
+  reason: string;
+  auditorId: number;
+  auditorName: string;
+  moneyMoved: true;
+  tips: string;
+}
+
+export interface MarkWithdrawPaidPayload {
+  /** 平台代扣个税（分）—— 与 `actualFen` **可单传可同传**，同传时必须自洽 */
+  taxWithheldFen?: number;
+  /** 实付（分） */
+  actualFen?: number;
+  paidAt?: string;
+  payoutBatchNo?: string;
+  remark?: string;
+}
+
+export interface MarkWithdrawPaidResult extends WithdrawMoneySnapshot {
+  id: number;
+  withdrawNo: string;
+  status: WithdrawStatusValue;
+  statusText: string;
+  amountFen: number;
+  taxWithheldFen: number;
+  actualFen: number;
+  /**
+   * ⭐ 代扣额的来源：
+   *   · `explicit` 运营两栏都填了并已校验自洽
+   *   · `derived` 只填一栏，另一栏由「申请 − 已填」推出
+   *   · `assumed_zero` **两栏都没填** → 系统替你假设了「无代扣」
+   * 端上必须把 `assumed_zero` 显示出来 —— 否则「个税为 0」会被当成结论。
+   */
+  taxSource: 'explicit' | 'derived' | 'assumed_zero';
+  paidAt: string;
+  payoutBatchNo: string | null;
+  auditorId: number;
+  auditorName: string;
+  tips: string;
+}
+
+export interface FailWithdrawPayload {
+  /** 必填 · 2–256 字 */
+  failReason: string;
+  payoutBatchNo?: string;
+  remark?: string;
+}
+
+export interface FailWithdrawResult extends WithdrawMoneySnapshot {
+  id: number;
+  withdrawNo: string;
+  status: WithdrawStatusValue;
+  statusText: string;
+  amountFen: number;
+  failReason: string;
+  moneyMoved: true;
+  tips: string;
+}
+
+/** D45 提现审批列表 */
+export function fetchAdminWithdrawals(params: WithdrawListQuery): Promise<WithdrawListView> {
+  return http.get<WithdrawListView>('/admin/finance/withdrawals', params);
+}
+
+/**
+ * D46 审批通过（登记批次号）
+ *
+ * ⚠️ **不动钱**：申请一瞬间余额已被冻结，批准只是「同意把这笔冻结额出款」
+ *    —— 故本动作既不写余额流水、也不改 `total_out`。
+ */
+export function approveWithdrawal(
+  id: number,
+  payload: ApproveWithdrawPayload = {},
+): Promise<ApproveWithdrawResult> {
+  return http.post<ApproveWithdrawResult>(`/admin/finance/withdrawals/${id}/approve`, payload);
+}
+
+/**
+ * D46a 审批驳回 → **原路解冻**（`balance +X / frozen −X`，`total_in`/`total_out` 都不动）
+ *
+ * `reason` 必填且 ≥2 字：团长端会看到这句话。
+ */
+export function rejectWithdrawal(id: number, reason: string): Promise<RejectWithdrawResult> {
+  return http.post<RejectWithdrawResult>(`/admin/finance/withdrawals/${id}/reject`, { reason });
+}
+
+/**
+ * D46b 到账回执登记（一期人工通道的**唯一收口**）
+ *
+ * ⚠️ `total_out` 按**申请金额**累加（不是实付）—— 代扣个税是平台代缴给税务的，
+ *    不是平台留存；若按实付记，账面会永久留下一个等于税额的缺口。
+ * ⚠️ **不写余额流水**：到账那刻**可用余额不变**，没有一条属于它的 `ab_balance_log`。
+ */
+export function markWithdrawalPaid(
+  id: number,
+  payload: MarkWithdrawPaidPayload = {},
+): Promise<MarkWithdrawPaidResult> {
+  return http.post<MarkWithdrawPaidResult>(`/admin/finance/withdrawals/${id}/paid`, payload);
+}
+
+/** D46c 打款失败 → **原路解冻**（同驳回口径；团长可重新申请） */
+export function markWithdrawalFailed(
+  id: number,
+  payload: FailWithdrawPayload,
+): Promise<FailWithdrawResult> {
+  return http.post<FailWithdrawResult>(`/admin/finance/withdrawals/${id}/fail`, payload);
+}

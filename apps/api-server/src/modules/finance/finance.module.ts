@@ -30,6 +30,7 @@ import { ReversalService } from './reversal.service';
 import { SupplierShareAdminController } from './supplier-share-admin.controller';
 import { SupplierShareService } from './supplier-share.service';
 import { WithdrawService } from './withdraw.service';
+import { WithdrawAdminService } from './withdraw-admin.service';
 
 /**
  * 财务模块 · 见《接口规范 v1.0》§4.4 / §6.5 与《目录结构 v2.0》
@@ -60,7 +61,19 @@ import { WithdrawService } from './withdraw.service';
  *    ⚠️ D43 一期**拿不到微信账单**（无商户号），出参强制标注 `channel.source='local_only'`
  *    —— 绝不报「已与微信对平」（那会让真正的差异永远不可见）。
  *
- * 后台侧仍待写：无（D45/D46 提现审批一期由 `WithdrawService` + 团长侧路由承载，后台审批页在 M4 补）。
+ *  · ⭐ **M4-4 `WithdrawAdminService` —— D45 提现审批列表 / D46 批准 · D46a 驳回 ·
+ *    D46b 到账回执 · D46c 打款失败**（同挂 `FinanceAdminController`）。
+ *    本批把 L12「申请即冻结」打开的那条资金链**收口**：此前后台无任何端点能推进
+ *    提现单，单子永远停在 `pending`，被冻结的钱既出不去也回不来，且 C3 退团守卫
+ *    会以「有未完成的提现」把团长**永久困住**（错误文案还写着「等待提现到账」）。
+ *    三路解冻共用一个 `releaseFrozen()`；到账按**申请金额**（非实付）累加 `total_out`。
+ *
+ * ⚠️ **角色白名单已收敛**：`FINANCE_READ_ROLES`（类级，含 `operator`）与
+ *    `FUND_ACTION_ROLES`（方法级资金动作，不含 `operator`）定义在
+ *    `finance.constants.ts`，由 D35 / D39 / D41 / D42 / D46 系列**共用一份**
+ *    —— 此前五处各写字面量，漂移不报错。
+ *
+ * 后台侧仍待写：无（M35 全部端点 D1–D60 已实装）。
  *
  * ⚠️ 依赖方向：`OrderModule → FinanceModule`（取 Refund/Reversal），单向无循环。
  *    `OrderModule` 自身也持有 `Refund` 实体（历史原因：`RefundService` 曾住在
@@ -122,6 +135,8 @@ import { WithdrawService } from './withdraw.service';
     ReconciliationService,
     InvoiceService,
     WithdrawService,
+    // M4-4：D45 提现审批列表 + D46 批准 / D46a 驳回 / D46b 到账回执 / D46c 打款失败
+    WithdrawAdminService,
     RefundService,
     ReversalService,
     RefundAdminService,

@@ -13,7 +13,12 @@ import {
   MinLength,
 } from 'class-validator';
 
-import { REFUND_REASON_LABEL, RefundReasonType, ReceiveType } from '@abox/shared-types';
+import {
+  REFUND_REASON_LABEL,
+  RefundReasonType,
+  ReceiveType,
+  WithdrawStatus,
+} from '@abox/shared-types';
 
 import { STATS_DEFAULT_RANGE, STATS_RANGES } from '../../stats/stats.constants';
 
@@ -22,6 +27,16 @@ const REASON_TYPES: string[] = Object.values(RefundReasonType);
 const REASON_HINT = Object.values(RefundReasonType)
   .map((v) => REFUND_REASON_LABEL[v])
   .join(' / ');
+
+/**
+ * 提现单状态取值（与 shared-types 的 `WithdrawStatus` **强制同源**）
+ *
+ * ⚠️ 从枚举 `Object.values()` 派生而**不另抄一份字面量**：抄一份就等于给
+ *    「枚举加了值、DTO 的 `@IsIn` 没跟上」留了位置 —— 那时的表现是新状态
+ *    能落库、却永远筛不出来（运营看不到这批单），且**两端都不报错**。
+ */
+const WITHDRAW_STATUS_KEYS: string[] = Object.values(WithdrawStatus);
+const WITHDRAW_STATUS_HINT = WITHDRAW_STATUS_KEYS.join(' / ');
 
 /**
  * L7 团长代退申请（《接口规范》§4.2 · C6 第一段）
@@ -551,4 +566,218 @@ export class AdminInvoicesQueryDto {
   @Min(1)
   @Max(100)
   pageSize?: number;
+}
+
+/* ========================================================================= *
+ * M4-4 后台 · 提现审批（D45 列表 · D46 批准 / 驳回 / 到账回执 / 打款失败）
+ * ========================================================================= */
+
+/** 提现审批页 Tab（语义糖，服务端展开成状态集合 —— 端上不自己拼） */
+export const WITHDRAW_TAB_KEYS = ['review', 'payout', 'done', 'all'] as const;
+
+/**
+ * D45 · 提现审批列表查询（M35-08）
+ *
+ * ⚠️ `status` 与 `tab` **二选一，`status` 优先**（同 D40/D34 的既有约定）：
+ *    精确状态适合「我就要找那几张被驳回的」，Tab 适合日常巡检。
+ *
+ * ⚠️ 非法 `status` 一律 `10001`，**不静默回落成「全部」**：
+ *    回落会让运营以为自己看的是「待审批」，实际是全部列表，
+ *    从而漏掉一批本当今天处理的提现（同 D44 的纪律）。
+ */
+export class AdminWithdrawalsQueryDto {
+  @ApiPropertyOptional({
+    description: '按状态精确过滤：pending/approved/paying/success/rejected/failed',
+  })
+  @IsOptional()
+  @IsIn(WITHDRAW_STATUS_KEYS as unknown as string[], {
+    message: `status 需为：${WITHDRAW_STATUS_HINT}`,
+  })
+  status?: string;
+
+  @ApiPropertyOptional({
+    description: 'Tab：review 待审批 / payout 待打款（已批准） / done 已终态 / all 全部',
+    enum: WITHDRAW_TAB_KEYS,
+    default: 'review',
+  })
+  @IsOptional()
+  @IsIn(WITHDRAW_TAB_KEYS as unknown as string[], {
+    message: 'tab 需为：review / payout / done / all',
+  })
+  tab?: string;
+
+  @ApiPropertyOptional({
+    description: '出款批次号精确过滤（导出某批清单时用）',
+    example: 'PB20260917',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  payoutBatchNo?: string;
+
+  @ApiPropertyOptional({
+    description: '关键词：提现单号 / 团长姓名 / 用户昵称（模糊匹配）',
+    example: '李明',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  keyword?: string;
+
+  @ApiPropertyOptional({ description: '页码，默认 1' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({ description: '每页条数，默认 20，上限 100' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number;
+}
+
+/**
+ * D46 · 审批通过
+ *
+ * `payoutBatchNo` 缺省按**审批日**聚合（`PB{yyyyMMdd}`）——
+ * 一期人工通道下「今天批的钱是一批」，运营提交一次、对一回账即可。
+ * 需要一天内分批提交时由运营显式传入（见 `order-no.ts` 的 `payoutBatchNoOf` 说明）。
+ */
+export class AdminApproveWithdrawDto {
+  @ApiPropertyOptional({
+    description: '出款批次号；缺省 = 审批日批次 PB{yyyyMMdd}',
+    example: 'PB20260917',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  payoutBatchNo?: string;
+
+  @ApiPropertyOptional({ description: '审批备注（写入 `ab_withdraw.audit_remark`）' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  remark?: string;
+}
+
+/**
+ * D46a · 审批驳回
+ *
+ * ⚠️ `reason` **必填 ≥2 字**：驳回会**原路解冻**团长的钱，
+ *    是唯一一个「用户会立刻看到自己钱回来了」的动作 ——
+ *    事后被问「为什么把我这笔打回来」时，`audit_remark` 是唯一能回答的地方。
+ */
+export class AdminRejectWithdrawDto {
+  @ApiProperty({
+    description: '驳回原因（必填，写入 `ab_withdraw.audit_remark`）',
+    example: '收款账号与实名不一致',
+  })
+  @IsString()
+  @IsNotEmpty({ message: '请填写驳回原因' })
+  @MinLength(2, { message: '驳回原因至少 2 个字' })
+  @MaxLength(256)
+  reason!: string;
+}
+
+/**
+ * D46b · 到账回执登记（一期人工通道的**唯一收口**）
+ *
+ * ⚠️ 三个系数的缺失后果各不一样，故 `taxWithheldFen` / `actualFen` **可单传、可同传**：
+ *    · 都不传 → 视为「无代扣个税」，实付 = 申请金额（**契约上最宽松、也最容易错**，
+ *      故出参回显 `taxSource='assumed_zero'`，让运营看得见「系统替你假设了 0」）
+ *    · 只传 `taxWithheldFen` → 实付 = 申请金额 − 代扣
+ *    · 只传 `actualFen` → 代扣 = 申请金额 − 实付
+ *    · 都传 → 必须满足 `申请金额 − 代扣 = 实付`，否则 `10001`
+ *      （**不允许两处各记一套**：那必然产生「账上写着代扣 50、实付却按另算」的双真相）
+ */
+export class AdminPaidWithdrawDto {
+  @ApiPropertyOptional({ description: '平台代扣个税（**整数分**）；缺省 0', example: 0 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  taxWithheldFen?: number;
+
+  @ApiPropertyOptional({
+    description: '实际到账（**整数分**）；缺省 = 申请金额 − 代扣',
+    example: 2580,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  actualFen?: number;
+
+  @ApiPropertyOptional({
+    description: '到账时间（ISO 8601，缺省 = 当前时间）；补录历史回执时用',
+    example: '2026-09-17T18:00:00+08:00',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  paidAt?: string;
+
+  @ApiPropertyOptional({
+    description: '出款批次号（缺省沿用该单已登记的批次）',
+    example: 'PB20260917',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  payoutBatchNo?: string;
+
+  @ApiPropertyOptional({ description: '登记备注（如平台回执流水号）' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  remark?: string;
+}
+
+/**
+ * D46c · 打款失败（平台退回 / 转账失败）
+ *
+ * ⚠️ 与 D46a 驳回**刻意分开**：两者都解冻，但**状态语义相反** ——
+ *    驳回是「平台认为不该发」，失败是「平台尝试发了但没成功」（账号不存在、
+ *    户名不符、平台额度不足…）。分开的好处是**运营能看到成因分布**：
+ *    若某批次里 `failed` 集中出现，问题在收款信息质检；若 `rejected` 集中出现，
+ *    问题在审批口径。合成一个状态会把这条线索埋掉（同 40015 与 40002 的取舍）。
+ */
+export class AdminFailWithdrawDto {
+  @ApiProperty({
+    description: '失败原因（必填，写入 `ab_withdraw.fail_reason`）',
+    example: '平台回执：收款账号户名不符',
+  })
+  @IsString()
+  @IsNotEmpty({ message: '请填写失败原因' })
+  @MinLength(2, { message: '失败原因至少 2 个字' })
+  @MaxLength(256)
+  failReason!: string;
+
+  @ApiPropertyOptional({
+    description: '出款批次号（缺省沿用该单已登记的批次）',
+    example: 'PB20260917',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  payoutBatchNo?: string;
+
+  @ApiPropertyOptional({ description: '登记备注' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  remark?: string;
+}
+
+/** 提现单 id 路径参数（`@Param` 校验，避免脏值打到 service） */
+export class WithdrawIdParamDto {
+  @ApiProperty({ description: '提现单 id（`ab_withdraw.id`）', example: 1 })
+  @Type(() => Number)
+  @IsInt({ message: 'id 需为整数' })
+  @Min(1, { message: 'id 需为正整数' })
+  id!: number;
 }

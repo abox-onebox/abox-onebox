@@ -11,6 +11,11 @@ import { ROLE_LABEL, menusOf } from '../../common/constants/admin-role';
 import { ErrorCode } from '../../common/constants/error-code';
 import { JwtPayload } from '../../common/decorators/auth.decorator';
 import { BizException } from '../../common/exceptions/biz.exception';
+import { money, toYuan } from '../../common/utils/money';
+import {
+  LeaderAccountSnapshot,
+  LeaderMoneyService,
+} from '../../common/services/leader-money.service';
 import { durationToSeconds } from '../../common/utils/time';
 import { verifyPassword } from '../../common/utils/password';
 import { TeamLeader } from '../../database/entities/leader.entity';
@@ -39,6 +44,8 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly kv: KvService,
     private readonly config: ConfigService,
+    /** M4-4：`leader.balance` 的真源（`ab_balance`）—— 见文件末尾 `leaderBalanceView` */
+    private readonly leaderMoney: LeaderMoneyService,
   ) {}
 
   /** 微信登录：code → openid → 查/建用户 → 签发 JWT */
@@ -76,6 +83,8 @@ export class AuthService {
       teamLeaderId: leader?.id ?? null,
     } satisfies JwtPayload);
 
+    const account = leader ? await this.leaderMoney.accountOf(Number(user.id)) : null;
+
     return {
       token,
       isNewUser,
@@ -93,7 +102,7 @@ export class AuthService {
             id: leader.id,
             level: leader.level,
             commissionRate: leader.commissionRate,
-            balance: leader.balance,
+            ...leaderBalanceView(account),
           }
         : null,
     };
@@ -105,6 +114,7 @@ export class AuthService {
     if (!user) throw new BizException(ErrorCode.USER_NOT_FOUND);
 
     const leader = await this.leaderRepo.findOne({ where: { userId } });
+    const account = leader ? await this.leaderMoney.accountOf(userId) : null;
 
     return {
       id: user.id,
@@ -119,7 +129,7 @@ export class AuthService {
             id: leader.id,
             level: leader.level,
             commissionRate: leader.commissionRate,
-            balance: leader.balance,
+            ...leaderBalanceView(account),
             totalOrders: leader.totalOrders,
             totalCommission: leader.totalCommission,
           }
@@ -279,4 +289,46 @@ export class AuthService {
   adminLogout(): null {
     return null;
   }
+}
+
+/**
+ * 团长「余额」视图（M4-4 · 修复《缺陷与陷阱》#69）
+ *
+ * ## 为什么要有这个函数，而不是直接下发 `leader.balance`
+ *
+ * `ab_team_leader.balance` 这一列**只在种子里被赋过值、全仓没有任何写点**，
+ * 而登录 / 资料两个出参一直把它当「可用余额」下发 —— 于是：
+ *
+ * · 团长「我的」页显示的是**种子里的死数字**，而「余额明细」页（L11 走 `ab_balance`）
+ *   显示的是真值 → **同一个人在同一时刻看到两个不同的余额**，且**两边都不报错**；
+ * · 他去提现会被 `50004 可提现余额不足` 拦下（真值可能为 0），
+ *   而页面上明明写着有几百块 —— 这是必然会产生的客服工单。
+ *
+ * 故 `balance` 改为从 `ab_balance`（**余额唯一真源**，与 L11 / D38 同源）派生；
+ * 同时补 `balanceFen` / `frozenFen`（**整数分**，端上不必再自己换算元）。
+ *
+ * ⚠️ `balance`（元字符串）**保留但已废弃** —— 小程序端既有页面在读它，
+ *    一次性删掉会造成「字段消失」的静默故障；值本身已改成真值，
+ *    新代码请用 `balanceFen`（与全项目「金额出参一律整数分」的纪律一致）。
+ */
+function leaderBalanceView(account: LeaderAccountSnapshot | null) {
+  const zero: LeaderAccountSnapshot = {
+    balanceFen: 0,
+    frozenFen: 0,
+    totalInFen: 0,
+    totalOutFen: 0,
+    hasAccount: false,
+  };
+  const a = account ?? zero;
+
+  return {
+    /** @deprecated 用 `balanceFen`（整数分）。此处仅为兼容既有端上页面，值取自 `ab_balance` */
+    balance: money(toYuan(a.balanceFen)),
+    /** 可用余额（整数分）—— 真源 `ab_balance` */
+    balanceFen: a.balanceFen,
+    /** 冻结额（整数分）—— 提现占用 + D39 手工冻结 */
+    frozenFen: a.frozenFen,
+    /** `false` = 从未发生资金往来（余额全 0），不是异常 */
+    hasBalanceAccount: a.hasAccount,
+  };
 }

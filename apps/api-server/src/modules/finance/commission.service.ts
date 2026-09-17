@@ -1,10 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, DataSource, EntityManager, FindOptionsWhere, Repository } from 'typeorm';
+import { Between, DataSource, EntityManager, FindOptionsWhere, In, Repository } from 'typeorm';
 
-import { LEADER_LEVEL_META, LeaderLevel, WithdrawStatus } from '@abox/shared-types';
+import { LEADER_LEVEL_META, LeaderLevel, WITHDRAW_FROZEN_STATUS } from '@abox/shared-types';
 
 import { BizConfigService } from '../../common/services/biz-config.service';
+import { LeaderMoneyService } from '../../common/services/leader-money.service';
 import { QueueService } from '../../common/queue/queue.service';
 import { monthRangeOf, todayBj } from '../../common/utils/time';
 import { money, round2 } from '../../common/utils/money';
@@ -28,12 +29,18 @@ import {
  *
  * 落点：`modules/finance`（《开发里程碑计划 v1.0》2.6 · 接口 L10 / L11）
  *
- * **余额真源口径（2026-09-15 定）**：
+ * **余额真源口径（2026-09-15 定 · 2026-09-17 M4-4 收紧）**：
  *   · 可用 / 冻结余额的唯一真源 = `ab_balance`（`user_id` 维度）；
  *     用户与团长共用同一小程序身份，佣金入账与下单抵扣是同一条余额链路 ——
  *     团长佣金既可提现，也可直接抵餐费。
- *   · `ab_team_leader.total_commission / withdrawn_amount / pending_amount`
- *     是**团长维度统计快照**，不参与提现扣减，避免双真源漂移。
+ *   · `ab_team_leader.total_commission` 是**事实累计**（入账时由
+ *     `creditCommissions()` 累加，是活的），与余额不是一回事。
+ *   · ⚠️ `ab_team_leader.withdrawn_amount` / `pending_amount` / `balance` 三列
+ *     **从种子之后就没有任何写点**（M4-4 盘出并停用 · 《缺陷与陷阱》#69）——
+ *     它们曾被当作「团长维度统计快照」下发，实际展示的是种子里写死的数字。
+ *     ⭐ 现已全部改为**派生**，读取口收敛到 `LeaderMoneyService`
+ *     （`ab_balance` / `ab_commission` / `ab_withdraw` 三表），列保留但不再读写。
+ *     本注释此前写「是团长维度统计快照」，属**文案承诺了一件代码没做的事**。
  *
  * 计佣基数口径（M2 风险项）：**按实发份数**（`completed` 订单份数，剔除已退款），
  *   非下单份数 —— 见《订单状态机》§4 与 `auto-confirm.task`。
@@ -132,6 +139,8 @@ export class CommissionService {
     // M4-3：入账后「通知团长」的任务入队口（消费者 `queues/settle-orders.consumer.ts`）
     private readonly queue: QueueService,
     private readonly message: MessageService,
+    // M4-4：余额 / 冻结 / 待入账佣金 / 累计已提现的**唯一真源**读取口（#69）
+    private readonly leaderMoney: LeaderMoneyService,
   ) {}
 
   /**
@@ -407,38 +416,46 @@ export class CommissionService {
    * 出参同时给出佣金视角，便于工作台与提现页共用同一份口径。
    */
   async getBalance(leader: TeamLeader) {
-    const account = await this.balanceRepo.findOne({ where: { userId: Number(leader.userId) } });
     const minWithdrawYuan = await this.bizConfig.minWithdraw();
 
-    const balance = Number(account?.balance ?? 0);
-    const frozen = Number(account?.frozen ?? 0);
+    /**
+     * ⭐ M4-4：五项金额全部走 `LeaderMoneyService`（**唯一真源**）。
+     *
+     * 改动前本方法有三处各自的毛病，且都不报错：
+     *   ① `withdrawnFen` 取 `ab_team_leader.withdrawn_amount` —— 该列**从未被写过**，
+     *      提现页「累计已提现」永远是种子值 / 0（#69）；
+     *   ② `pendingCommission` 只按 `status='pending'` 过滤、**没排除 `type='reversal'`**
+     *      （负额冲销行）→ 一旦出现「已入账后冲销」的行，待入账佣金会被算小
+     *      （与 M4-2 修掉的 `monthOrdersOf` 双计是同一族缺陷：漏一个过滤条件，
+     *      数字就悄悄错，且没有任何断言会红）；
+     *   ③ `inFlightCount` 只数 `status='pending'`，而**紧接着的注释写着**
+     *      「待审批 / 已批准 / 打款中」——**文案承诺三个状态、代码只数一个**
+     *      （同 M4-1 的 `isRealDate` 文案与代码不一致）。后果：运营一批准，
+     *      这数字立刻掉到 0，团长以为「没有处理中的提现」，而那笔钱仍在冻结中。
+     */
+    const snapshot = await this.leaderMoney.snapshotOf([
+      { id: Number(leader.id), userId: Number(leader.userId) },
+    ]);
+    const snap = snapshot.get(Number(leader.id))!;
     const minFen = Math.round(minWithdrawYuan * 100);
 
-    // 待结算佣金（已产生未打款）
-    const pendingRows = await this.commissionRepo.find({
-      where: { teamLeaderId: Number(leader.id), status: 'pending' },
-    });
-    const pendingCommission = pendingRows.reduce((s, c) => s + Number(c.amount), 0);
-
-    // 提现中的申请单（待审批 / 已批准 / 打款中）
+    // 占用（冻结）中的提现单 —— 用 `WITHDRAW_FROZEN_STATUS`（shared-types 单一真相），
+    // 不手写状态列表，否则「批准后不算占用」这类漂移会再次发生。
     const inFlight = await this.withdrawRepo.count({
-      where: {
-        leaderId: Number(leader.id),
-        status: WithdrawStatus.PENDING,
-      },
+      where: { leaderId: Number(leader.id), status: In([...WITHDRAW_FROZEN_STATUS]) },
     });
 
     return {
-      balanceFen: Math.round(balance * 100),
-      frozenFen: Math.round(frozen * 100),
-      pendingCommissionFen: Math.round(pendingCommission * 100),
-      totalInFen: Math.round(Number(account?.totalIn ?? 0) * 100),
-      totalOutFen: Math.round(Number(account?.totalOut ?? 0) * 100),
-      /** 累计已提现（团长维度快照） */
-      withdrawnFen: Math.round(Number(leader.withdrawnAmount) * 100),
+      balanceFen: snap.balanceFen,
+      frozenFen: snap.frozenFen,
+      pendingCommissionFen: snap.pendingCommissionFen,
+      totalInFen: snap.totalInFen,
+      totalOutFen: snap.totalOutFen,
+      /** 累计已提现（**到账口径**：`ab_withdraw(status='success').actual_amount` 合计） */
+      withdrawnFen: snap.withdrawnFen,
       inFlightCount: inFlight,
       minWithdrawFen: minFen,
-      canWithdraw: Math.round(balance * 100) >= minFen,
+      canWithdraw: snap.balanceFen >= minFen,
       level: leader.level,
       levelLabel: levelLabel(leader.level),
       rate: Number(leader.commissionRate),

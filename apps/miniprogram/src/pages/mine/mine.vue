@@ -28,7 +28,7 @@
         <view class="card__row">
           <text class="card__label">佣金余额</text>
           <text class="card__value card__value--strong">
-            ¥{{ leaderStore.info?.balance ?? '0.00' }}
+            ¥{{ fenToYuanText(leaderStore.info?.balanceFen ?? 0) }}
           </text>
         </view>
         <view class="card__row">
@@ -125,6 +125,7 @@ import { LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
 import { fetchMe } from '@/api/auth';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useLeaderStore } from '@/stores/leader';
+import { fenToYuanText } from '@/utils/format';
 import { useUserStore } from '@/stores/user';
 import { clearAuthStorage } from '@/utils/storage';
 import { navigateTo, switchTab } from '@/utils/router';
@@ -175,6 +176,8 @@ async function refresh(): Promise<void> {
         level: me.leader.level,
         commissionRate: me.leader.commissionRate,
         balance: me.leader.balance,
+        balanceFen: me.leader.balanceFen,
+        frozenFen: me.leader.frozenFen,
       });
     }
   } catch (e) {

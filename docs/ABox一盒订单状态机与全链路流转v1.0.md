@@ -316,6 +316,35 @@ pending ──付款登记(D37)──> success（已付款）
 
 ---
 
+### 5.5 提现状态机（`ab_withdraw.status` · L12 申请 → D45/D46 收口 · M4-4）
+
+```
+                       ┌─ D46  approve ─→ approved ─┐
+   pending ────────────┤                            ├─→ D46b paid ─→ success（钱出平台）
+ （L12 申请即冻结）      └─ D46a reject  ─→ rejected  │
+                                                    └─→ D46c fail ─→ failed（钱退回用户）
+```
+
+| 迁移 | 触发 | 资金效果 |
+| --- | --- | --- |
+| `— → pending` | **L12 提现申请**（M2 已实装） | `balance −X` / `frozen +X`（**申请即冻结**）；`total_in` / `total_out` 不动 |
+| `pending → approved` | **D46 批准** | **不动钱**（出参 `moneyMoved=false`）；仅写审批人 / 时间 / 备注 + **出款批次号** `PB{yyyyMMdd}` |
+| `pending → rejected` | **D46a 驳回** | **原路解冻**：`balance +X` / `frozen −X`；`total_in` / `total_out` 不动（同 D39 冻结/解冻口径） |
+| `approved → success` | **D46b 到账回执**（一期人工通道的**唯一收口**） | `frozen −X` / `total_out +X`（**X = 申请金额，不是实付**）；可用余额不变；登记 `tax_withheld_amount` / `actual_amount` / `paid_at` |
+| `approved → failed` | **D46c 打款失败** | **原路解冻**（同 `rejected`） |
+| `paying → …` | 二期 `FLEX_API` 自动通道 | 一期**不产生**该状态（人工通道下「已提交平台、等回执」没有可观测锚点）；但两个收口动作**都接受 `paying` 入参**，二期接 API 无需改收口逻辑 |
+
+> ⭐ **三条不变量（本表是它们的唯一出处）**
+> ① **唯一的冻结释放口** —— 驳回 / 到账 / 失败三路共用 `releaseFrozen()`，差别只在 `direction`（`'in'` 把钱挪回可用 / `'out'` 让钱正式出平台）。三路各写一份的后果**不是重复代码，而是其中一路漏掉某个字段**（如「到账忘了减 `frozen`」→ 该用户冻结额永久虚高，而同一天其余提现看起来都正常）。
+> ② **`total_out` 按「申请金额」而非「实付」累加** —— 申请时已从可用余额扣掉 X，到账只是把这笔被冻结的钱**正式记为支出**；按实付记会让 `total_in − total_out` 与 `balance + frozen` 之间**永久**留下一个等于代扣税额的缺口（账面像「平台多留了钱」，而那笔税是平台**代扣代缴给税务**的、不是平台留存）。
+> ③ **到账不写** `ab_balance_log` —— 该表语义是「**可用余额**的每一次变化」，到账时可用余额**不变**（钱在申请时就已扣走）。`frozen` / `total_out` 的变化**从来**不由流水解释（D39 的 `freeze` 行即先例），到账事件由 `ab_withdraw` 自身完整承载。
+>
+> ⭐ **退出团长（C3）与提现互锁** —— `collectQuitBlockers` 的 `WITHDRAW_IN_FLIGHT` 分支以 `pending` / `approved` / `paying`（`WITHDRAW_FROZEN_STATUS`）判定「有未完成的提现」。在本批之前**后台无端点能推进提现单** → 只要提过一次现，退出团长就**再也不可能成功**，而错误文案还写着「等待提现到账」（等一个永远不会发生的到账）。本批补齐 D46 系列后，该守卫的提现腿才真正**可闭合**。
+>
+> ⭐ **解冻前 fail-closed `40015`** —— `frozen < 申请额` 时停下（**不复用 `40002`**）：那是「**冻结账对不上**」的账实不符信号（有人绕过了冻结口径），硬扣会让 `frozen` 变负，并在**下一个用户**那里表现为「冻结额凭空多了」。
+
+---
+
 ## 六、异常与边界处理
 
 | 场景 | 处理策略 |

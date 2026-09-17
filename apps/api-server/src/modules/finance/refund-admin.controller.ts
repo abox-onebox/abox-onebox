@@ -10,6 +10,7 @@ import {
   RejectRefundDto,
   RefundIdParamDto,
 } from './dto/refund-admin.dto';
+import { FINANCE_READ_ROLES, FUND_ACTION_ROLES } from './finance.constants';
 import { RefundAdminService } from './refund-admin.service';
 
 /**
@@ -22,15 +23,18 @@ import { RefundAdminService } from './refund-admin.service';
  *    否则 `/admin/finance/refunds/detail/1` 会被 `:id` 吃掉（与 D8 的 export 同一个坑）。
  *
  * ⚠️ **两级白名单**：类级放 `operator`（运营要能**看**退款流水、跟进用户），
- *    但 D41/D42 **方法级收窄到 `super_admin`/`admin`/`finance`** —— 决定「钱退不退」
+ *    但 D41/D42 **方法级收窄到 `FUND_ACTION_ROLES`** —— 决定「钱退不退」
  *    是资金动作，不该由运营专员拍板。这样运营的 `/finance/refund` 菜单也不再是
  *    「看得见点不开」。`viewer` 两级都进不来。
+ *
+ * ⚠️ M4-4：两个集合已上移到 `finance.constants.ts`（域级概念），与 D35 / D39 /
+ *    D46 系列共用同一份定义 —— 此前五个端点各写一份字面量，漂移不报错。
  */
 @ApiTags('后台·退款审批')
 @ApiBearerAuth()
 @Controller('admin/finance/refunds')
 @UseGuards(AdminGuard)
-@Roles('super_admin', 'admin', 'finance', 'operator')
+@Roles(...FINANCE_READ_ROLES)
 export class RefundAdminController {
   constructor(private readonly refundAdmin: RefundAdminService) {}
 
@@ -62,7 +66,7 @@ export class RefundAdminController {
   // ------------------------------------------------------------ D41 通过
 
   @Post(':id/approve')
-  @Roles('super_admin', 'admin', 'finance')
+  @Roles(...FUND_ACTION_ROLES)
   @OperationLog({ module: 'finance', action: '退款审批通过', targetParam: 'id' })
   @ApiOperation({
     summary: 'D41 审批通过 → 实际退款（C6 第二段 → 第三段）',
@@ -82,7 +86,7 @@ export class RefundAdminController {
   // ------------------------------------------------------------ D42 驳回
 
   @Post(':id/reject')
-  @Roles('super_admin', 'admin', 'finance')
+  @Roles(...FUND_ACTION_ROLES)
   @OperationLog({ module: 'finance', action: '退款审批驳回', targetParam: 'id' })
   @ApiOperation({
     summary: 'D42 审批驳回 → 订单回到申请前状态（C6 第二段）',
