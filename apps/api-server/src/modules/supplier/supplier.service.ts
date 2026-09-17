@@ -61,6 +61,20 @@ interface DerivedPlan {
   centers: Map<number, number>;
 }
 
+/** 截单刷新生产计划的出参（`freezeProducePlan`） */
+export interface ProducePlanFreezeResult {
+  date: string;
+  /** 本次定格的计划总量（份） */
+  totalQuantity: number;
+  createdDaily: number;
+  updatedDaily: number;
+  createdDetails: number;
+  updatedDetails: number;
+  /** 已开工（cooking/done）而未覆盖的行数 —— 需人工核对 */
+  skippedStarted: number;
+  supplierCount: number;
+}
+
 /**
  * 供应商端服务（M3-8 · 《接口规范 v1.0》§6.5 S1–S3 · 原型 P21/P22）
  *
@@ -534,54 +548,193 @@ export class SupplierService {
    *   ③ `unit_price` 取 `ab_dish.cost_price`（菜品属性）而非 `ab_set_meal_item.share_amount`
    *      —— 供价是「逐菜协商」的菜品属性，同一道菜在不同套餐里不应有两个供价。
    */
-  private async ensureProducePlan(date: string, onlySupplierId?: number): Promise<void> {
-    const assignments = await this.maRepo.find({ where: { mealDate: date, status: 'active' } });
-    const usable = assignments.filter((a) => a.distributionCenterId);
-    if (!usable.length) return;
+  /**
+   * 截单后**覆盖刷新**生产计划量（4.2 第三段 · 由 `tasks/cutoff.task.ts` 委托）
+   *
+   * ## 为什么需要「覆盖」，而 `ensureProducePlan` 只肯「补齐」
+   * 惰性 `ensureProducePlan` 的取舍②是「已有父行不重算」—— 因为父行是**已冻结的承诺数**。
+   * 但那条纪律成立的前提是「行是在**销量定格之后**生成的」。而惰性生成让这个前提
+   * 可以被绕过：
+   *
+   * ```
+   * T-1 14:00  开团 → 用户下单，sold_count 持续增长
+   * T-1 15:00  供应商点开工作台（P21）→ 惰性生成计划，用的却是「此刻」的销量
+   *            ↓ 此后 dailyKey 已存在，ensureProducePlan 永不重算
+   * T-1 24:00  截单 —— 销量定格，但计划量停在 15:00 的快照上
+   * ```
+   * 结果就是**备料量系统性偏小**，供应商照着做会不够卖，而且**没有任何地方会报错**。
+   * 所以截单这一刻必须把计划量**重算并覆盖**。
+   *
+   * ## 覆盖的边界（安全阀）
+   * 只覆盖父行 `status='pending'`（尚未开工）的行。若某行已被供应商置为
+   * `cooking` / `done`（手动补跑晚于出餐），说明**生产已经发生**，此时改计划量
+   * 只会让「计划」与「实际已生产」对不上 —— 保持原值并记 warn。
+   *
+   * ## 与「生成即冻结」不矛盾
+   * 冻结的**时点**是截单，不是「首次被访问」。截单前生成的是预估，截单后才是承诺。
+   * 本方法正是把「预估」转成「承诺」的那一步；执行完即冻结（cutoff 只跑一次）。
+   *
+   * @param date 出餐日（T 日）
+   */
+  async freezeProducePlan(date: string): Promise<ProducePlanFreezeResult> {
+    const agg = await this.aggregatePlan(date);
+    const { plans, existingDaily, existingDetails, dishMap } = agg;
+    const dailyOf = new Map(existingDaily.map((d) => [`${d.supplierId}:${d.dishId}`, d]));
+    const detailOf = new Map(
+      existingDetails.map((d) => [`${d.supplierId}:${d.dishId}:${d.distributionCenterId}`, d]),
+    );
 
-    const setMealIds = [...new Set(usable.map((a) => a.setMealId))];
-    const items = setMealIds.length
-      ? await this.itemRepo.find({ where: { setMealId: In(setMealIds) } })
-      : [];
-    const itemsOf = new Map<number, SetMealItem[]>();
-    for (const it of items) {
-      const list = itemsOf.get(it.setMealId) ?? [];
-      list.push(it);
-      itemsOf.set(it.setMealId, list);
-    }
+    const insDaily: Array<Partial<SupplierDishDaily>> = [];
+    const insDetails: Array<Partial<SupplierDishCenterDaily>> = [];
+    let updatedDaily = 0;
+    let updatedDetails = 0;
+    let skippedFrozen = 0;
+    let totalQuantity = 0;
 
-    // ---- 聚合：一道菜在同一天要分别送几个集散中心各多少份 ----
-    const plans = new Map<string, DerivedPlan>();
-    for (const a of usable) {
-      const dcId = a.distributionCenterId as number;
-      for (const it of itemsOf.get(a.setMealId) ?? []) {
-        if (onlySupplierId && it.supplierId !== onlySupplierId) continue;
-        const key = `${it.supplierId}:${it.dishId}`;
-        const plan =
-          plans.get(key) ??
-          ({
-            supplierId: it.supplierId,
-            dishId: it.dishId,
-            total: 0,
-            centers: new Map(),
-          } as DerivedPlan);
-        plan.total += a.soldCount;
-        plan.centers.set(dcId, (plan.centers.get(dcId) ?? 0) + a.soldCount);
-        plans.set(key, plan);
+    for (const plan of plans.values()) {
+      // 与原实现同一条纪律：不生成 0 份的计划（否则 P21 长出一串空卡片）
+      if (plan.total <= 0) continue;
+      totalQuantity += plan.total;
+
+      const key = `${plan.supplierId}:${plan.dishId}`;
+      const existed = dailyOf.get(key);
+      if (!existed) {
+        insDaily.push({
+          supplierId: plan.supplierId,
+          dishId: plan.dishId,
+          produceDate: date,
+          planQuantity: plan.total,
+          unitPrice: dishMap.get(plan.dishId)?.costPrice ?? '0.00',
+          status: DAILY_PENDING,
+        });
+      } else if (existed.status === DAILY_PENDING && Number(existed.planQuantity) !== plan.total) {
+        await this.dailyRepo.update(
+          { id: existed.id },
+          { planQuantity: plan.total, version: (existed.version ?? 0) + 1 },
+        );
+        updatedDaily += 1;
+      } else if (existed.status !== DAILY_PENDING) {
+        skippedFrozen += 1;
+      }
+
+      for (const [dcId, qty] of plan.centers) {
+        if (qty <= 0) continue;
+        const dKey = `${key}:${dcId}`;
+        const existedDetail = detailOf.get(dKey);
+        if (!existedDetail) {
+          insDetails.push({
+            supplierId: plan.supplierId,
+            dishId: plan.dishId,
+            produceDate: date,
+            distributionCenterId: dcId,
+            planQuantity: qty,
+            status: DETAIL_PENDING,
+          });
+        } else if (
+          existedDetail.status === DETAIL_PENDING &&
+          Number(existedDetail.planQuantity) !== qty
+        ) {
+          await this.detailRepo.update(
+            { id: existedDetail.id },
+            { planQuantity: qty, version: (existedDetail.version ?? 0) + 1 },
+          );
+          updatedDetails += 1;
+        }
       }
     }
-    if (!plans.size) return;
+
+    if (insDaily.length) await this.dailyRepo.save(this.dailyRepo.create(insDaily));
+    if (insDetails.length) await this.detailRepo.save(this.detailRepo.create(insDetails));
+
+    this.logger.log(
+      `截单刷新生产计划 date=${date} 合计 ${totalQuantity} 份 ` +
+        `父行（新增 ${insDaily.length} / 更新 ${updatedDaily}）` +
+        `明细（新增 ${insDetails.length} / 更新 ${updatedDetails}）` +
+        (skippedFrozen ? ` 已开工跳过 ${skippedFrozen}` : ''),
+    );
+    if (skippedFrozen) {
+      this.logger.warn(
+        `date=${date} 有 ${skippedFrozen} 道菜的生产计划已开工（cooking/done），` +
+          '未按截单量覆盖 —— 请人工核对是否漏产',
+      );
+    }
+
+    return {
+      date,
+      totalQuantity,
+      createdDaily: insDaily.length,
+      updatedDaily,
+      createdDetails: insDetails.length,
+      updatedDetails,
+      skippedStarted: skippedFrozen,
+      supplierCount: new Set([...plans.values()].map((p) => p.supplierId)).size,
+    };
+  }
+
+  /**
+   * 聚合「某日各供应商各菜、按加工场所分别多少份」
+   *
+   * `ensureProducePlan`（补齐）与 `freezeProducePlan`（覆盖）共用本方法 ——
+   * 两处若各写一遍聚合，迟早出现「补齐时说 100 份、覆盖时说 120 份」这种自相矛盾。
+   */
+  private async aggregatePlan(date: string, onlySupplierId?: number) {
+    const assignments = await this.maRepo.find({ where: { mealDate: date, status: 'active' } });
+    const usable = assignments.filter((a) => a.distributionCenterId);
+
+    const plans = new Map<string, DerivedPlan>();
+    if (usable.length) {
+      const setMealIds = [...new Set(usable.map((a) => a.setMealId))];
+      const items = setMealIds.length
+        ? await this.itemRepo.find({ where: { setMealId: In(setMealIds) } })
+        : [];
+      const itemsOf = new Map<number, SetMealItem[]>();
+      for (const it of items) {
+        const list = itemsOf.get(it.setMealId) ?? [];
+        list.push(it);
+        itemsOf.set(it.setMealId, list);
+      }
+
+      // 聚合：一道菜在同一天要分别送几个加工场所各多少份
+      for (const a of usable) {
+        const dcId = a.distributionCenterId as number;
+        for (const it of itemsOf.get(a.setMealId) ?? []) {
+          if (onlySupplierId && it.supplierId !== onlySupplierId) continue;
+          const key = `${it.supplierId}:${it.dishId}`;
+          const plan =
+            plans.get(key) ??
+            ({
+              supplierId: it.supplierId,
+              dishId: it.dishId,
+              total: 0,
+              centers: new Map(),
+            } as DerivedPlan);
+          plan.total += a.soldCount;
+          plan.centers.set(dcId, (plan.centers.get(dcId) ?? 0) + a.soldCount);
+          plans.set(key, plan);
+        }
+      }
+    }
 
     const [existingDaily, existingDetails] = await Promise.all([
       this.dailyRepo.find({ where: { produceDate: date } }),
       this.detailRepo.find({ where: { produceDate: date } }),
     ]);
+    const dishMap = await this.dishMapOf([...plans.values()].map((p) => p.dishId));
+
+    return { plans, existingDaily, existingDetails, dishMap };
+  }
+
+  private async ensureProducePlan(date: string, onlySupplierId?: number): Promise<void> {
+    const { plans, existingDaily, existingDetails, dishMap } = await this.aggregatePlan(
+      date,
+      onlySupplierId,
+    );
+    if (!plans.size) return;
+
     const dailyKey = new Set(existingDaily.map((d) => `${d.supplierId}:${d.dishId}`));
     const detailKey = new Set(
       existingDetails.map((d) => `${d.supplierId}:${d.dishId}:${d.distributionCenterId}`),
     );
-
-    const dishMap = await this.dishMapOf([...plans.values()].map((p) => p.dishId));
 
     const newDaily: Array<Partial<SupplierDishDaily>> = [];
     const newDetails: Array<Partial<SupplierDishCenterDaily>> = [];

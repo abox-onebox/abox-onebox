@@ -115,17 +115,35 @@ T+1 04:00  ┃ reconciliation.task       与微信支付每日对账
 
 ### 3.1 定时任务清单（与代码落点对应）
 
-| 任务 | 触发时间 | 幂等键 | 职责 |
-| --- | --- | --- | --- |
-| `meal-publish.task` | T-1 14:00 | `meal_date` | 套餐上架、开团 |
-| `cutoff.task` | T-1 24:00 | `meal_date` | 截单：取消未支付 + 锁定已支付 + 推备料 |
-| `delivery-generate.task` | T 日 00:30 | `meal_date` | 生成配送单 |
-| `auto-confirm.task` | T 日 14:00 | `meal_date` | 自动确认收货 + 计算佣金 |
-| `commission-settle.task` | T+1 02:00 | `meal_date` | 佣金入账到团长余额（提现走灵活用工平台代发 · C11） |
-| `supplier-share.task` | T+1 02:00 | `meal_date` | 生成供应商 / 集散中心**应付结算单**（不拨款） |
-| `reconciliation.task` | 每日 04:00 | `date` | 对账 |
-| `leader-expire.task` | 每日 03:00 | `date` | **见习团长 30 天未促单 → 取消资格（C2）** ⭐ |
+> ⭐ **M4-1 起，「几点跑」与「动哪一天」在代码里**分开声明**：`tasks/schedule.service.ts` 的
+> `TASK_SCHEDULES` 是唯一真相（`cron` + `dateKind` + 职责文案），任务体**不写日期计算** ——
+> 日期由 `ScheduleService.run()` 推导并回传给任务。下表的「目标日期」列即 `dateKind`。
+> ⭐ 手动补跑：`POST /admin/schedule/{task}/run`（`date` 可选，缺省按本表推导），
+> 与跑批**共用同一执行口** `runOnce(date)`。时刻表查询：`GET /admin/schedule`。
 
+| 任务 | 触发时间 | **目标日期** | 幂等键 | 职责 | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| `meal-publish.task` | T-1 14:00 | **次日** `tomorrow` | `meal_date` | 套餐上架、开团（上架前过截单闸门，已过则整批不动） | **M4-1 ✅** |
+| `cutoff.task` | T-1 24:00 | 当日 `today` | `meal_date` | 截单：取消未支付（**并解冻余额**）+ 锁定已支付 + **定格备料量** + 覆盖刷新生产计划 | **M4-1 ✅** |
+| `delivery-generate.task` | T 日 00:30 | 当日 `today` | `meal_date` | 按**楼群**生成配送单（幂等不覆盖；无 `cut_off` 订单时告警） | **M4-1 ✅** |
+| `auto-confirm.task` | T 日 14:00 | 当日 `today` | `meal_date` | 自动确认收货 + 计算佣金 | M4-2 |
+| `commission-settle.task` | T+1 02:00 | 前一日 `yesterday` | `meal_date` | 佣金入账到团长余额（提现走灵活用工平台代发 · C11） | M4-2 |
+| `supplier-share.task` | T+1 02:00 | 前一日 `yesterday` | `meal_date` | 生成供应商应付结算单（不拨款） | ✅ M3-9 · M4-1 迁统一执行口 |
+| `reconciliation.task` | 每日 04:00 | 当日 `today` | `date` | 对账 | M4-2 |
+| `leader-expire.task` | 每日 03:00 | **无**（全量扫描） | `date` | **见习团长 30 天未促单 → 取消资格（C2）** ⭐ | ✅ M2 · M4-1 迁统一执行口 |
+
+> ⚠️ **「同刻不同日」是本表最容易配错的一处**：`meal-publish` 与 `auto-confirm` 的 cron
+> **完全相同**（`0 0 14 * * *`），但前者开**次日**的团、后者确认**当日**的单。cron 表达式只写
+> 「几点跑」、**不写「动哪一天」** —— 这也是本表必须显式列出「目标日期」列的原因。
+> `cutoff` / `delivery-generate` / `auto-confirm` 三者都落在同一自然日内（00:00 / 00:30 / 14:00），
+> 目标日期都是该出餐日 T，**不需要任何偏移**；偏移只出现在「开明日团」（+1）与「T+1 凌晨结算」（−1）两处。
+>
+> ⭐ **`cutoff` 的第三件事（M4-1 修正）**：`ab_meal_assignment.sold_count` 原注释写「实时累加」，
+> 但全仓**无累加点**，而它是推给供应商的备料量聚合基数 → 份数**恒为 0 且不报错**。现改为
+> **截单时从订单表聚合一次并定格**（口径：`status NOT IN ('pending_pay','cancelled')` 的份数），
+> 语义 = 「**截单定格的已售份数**」；同一时点还会**覆盖刷新**生产计划（只覆盖未开工父行）。
+> 截单**顺序不可颠倒**：先定格备料量、再刷计划，否则计划量会按未定格的销量算出来。
+>
 > ⚠️ **`leader-expire.task` 为新增项**：C2 明确"见习 30 天未促单自动取消资格"，而《目录结构 v2.0》`tasks/` 未列此任务——本文件补齐，实施时需一并加入 `tasks/` 目录。
 > 判定口径：`level='trainee' AND status='active' AND DATEDIFF(NOW(), last_order_at) > 30` → `status='expired'`，并推送提醒。
 

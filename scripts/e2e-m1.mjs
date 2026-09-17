@@ -57,11 +57,43 @@ function assert(cond, name, detail = '') {
 // ---------------------------------------------------------------------------
 const call = makeCall(BASE);
 
+/**
+ * 前置：本套件以**真实 HTTP 下单**为前提，要求当前处在下单窗口
+ * `isOrderable(T)` = `[T-1 14:00, T-1 23:00)` 内。
+ *
+ * ⚠️ 窗口外**任何**出餐日都下不了单（该不等式对整数日无解）—— 于是「U6 创建订单」
+ *    一挂，后续 20 余条断言全部级联红（支付、列表、详情、取消、幂等…），
+ *    真回归会被这段假红淹没。故这里**一次性判定 + 只给一条可读失败**，
+ *    而不是让套件跑满 40 秒吐 20 行红（ref《缺陷与陷阱》§假红）。
+ *
+ * 经 `gate.mjs` 跑时不会触发：它注入了 `ABOX_SHIFT_TO_HOUR` 把窗口打开
+ * （机制见 gate.mjs 文件头 + `common/utils/time.ts`）。
+ */
+function assertOrderWindow() {
+  const injected = Number(process.env.ABOX_SHIFT_TO_HOUR);
+  const h =
+    Number.isInteger(injected) && injected >= 0 && injected <= 23
+      ? injected
+      : new Date(Date.now() + 8 * 3600 * 1000).getUTCHours();
+  if (h >= 14 && h < 23) return true;
+
+  log(
+    `\n✘ 前置失败：当前不在下单窗口（北京时间 ${String(h).padStart(2, '0')}:xx ∉ [14:00, 23:00)）\n` +
+      `  这是**环境前提**，不是代码回归 —— 窗口外无论传哪个出餐日都无单可下。\n` +
+      `  · 经门禁跑（推荐，已自动注入时钟）：node scripts/gate.mjs e2e:m1\n` +
+      `  · 直接手跑：ABOX_SHIFT_TO_HOUR=20 node scripts/e2e-m1.mjs\n` +
+      `  · 或等到 14:00 之后（真窗口）。\n`,
+  );
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
 async function main() {
   log(`\n=== ABox M1 端到端验收 ===\n数据库：${DB_PATH}\n`);
+
+  if (!assertOrderWindow()) process.exit(1);
 
   installCleanupHooks();
   await assertPortFree(PORT);

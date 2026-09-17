@@ -2,6 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 
 import { LeaderPromotionService } from '../modules/team-leader/promotion.service';
+import { ScheduleService, TASK_SCHEDULES } from './schedule.service';
+
+const NAME = 'leader-expire' as const;
+const SPEC = TASK_SCHEDULES[NAME];
 
 /**
  * 每日 03:00 · 见习团长 30 天未促单失效（C2）
@@ -22,18 +26,32 @@ import { LeaderPromotionService } from '../modules/team-leader/promotion.service
 export class LeaderExpireTask {
   private readonly logger = new Logger(LeaderExpireTask.name);
 
-  constructor(private readonly promotionService: LeaderPromotionService) {}
+  constructor(
+    private readonly sched: ScheduleService,
+    private readonly promotionService: LeaderPromotionService,
+  ) {}
 
-  @Cron('0 0 3 * * *', { timeZone: 'Asia/Shanghai' })
+  @Cron(SPEC.cron, { timeZone: SPEC.timeZone })
   async handle(): Promise<void> {
-    try {
-      const expired = await this.promotionService.expireTrainees(30);
-      this.logger.log(
-        `见习失效扫描完成：停职 ${expired.length} 名${expired.length ? `（#${expired.join(' #')}）` : ''}`,
-      );
-    } catch (e) {
-      // 定时任务失败不得让进程崩：记录后由下一日重跑（判定幂等，重跑安全）
-      this.logger.error(`见习失效扫描失败：${(e as Error).message}`);
-    }
+    // 本任务 `dateKind = null`（全量扫描，与出餐日无关）—— 锁键按「当日」防同日重复跑
+    const outcome = await this.sched.run(NAME, () => this.runOnce());
+
+    if (outcome.error || !outcome.result) return; // `run()` 已记录失败原因
+    const expired = outcome.result;
+    this.logger.log(
+      `见习失效扫描完成：停职 ${expired.length} 名${expired.length ? `（#${expired.join(' #')}）` : ''}`,
+    );
+  }
+
+  /**
+   * 业务执行口（**不含锁**）—— 跑批与手动补跑共用
+   *
+   * 本任务与出餐日无关（全量扫描），故不接受 `date` 参数 —— 后台补跑口会传，
+   * 此处显式忽略（`_date`），以免调用方误以为「某个日期没扫到」。
+   *
+   * 手动补跑：`POST /admin/schedule/leader-expire/run`（不带锁）。
+   */
+  async runOnce(_date?: string) {
+    return this.promotionService.expireTrainees(30);
   }
 }

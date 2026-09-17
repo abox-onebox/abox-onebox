@@ -113,11 +113,41 @@ function writeDb(sql, params = []) {
 /** 北京时间「今日」yyyy-MM-dd */
 const todayBj = () => new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
 
+/**
+ * 前置：M2 的团长佣金链路要靠**真实 HTTP 下单**造数，故要求当前处在下单窗口
+ * `isOrderable(T)` = `[T-1 14:00, T-1 23:00)` 内。
+ *
+ * ⚠️ 窗口外「夹具 · U6 下单成功」先挂，拿不到 `orderNo` 后会把 `undefined` 写进
+ *    SQLite（`Provided value cannot be bound to SQLite parameter`）直接崩 ——
+ *    一次环境前提问题伪装成「脚本崩了」。故这里**一次性判定 + 只给一条可读失败**。
+ *
+ * 经 `gate.mjs` 跑时不会触发（它注入了 `ABOX_SHIFT_TO_HOUR` 打开窗口）。
+ */
+function assertOrderWindow() {
+  const injected = Number(process.env.ABOX_SHIFT_TO_HOUR);
+  const h =
+    Number.isInteger(injected) && injected >= 0 && injected <= 23
+      ? injected
+      : new Date(Date.now() + 8 * 3600 * 1000).getUTCHours();
+  if (h >= 14 && h < 23) return true;
+
+  log(
+    `\n✘ 前置失败：当前不在下单窗口（北京时间 ${String(h).padStart(2, '0')}:xx ∉ [14:00, 23:00)）\n` +
+      `  这是**环境前提**，不是代码回归 —— 窗口外造不出已支付订单，佣金链路无数据可验。\n` +
+      `  · 经门禁跑（推荐，已自动注入时钟）：node scripts/gate.mjs e2e:m2\n` +
+      `  · 直接手跑：ABOX_SHIFT_TO_HOUR=20 node scripts/e2e-m2.mjs\n` +
+      `  · 或等到 14:00 之后（真窗口）。\n`,
+  );
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
 async function main() {
   log(`\n=== ABox M2 端到端验收 ===\n数据库：${DB_PATH}\n`);
+
+  if (!assertOrderWindow()) process.exit(1);
 
   installCleanupHooks();
   await assertPortFree(PORT);

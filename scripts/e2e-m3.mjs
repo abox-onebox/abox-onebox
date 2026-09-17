@@ -169,12 +169,20 @@ const call = makeCall(BASE);
  * ⚠️ 本函数只用于**选择断言分支**，不放松任何断言：
  *    窗口内断言 `canOrder === true`；窗口外断言「后台 active ∧ 前端回落到『待开团』而非『未开团』」
  *    —— 后者才是「未上架」的样子，同样能证明可见性开关闭环。
- *    否则本套件每天 00:00–14:00 恒红，真回归会被这 11 小时的假红淹没。
+ *    否则本套件每天 23:00–14:00（15 小时）恒红，真回归会被这段假红淹没。
+ *
+ * ⚠️ `gate.mjs` 给 e2e 注入了 `ABOX_SHIFT_TO_HOUR`（见其文件头）：此时**服务端的
+ *    「现在」已被平移到该小时**，本函数必须读同一个值，否则会出现「脚本以为窗口关、
+ *    服务端其实开着」的错位判定。只有未设该变量（直接手跑脚本）时才回落到真实钟。
  *
  * 实现用 UTC+8 显式偏移，不依赖 ICU 时区库（与 `time.ts` 同一思路）。
  */
 function inOrderWindowBj() {
-  const h = new Date(Date.now() + 8 * 60 * 60 * 1000).getUTCHours();
+  const injected = Number(process.env.ABOX_SHIFT_TO_HOUR);
+  const h =
+    Number.isInteger(injected) && injected >= 0 && injected <= 23
+      ? injected
+      : new Date(Date.now() + 8 * 60 * 60 * 1000).getUTCHours();
   return h >= 14 && h < 23;
 }
 
@@ -8581,6 +8589,519 @@ async function main() {
           Number(left27?.s ?? -1) === 0,
         '§27 夹具还原：订单 / 支付流水 / 退款 / 应付单全部清除 —— 应付单不删，下一次重跑三种开票状态会互相串味（本轮 `partial` 会把下轮 `full` 拉成 `partial`）',
         `o=${left27?.o} p=${left27?.p} r=${left27?.r} s=${left27?.s}`,
+      );
+    }
+  }
+
+  // ==========================================================================
+  // §28 M4-1 日切链路（调度基座 + 4.1 开团 / 4.2 截单 / 4.3 配送单）
+  //
+  // ⚠️ 本节**不依赖下单窗口**（同 §18–§27 纪律）：订单 / 分配行夹具**全部直插**，
+  //    三个任务一律经**补跑接口**用**显式日期**驱动 —— 不等真实时刻、不依赖 cron 触发。
+  //
+  // ⚠️ 本节使用四个**隔离出餐日**（避开其它章节用过的 today ± {1,10,60,90,200,365}）：
+  //    · D28F = today + 130  未来日 → 「开团」正例（未过截单才允许上架）
+  //    · D28P = today − 205  过去日 → 「截单」+「配送单」（须已过截单时刻才跑得动）
+  //    · D28X = today − 212  过去日 → 「已过截单即拒绝开团」（其分配行须保持 pending）
+  //    · D28W = today − 190  过去日 → 「配送单可信度告警」（有单却一单没截 → 必须报警）
+  //    隔离日的意义：汇总类断言可以取**绝对值**而非差值；代价是必须**彻底还原**（见节末）。
+  //
+  // 本节钉死九条不变量：
+  //   ① ⭐ **同刻不同日**是声明式防线：`meal-publish` 与 `auto-confirm` 的 cron 完全相同
+  //      （14:00），但 `dateKind` 分别是「次日」与「当日」—— 必须由接口如实下发。
+  //      这是 M4 头号陷阱：cron 只写「几点跑」、不写「动哪一天」，写反了照样编译通过、
+  //      甚至部分断言仍然是绿的。
+  //   ② 未实装任务**如实标注**（`implemented=false` + `pendingNote`）且补跑被明确拒绝 ——
+  //      不把「只打了一行日志」的占位任务伪装成已上线。
+  //   ③ ⭐ 补跑与跑批**共用同一执行口**：不传日期时按声明表推导，与跑批同一天。
+  //   ④ ⭐ 截单三分支一次跑全：未支付→`cancelled`（**且解冻余额**）、已支付→`cut_off`
+  //      （不可逆）、备料量基数**定格**。第三项是本次修的真实缺口 —— `sold_count`
+  //      全仓无累加点，跑批推给供应商的份数此前**恒为 0**，而没有任何地方会报错。
+  //   ⑤ ⭐ 备料量**不含**未支付 / 已取消，否则供应商按虚数备货。
+  //   ⑥ ⭐ 生产计划按**截单后定格**的量覆盖：截单前生成的「预估」必须被「承诺」取代。
+  //   ⑦ ⭐ 开团**已过截单即整批不动**：上架了用户也下不了单，静默置 `active` 会做出
+  //      「看起来开了团、实际没人能下单」的假象。
+  //   ⑧ ⭐ 跑批路径（**无 HTTP 请求**）也必须落 `ab_operation_log`（source=system）——
+  //      全局拦截器在这条路上不生效，否则状态机 §2.1.5「每次迁移留痕」是空的。
+  //   ⑨ ⭐ 三个任务重复触发**都不产生重复数据**；配送单**不覆盖**已存在行
+  //      （司机 / 车牌是人工录入的，跑批抹掉就找不回来 —— 当前也没有修正入口）。
+  // ==========================================================================
+  {
+    log('\n§28 M4-1 日切链路（调度基座 + 开团 / 截单 / 配送单）');
+
+    const SCH28 = '/admin/schedule';
+    const PREFIX28 = `E2E28${stamp}`;
+    const D28F = addDaysStr(bjToday(), 130);
+    const D28P = addDaysStr(bjToday(), -205);
+    const D28X = addDaysStr(bjToday(), -212);
+    const D28W = addDaysStr(bjToday(), -190);
+    /** 直插 datetime 一律 **UTC** 格式（理由同 §27：TypeORM 按 UTC 落库与查询） */
+    const AT28 = `${bjToday()} 02:00:00.000`;
+
+    // ---------------------------------------------------------- A. 夹具原料
+    // 模板分配行必须同时满足：有「加工场所」（否则聚合不出计划）+ 有菜品明细
+    // + 明细的 `supplier_id` 齐全（否则聚合会造出 `supplier_id=NULL` 的行 → 建表约束报错）
+    const tpl28 = readDb(
+      `SELECT a.building_group_id AS gid, a.set_meal_id AS smid, a.distribution_center_id AS dcid, b.id AS bid
+         FROM ab_meal_assignment a
+         JOIN ab_building b ON b.building_group_id = a.building_group_id
+        WHERE a.distribution_center_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM ab_set_meal_item i WHERE i.set_meal_id = a.set_meal_id)
+          AND NOT EXISTS (SELECT 1 FROM ab_set_meal_item i WHERE i.set_meal_id = a.set_meal_id AND i.supplier_id IS NULL)
+        ORDER BY a.id LIMIT 1`,
+    );
+    const grp28 = tpl28
+      ? readDb('SELECT id, name FROM ab_building_group WHERE id <> ? ORDER BY id LIMIT 1', [
+          tpl28.gid,
+        ])
+      : null;
+    const bld28 = grp28
+      ? readDb('SELECT id FROM ab_building WHERE building_group_id = ? ORDER BY id LIMIT 1', [
+          grp28.id,
+        ])
+      : null;
+    const l28 = readDb('SELECT id, user_id FROM ab_team_leader ORDER BY id LIMIT 1');
+    const openid28 = `${PREFIX28}u`;
+
+    assert(
+      !!tpl28 && !!grp28 && !!bld28 && !!l28,
+      '§28 前置：日切夹具原料齐备（1 个「有加工场所 + 菜品明细齐全」的分配模板 / 2 个楼群 / 1 团长）',
+      `tpl=${!!tpl28} grp=${Number(grp28?.id)} bld=${Number(bld28?.id)} leader=${!!l28}`,
+    );
+
+    if (tpl28 && grp28 && bld28 && l28) {
+      const G28A = Number(tpl28.gid);
+      const G28B = Number(grp28.id);
+      const B28A = Number(tpl28.bid);
+      const SM28 = Number(tpl28.smid);
+      const DC28 = Number(tpl28.dcid);
+      const L28 = Number(l28.id);
+
+      // 夹具用户**专供**解冻断言：不能借用既有团长账号 —— 它可能已有余额行，
+      // 事后删除会把别人的账一起抹掉（§26 的同一条教训）。
+      writeDb(
+        'INSERT INTO ab_user (openid, nickname, gender, status, version, created_at, updated_at) VALUES (?, ?, 0, 1, 0, ?, ?)',
+        [openid28, `${PREFIX28}日切用户`, AT28, AT28],
+      );
+      const uid28 = Number(readDb('SELECT id FROM ab_user WHERE openid = ?', [openid28])?.id ?? 0);
+      // 账户里先摆好 5.80 的**冻结**（模拟「下单冻结（余额抵扣）」的落点）
+      writeDb(
+        "INSERT INTO ab_balance (user_id, balance, frozen, total_in, total_out, version, created_at, updated_at) VALUES (?, '0.00', '5.80', '0.00', '0.00', 0, ?, ?)",
+        [uid28, AT28, AT28],
+      );
+
+      const INS_A28 =
+        'INSERT INTO ab_meal_assignment (meal_date, building_group_id, set_meal_id, distribution_center_id, status, publish_at, cutoff_at, sold_count, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, NULL, 0, 0, ?, ?)';
+      const mkAssign28 = (date, gid, status) => {
+        writeDb(INS_A28, [date, gid, SM28, DC28, status, AT28, AT28]);
+        return Number(
+          readDb('SELECT id FROM ab_meal_assignment WHERE meal_date = ? AND building_group_id = ?', [
+            date,
+            gid,
+          ])?.id ?? 0,
+        );
+      };
+
+      mkAssign28(D28F, G28A, 'pending'); // 开团正例 ×2
+      mkAssign28(D28F, G28B, 'pending');
+      const aP28 = mkAssign28(D28P, G28A, 'active'); // 截单 / 配送：有单
+      mkAssign28(D28P, G28B, 'active'); //                   G28B 一单没有
+      const aX28 = mkAssign28(D28X, G28A, 'pending'); // 已过截单拒绝开团（须保持 pending）
+      const aW28 = mkAssign28(D28W, G28A, 'active'); // 可信度告警：有「已支付但未截单」的单
+
+      const INS_O28 =
+        'INSERT INTO ab_order (order_no, user_id, team_leader_id, building_id, building_group_id, set_meal_id, assignment_id, meal_date, quantity, unit_price, total_amount, balance_used, discount_amount, pay_amount, status, version, paid_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?, ?, ?)';
+      const mkOrder28 = (no, date, assignId, status, qty, balanceUsedFen = 0) => {
+        const total = qty * 25.8;
+        writeDb(INS_O28, [
+          no,
+          uid28,
+          L28,
+          B28A,
+          G28A,
+          SM28,
+          assignId,
+          date,
+          qty,
+          '25.80',
+          total.toFixed(2),
+          (balanceUsedFen / 100).toFixed(2),
+          (total - balanceUsedFen / 100).toFixed(2),
+          status,
+          status === 'pending_pay' ? null : AT28,
+          AT28,
+          AT28,
+        ]);
+        return Number(readDb('SELECT id FROM ab_order WHERE order_no = ?', [no])?.id ?? 0);
+      };
+
+      // 截单夹具：未支付 ×2（其一有余额冻结）/ 已支付 ×2（共 5 份）/ 已取消 ×9 份
+      const o28P1 = mkOrder28(`${PREFIX28}P1`, D28P, aP28, 'pending_pay', 2, 580);
+      const o28P2 = mkOrder28(`${PREFIX28}P2`, D28P, aP28, 'pending_pay', 1);
+      const o28P3 = mkOrder28(`${PREFIX28}P3`, D28P, aP28, 'paid', 3);
+      const o28P4 = mkOrder28(`${PREFIX28}P4`, D28P, aP28, 'paid', 2);
+      mkOrder28(`${PREFIX28}P5`, D28P, aP28, 'cancelled', 9);
+      // 告警夹具：已支付、但**没有**任何 cut_off 订单
+      mkOrder28(`${PREFIX28}W1`, D28W, aW28, 'paid', 4);
+
+      // ------------------------------------------------------ B. 调度基座：时刻表
+      const sched28 = await call('GET', SCH28, { token: adminToken });
+      const rows28 = sched28.body?.data?.list ?? [];
+      const t28 = (n) => rows28.find((r) => r.task === n) ?? null;
+      assert(
+        sched28.body?.code === 0 && rows28.length === 8,
+        '§28 时刻表一次列出全部 8 个定时任务（含未实装项 —— 不隐藏）',
+        `code=${sched28.body?.code} rows=${rows28.length}`,
+      );
+      const pub28 = t28('meal-publish');
+      const conf28 = t28('auto-confirm');
+      assert(
+        !!pub28 &&
+          !!conf28 &&
+          pub28.cron === conf28.cron &&
+          pub28.dateKind === 'tomorrow' &&
+          conf28.dateKind === 'today',
+        '⭐⭐ §28 **同刻不同日**：`meal-publish` 与 `auto-confirm` 的 cron 完全相同（14:00），但目标日期分别是「次日」与「当日」—— M4 头号陷阱的唯一防线，必须由接口如实下发',
+        `cron=${pub28?.cron} vs ${conf28?.cron} · dateKind=${pub28?.dateKind} vs ${conf28?.dateKind}`,
+      );
+      assert(
+        t28('leader-expire')?.dateKind === null && t28('leader-expire')?.implemented === true,
+        '§28 全量扫描型任务（`leader-expire`）`dateKind=null`（与出餐日无关）且已实装',
+        `dateKind=${JSON.stringify(t28('leader-expire')?.dateKind)} implemented=${t28('leader-expire')?.implemented}`,
+      );
+      const notYet28 = ['auto-confirm', 'commission-settle', 'reconciliation'].filter(
+        (n) => t28(n)?.implemented !== false || !String(t28(n)?.pendingNote ?? '').includes('M4-2'),
+      );
+      assert(
+        notYet28.length === 0,
+        '⭐ §28 未实装任务**如实标注**（`implemented=false` + `pendingNote` 指明补齐批次）—— 把占位任务显示成「已上线」比不显示更伤运营信任',
+        `未如实标注：${notYet28.join(',') || '无'}`,
+      );
+
+      // ------------------------------------------------------ C. 补跑闸门
+      const unknown28 = await call('POST', `${SCH28}/no-such-task/run`, {
+        token: adminToken,
+        body: {},
+      });
+      assert(
+        unknown28.body?.code === 10001,
+        '§28 未知任务名补跑 → 10001（不静默什么都不做）',
+        `code=${unknown28.body?.code} msg=${unknown28.body?.message}`,
+      );
+      const pending28 = await call('POST', `${SCH28}/auto-confirm/run`, {
+        token: adminToken,
+        body: { date: D28P },
+      });
+      assert(
+        pending28.body?.code === 10001 &&
+          String(pending28.body?.message ?? '').includes('尚未实装'),
+        '⭐ §28 未实装任务补跑被**明确拒绝**（10001 + 指明补齐批次）—— 静默返回「完成」会让运营以为已经跑过',
+        `code=${pending28.body?.code} msg=${pending28.body?.message}`,
+      );
+      const badDate28 = await call('POST', `${SCH28}/cutoff/run`, {
+        token: adminToken,
+        body: { date: '2026-02-30' },
+      });
+      assert(
+        badDate28.body?.code === 10001 &&
+          String(badDate28.body?.message ?? '').includes('不是合法日期'),
+        '⭐⭐ §28 日历上**不存在**的日期（2026-02-30）被拒 → 10001 —— 放行会让 `Date.UTC` **静默滚动**到 2026-03-02：运营以为在补跑「2 月 30 日」并看到「完成」，实际批量改了 3 月 2 日的订单',
+        `code=${badDate28.body?.code} msg=${badDate28.body?.message}`,
+      );
+
+      // ------------------------------------------------------ D. 截单（4.2）
+      const cut28 = await call('POST', `${SCH28}/cutoff/run`, {
+        token: adminToken,
+        body: { date: D28P },
+      });
+      const cut28d = cut28.body?.data?.result?.cut;
+      const plan28 = cut28.body?.data?.result?.plan;
+      assert(
+        cut28.body?.code === 0 && cut28.body?.data?.date === D28P,
+        '§28 补跑接口按**传入日期**执行并回显 `date`（与跑批共用同一执行口，故补跑算出来的数与跑批一致）',
+        `code=${cut28.body?.code} date=${cut28.body?.data?.date}`,
+      );
+      assert(
+        cut28d?.autoCancelled?.count === 2 &&
+          cut28d?.locked?.count === 2 &&
+          cut28d?.locked?.totalQuantity === 5,
+        '⭐ §28 截单三分支一次跑全：未支付 2 单 → 取消 / 已支付 2 单 → 锁定 **5 份** / 原本 `cancelled` 的 9 份**不计入锁定**',
+        `取消=${cut28d?.autoCancelled?.count} 锁定=${cut28d?.locked?.count} 份=${cut28d?.locked?.totalQuantity}`,
+      );
+      const st28 = readRows('SELECT order_no, status FROM ab_order WHERE order_no LIKE ? ORDER BY order_no', [
+        `${PREFIX28}P%`,
+      ]);
+      const st28of = new Map(st28.map((r) => [String(r.order_no), String(r.status)]));
+      assert(
+        st28of.get(`${PREFIX28}P1`) === 'cancelled' &&
+          st28of.get(`${PREFIX28}P2`) === 'cancelled' &&
+          st28of.get(`${PREFIX28}P3`) === 'cut_off' &&
+          st28of.get(`${PREFIX28}P4`) === 'cut_off' &&
+          st28of.get(`${PREFIX28}P5`) === 'cancelled',
+        '⭐ §28 状态已落库：`pending_pay → cancelled`、`paid → cut_off`（**不可逆**锁定），原本已取消的不受影响',
+        st28.map((r) => `${String(r.order_no).slice(-2)}=${r.status}`).join(' '),
+      );
+      const bal28 = readDb('SELECT balance, frozen FROM ab_balance WHERE user_id = ?', [uid28]);
+      assert(
+        cut28d?.autoCancelled?.releasedBalanceFen === 580 &&
+          Number(bal28?.frozen) === 0 &&
+          Number(bal28?.balance) === 5.8,
+        '⭐⭐ §28 未支付兜底取消**同时解冻余额**（冻结 5.80 → 可用）—— 只改状态不解冻，用户的钱会被永久锁在一张已取消的订单上',
+        `解冻分=${cut28d?.autoCancelled?.releasedBalanceFen} 账户可用/冻结=${bal28?.balance}/${bal28?.frozen}`,
+      );
+      const balLog28 = readDb(
+        'SELECT type, direction, amount FROM ab_balance_log WHERE user_id = ? AND related_id = ?',
+        [uid28, `${PREFIX28}P1`],
+      );
+      assert(
+        balLog28?.type === 'order_pay' &&
+          Number(balLog28?.direction) === 1 &&
+          Number(balLog28?.amount) === 5.8,
+        '§28 解冻留流水（`ab_balance_log` type=order_pay / direction=+1）—— 余额每一次变动都要有据可查',
+        `type=${balLog28?.type} dir=${balLog28?.direction} amount=${balLog28?.amount}`,
+      );
+      const oplog28 = readDb(
+        `SELECT SUM(CASE WHEN action = '截单取消' THEN 1 ELSE 0 END) AS c,
+                SUM(CASE WHEN action = '截单锁定' THEN 1 ELSE 0 END) AS l
+           FROM ab_operation_log
+          WHERE module = 'order' AND target_id IN (?, ?, ?, ?)`,
+        [String(o28P1), String(o28P2), String(o28P3), String(o28P4)],
+      );
+      assert(
+        Number(oplog28?.c) === 2 && Number(oplog28?.l) === 2,
+        '⭐⭐ §28 状态机 §2.1.5：**跑批路径（无 HTTP 请求）也落了操作日志**（全局拦截器不生效，必须显式写入）—— 否则「每次迁移留痕」在跑批这条路上是空的',
+        `截单取消=${oplog28?.c} 截单锁定=${oplog28?.l}`,
+      );
+      const sold28 = readDb('SELECT sold_count FROM ab_meal_assignment WHERE id = ?', [aP28]);
+      assert(
+        Number(sold28?.sold_count) === 5,
+        '⭐⭐ §28 备料量基数**定格** = 5 份（计入生产 = 既非未支付、也非已取消）—— 此前 `sold_count` 全仓无累加点，跑批推给供应商的份数**恒为 0** 且不报任何错',
+        `sold_count=${sold28?.sold_count}`,
+      );
+      const plan28row = readDb(
+        'SELECT COUNT(*) AS c, COUNT(DISTINCT plan_quantity) AS d, MIN(plan_quantity) AS mn, MAX(plan_quantity) AS mx, COALESCE(SUM(plan_quantity), 0) AS s FROM ab_supplier_dish_daily WHERE produce_date = ?',
+        [D28P],
+      );
+      assert(
+        Number(plan28row?.c) > 0 && Number(plan28row?.d) === 1 && Number(plan28row?.mn) === 5,
+        '⭐⭐ §28 生产计划按**截单后定格**的量覆盖（每道菜都 = 5 份，且**不生成 0 份行**）—— 截单前顺手生成的「预估」必须被「承诺」取代，否则备料量系统性偏小',
+        `行数=${plan28row?.c} 取值数=${plan28row?.d} min=${plan28row?.mn} max=${plan28row?.mx}`,
+      );
+      assert(
+        Number(plan28?.totalQuantity) === Number(plan28row?.s) &&
+          Number(plan28?.supplierCount) >= 1,
+        '§28 截单出参的供应商侧合计与落库的 `ab_supplier_dish_daily` 合计**相等**（出参一份口径、落库另一份口径时，运营看到的「今天要备 N 份」与表里的数会对不上，且**不报任何错**）',
+        `出参=${plan28?.totalQuantity} 落库=${plan28row?.s} 供应商数=${plan28?.supplierCount}`,
+      );
+
+      const cut28b = await call('POST', `${SCH28}/cutoff/run`, {
+        token: adminToken,
+        body: { date: D28P },
+      });
+      const cut28bd = cut28b.body?.data?.result?.cut;
+      const sold28b = readDb('SELECT sold_count FROM ab_meal_assignment WHERE id = ?', [aP28]);
+      assert(
+        cut28b.body?.code === 0 &&
+          cut28bd?.autoCancelled?.count === 0 &&
+          cut28bd?.locked?.count === 0,
+        '⭐ §28 截单**幂等**：重跑不产生重复动作（以 `meal_date` 为键，不需要额外幂等占位表）',
+        `取消=${cut28bd?.autoCancelled?.count} 锁定=${cut28bd?.locked?.count}`,
+      );
+      assert(
+        Number(sold28b?.sold_count) === 5,
+        '§28 重跑后备料量仍为 5（**定格**而非累加）—— 若改成实时累加，这里会变成 10，而供应商会被多备一倍',
+        `sold_count=${sold28b?.sold_count}`,
+      );
+
+      // ------------------------------------------------------ E. 开团（4.1）
+      const pubs28 = await call('POST', `${SCH28}/meal-publish/run`, {
+        token: adminToken,
+        body: { date: D28F },
+      });
+      const pubd28 = pubs28.body?.data?.result;
+      assert(
+        pubs28.body?.code === 0 &&
+          pubd28?.total === 2 &&
+          pubd28?.published === 2 &&
+          pubd28?.blockedByCutoff === false,
+        '§28 开团：未来日的 2 个 `pending` 分配 → `active`（D 日 14:00 开的正是 D+1 的团）',
+        `total=${pubd28?.total} published=${pubd28?.published} blocked=${pubd28?.blockedByCutoff}`,
+      );
+      const act28 = readDb(
+        'SELECT COUNT(*) AS c FROM ab_meal_assignment WHERE meal_date = ? AND status = ?',
+        [D28F, 'active'],
+      );
+      const tm28 = readDb(
+        'SELECT publish_at, cutoff_at FROM ab_meal_assignment WHERE meal_date = ? ORDER BY id LIMIT 1',
+        [D28F],
+      );
+      assert(
+        Number(act28?.c) === 2 && !!tm28?.publish_at && !!tm28?.cutoff_at,
+        '§28 上架同时落 `publish_at` 与实际 `cutoff_at`（截单时刻冗余 —— 用户端倒计时与团长端展示都读它）',
+        `active=${act28?.c} publish_at=${tm28?.publish_at} cutoff_at=${tm28?.cutoff_at}`,
+      );
+      const pubs28b = await call('POST', `${SCH28}/meal-publish/run`, {
+        token: adminToken,
+        body: { date: D28F },
+      });
+      const pubd28b = pubs28b.body?.data?.result;
+      assert(
+        pubs28b.body?.code === 0 &&
+          pubd28b?.published === 0 &&
+          pubd28b?.alreadyActive === 2,
+        '⭐ §28 开团**幂等**：重跑 `published=0 / alreadyActive=2` —— 重复触发**不产生任何写入**',
+        `published=${pubd28b?.published} alreadyActive=${pubd28b?.alreadyActive}`,
+      );
+      const pubs28x = await call('POST', `${SCH28}/meal-publish/run`, {
+        token: adminToken,
+        body: { date: D28X },
+      });
+      const pubd28x = pubs28x.body?.data?.result;
+      const xrow28 = readDb('SELECT status FROM ab_meal_assignment WHERE id = ?', [aX28]);
+      assert(
+        pubs28x.body?.code === 0 &&
+          pubd28x?.blockedByCutoff === true &&
+          pubd28x?.published === 0 &&
+          String(xrow28?.status) === 'pending',
+        '⭐⭐ §28 **已过截单即整批不动**：`blockedByCutoff=true` 且分配行仍是 `pending` —— 静默置 `active` 会做出「看起来开了团、实际没人能下单」的假象（`isOrderable` 恒假）',
+        `blocked=${pubd28x?.blockedByCutoff} published=${pubd28x?.published} status=${xrow28?.status}`,
+      );
+
+      // ------------------------------------------------------ F. 配送单（4.3）
+      const dg28 = await call('POST', `${SCH28}/delivery-generate/run`, {
+        token: adminToken,
+        body: { date: D28P },
+      });
+      const dgd28 = dg28.body?.data?.result;
+      assert(
+        dg28.body?.code === 0 &&
+          dgd28?.created === 1 &&
+          dgd28?.emptyGroups === 1 &&
+          dgd28?.totalQuantity === 5 &&
+          dgd28?.warning === null,
+        '⭐ §28 配送单按**楼群**生成（唯一键 `meal_date`+`building_group_id`）：有单的楼群建 1 张 / 5 份，**无单楼群不建单**（计入 `emptyGroups`）',
+        `created=${dgd28?.created} empty=${dgd28?.emptyGroups} qty=${dgd28?.totalQuantity} warning=${dgd28?.warning ?? 'null'}`,
+      );
+      const dr28 = readDb(
+        'SELECT total_quantity, expected_at, status FROM ab_delivery_record WHERE meal_date = ? AND building_group_id = ?',
+        [D28P, G28A],
+      );
+      assert(
+        Number(dr28?.total_quantity) === 5 &&
+          String(dr28?.expected_at ?? '').startsWith(`${D28P} 03:30:00`),
+        '§28 配送单份数与备料量**同口径**（5 份），预计送达锚在 T 日 11:30（UTC 03:30）—— 两者不一致会出现「供应商做了 120 份、配送只送 100 份」，而**两边都不报错**',
+        `qty=${dr28?.total_quantity} expected_at=${dr28?.expected_at}`,
+      );
+
+      // 人工录入司机 / 车牌后重跑
+      writeDb(
+        'UPDATE ab_delivery_record SET driver_name = ?, driver_phone = ?, plate_no = ?, total_quantity = ? WHERE meal_date = ? AND building_group_id = ?',
+        ['张三', '13800000000', '京A12345', 99, D28P, G28A],
+      );
+      const dg28b = await call('POST', `${SCH28}/delivery-generate/run`, {
+        token: adminToken,
+        body: { date: D28P },
+      });
+      const dgd28b = dg28b.body?.data?.result;
+      const dr28b = readDb(
+        'SELECT driver_name, plate_no, total_quantity FROM ab_delivery_record WHERE meal_date = ? AND building_group_id = ?',
+        [D28P, G28A],
+      );
+      assert(
+        dg28b.body?.code === 0 && dgd28b?.created === 0 && dgd28b?.skipped === 1,
+        '⭐ §28 配送单**幂等**：重跑 `created=0 / skipped=1`（同一楼群当日已建过即跳过）',
+        `created=${dgd28b?.created} skipped=${dgd28b?.skipped}`,
+      );
+      assert(
+        dr28b?.driver_name === '张三' &&
+          dr28b?.plate_no === '京A12345' &&
+          Number(dr28b?.total_quantity) === 99,
+        '⭐⭐ §28 幂等**不覆盖**已存在行：人工录入的司机 / 车牌必须保留 —— 跑批把它抹掉就找不回来（`ab_delivery_record` **当前无后台修正入口**，`DeliveryController` 仍是空壳）',
+        `driver=${dr28b?.driver_name} plate=${dr28b?.plate_no} qty=${dr28b?.total_quantity}`,
+      );
+
+      // 可信度告警：有单却**一张都没截**（截单可能没跑成）→ 必须报警而非静默给出偏小的数
+      const dg28w = await call('POST', `${SCH28}/delivery-generate/run`, {
+        token: adminToken,
+        body: { date: D28W },
+      });
+      const dgd28w = dg28w.body?.data?.result;
+      assert(
+        dg28w.body?.code === 0 &&
+          dgd28w?.created === 1 &&
+          typeof dgd28w?.warning === 'string' &&
+          dgd28w.warning.includes('截单'),
+        '⭐⭐ §28 配送单**可信度告警**：该日有单却没有一张 `cut_off` → 明确提示「截单可能没跑成，份数可能偏小」—— 否则份数偏小且**没有任何报错**，一直错到有人发现货不够',
+        `created=${dgd28w?.created} warning=${String(dgd28w?.warning ?? '').slice(0, 36)}…`,
+      );
+
+      // ------------------------------------------------------ G. 不传日期：按声明表推导
+      const dg28n = await call('POST', `${SCH28}/delivery-generate/run`, {
+        token: adminToken,
+        body: {},
+      });
+      const dgd28n = dg28n.body?.data?.result;
+      assert(
+        dg28n.body?.code === 0 && dg28n.body?.data?.date === bjToday(),
+        '⭐⭐ §28 补跑**不传日期**时按声明表推导（`delivery-generate` 的 `dateKind=今日`）—— 与跑批走同一个 `targetDate()`，从根上杜绝「补跑动的不是同一天」',
+        `date=${dg28n.body?.data?.date} 期望=${bjToday()}`,
+      );
+
+      // ------------------------------------------------------ H. 夹具还原
+      // 本次推导调用可能给「今日」造了配送单（取决于种子是否排了今日餐）—— 按返回的 id 精确删，
+      // 不用 `WHERE meal_date = 今日`：那会误删**不是本节造的**行。
+      const dgIds28 = (dgd28n?.list ?? []).map((x) => x.id).filter((x) => x != null);
+      if (dgIds28.length) {
+        writeDb(
+          `DELETE FROM ab_delivery_record WHERE id IN (${dgIds28.map(() => '?').join(',')})`,
+          dgIds28,
+        );
+      }
+      writeDb('DELETE FROM ab_delivery_record WHERE meal_date IN (?, ?)', [D28P, D28W]);
+      writeDb('DELETE FROM ab_supplier_dish_center_daily WHERE produce_date = ?', [D28P]);
+      writeDb('DELETE FROM ab_supplier_dish_daily WHERE produce_date = ?', [D28P]);
+      writeDb('DELETE FROM ab_meal_assignment WHERE meal_date IN (?, ?, ?, ?)', [
+        D28F,
+        D28P,
+        D28X,
+        D28W,
+      ]);
+      writeDb('DELETE FROM ab_balance_log WHERE user_id = ?', [uid28]);
+      writeDb('DELETE FROM ab_balance WHERE user_id = ?', [uid28]);
+      writeDb('DELETE FROM ab_order WHERE order_no LIKE ?', [`${PREFIX28}%`]);
+      writeDb('DELETE FROM ab_user WHERE openid LIKE ?', [`${PREFIX28}%`]);
+
+      const left28 = {
+        o: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_order WHERE order_no LIKE ?', [`${PREFIX28}%`])?.c ?? -1,
+        ),
+        a: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_meal_assignment WHERE meal_date IN (?, ?, ?, ?)', [
+            D28F,
+            D28P,
+            D28X,
+            D28W,
+          ])?.c ?? -1,
+        ),
+        d: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_delivery_record WHERE meal_date IN (?, ?)', [
+            D28P,
+            D28W,
+          ])?.c ?? -1,
+        ),
+        p: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_supplier_dish_daily WHERE produce_date = ?', [D28P])
+            ?.c ?? -1,
+        ),
+        b: Number(readDb('SELECT COUNT(*) AS c FROM ab_balance WHERE user_id = ?', [uid28])?.c ?? -1),
+        u: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_user WHERE openid LIKE ?', [`${PREFIX28}%`])?.c ?? -1,
+        ),
+      };
+      assert(
+        Object.values(left28).every((v) => v === 0),
+        '§28 夹具还原：订单 / 分配行 / 配送单 / 生产计划 / 余额行 / 夹具用户全部清除 —— 余额行与用户不还原，下一次重跑的平台负债就会凭空多出 ¥5.80，并让 D38↔D33 的对账断言在「两次读之间」产生假绿',
+        `o=${left28.o} a=${left28.a} d=${left28.d} p=${left28.p} b=${left28.b} u=${left28.u}`,
       );
     }
   }

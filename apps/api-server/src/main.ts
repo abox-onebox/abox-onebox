@@ -11,6 +11,7 @@ import { resolve } from 'path';
 
 import { AppModule } from './app.module';
 import { requestIdMiddleware } from './common/middleware/request-id.middleware';
+import { clockShiftMs, isClockShifted, now, toBjIso } from './common/utils/time';
 
 async function bootstrap() {
   // rawBody: 微信支付 V3 回调需用**原始报文**验签（/pay/notify）
@@ -66,6 +67,17 @@ async function bootstrap() {
   if (d.providerMode === 'mock') {
     Logger.warn(
       '当前为 MOCK 模式：登录用 code=dev:1001；支付成功自动回调（可关 MOCK_PAY_AUTO_SUCCESS）',
+      'Bootstrap',
+    );
+  }
+
+  // 时钟注入告警（e2e 专用；机制与边界见 common/utils/time.ts 顶部注释）
+  if (isClockShifted()) {
+    const shiftMin = Math.round(clockShiftMs() / 60_000);
+    Logger.warn(
+      `时钟注入已启用：ABOX_SHIFT_TO_HOUR 生效，now() = ${toBjIso(now())}` +
+        `（真实时刻 ${shiftMin >= 0 ? '+' : ''}${shiftMin} 分钟）· ` +
+        `@Cron 仍按真实钟触发 —— 跑批请走补跑接口，勿以本时间为准排查线上问题`,
       'Bootstrap',
     );
   }

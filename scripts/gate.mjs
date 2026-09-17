@@ -38,6 +38,22 @@ const NODE_DIR = dirname(process.execPath);
 const IS_WIN = process.platform === 'win32';
 const PATH_SEP = IS_WIN ? ';' : ':';
 
+/**
+ * ── e2e 时钟注入（2026-09-17）─────────────────────────────────────────────
+ * `isOrderable(T)` = `[T-1 14:00, T-1 23:00)` —— 窗口外**任何**出餐日都下不了单
+ * （该不等式对整数日无解），于是 m1/m2 每天只有 9 小时能跑，00:00–14:00 恒红：
+ * 20+ 条断言级联失败，真回归反而被这 15 小时的假红淹没（ref《缺陷与陷阱》已登记）。
+ *
+ * 处理：给所有做「相对现在」判定的门禁注入 `ABOX_SHIFT_TO_HOUR=20` —— 服务端
+ * 把**北京小时**平移到 20:00（**日历日不变**），时间仍 1:1 前进。于是脚本侧用真实
+ * 钟算出的 `todayBj()/tomorrowBj()` 与服务端依旧对齐，夹具无需改动。
+ *
+ * 只影响被注入的测试进程：`time.ts` 在 `NODE_ENV=production` 时直接忽略该变量。
+ * 边界（不改变 `@Cron` 触发时刻、不影响存量 `new Date()` 落库）见 time.ts 顶部注释。
+ */
+const E2E_CLOCK_HOUR = '20';
+const CLOCK_ENV = { ABOX_SHIFT_TO_HOUR: E2E_CLOCK_HOUR };
+
 /** 各门禁：cwd 相对仓库根；cmd 与 package.json script 保持一致 */
 const GATES = {
   'shared:types': { cwd: 'packages/shared-types', cmd: 'tsc -p tsconfig.build.json', group: 'shared' },
@@ -56,14 +72,15 @@ const GATES = {
   seed: {
     cwd: 'apps/api-server',
     cmd: 'ts-node -r tsconfig-paths/register src/database/seeds/seed.ts',
+    env: CLOCK_ENV,
   },
   // M1 端到端验收：真实起服务 + 真实 HTTP，覆盖验收标准 1–5（含幂等回放与 40004 分支）
   // env.E2E_PORT：两个 e2e 各用独立端口，串跑时互不干扰（详见 scripts/lib/e2e-server.mjs）
-  'e2e:m1': { cwd: '.', cmd: 'node scripts/e2e-m1.mjs', group: 'e2e', env: { E2E_PORT: '3101' } },
+  'e2e:m1': { cwd: '.', cmd: 'node scripts/e2e-m1.mjs', group: 'e2e', env: { E2E_PORT: '3101', ...CLOCK_ENV } },
   // M2 端到端验收：团长申请即生效（C3）+ 身份守卫 + floor 落库 + 等级口径回归
-  'e2e:m2': { cwd: '.', cmd: 'node scripts/e2e-m2.mjs', group: 'e2e', env: { E2E_PORT: '3102' } },
+  'e2e:m2': { cwd: '.', cmd: 'node scripts/e2e-m2.mjs', group: 'e2e', env: { E2E_PORT: '3102', ...CLOCK_ENV } },
   // M3 端到端验收：后台登录/锁定/吊销 + 主体隔离 + 角色白名单 + 操作日志
-  'e2e:m3': { cwd: '.', cmd: 'node scripts/e2e-m3.mjs', group: 'e2e', env: { E2E_PORT: '3103' } },
+  'e2e:m3': { cwd: '.', cmd: 'node scripts/e2e-m3.mjs', group: 'e2e', env: { E2E_PORT: '3103', ...CLOCK_ENV } },
 };
 
 /** 组合门禁别名 */
@@ -193,7 +210,15 @@ if (argv.length === 0 || argv[0] === 'list') {
 }
 
 const queue = expand(argv);
-console.log(`门禁执行：${queue.join(' → ')}\n`);
+console.log(`门禁执行：${queue.join(' → ')}`);
+const clocked = queue.filter((n) => GATES[n]?.env?.ABOX_SHIFT_TO_HOUR);
+if (clocked.length) {
+  console.log(
+    `⏱ 时钟注入：${clocked.join(' / ')} 的北京小时平移至 ${E2E_CLOCK_HOUR}:00（日历日不变）` +
+      ` —— 下单窗口依赖不再锁死 14:00–23:00（见 gate.mjs 顶部说明）`,
+  );
+}
+console.log();
 
 const results = [];
 for (const name of queue) {

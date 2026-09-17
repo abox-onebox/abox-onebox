@@ -232,7 +232,48 @@ POST /api/v1/payments/mock/paid   { "orderNo": "AB202609150001" }
 > 若提示跳过钩子安装，说明当前环境 PATH 里没有 `git`；git 可用后在仓库根执行 `pnpm exec husky install` 即可。
 > 提交信息写错格式会被拦下，用 `feat:` / `fix:` / `docs:` 等前缀重写即可。
 
+### 6.2 ⏱ 时钟注入：让「下单窗口」不再把端到端套件锁死在下午
+
+**仓库内现行门禁是 `abox-onebox/scripts/gate.mjs`**（带 `all` / `verify` 别名，**含 e2e**；
+工作区根的 `tests/tools/gate.mjs` 是只跑 12 道静态/构建步骤的等价物，不含 e2e）。日常这样跑：
+
+```bash
+cd abox-onebox
+export NODE_PATH=/c/Users/herma/.workbuddy/binaries/node/workspace/node_modules
+NODE=/c/Users/herma/.workbuddy/binaries/node/versions/22.22.2-3/node.exe
+$NODE scripts/gate.mjs all        # 8 道：shared / lint / format / typecheck×3 / jest / build×3
+$NODE scripts/gate.mjs verify     # 4 道：seed → e2e:m1 → e2e:m2 → e2e:m3
+$NODE scripts/gate.mjs e2e:m3     # 单跑某一段（⚠️ 单跑不重置种子，先补 `seed`）
+```
+
+**症状**：`e2e:m1` / `e2e:m2` 走**真实 HTTP 下单**，而 `isOrderable(T)` = `[T-1 14:00, T-1 23:00)`
+—— 该不等式对整数日**无解**，所以**窗口外无论传哪个出餐日都下不了单**。结果是全量套件每天只有
+9 小时能跑：**23:00–14:00 之间 `m1` 会红 20 余条（全部由「U6 创建订单」级联而来）**，
+`m2` 更隐蔽 —— 拿不到 `orderNo` 后把 `undefined` 写进 SQLite，直接抛
+`Provided value cannot be bound to SQLite parameter`，看起来像「脚本崩了」。
+
+**机制**：`apps/api-server/src/common/utils/time.ts` 收敛出**唯一时间源 `now()`**。当设了
+`ABOX_SHIFT_TO_HOUR=20`（且 `NODE_ENV !== 'production'`）时，服务端把**北京小时**平移到 20:00：
+
+- **日历日不变** → 脚本侧用真实钟算出的 `todayBj()/tomorrowBj()` 与服务端**仍然对齐**，夹具无需改动；
+- 时间仍 **1:1 前进**（不是冻住时钟）→ 时间戳单调性、`created_at < paid_at` 全部保持；
+- `gate.mjs` 已给 `seed` / `e2e:m1` / `e2e:m2` / `e2e:m3` **自动注入**并打印一行横幅；
+  服务端启动时也会 WARN 一行，避免把注入时刻误当成真实时刻排查问题。
+
+手动起服务调试时同样可用：`ABOX_SHIFT_TO_HOUR=20 npm run dev:api`。
+
+**边界（别把它当成能测一切）**：
+
+1. **只影响 `now()`，不改 `@Cron()` 的真实触发时刻**（NestJS 的 cron 是静态元数据）。
+   所以**跑批验收一律走手动补跑接口** `POST /admin/schedule/{task}/run`（接收显式出餐日，与时钟无关）；
+2. 存量 `new Date()` 直接调用点（如 TypeORM 的 `@CreateDateColumn`）仍写**真实**时刻 ——
+   二者相差一个固定平移量，先后关系自洽，但**别拿落库时刻与服务端 `now()` 直接相减**；
+3. 注入后 `now()` 落在**未来**（真实 11:00 → 注入 20:00），不要用它做「距今多久」的断言；
+4. 直接手跑某个 e2e 脚本（不经 gate）时不会注入 → 窗口外会先撞上「前置：当前不在下单窗口」
+   **一条**可读失败并退出（这是**刻意**的 fail-fast，避免 20 余条假红淹没真回归）。
+
 ---
+
 
 ## 七、切到云服务器时怎么改
 

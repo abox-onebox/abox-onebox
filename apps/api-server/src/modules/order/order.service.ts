@@ -32,6 +32,7 @@ import { Balance, BalanceLog } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { MealAssignment, SetMealItem } from '../../database/entities/meal.entity';
 import { Order, PaymentLog, Refund } from '../../database/entities/order.entity';
+import { OperationLog } from '../../database/entities/system.entity';
 import { Dish, Supplier } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
 import { WX_PAY_PROVIDER, WxPayProvider } from '../../providers/wx-pay/wx-pay.provider';
@@ -42,6 +43,18 @@ import { CreateOrderReqDto } from './dto/order.dto';
 const toFen = (yuan: number | string): number => Math.round(Number(yuan) * 100);
 /** 分 → 元（两位小数字符串，落 DECIMAL 列） */
 const toYuanStr = (fen: number): string => (fen / 100).toFixed(2);
+
+/** 截单出参（`cutoffByDate` · 跑批与手动补跑共用同一形状） */
+export interface CutoffByDateResult {
+  date: string;
+  /** ① 未支付兜底取消 */
+  autoCancelled: { count: number; orderNos: string[]; releasedBalanceFen: number };
+  /** ② 已支付锁定 */
+  locked: { count: number; orderNos: string[]; totalQuantity: number };
+  /** ③ 备料量定格（按楼群） */
+  soldByGroup: Array<{ buildingGroupId: number; quantity: number }>;
+  totalSoldQuantity: number;
+}
 
 /**
  * 订单服务
@@ -405,6 +418,206 @@ export class OrderService {
       statusText: userStatusText(OrderStatus.CANCELLED),
       refundInitiated,
       refundedBalanceFen: balanceUsedFen,
+    };
+  }
+
+  // ==========================================================================
+  // 截单（T-1 24:00 · T5 / T6）—— 跑批入口，由 `tasks/cutoff.task.ts` 委托
+  // ==========================================================================
+
+  /**
+   * 截单：① 未支付兜底取消 ② 已支付锁定 ③ 定格备料量基数
+   *
+   * 口径依据：《订单状态机与全链路流转 v1.0》§3 T-1 24:00 · §二 T5/T6
+   *
+   * ## 为什么这一整套必须写在订单域
+   * 截单要动两样东西：**订单状态**与**分配表的备料量基数**。后者的口径是
+   * 「**哪些订单算生产**」—— 这个判断只有订单域做得对（要区分 `pending_pay` 未付款、
+   * `cancelled` 已取消、以及后续可能出现的退款态）。若让 meal 域或 supplier 域
+   * 各自去查订单表，同一句「哪些订单算数」就会有第二份实现（本项目头号顽疾）。
+   *
+   * ## ⭐ 为什么顺带回写 `sold_count`（本次修复的真实缺口）
+   * `ab_meal_assignment.sold_count` 注释写着「已订份数（实时累加）」，但**全仓没有任何
+   * 累加点** —— 下单不加、取消不减、退款不管，它只在种子里被赋过值。而供应商的
+   * 备料量（`ab_supplier_dish_daily.plan_quantity`）正是拿它当聚合基数，
+   * 于是**跑批推给供应商的份数恒为 0**（`ensureProducePlan` 里那句
+   * 「`sold_count=0` 的分配很常见」其实不是「常见」，是「唯一可能」）。
+   *
+   * 收口方式与「生产计划生成即冻结」同族：**不引入实时累加**（那要在下单 / 取消 /
+   * 超时 / 退款四条路径上同步维护，漏一条就是静默错账），而是**在截单这一「定格」
+   * 时刻从订单表聚合一次并落库**。语义随之明确为「**截单定格的已售份数**」：
+   *   · 截单前：可能为 0 或种子值 —— 此时它不承诺准确（页面勿据此下结论）
+   *   · 截单后：**定格**，不再随退款 / 改单变化
+   *
+   * ## 备料量口径
+   * 计入 `status NOT IN ('pending_pay', 'cancelled')` 的订单：
+   *   · 排除未支付 —— 钱没到、单已作废
+   *   · 排除已取消 —— 截单时刚被本方法置为取消
+   *   · **包含后续状态（cooked / delivered / …）与退款态** —— 手动补跑时订单可能已
+   *     流转到 T 日之后；而这些货**已经做了**（自营口径下采购款按实收量付，与用户
+   *     是否退款无关），所以计在生产量内。截单定格后也不会因退款而回退。
+   *
+   * ## 幂等
+   * 以 `meal_date` 为键：第二次执行时已无 `pending_pay` / `paid` 的订单，
+   * 两个分支各自自然为空 —— **不需要额外幂等占位表**（与 4.11 一致）。
+   *
+   * @param date 出餐日（由 `ScheduleService.targetDate('today')` 得出，即 T 日）
+   */
+  async cutoffByDate(date: string, operatorId?: number | null): Promise<CutoffByDateResult> {
+    const now = new Date();
+    const logRepoOf = (m: EntityManager) => m.getRepository(OperationLog);
+
+    // ---- ① 未支付 → 取消（解冻余额）--------------------------------------
+    const pendings = await this.orderRepo.find({
+      where: { mealDate: date, status: OrderStatus.PENDING_PAY },
+      order: { id: 'ASC' },
+    });
+    const cancelledNos: string[] = [];
+    let releasedBalanceFen = 0;
+
+    if (pendings.length) {
+      await this.dataSource.transaction(async (m: EntityManager) => {
+        for (const o of pendings) {
+          // 重读 + 状态复核：并发的用户自助取消可能已把它处理掉（T4）
+          const fresh = await m.findOne(Order, { where: { id: o.id } });
+          if (!fresh || fresh.status !== OrderStatus.PENDING_PAY) continue;
+
+          const fen = toFen(fresh.balanceUsed);
+          if (fen > 0) {
+            await this.releaseBalance(m, fresh.userId, fen, fresh.orderNo);
+            releasedBalanceFen += fen;
+          }
+          await m.getRepository(Order).update(
+            { id: fresh.id },
+            {
+              status: OrderStatus.CANCELLED,
+              cancelledAt: now,
+              version: (fresh.version ?? 0) + 1,
+            },
+          );
+          // 状态机 §2.1.5：每次迁移落 `ab_operation_log`。跑批没有 HTTP 请求，
+          // 全局拦截器不生效，故在此**显式写入**（来源标 system）。
+          await logRepoOf(m).insert({
+            adminUserId: operatorId ?? null,
+            module: 'order',
+            action: '截单取消',
+            targetId: String(fresh.id),
+            requestData: { orderNo: fresh.orderNo, mealDate: date },
+            snapshot: {
+              fromStatus: OrderStatus.PENDING_PAY,
+              toStatus: OrderStatus.CANCELLED,
+              source: 'system',
+              reason: 'T-1 24:00 截单：未支付兜底取消',
+            },
+          });
+          cancelledNos.push(fresh.orderNo);
+        }
+      });
+    }
+
+    // ---- ② 已支付 → 已截单（锁定，不可逆）--------------------------------
+    const paids = await this.orderRepo.find({
+      where: { mealDate: date, status: OrderStatus.PAID },
+      order: { id: 'ASC' },
+    });
+    const lockedNos: string[] = [];
+    let lockedQuantity = 0;
+
+    if (paids.length) {
+      await this.dataSource.transaction(async (m: EntityManager) => {
+        for (const o of paids) {
+          const fresh = await m.findOne(Order, { where: { id: o.id } });
+          if (!fresh || fresh.status !== OrderStatus.PAID) continue;
+
+          await m.getRepository(Order).update(
+            { id: fresh.id },
+            {
+              status: OrderStatus.CUT_OFF,
+              version: (fresh.version ?? 0) + 1,
+            },
+          );
+          await logRepoOf(m).insert({
+            adminUserId: operatorId ?? null,
+            module: 'order',
+            action: '截单锁定',
+            targetId: String(fresh.id),
+            requestData: { orderNo: fresh.orderNo, mealDate: date },
+            snapshot: {
+              fromStatus: OrderStatus.PAID,
+              toStatus: OrderStatus.CUT_OFF,
+              source: 'system',
+              reason: 'T-1 24:00 截单：锁定并不可逆',
+            },
+          });
+          lockedNos.push(fresh.orderNo);
+          lockedQuantity += Number(fresh.quantity ?? 0);
+        }
+      });
+    }
+
+    // ---- ③ 定格备料量基数 ------------------------------------------------
+    const sold = await this.freezeSoldCounts(date);
+
+    this.logger.log(
+      `截单完成 date=${date} 取消未支付 ${cancelledNos.length} 单（解冻 ${releasedBalanceFen} 分）` +
+        `锁定已支付 ${lockedNos.length} 单（${lockedQuantity} 份）` +
+        `备料量定格 ${sold.totalQuantity} 份 / ${sold.byGroup.length} 个楼群` +
+        (operatorId ? `（操作人#${operatorId}）` : '（跑批）'),
+    );
+
+    return {
+      date,
+      autoCancelled: {
+        count: cancelledNos.length,
+        orderNos: cancelledNos,
+        releasedBalanceFen,
+      },
+      locked: { count: lockedNos.length, orderNos: lockedNos, totalQuantity: lockedQuantity },
+      soldByGroup: sold.byGroup,
+      totalSoldQuantity: sold.totalQuantity,
+    };
+  }
+
+  /**
+   * 按楼群聚合「计入生产」的订单份数，回写 `ab_meal_assignment.sold_count`
+   *
+   * 口径见 `cutoffByDate()` 注释。本方法**幂等**（每次按当前订单重算覆盖），
+   * 因此手动补跑能得到与跑批相同的数。
+   */
+  private async freezeSoldCounts(date: string): Promise<{
+    byGroup: Array<{ buildingGroupId: number; quantity: number }>;
+    totalQuantity: number;
+  }> {
+    const rows = await this.orderRepo
+      .createQueryBuilder('o')
+      .select('o.building_group_id', 'buildingGroupId')
+      .addSelect('SUM(o.quantity)', 'quantity')
+      .where('o.meal_date = :date', { date })
+      .andWhere('o.status NOT IN (:...excluded)', {
+        excluded: [OrderStatus.PENDING_PAY, OrderStatus.CANCELLED],
+      })
+      .groupBy('o.building_group_id')
+      .getRawMany<{ buildingGroupId: string | number; quantity: string | number }>();
+
+    const byGroup = rows.map((r) => ({
+      buildingGroupId: Number(r.buildingGroupId),
+      quantity: Number(r.quantity ?? 0),
+    }));
+
+    const assignments = await this.assignmentRepo.find({ where: { mealDate: date } });
+    const qtyOf = new Map(byGroup.map((g) => [g.buildingGroupId, g.quantity]));
+    for (const a of assignments) {
+      const next = qtyOf.get(a.buildingGroupId) ?? 0;
+      if (Number(a.soldCount) === next) continue;
+      await this.assignmentRepo.update(
+        { id: a.id },
+        { soldCount: next, version: (a.version ?? 0) + 1 },
+      );
+    }
+
+    return {
+      byGroup,
+      totalQuantity: byGroup.reduce((s, g) => s + g.quantity, 0),
     };
   }
 

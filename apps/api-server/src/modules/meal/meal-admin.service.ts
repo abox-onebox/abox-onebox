@@ -39,6 +39,22 @@ const STATUS_HINT: Record<string, string> = {
   cancelled: '已取消',
 };
 
+/** 跑批开团出参（`publishByDate` · 4.1） */
+export interface PublishByDateResult {
+  date: string;
+  /** 该日分配总数 */
+  total: number;
+  /** 本次上架数 */
+  published: number;
+  publishedIds: number[];
+  /** 幂等命中：已是上架态 */
+  alreadyActive: number;
+  /** 已停团，跑批不复活 */
+  skippedCancelled: number;
+  /** 该出餐日已过截单时刻 —— 整批未动 */
+  blockedByCutoff: boolean;
+}
+
 interface MatrixGroup {
   id: number;
   name: string;
@@ -393,6 +409,92 @@ export class MealAdminService {
 
     await this.assignmentRepo.save(a);
     return this.assignmentView(a);
+  }
+
+  // ==========================================================================
+  // 4.1 · 跑批开团（T-1 14:00 开「明日」的团）
+  // ==========================================================================
+
+  /**
+   * 开团：把某出餐日的全部 `pending` 分配置为 `active`
+   *
+   * 由 `tasks/meal-publish.task.ts` 委托，目标日期 = **明日**
+   * （D 日 14:00 开的是 D+1 的团 —— D+1 的开团时刻正是 D 日 14:00）。
+   *
+   * ## 与 `publishAssignment(id,'publish')` 的关系
+   * 同一段状态迁移逻辑（`status=active` + `publish_at` + `cutoff_at`），
+   * 差别只在「单个 / 按日整批」与错误处理：
+   *   · 单条：过截单 → **抛 `MEAL_PUBLISH_AFTER_CUTOFF`**（运营点按钮，必须当场知道）
+   *   · 整批：过截单 → **整批记为 blocked 不抛**（跑批/补跑不该因一个日期就中断，且
+   *     「补跑一个已过去的日期」本身就是无意义操作，如实回报比抛错有用）
+   *
+   * ## 幂等
+   * 只有 `pending` 才迁移。重复执行时全部已是 `active` → 归入 `alreadyActive`，
+   * **不产生任何写入**（4.11「重复触发不产生重复数据」）。
+   *
+   * ⚠️ `cancelled`（已停团）**不复活** —— 停团是人工决策，跑批无权撤销。
+   *
+   * @param date 出餐日（由 `ScheduleService.targetDate('tomorrow')` 得出）
+   */
+  async publishByDate(date: string): Promise<PublishByDateResult> {
+    const list = await this.assignmentRepo.find({
+      where: { mealDate: date },
+      order: { id: 'ASC' },
+    });
+
+    const result: PublishByDateResult = {
+      date,
+      total: list.length,
+      published: 0,
+      publishedIds: [],
+      alreadyActive: 0,
+      skippedCancelled: 0,
+      blockedByCutoff: false,
+    };
+
+    if (!list.length) return result;
+
+    // 已过该日截单时刻 —— 上架了用户也下不了单（`isOrderable` 恒假），故整批不动
+    if (isAfterCutoff(date)) {
+      result.blockedByCutoff = true;
+      this.logger.warn(
+        `开团跳过 date=${date}：已过截单时刻（${toBjIso(cutoffAtOf(date))}），` +
+          '上架亦无法下单。若需补开团请先确认出餐日是否正确',
+      );
+      return result;
+    }
+
+    const now = new Date();
+    const cutoffAt = cutoffAtOf(date);
+    const toPublish: MealAssignment[] = [];
+
+    for (const a of list) {
+      if (a.status === 'active') {
+        result.alreadyActive += 1;
+        continue;
+      }
+      if (a.status === 'cancelled') {
+        result.skippedCancelled += 1;
+        continue;
+      }
+      a.status = 'active';
+      a.publishAt = now;
+      a.cutoffAt = cutoffAt;
+      toPublish.push(a);
+    }
+
+    if (toPublish.length) {
+      await this.assignmentRepo.save(toPublish);
+      result.published = toPublish.length;
+      result.publishedIds = toPublish.map((a) => a.id);
+      this.logger.log(
+        `开团 date=${date} 上架 ${toPublish.length} 个楼群` +
+          `（已上架 ${result.alreadyActive} / 已停团 ${result.skippedCancelled}）` +
+          ` 截单时刻 ${toBjIso(cutoffAt)}`,
+      );
+    }
+
+    return result;
   }
 
   // ==========================================================================

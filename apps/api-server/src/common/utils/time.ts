@@ -17,6 +17,70 @@ export const TZ_OFFSET_MINUTES = 8 * 60;
 const BJ_OFFSET_MS = TZ_OFFSET_MINUTES * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// ---------------------------------------------------------------------------
+// e2e 可控时钟（**仅测试**；生产环境恒为 0）
+// ---------------------------------------------------------------------------
+
+/**
+ * 时钟平移量（毫秒）。进程启动时**算一次**，之后恒定 —— 时间仍 1:1 前进
+ * （不是「冻住时钟」），因此时间戳单调性、`created_at < paid_at` 这类
+ * 先后关系全部保持成立。
+ *
+ * 为什么需要它：`isOrderable(T)` = `[T-1 14:00, T-1 23:00)` —— **任何**出餐日
+ * 在窗口外都不可能下单（T-1 14:00 ≤ now < T-1 23:00 对整数日无解），
+ * 于是端到端套件每天只有 9 小时能跑，凌晨到下午 14:00 恒红。这不是被测行为
+ * 出错，而是断言依赖了环境时钟 —— 真回归会被 15 小时的假红淹没。
+ *
+ * 注入方式：`ABOX_SHIFT_TO_HOUR=20` → 把「北京时间小时」平移到 20:00，
+ * **日历日不变**（真实 03:00 → 注入 20:00 同日；真实 22:00 → 注入 20:00 同日），
+ * 所以脚本侧用真实时钟算出的 `todayBj()/tomorrowBj()` 与服务端仍然对齐，
+ * 无需改动夹具。
+ *
+ * ⚠️ 边界与非目标（如实记录，别误当成能测一切）：
+ *   1. **只在 `NODE_ENV !== 'production'` 时生效**，且必须显式设环境变量 ——
+ *      生产不会因为漏配而跑在假时间上。
+ *   2. **不改变 `@Cron()` 的真实触发时刻**（NestJS 的 cron 是静态元数据，
+ *      由调度库读真实钟）。跑批验收一律走**补跑接口**（`POST /admin/schedule/:task/run`），
+ *      它接收显式出餐日，与时钟无关。
+ *   3. 只影响 `now()`。**存量 `new Date()` 的直接调用点（如 TypeORM 的
+ *      `@CreateDateColumn`）仍写入真实时刻** —— 二者相差一个固定平移量，
+ *      先后关系仍自洽；若某条断言要拿「落库时刻」与「服务端 now」比大小，
+ *      注意二者的差值不是 0 而是本平移量。
+ *   4. 平移后 `now()` 落在未来（如真实 11:00 → 注入 20:00），故**不要**拿它
+ *      与真实墙钟做「距今多久」的断言。
+ */
+const SHIFT_MS = resolveShiftMs();
+
+function resolveShiftMs(): number {
+  if (process.env.NODE_ENV === 'production') return 0;
+  const raw = process.env.ABOX_SHIFT_TO_HOUR;
+  if (!raw) return 0;
+  const target = Number(raw);
+  if (!Number.isInteger(target) || target < 0 || target > 23) return 0;
+
+  const bj = new Date(Date.now() + BJ_OFFSET_MS);
+  const withinDayMs =
+    ((bj.getUTCHours() * 60 + bj.getUTCMinutes()) * 60 + bj.getUTCSeconds()) * 1000 +
+    bj.getUTCMilliseconds();
+  return target * 3_600_000 - withinDayMs;
+}
+
+/**
+ * 当前时刻 —— **全服务端唯一时间源**。
+ *
+ * 一切「相对现在」的判定（下单窗口 / 截单 / 倒计时 / 今日明日）都必须经由此函数，
+ * 不要直接 `new Date()`，否则注入态下会出现两套互不相干的时间。
+ */
+export function now(): Date {
+  return new Date(Date.now() + SHIFT_MS);
+}
+
+/** 是否处于时钟注入态（启动横幅据此如实告警，防止把假时刻误当真实时刻排查） */
+export const isClockShifted = (): boolean => SHIFT_MS !== 0;
+
+/** 注入平移量（毫秒，带符号）；供启动横幅打印 */
+export const clockShiftMs = (): number => SHIFT_MS;
+
 /** `YYYY-MM-DD` 格式校验 */
 export const isDateStr = (v: unknown): v is string =>
   typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
@@ -60,12 +124,12 @@ export function durationToSeconds(v: string | undefined): number {
 }
 
 /** 北京时间「当天」的 yyyy-MM-dd */
-export function todayBj(at: Date = new Date()): string {
+export function todayBj(at: Date = now()): string {
   return new Date(at.getTime() + BJ_OFFSET_MS).toISOString().slice(0, 10);
 }
 
 /** 北京时间「次日」的 yyyy-MM-dd —— U1「明日套餐」的 T 日 */
-export function tomorrowBj(at: Date = new Date()): string {
+export function tomorrowBj(at: Date = now()): string {
   return addDays(todayBj(at), 1);
 }
 
@@ -103,7 +167,7 @@ export const autoConfirmAtOf = (mealDate: string): Date => bjDateTime(mealDate, 
 export function isOrderable(
   mealDate: string,
   cutoffWindowMinutes: number,
-  at: Date = new Date(),
+  at: Date = now(),
 ): boolean {
   const open = publishAtOf(mealDate).getTime();
   const close = cutoffAtOf(mealDate).getTime() - cutoffWindowMinutes * 60 * 1000;
@@ -112,13 +176,13 @@ export function isOrderable(
 }
 
 /** 距截单剩余秒数（已截单返回 0；U1 countdownSec） */
-export function secondsToCutoff(mealDate: string, at: Date = new Date()): number {
+export function secondsToCutoff(mealDate: string, at: Date = now()): number {
   const diff = cutoffAtOf(mealDate).getTime() - at.getTime();
   return diff > 0 ? Math.floor(diff / 1000) : 0;
 }
 
 /** 是否已过截单时刻（硬闸判定） */
-export const isAfterCutoff = (mealDate: string, at: Date = new Date()): boolean =>
+export const isAfterCutoff = (mealDate: string, at: Date = now()): boolean =>
   at.getTime() >= cutoffAtOf(mealDate).getTime();
 
 /** 输出 `2026-09-15T11:30:00+08:00`（《接口规范》§1.6 时间传输格式） */

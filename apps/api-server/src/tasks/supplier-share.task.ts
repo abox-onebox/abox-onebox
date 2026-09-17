@@ -3,6 +3,10 @@ import { Cron } from '@nestjs/schedule';
 
 import { money } from '../common/utils/money';
 import { SupplierShareService } from '../modules/finance/supplier-share.service';
+import { ScheduleService, TASK_SCHEDULES } from './schedule.service';
+
+const NAME = 'supplier-share' as const;
+const SPEC = TASK_SCHEDULES[NAME];
 
 /**
  * T+1 02:00 · 生成**昨日**应付结算单（只生成不拨款 · C10 不变）
@@ -25,26 +29,38 @@ import { SupplierShareService } from '../modules/finance/supplier-share.service'
 export class SupplierShareTask {
   private readonly logger = new Logger(SupplierShareTask.name);
 
-  constructor(private readonly shares: SupplierShareService) {}
+  constructor(
+    private readonly sched: ScheduleService,
+    private readonly shares: SupplierShareService,
+  ) {}
 
-  @Cron('0 10 2 * * *', { timeZone: 'Asia/Shanghai' })
+  @Cron(SPEC.cron, { timeZone: SPEC.timeZone })
   async handle(): Promise<void> {
-    try {
-      const r = await this.shares.runDaily();
-      this.logger.log(
-        `应付出单完成 date=${r.date} 新增 ${r.summary.createdCount} 单 ` +
-          `¥${money(r.summary.createdAmountFen / 100)} ` +
-          `跳过 ${r.summary.skippedCount}（已出过） 异常 ${r.summary.exceptionCount}`,
+    // 目标日期 = 「昨日」（应付的对象是**已发生**的交付），由声明表推导后透传
+    const outcome = await this.sched.run(NAME, (date) => this.runOnce(date));
+
+    if (outcome.error || !outcome.result) return; // `run()` 已记录失败原因
+    const r = outcome.result;
+
+    this.logger.log(
+      `应付出单完成 date=${r.date} 新增 ${r.summary.createdCount} 单 ` +
+        `¥${money(r.summary.createdAmountFen / 100)} ` +
+        `跳过 ${r.summary.skippedCount}（已出过） 异常 ${r.summary.exceptionCount}`,
+    );
+    if (r.summary.exceptionCount) {
+      this.logger.warn(
+        `未出单异常 ${r.summary.exceptionCount} 项（多为出餐确认未完成/资质异常）` +
+          '—— 请在后台「应付结算」页查看异常清单并处理',
       );
-      if (r.summary.exceptionCount) {
-        this.logger.warn(
-          `未出单异常 ${r.summary.exceptionCount} 项（多为出餐确认未完成/资质异常）` +
-            '—— 请在后台「应付结算」页查看异常清单并处理',
-        );
-      }
-    } catch (e) {
-      // 定时任务失败不得让进程崩：判定幂等，重跑安全
-      this.logger.error(`应付出单失败：${(e as Error).message}`);
     }
+  }
+
+  /**
+   * 业务执行口（**不含锁**）—— 跑批与手动补跑共用
+   *
+   * 手动补跑：`POST /admin/schedule/supplier-share/run`（不带锁）。
+   */
+  async runOnce(date: string) {
+    return this.shares.runDaily(date);
   }
 }
