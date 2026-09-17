@@ -30,6 +30,10 @@ export const ADMIN_MENU_KEYS = [
   '/meal/template',
   '/order/list',
   '/order/detail',
+  // M5-1：配送单管理（D61/D62）—— 跑批对已存在的配送单**不覆盖**（保护人工录入的
+  //   司机 / 车牌），份数因此被冻住；本页是唯一能改它的地方。属运营日常作业
+  //   （要打电话叫车、要填司机车牌），故 `operator` 也必须可用。
+  '/order/delivery',
   '/leader/list',
   '/leader/apply',
   '/building/overview',

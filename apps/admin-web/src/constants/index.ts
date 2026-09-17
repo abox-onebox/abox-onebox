@@ -74,6 +74,9 @@ export const ADMIN_NAV = [
     items: [
       { path: '/order/list', title: '订单中心', page: 'P30', module: 'M32-01/02/06' },
       { path: '/order/detail', title: '订单详情', page: 'P31', module: 'M32-03/04/05' },
+      // M5-1：配送单管理（D61/D62）。原型无对应页，故 `page` 记 `—`；
+      //   `module` 列记**接口编号**而不是原型模块号 —— 不编造一个并不存在的原型页。
+      { path: '/order/delivery', title: '配送单管理', page: '—', module: 'D61/D62' },
     ],
   },
   {

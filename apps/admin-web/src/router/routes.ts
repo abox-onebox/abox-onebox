@@ -44,6 +44,13 @@ export const routes: RouteRecordRaw[] = [
         name: 'OrderDetail',
         component: () => import('@/views/order/detail.vue'),
       },
+      // 配送单管理（M5-1 · D61/D62）—— 跑批对已存在的配送单不覆盖，
+      // 份数因此被冻住；本页是**唯一**能改它的地方（此前只在 DBA 手里）。
+      {
+        path: 'order/delivery',
+        name: 'OrderDelivery',
+        component: () => import('@/views/order/delivery.vue'),
+      },
 
       // 团长管理 M33 · P32
       {

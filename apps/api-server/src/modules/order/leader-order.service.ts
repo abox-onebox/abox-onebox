@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, DataSource, In, Repository, SelectQueryBuilder } from 'typeorm';
 
-import { ORDER_STATUS_VIEW, OrderStatus } from '@abox/shared-types';
+import { DELIVERY_STATUS_LABEL, ORDER_STATUS_VIEW, OrderStatus } from '@abox/shared-types';
 
 import { maskPhone } from '../../common/utils/crypto';
 import { toFen } from '../../common/utils/money';
@@ -214,7 +214,7 @@ export class LeaderOrderService {
       delivery: delivery
         ? {
             status: delivery.status,
-            statusText: DELIVERY_STATUS_TEXT[delivery.status] ?? delivery.status,
+            statusText: DELIVERY_STATUS_LABEL[delivery.status] ?? delivery.status,
             expectedAt: delivery.expectedAt,
             actualAt: delivery.actualAt ?? null,
             driverName: delivery.driverName ?? null,
@@ -361,14 +361,6 @@ export class LeaderOrderService {
     };
   }
 }
-
-/** 配送状态文案（L8） */
-const DELIVERY_STATUS_TEXT: Record<string, string> = {
-  pending: '待叫车',
-  called: '已叫车',
-  en_route: '配送中',
-  arrived: '已送达',
-};
 
 /** 北京时间 yyyy-MM-dd HH:mm（导出用） */
 function formatBj(d: Date): string {

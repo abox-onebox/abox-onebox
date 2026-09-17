@@ -9,6 +9,7 @@ export * from './enums/role';
 export * from './enums/dish-slot';
 export * from './enums/refund';
 export * from './enums/withdraw-status';
+export * from './enums/delivery-status';
 export * from './api/common';
 export * from './dto/create-order.dto';
 export * from './dto/order.dto';

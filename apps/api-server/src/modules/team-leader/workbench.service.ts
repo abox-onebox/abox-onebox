@@ -2,7 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository } from 'typeorm';
 
-import { LEADER_LEVEL_META, LeaderLevel, OrderStatus } from '@abox/shared-types';
+import {
+  DELIVERY_STATUS_LABEL,
+  DeliveryStatus,
+  LEADER_LEVEL_META,
+  LeaderLevel,
+  OrderStatus,
+} from '@abox/shared-types';
 
 import { BizConfigService } from '../../common/services/biz-config.service';
 import { toFen } from '../../common/utils/money';
@@ -123,7 +129,9 @@ export class LeaderWorkbenchService {
         buildingName: building?.name ?? null,
         floor: leader.floor ?? null,
         status: delivery?.status ?? 'pending',
-        statusText: DELIVERY_STATUS_TEXT[delivery?.status ?? 'pending'] ?? '待叫车',
+        statusText: delivery
+          ? (DELIVERY_STATUS_LABEL[delivery.status] ?? delivery.status)
+          : DELIVERY_STATUS_LABEL[DeliveryStatus.PENDING],
         expectAt: '11:30',
         expectAtIso: toBjIso(arrivalAtOf(today)),
         actualAt: delivery?.actualAt ?? null,
@@ -148,14 +156,6 @@ export class LeaderWorkbenchService {
     return qb.getMany();
   }
 }
-
-/** 配送状态文案 */
-const DELIVERY_STATUS_TEXT: Record<string, string> = {
-  pending: '待叫车',
-  called: '已叫车',
-  en_route: '配送中',
-  arrived: '已送达',
-};
 
 /** 等级中文名（查表 miss 时回落 key 本身） */
 function levelLabel(level: string): string {

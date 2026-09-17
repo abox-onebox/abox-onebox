@@ -5658,7 +5658,7 @@ async function main() {
     );
     assert(
       !!cfg['set_meal.cutoff_time']?.unwiredReason?.includes('cutoff.task'),
-      '「未接线」原因要能回答**为什么改了没用**（截单时间配的是 23:59，实际调度在 `cutoff.task` 的 cron 里）',
+      '「未接线」原因要能回答**为什么改了没用**，且必须指向**当前真实**的真相源（截单时间配的是 23:59，实际时刻由 `cutoff.task` 取自 `TASK_SCHEDULES` 声明表 —— 文案若还写着「硬编码在 `@Cron` 里」，在 M4-1 之后就是**过时的解释**；M5-1 已纠偏，并要求点明「本键 / 声明表 / 下单窗口三者无机械对账」这一缺口）',
       `reason=${cfg['set_meal.cutoff_time']?.unwiredReason ?? '无'}`,
     );
 
@@ -9025,10 +9025,32 @@ async function main() {
       );
 
       // 人工录入司机 / 车牌后重跑
-      writeDb(
-        'UPDATE ab_delivery_record SET driver_name = ?, driver_phone = ?, plate_no = ?, total_quantity = ? WHERE meal_date = ? AND building_group_id = ?',
-        ['张三', '13800000000', '京A12345', 99, D28P, G28A],
+      // ⚠️ M5-1 起改**走 D62 接口**（原先直写 `UPDATE`）：直写只能验证「跑批不覆盖」，
+      //    走接口才能同时验证「修正真的落到了库里」—— 否则「接口写了别处」这种错误
+      //    会被下面的不覆盖断言**放过**（跑批不覆盖一个从没被改过的行，也是绿的）。
+      const dr28id = Number(
+        readDb('SELECT id FROM ab_delivery_record WHERE meal_date = ? AND building_group_id = ?', [
+          D28P,
+          G28A,
+        ])?.id ?? 0,
       );
+      const p28 = await call('PUT', `/admin/deliveries/${dr28id}`, {
+        token: adminToken,
+        body: {
+          version: 0,
+          reason: 'e2e §28 人工录入司机 / 车牌 / 份数',
+          driverName: '张三',
+          driverPhone: '13800000000',
+          plateNo: '京A12345',
+          totalQuantity: 99,
+        },
+      });
+      assert(
+        p28.body?.code === 0 && p28.body?.data?.changed?.length === 4,
+        '⭐ §28 人工录入配送信息走 D62 接口且四项一次生效（M5-1）—— 直写库只能验证「跑批不覆盖」，走接口才能同时验证「修正真的落到库里」',
+        `code=${p28.body?.code} changed=${p28.body?.data?.changed?.length} v=${p28.body?.data?.version}`,
+      );
+
       const dg28b = await call('POST', `${SCH28}/delivery-generate/run`, {
         token: adminToken,
         body: { date: D28P },
@@ -9047,7 +9069,7 @@ async function main() {
         dr28b?.driver_name === '张三' &&
           dr28b?.plate_no === '京A12345' &&
           Number(dr28b?.total_quantity) === 99,
-        '⭐⭐ §28 幂等**不覆盖**已存在行：人工录入的司机 / 车牌必须保留 —— 跑批把它抹掉就找不回来（`ab_delivery_record` **当前无后台修正入口**，`DeliveryController` 仍是空壳）',
+        '⭐⭐ §28 幂等**不覆盖**已存在行：人工录入的司机 / 车牌必须保留 —— 跑批把它抹掉就找不回来（M5-1 起「改回来」的入口 = D62 `PUT /admin/deliveries/{id}`，断言见 §32；在此之前该口子只在 DBA 手里）',
         `driver=${dr28b?.driver_name} plate=${dr28b?.plate_no} qty=${dr28b?.total_quantity}`,
       );
 
@@ -9101,6 +9123,12 @@ async function main() {
       writeDb('DELETE FROM ab_balance WHERE user_id = ?', [uid28]);
       writeDb('DELETE FROM ab_order WHERE order_no LIKE ?', [`${PREFIX28}%`]);
       writeDb('DELETE FROM ab_user WHERE openid LIKE ?', [`${PREFIX28}%`]);
+      // M5-1 起 §28 的「人工录入」改走 D62 接口 → 会落一条 `module='delivery'` 操作日志，
+      // 一并还原：不还原只会留噪音，但会让后续按 `module='delivery'` 做的计数断言随重跑漂移。
+      writeDb('DELETE FROM ab_operation_log WHERE module = ? AND target_id = ?', [
+        'delivery',
+        String(dr28id),
+      ]);
 
       const left28 = {
         o: Number(
@@ -9128,11 +9156,17 @@ async function main() {
         u: Number(
           readDb('SELECT COUNT(*) AS c FROM ab_user WHERE openid LIKE ?', [`${PREFIX28}%`])?.c ?? -1,
         ),
+        g: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = ? AND target_id = ?', [
+            'delivery',
+            String(dr28id),
+          ])?.c ?? -1,
+        ),
       };
       assert(
         Object.values(left28).every((v) => v === 0),
         '§28 夹具还原：订单 / 分配行 / 配送单 / 生产计划 / 余额行 / 夹具用户全部清除 —— 余额行与用户不还原，下一次重跑的平台负债就会凭空多出 ¥5.80，并让 D38↔D33 的对账断言在「两次读之间」产生假绿',
-        `o=${left28.o} a=${left28.a} d=${left28.d} p=${left28.p} b=${left28.b} u=${left28.u}`,
+        `o=${left28.o} a=${left28.a} d=${left28.d} p=${left28.p} b=${left28.b} u=${left28.u} g=${left28.g}`,
       );
     }
   }
@@ -10889,6 +10923,517 @@ async function main() {
           `w=${left31.w} b=${left31.b} g=${left31.g} l=${left31.l} u=${left31.u} o=${left31.o}`,
         );
       }
+    }
+  }
+
+  // ==========================================================================
+  // §32 M5-1 配送单查看与人工修正（D61 / D62 · 收口挂账 #61）
+  //
+  // ⚠️ 同样**不依赖下单窗口**（同 §18–§28 纪律）：订单 / 分配行夹具**全部直插**，
+  //    配送单经**补跑接口**用**显式日期**驱动。
+  //
+  // ⚠️ 两个**隔离日期**（避开 §18–§31 已占用的 today ± {1,10,60,90,130,190,200,
+  //    205,208,209,210,212,213,214,215,365}）：
+  //    · D32A = today − 216  有单（验证查看 + 修正链路）
+  //    · D32B = today − 217  无单（验证「无单楼群不建单」→ 列表空态而非报错）
+  //
+  // 本节钉死九条不变量：
+  //   ① ⭐⭐ **人工修正后重跑跑批不覆盖**（挂账 #61 的正题）：幂等不覆盖保护了人工录入，
+  //      若跑批把修正抹掉，「改过又变回去」**不会有任何报错**，直到装错货。
+  //   ② ⭐⭐ **乐观锁**：用过期 `version` 重提 → `30016` 并回带 `data.current`。
+  //      否则后写者用旧快照**静默覆盖**前者的修改，双方都不报错（同 #61 同族的风险形态）。
+  //   ③ ⭐ **份数与订单不符 ≠ 被人改过**：成因有两种（人工修正 / 截单后订单侧退款取消），
+  //      系统不假装能区分 —— 只标 `quantityMismatch` 并给出排查入口（操作日志）。
+  //      而 `hasManualInput`（司机/电话/车牌/备注有值）是**可靠**标记：跑批从不写这四列。
+  //   ④ ⭐ 修正出参带 **before / after 双侧快照** —— 它随响应体被操作日志整体落库，
+  //      事后能回放「5 → 3、司机空 → 张三」。只回「保存成功」等于没有审计。
+  //   ⑤ ⭐ **空改动不写库、不推进版本**（`changed=[]`）：否则审计链上全是假变更记录。
+  //   ⑥ ⭐ 传**空字符串 = 清空该字段**（存 `null`）；未提交的字段原样保留。
+  //   ⑦ ⭐ 状态枚举与中文**由服务端下发**（`statusText` / `statusOptions` 按履约顺序）——
+  //      端上不维护第二份映射，就不会出现「服务端加了状态、下拉框里没有」的静默漂移。
+  //   ⑧ ⭐ 两级白名单**不含 viewer**（读与写都 10003）：配送单含运力与司机电话，
+  //      与 D47–D50（看板刻意含 viewer）正相反。
+  //   ⑨ ⭐ 列表（GET）**不写**操作日志 —— 每次刷新都记一条会把日志表刷爆，
+  //      真正要查的「谁改了份数」反而被冲掉（同 S1/S9 纪律）。
+  // ==========================================================================
+  {
+    log('\n§32 M5-1 配送单查看与人工修正（D61 / D62 · 挂账 #61）');
+
+    const PREFIX32 = `E2E32${stamp}`;
+    const D32A = addDaysStr(bjToday(), -216);
+    const D32B = addDaysStr(bjToday(), -217);
+    const AT32 = `${bjToday()} 02:00:00.000`;
+    const DEL32 = '/admin/deliveries';
+    /** SQLite 的 json 列取出来是字符串，MySQL 可能已是对象 —— 两边都能吃 */
+    const asObj32 = (v) => {
+      try {
+        return typeof v === 'string' ? JSON.parse(v) : v;
+      } catch {
+        return null;
+      }
+    };
+
+    // ---------------------------------------------------------- A. 夹具原料
+    const tpl32 = readDb(
+      `SELECT a.building_group_id AS gid, a.set_meal_id AS smid, a.distribution_center_id AS dcid, b.id AS bid
+         FROM ab_meal_assignment a
+         JOIN ab_building b ON b.building_group_id = a.building_group_id
+        WHERE a.distribution_center_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM ab_set_meal_item i WHERE i.set_meal_id = a.set_meal_id)
+          AND NOT EXISTS (SELECT 1 FROM ab_set_meal_item i WHERE i.set_meal_id = a.set_meal_id AND i.supplier_id IS NULL)
+        ORDER BY a.id LIMIT 1`,
+    );
+    const l32 = readDb('SELECT id FROM ab_team_leader ORDER BY id LIMIT 1');
+    const openid32 = `${PREFIX32}u`;
+
+    assert(
+      !!tpl32 && !!l32,
+      '§32 前置：配送单夹具原料齐备（1 个「有加工场所 + 菜品明细齐全」的分配模板 / 1 团长）',
+      `tpl=${!!tpl32} leader=${!!l32}`,
+    );
+
+    if (tpl32 && l32) {
+      const G32 = Number(tpl32.gid);
+      const B32 = Number(tpl32.bid);
+      const SM32 = Number(tpl32.smid);
+      const DC32 = Number(tpl32.dcid);
+      const L32 = Number(l32.id);
+
+      writeDb(
+        'INSERT INTO ab_user (openid, nickname, gender, status, version, created_at, updated_at) VALUES (?, ?, 0, 1, 0, ?, ?)',
+        [openid32, `${PREFIX32}配送用户`, AT32, AT32],
+      );
+      const uid32 = Number(readDb('SELECT id FROM ab_user WHERE openid = ?', [openid32])?.id ?? 0);
+
+      const INS_A32 =
+        'INSERT INTO ab_meal_assignment (meal_date, building_group_id, set_meal_id, distribution_center_id, status, publish_at, cutoff_at, sold_count, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, NULL, 0, 0, ?, ?)';
+      writeDb(INS_A32, [D32A, G32, SM32, DC32, 'active', AT32, AT32]);
+      const a32 = Number(
+        readDb(
+          'SELECT id FROM ab_meal_assignment WHERE meal_date = ? AND building_group_id = ?',
+          [D32A, G32],
+        )?.id ?? 0,
+      );
+      writeDb(INS_A32, [D32B, G32, SM32, DC32, 'active', AT32, AT32]);
+
+      const INS_O32 =
+        'INSERT INTO ab_order (order_no, user_id, team_leader_id, building_id, building_group_id, set_meal_id, assignment_id, meal_date, quantity, unit_price, total_amount, balance_used, discount_amount, pay_amount, status, version, paid_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?, ?, ?)';
+      const mkOrder32 = (no, qty) => {
+        const total = qty * 25.8;
+        writeDb(INS_O32, [
+          no,
+          uid32,
+          L32,
+          B32,
+          G32,
+          SM32,
+          a32,
+          D32A,
+          qty,
+          '25.80',
+          total.toFixed(2),
+          '0.00',
+          total.toFixed(2),
+          // ⚠️ 直插 `cut_off` 而非 `paid`：配送单**本就在截单之后**生成（T 日 00:30），
+          //    用 `paid` 会命中「该日有单却没有一张已截单订单」的可信度告警
+          //    （那正是 §28 要验证的行为，不是本节要验的东西）。
+          'cut_off',
+          AT32,
+          AT32,
+          AT32,
+        ]);
+      };
+      mkOrder32(`${PREFIX32}O1`, 3);
+      mkOrder32(`${PREFIX32}O2`, 2); // 合计 5 份
+
+      // ---------------------------------------------------- B. 生成配送单
+      const dg32 = await call('POST', '/admin/schedule/delivery-generate/run', {
+        token: adminToken,
+        body: { date: D32A },
+      });
+      const dgd32 = dg32.body?.data?.result;
+      const dg32b = await call('POST', '/admin/schedule/delivery-generate/run', {
+        token: adminToken,
+        body: { date: D32B },
+      });
+      const dgd32b = dg32b.body?.data?.result;
+      assert(
+        dg32.body?.code === 0 &&
+          dgd32?.created === 1 &&
+          dgd32?.totalQuantity === 5 &&
+          dgd32?.warning === null &&
+          dg32b.body?.code === 0 &&
+          dgd32b?.created === 0 &&
+          dgd32b?.emptyGroups === 1,
+        '§32 前置：跑批为 D32A 建 1 张配送单（5 份 · 与订单同口径）· D32B 无单楼群**不建单**（计入 `emptyGroups`）',
+        `A: created=${dgd32?.created} qty=${dgd32?.totalQuantity} / B: created=${dgd32b?.created} empty=${dgd32b?.emptyGroups}`,
+      );
+
+      const id32 = Number(
+        readDb('SELECT id FROM ab_delivery_record WHERE meal_date = ? AND building_group_id = ?', [
+          D32A,
+          G32,
+        ])?.id ?? 0,
+      );
+
+      // ---------------------------------------------------- C. D61 列表
+      const list32 = await call('GET', `${DEL32}?date=${D32A}`, { token: adminToken });
+      const ld32 = list32.body?.data;
+      const row32 = ld32?.list?.[0];
+      assert(
+        list32.body?.code === 0 &&
+          ld32?.date === D32A &&
+          ld32?.list?.length === 1 &&
+          row32?.id === id32 &&
+          row32?.mealDate === D32A,
+        '§32 D61 按出餐日列出配送单（粒度 = 楼群，一天一单）',
+        `code=${list32.body?.code} date=${ld32?.date} n=${ld32?.list?.length}`,
+      );
+      assert(
+        row32?.totalQuantity === 5 &&
+          row32?.orderQuantity === 5 &&
+          row32?.quantityDiff === 0 &&
+          row32?.quantityMismatch === false &&
+          row32?.hasManualInput === false &&
+          row32?.version === 0 &&
+          row32?.status === 'pending',
+        '⭐⭐ §32 D61 出参**同时**给「配送单份数」与「按订单算出的份数」并标出差异，且初始态如实（无人工作业痕迹 / `version=0` / `pending`）—— 只给一个数，运营无法发现「单据与实物对不上」',
+        `tq=${row32?.totalQuantity} oq=${row32?.orderQuantity} mismatch=${row32?.quantityMismatch} manual=${row32?.hasManualInput} v=${row32?.version}`,
+      );
+      assert(
+        row32?.statusText === '待叫车' &&
+          row32?.buildingGroupName &&
+          String(row32?.expectedAt ?? '').startsWith(`${D32A}T11:30`),
+        '§32 D61 状态中文 / 楼群名 / 预计送达（锚 T 日 11:30）齐备',
+        `statusText=${row32?.statusText} expectedAt=${row32?.expectedAt}`,
+      );
+      assert(
+        Array.isArray(ld32?.statusOptions) &&
+          ld32.statusOptions.map((o) => o.value).join(',') === 'pending,called,en_route,arrived',
+        '⭐ §32 D61 状态枚举与筛选顺序**由服务端下发**（4 态按履约顺序，非字典序）—— 端上不自己排、不维护第二份映射，就不会出现「服务端加了状态、下拉框里没有」的静默漂移',
+        `opts=${JSON.stringify(ld32?.statusOptions?.map((o) => o.value))}`,
+      );
+      assert(
+        typeof ld32?.note === 'string' &&
+          ld32.note.includes('人工修正') &&
+          ld32.note.includes('退款'),
+        '⭐⭐ §32 D61 口径说明随出参下发且**点明两种成因**（人工修正 / 截单后退款取消）—— 不写清这一点，运营会把「截单后退款」误读成「有人改过」，进而去追一个根本不存在的责任人',
+        `note=${String(ld32?.note ?? '').slice(0, 26)}…`,
+      );
+
+      const f32a = await call('GET', `${DEL32}?date=${D32A}&status=pending`, { token: adminToken });
+      const f32b = await call('GET', `${DEL32}?date=${D32A}&status=arrived`, { token: adminToken });
+      const bad32 = await call('GET', `${DEL32}?date=${D32A}&status=nope`, { token: adminToken });
+      assert(
+        f32a.body?.data?.list?.length === 1 &&
+          f32b.body?.data?.list?.length === 0 &&
+          bad32.body?.code === 10001,
+        '⭐ §32 D61 状态筛选生效（`pending` 1 条 / `arrived` 0 条），未知 `status` → `10001` —— **不静默忽略筛选条件**：静默忽略会让运营以为「筛过了」，实际看到的是全量',
+        `p=${f32a.body?.data?.list?.length} a=${f32b.body?.data?.list?.length} bad=${bad32.body?.code}`,
+      );
+      const list32d = await call('GET', DEL32, { token: adminToken });
+      assert(
+        list32d.body?.code === 0 &&
+          /^\d{4}-\d{2}-\d{2}$/.test(String(list32d.body?.data?.date ?? '')),
+        '⭐ §32 D61 不传 `date` 时服务端取**最近一个有配送单的出餐日**（不是「今天」）—— 用「今天」会让运营在 00:30 跑批生成之前打开页面看到空页，误以为漏跑了',
+        `date=${list32d.body?.data?.date} n=${list32d.body?.data?.list?.length}`,
+      );
+      const empty32 = await call('GET', `${DEL32}?date=${addDaysStr(bjToday(), -218)}`, {
+        token: adminToken,
+      });
+      assert(
+        empty32.body?.code === 0 && empty32.body?.data?.list?.length === 0,
+        '§32 D61 该日无配送单 → `code=0` + 空列表（HTTP 200）—— 「还没有单」是正常状态，不是错误；报错会让运营以为接口挂了',
+        `code=${empty32.body?.code} n=${empty32.body?.data?.list?.length}`,
+      );
+
+      // ---------------------------------------------------- D. D62 人工修正
+      const p1 = await call('PUT', `${DEL32}/${id32}`, {
+        token: adminToken,
+        body: {
+          version: 0,
+          reason: 'e2e §32 实际只送出 3 份',
+          totalQuantity: 3,
+          driverName: '张三',
+          driverPhone: '13800000000',
+          plateNo: '京A12345',
+        },
+      });
+      const p1d = p1.body?.data;
+      assert(
+        p1.body?.code === 0 &&
+          p1d?.changed?.length === 4 &&
+          p1d?.before?.totalQuantity === 5 &&
+          p1d?.after?.totalQuantity === 3 &&
+          p1d?.before?.driverName === null &&
+          p1d?.after?.driverName === '张三' &&
+          p1d?.version === 1,
+        '⭐⭐ §32 D62 修正出参带 **before / after 双侧快照**（不只回「保存成功」）—— 它随响应体被操作日志整体落库，事后能回放「5 → 3、司机空 → 张三」，这是审计链的全部依据',
+        `code=${p1.body?.code} changed=${p1d?.changed?.length} ${p1d?.before?.totalQuantity}→${p1d?.after?.totalQuantity} v=${p1d?.version}`,
+      );
+      assert(
+        p1d?.quantityDiff === -2 && p1d?.orderQuantity === 5,
+        '⭐ §32 D62 修正后回带与订单的差异（-2 = 比订单少送 2 份）—— 修正**不改变订单**，差异必须让运营看见，否则「少送了 2 份」这件事只存在于配送单没人看的那一列里',
+        `diff=${p1d?.quantityDiff} oq=${p1d?.orderQuantity}`,
+      );
+
+      const list32c = await call('GET', `${DEL32}?date=${D32A}`, { token: adminToken });
+      const row32c = list32c.body?.data?.list?.[0];
+      assert(
+        row32c?.quantityMismatch === true &&
+          row32c?.quantityDiff === -2 &&
+          row32c?.hasManualInput === true &&
+          row32c?.version === 1,
+        '⭐⭐ §32 修正后列表**一眼可见**：`quantityMismatch`（与订单不符）+ `hasManualInput`（人工作业痕迹，可靠标记）+ 版本已推进 —— 不必逐条点开才知道哪些单被人动过',
+        `mismatch=${row32c?.quantityMismatch} manual=${row32c?.hasManualInput} v=${row32c?.version}`,
+      );
+
+      const dg32c = await call('POST', '/admin/schedule/delivery-generate/run', {
+        token: adminToken,
+        body: { date: D32A },
+      });
+      const dgd32c = dg32c.body?.data?.result;
+      const dr32 = readDb('SELECT total_quantity, driver_name, plate_no FROM ab_delivery_record WHERE id = ?', [
+        id32,
+      ]);
+      assert(
+        dgd32c?.created === 0 &&
+          dgd32c?.skipped === 1 &&
+          Number(dr32?.total_quantity) === 3 &&
+          dr32?.driver_name === '张三' &&
+          dr32?.plate_no === '京A12345',
+        '⭐⭐ §32 **人工修正后重跑跑批不覆盖**（`created=0/skipped=1`，份数仍 3、司机车牌仍在）—— 这是挂账 #61 的正题：幂等不覆盖保护了人工录入，若跑批把修正抹掉，「改过又变回去」不会有任何报错，直到装错货',
+        `created=${dgd32c?.created} qty=${dr32?.total_quantity} driver=${dr32?.driver_name}`,
+      );
+
+      const p2 = await call('PUT', `${DEL32}/${id32}`, {
+        token: adminToken,
+        body: { version: 0, reason: 'e2e §32 用过期版本重提', totalQuantity: 9 },
+      });
+      assert(
+        p2.body?.code === 30016 &&
+          p2.body?.data?.current?.version === 1 &&
+          p2.body?.data?.current?.totalQuantity === 3,
+        '⭐⭐ §32 D62 乐观锁：用**过期 `version`** 重提 → `30016` 且出参带 `data.current`（当前值 + 当前版本）—— 两个运营先后改同一张单时，后写者用旧快照会把前者的修改**静默覆盖**，双方都不报错，直到装错货；带 `current` 才能让端上刷新后重提',
+        `code=${p2.body?.code} curV=${p2.body?.data?.current?.version} curQty=${p2.body?.data?.current?.totalQuantity}`,
+      );
+
+      const p3 = await call('PUT', `${DEL32}/${id32}`, {
+        token: adminToken,
+        body: { version: 1, reason: 'e2e §32 提交与原值相同的内容', totalQuantity: 3, driverName: '张三' },
+      });
+      const p3d = p3.body?.data;
+      const v3db = readDb('SELECT version FROM ab_delivery_record WHERE id = ?', [id32]);
+      assert(
+        p3.body?.code === 0 &&
+          p3d?.changed?.length === 0 &&
+          p3d?.unchanged?.length === 2 &&
+          p3d?.version === 1 &&
+          Number(v3db?.version) === 1,
+        '⭐ §32 D62 **空改动不写库、不推进版本**（`changed=[]` / `unchanged` 列出提交项 / 库里 `version` 仍为 1）—— 若一律回「保存成功」并推进版本，审计链上会充满什么都没改的假记录，真正有意义的变更被淹掉（与 D58 同一纪律）',
+        `changed=${p3d?.changed?.length} unchanged=${p3d?.unchanged?.length} v=${p3d?.version}/${v3db?.version}`,
+      );
+
+      const p4 = await call('PUT', `${DEL32}/${id32}`, {
+        token: adminToken,
+        body: { version: 1, reason: 'e2e §32 只补一条配送备注', remark: '放前台，勿上楼' },
+      });
+      const p4d = p4.body?.data;
+      assert(
+        p4.body?.code === 0 &&
+          p4d?.changed?.join(',') === 'remark' &&
+          p4d?.after?.totalQuantity === 3 &&
+          p4d?.after?.driverName === '张三' &&
+          p4d?.version === 2,
+        '§32 D62 部分更新：只提交 `remark` → `changed=[remark]`，**其余字段原样保留**（未提交 = 不动，而不是清空）',
+        `changed=${p4d?.changed} qty=${p4d?.after?.totalQuantity} driver=${p4d?.after?.driverName} v=${p4d?.version}`,
+      );
+
+      const p5 = await call('PUT', `${DEL32}/${id32}`, {
+        token: adminToken,
+        body: {
+          version: 2,
+          reason: 'e2e §32 取消叫车，清空司机信息',
+          driverName: '',
+          driverPhone: '',
+          plateNo: '',
+        },
+      });
+      const p5d = p5.body?.data;
+      assert(
+        p5.body?.code === 0 &&
+          p5d?.changed?.length === 3 &&
+          p5d?.after?.driverName === null &&
+          p5d?.after?.driverPhone === null &&
+          p5d?.after?.plateNo === null &&
+          p5d?.after?.remark === '放前台，勿上楼' &&
+          p5d?.after?.totalQuantity === 3,
+        '⭐ §32 D62 传**空字符串 = 清空该字段**（存 `null` 而非空串）—— 清不掉就会留下一个「看着有司机、其实已取消叫车」的幽灵记录；未提交的 `remark` 与份数不受影响',
+        `driver=${p5d?.after?.driverName} remark=${p5d?.after?.remark} qty=${p5d?.after?.totalQuantity} v=${p5d?.version}`,
+      );
+
+      // ---------------------------------------------------- E. 入参闸门
+      const noReason32 = await call('PUT', `${DEL32}/${id32}`, {
+        token: adminToken,
+        body: { version: 3, totalQuantity: 4 },
+      });
+      const shortReason32 = await call('PUT', `${DEL32}/${id32}`, {
+        token: adminToken,
+        body: { version: 3, reason: '改', totalQuantity: 4 },
+      });
+      const negQty32 = await call('PUT', `${DEL32}/${id32}`, {
+        token: adminToken,
+        body: { version: 3, reason: 'e2e 负数份数', totalQuantity: -1 },
+      });
+      const bigQty32 = await call('PUT', `${DEL32}/${id32}`, {
+        token: adminToken,
+        body: { version: 3, reason: 'e2e 超大份数', totalQuantity: 100000 },
+      });
+      const noVer32 = await call('PUT', `${DEL32}/${id32}`, {
+        token: adminToken,
+        body: { reason: 'e2e 缺版本号', totalQuantity: 4 },
+      });
+      assert(
+        noReason32.body?.code === 10001 &&
+          shortReason32.body?.code === 10001 &&
+          negQty32.body?.code === 10001 &&
+          bigQty32.body?.code === 10001 &&
+          noVer32.body?.code === 10001,
+        '⭐⭐ §32 D62 入参闸门：`reason` 缺失 / 太短（少于 2 个字）/ `version` 缺失 / 份数负数 / 超上限（9999）一律 `10001` —— 份数误输一位（5 → 99999）会让整条配送链按错误的量装货；`reason` 是审计的必填项，不是可选项',
+        `noReason=${noReason32.body?.code} short=${shortReason32.body?.code} neg=${negQty32.body?.code} big=${bigQty32.body?.code} noVer=${noVer32.body?.code}`,
+      );
+      const notFound32 = await call('PUT', `${DEL32}/99999999`, {
+        token: adminToken,
+        body: { version: 0, reason: 'e2e 不存在的配送单', totalQuantity: 1 },
+      });
+      assert(
+        notFound32.body?.code === 30017,
+        '⭐ §32 D62 目标 id 不存在 → `30017`（而不是「保存成功」）—— 静默成功会让运营以为改好了，实际什么都没发生；与 30010（订单不存在）/ 40012（退款单不存在）同族：每张单有自己的排查入口',
+        `code=${notFound32.body?.code}`,
+      );
+
+      // ---------------------------------------------------- F. 操作日志留痕
+      const logs32 = readDb(
+        'SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = ? AND target_id = ?',
+        ['delivery', String(id32)],
+      );
+      const conflictLog32 = readDb(
+        "SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = ? AND target_id = ? AND response_data LIKE '%30016%'",
+        ['delivery', String(id32)],
+      );
+      assert(
+        Number(logs32?.c ?? 0) >= 4 && Number(conflictLog32?.c ?? 0) >= 1,
+        '⭐⭐ §32 D62 操作日志**失败的请求也记**（乐观锁冲突 `30016` 那条也在库里；每次成功修正各一条）—— 审计要回答「谁试图做了什么但被拒」，只记成功的日志答不了（D56 纪律）；挂 `target_id` = 配送单 id 才能在 D56 反查「这单被谁改过几次」',
+        `total=${logs32?.c} conflict=${conflictLog32?.c}`,
+      );
+      // ⚠️ 必须取**最后一次成功修正**：失败调用（`10001` 校验失败 / `30016` 冲突）**也会**留日志，
+      //    但它们的 `response_data` 是 `{error:{...}}`、没有 before/after ——
+      //    按 `ORDER BY id DESC` 直接取最新会取到失败那条（本批首跑即踩到）。
+      const logRow32 = readDb(
+        'SELECT request_data, response_data, admin_user_id FROM ab_operation_log WHERE module = ? AND target_id = ? AND response_data LIKE ? ORDER BY id DESC LIMIT 1',
+        ['delivery', String(id32), '%"after":%'],
+      );
+      const req32 = asObj32(logRow32?.request_data);
+      const res32 = asObj32(logRow32?.response_data);
+      assert(
+        Number(logRow32?.admin_user_id ?? 0) > 0 &&
+          String(req32?.body?.reason ?? '').includes('e2e') &&
+          res32?.before !== undefined &&
+          res32?.after !== undefined &&
+          res32?.changed !== undefined,
+        '⭐⭐ §32 **成功修正**的操作日志同时含请求体（`reason`）/ 响应体（`before` + `after` + `changed`）/ 操作人 id —— 三者缺一都不叫可回放：缺 `reason` 不知为何改，缺 before/after 不知改成什么，缺操作人不知谁改的',
+        `by=${logRow32?.admin_user_id} reason=${String(req32?.body?.reason ?? '').slice(0, 14)}… hasDiff=${res32?.before !== undefined && res32?.after !== undefined}`,
+      );
+      const getLogA32 = Number(
+        readDb('SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = ? AND target_id = ?', [
+          'delivery',
+          String(id32),
+        ])?.c ?? 0,
+      );
+      await call('GET', `${DEL32}?date=${D32A}`, { token: adminToken });
+      await call('GET', `${DEL32}?date=${D32A}&status=pending`, { token: adminToken });
+      const getLogB32 = Number(
+        readDb('SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = ? AND target_id = ?', [
+          'delivery',
+          String(id32),
+        ])?.c ?? 0,
+      );
+      assert(
+        getLogA32 === getLogB32,
+        '§32 列表接口（GET）**不写**操作日志 —— 每次刷新列表都记一条会把日志表刷爆，真正要查的「谁改了份数」反而被冲掉（同 S1/S9「列表类不打日志」纪律）',
+        `${getLogA32} → ${getLogB32}`,
+      );
+
+      // ---------------------------------------------------- G. 两级白名单
+      const vw32 = `e2e_dlv_vw_${stamp}`;
+      const mkVw32 = await call('POST', '/admin/system/accounts', {
+        token: adminToken,
+        body: {
+          username: vw32,
+          password: PWD,
+          role: 'viewer',
+          realName: 'e2e 配送只读观察者',
+        },
+      });
+      const vwt32 = await adminLogin(vw32, PWD);
+      const vwRead32 = await call('GET', `${DEL32}?date=${D32A}`, { token: vwt32.token });
+      const vwWrite32 = await call('PUT', `${DEL32}/${id32}`, {
+        token: vwt32.token,
+        body: { version: 3, reason: 'e2e viewer 越权', totalQuantity: 1 },
+      });
+      assert(
+        mkVw32.body?.code === 0 &&
+          vwRead32.body?.code === 10003 &&
+          vwWrite32.body?.code === 10003,
+        '⭐ §32 配送单页两级白名单**不含 viewer**（读与写都 `10003`）—— 只读观察者仅看板；配送单含运力安排与司机电话，与 D47–D50（看板刻意含 viewer）正好相反',
+        `read=${vwRead32.body?.code} write=${vwWrite32.body?.code}`,
+      );
+
+      // ---------------------------------------------------- H. 夹具还原
+      writeDb('DELETE FROM ab_operation_log WHERE module = ? AND target_id = ?', [
+        'delivery',
+        String(id32),
+      ]);
+      writeDb('DELETE FROM ab_admin_user WHERE username = ?', [vw32]);
+      writeDb('DELETE FROM ab_order WHERE order_no IN (?, ?)', [
+        `${PREFIX32}O1`,
+        `${PREFIX32}O2`,
+      ]);
+      writeDb('DELETE FROM ab_delivery_record WHERE meal_date IN (?, ?)', [D32A, D32B]);
+      writeDb('DELETE FROM ab_meal_assignment WHERE meal_date IN (?, ?)', [D32A, D32B]);
+      writeDb('DELETE FROM ab_user WHERE id = ?', [uid32]);
+      const left32 = {
+        d: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_delivery_record WHERE meal_date IN (?, ?)', [
+            D32A,
+            D32B,
+          ])?.c ?? -1,
+        ),
+        o: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_order WHERE order_no IN (?, ?)', [
+            `${PREFIX32}O1`,
+            `${PREFIX32}O2`,
+          ])?.c ?? -1,
+        ),
+        a: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_meal_assignment WHERE meal_date IN (?, ?)', [
+            D32A,
+            D32B,
+          ])?.c ?? -1,
+        ),
+        u: Number(readDb('SELECT COUNT(*) AS c FROM ab_user WHERE id = ?', [uid32])?.c ?? -1),
+        g: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = ? AND target_id = ?', [
+            'delivery',
+            String(id32),
+          ])?.c ?? -1,
+        ),
+      };
+      assert(
+        Object.values(left32).every((v) => v === 0),
+        '§32 夹具还原：配送单 / 订单 / 分配行 / 夹具用户 / 操作日志全部清除 —— 不还原会让「按出餐日查询」命中上一轮残留，让 D61 的条数与份数断言在重跑时随机变红',
+        `d=${left32.d} o=${left32.o} a=${left32.a} u=${left32.u} g=${left32.g}`,
+      );
     }
   }
 

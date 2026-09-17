@@ -429,7 +429,8 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     impact: 'master',
     wiring: 'unwired',
     description: '口径记录：T-1 14:00 开放次日预订。',
-    unwiredReason: '实际由 `meal-publish.task` 的 `@Cron("0 0 14 * * *")` 硬编码，不读本键。',
+    unwiredReason:
+      '实际时刻由 `meal-publish.task` 取自 `TASK_SCHEDULES`（`tasks/schedule.service.ts` 的调度声明表），本键不参与调度。',
     consumedBy: '无 —— 调度硬编码在定时任务装饰器里',
   },
   {
@@ -441,8 +442,9 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     wiring: 'unwired',
     description: '口径记录：T-1 24:00 截单（语义 = 当日 23:59）。',
     unwiredReason:
-      '实际由 `cutoff.task` 的 `@Cron("0 0 0 * * *")` 在 00:00 执行；' +
-      '用户可下单窗口另由 `isOrderable()` 计算（截止 23:00），两者都以代码为准。',
+      '实际时刻由 `cutoff.task` 取自 `TASK_SCHEDULES`（调度声明表），本键不参与调度；' +
+      '用户可下单窗口另由 `isOrderable()` 计算（截止 23:00）。' +
+      '⚠️ 本键 / 声明表 / 下单窗口**三者没有任何机械对账**，改其一必须人工核对另两处（《缺陷与陷阱》#49）。',
     consumedBy: '无 —— 调度硬编码在定时任务装饰器里',
   },
   {
@@ -464,7 +466,8 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     impact: 'master',
     wiring: 'unwired',
     description: '口径记录：T 日 14:00 自动确认收货。',
-    unwiredReason: '实际由 `auto-confirm.task` 的 `@Cron("0 0 14 * * *")` 硬编码，不读本键。',
+    unwiredReason:
+      '实际时刻由 `auto-confirm.task` 取自 `TASK_SCHEDULES`（调度声明表），本键不参与调度。',
     consumedBy: '无 —— 调度硬编码在定时任务装饰器里',
   },
   {
@@ -475,7 +478,8 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     impact: 'master',
     wiring: 'unwired',
     description: '口径记录：T+1 02:00 结算佣金。',
-    unwiredReason: '实际由 `commission-settle.task` 的 `@Cron("0 0 2 * * *")` 硬编码，不读本键。',
+    unwiredReason:
+      '实际时刻由 `commission-settle.task` 取自 `TASK_SCHEDULES`（调度声明表），本键不参与调度。',
     consumedBy: '无 —— 调度硬编码在定时任务装饰器里',
   },
   {
@@ -488,7 +492,7 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     description: '口径记录：供应商应付**日结**（C11）。',
     options: [{ value: 'daily', label: '日结（T+1）' }],
     unwiredReason:
-      '实际由 `supplier-share.task` 的 `@Cron("0 10 2 * * *")` 硬编码为日结，不读本键。',
+      '实际由 `supplier-share.task` 取自 `TASK_SCHEDULES`（调度声明表）并固定为日结，本键不参与调度。',
     consumedBy: '无 —— 跑批时间硬编码在定时任务装饰器里',
   },
   {

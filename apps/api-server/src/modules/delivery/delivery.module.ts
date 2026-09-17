@@ -13,9 +13,9 @@ import { DeliveryService } from './delivery.service';
  * M4-1 实装：`DeliveryService.generateByDate()` —— T 日 00:30 按楼群生成配送单
  * （跑批由 `tasks/delivery-generate.task.ts` 委托）。
  *
- * ⚠️ 本模块**只导出服务**，供 `TasksModule` 调用；`DeliveryController` 仍为空壳 ——
- *    配送单的后台查看入口在 D 系列里尚未定义（运营目前通过 P34 订单详情间接看），
- *    属后续批次。此处不预建半成品端点。
+ * M5-1 实装：D61 `GET /admin/deliveries`（列表 + 份数差异）+ D62 `PUT /admin/deliveries/{id}`
+ * （人工修正份数 / 司机 / 车牌，`version` 乐观锁 + 写操作日志）——
+ * 收口挂账 **#61**「跑批幂等不覆盖保护了人工录入，也把份数永久固化」的口子。
  */
 @Module({
   imports: [TypeOrmModule.forFeature([DeliveryRecord, Order, BuildingGroup, MealAssignment])],
