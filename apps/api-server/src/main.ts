@@ -20,6 +20,21 @@ async function bootstrap() {
     rawBody: true,
   });
 
+  /**
+   * 优雅关闭（M5-0）
+   *
+   * ⚠️ 必须显式开启：Nest **默认不监听进程信号**。不调用它时，容器收到
+   *    SIGTERM / SIGINT（`docker stop`、滚动更新、K8s 驱逐）会**直接退出**，
+   *    于是 `KvService.onModuleDestroy` 与 `QueueService.onModuleDestroy`
+   *    （关闭 Redis 连接 / 排空队列 backend）**永远不会执行** ——
+   *    代码看起来写了关闭逻辑，实际一次都没跑过。
+   *
+   * 关掉 `SIGTERM` 期间的「半截任务」风险：关闭钩子会等在途请求结束，
+   * 而跑批是 `@Cron` 触发的独立流程（不在此列）—— 故**滚动更新仍须避开禁发窗口**，
+   * 见《ABox一盒部署运维手册v1.0.md》§6。
+   */
+  app.enableShutdownHooks();
+
   const cfg = app.get(ConfigService);
 
   // 请求链路 ID（《接口规范》§1.2）：优先沿用 X-Request-Id，缺省服务端生成
@@ -59,7 +74,11 @@ async function bootstrap() {
   const d = cfg.get<{ db: string; queue: string; storage: string; providerMode: string }>(
     'app.drivers',
   ) ?? { db: '?', queue: '?', storage: '?', providerMode: '?' };
-  Logger.log(`API 已启动：http://localhost:${port}${prefix}  Swagger: /docs`, 'Bootstrap');
+  const version = cfg.get<string>('app.version') ?? 'dev';
+  Logger.log(
+    `API 已启动：http://localhost:${port}${prefix}  Swagger: /docs  ·  版本 ${version}  ·  环境 ${cfg.get<string>('app.env') ?? '?'}`,
+    'Bootstrap',
+  );
   Logger.log(
     `驱动：db=${d.db} · queue=${d.queue} · storage=${d.storage} · provider=${d.providerMode}`,
     'Bootstrap',

@@ -16,6 +16,15 @@ export type ProviderMode = 'mock' | 'real';
 
 export interface AppConfig {
   env: string;
+  /**
+   * 构建版本（部署时由镜像构建注入 git sha）
+   *
+   * 为什么必须进配置而不是散读 `process.env`：灰度与回滚的验收判据是
+   * 「现在的容器跑的是哪个版本」，而 `GET /health/ready` 会把它回显出来 ——
+   * 探针是唯一不需要登录就能问「你跑的是哪一版」的入口。
+   * 缺省 `dev` 表示「没人注入过」，本身就是有效信息（本地直跑）。
+   */
+  version: string;
   port: number;
   baseUrl: string;
   apiPrefix: string;
@@ -69,6 +78,7 @@ const bool = (v: string | undefined, fallback: boolean): boolean =>
 
 export default registerAs('app', (): AppConfig => ({
   env: str(process.env.NODE_ENV, 'development'),
+  version: str(process.env.APP_VERSION, 'dev'),
   port: num(process.env.APP_PORT, 3000),
   baseUrl: str(process.env.APP_BASE_URL, 'http://localhost:3000'),
   apiPrefix: str(process.env.API_PREFIX, '/api/v1'),

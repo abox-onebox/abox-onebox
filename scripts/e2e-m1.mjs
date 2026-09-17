@@ -106,6 +106,67 @@ async function main() {
   }
   ok('服务启动', `${BASE}/health`);
 
+  // ---------- 0. 探针契约（M5-0 · 存活 / 就绪两级） ----------
+  // ⚠️ 探针是**编排器的判据**，改坏了不会有任何功能报错，只会让「该摘流量时摘不掉、
+  //    该重启时重启不了」。故把契约钉在门禁里，防止后来者顺手改出参。
+  //    两级必须**分开**：liveness 不检依赖（失败=重启），readiness 检依赖（失败=摘流量）；
+  //    若 liveness 也检 DB，DB 一抖就会引发全量重启风暴。
+  const live = await call('GET', '/health');
+  assert(
+    live.status === 200 &&
+      live.body?.code === 0 &&
+      live.body?.data?.status === 'ok' &&
+      live.body?.data?.service === 'abox-api' &&
+      typeof live.body?.data?.ts === 'number',
+    'M5-0 存活探针 /health 契约不变（三套件 waitHealthy 依赖）',
+    `status=${live.status} code=${live.body?.code}`,
+  );
+  // 键集合固定 —— 防止有人把 readiness 的 checks 塞进 liveness（那等于把依赖绑上重启链）
+  assert(
+    JSON.stringify(Object.keys(live.body?.data ?? {}).sort()) ===
+      JSON.stringify(['service', 'status', 'ts']),
+    'M5-0 存活探针出参未被就绪信息污染',
+    Object.keys(live.body?.data ?? {}).join(','),
+  );
+
+  const ready = await call('GET', '/health/ready');
+  const q = ready.body?.data?.checks?.queue ?? {};
+  assert(
+    ready.status === 200 &&
+      ready.body?.code === 0 &&
+      ready.body?.data?.status === 'ready' &&
+      ready.body?.data?.checks?.db?.ok === true &&
+      typeof ready.body?.data?.checks?.db?.latencyMs === 'number',
+    'M5-0 就绪探针 /health/ready 检数据库连通',
+    `status=${ready.status} db.ok=${ready.body?.data?.checks?.db?.ok}`,
+  );
+  // 消费者齐不齐是**启动期验不到、失败后完全静默**的故障（入队照常成功、却永远无人消费）
+  assert(
+    q.ok === true && q.consumers === q.consumersTotal && q.consumersTotal === 3,
+    'M5-0 就绪探针检队列消费者齐备（3 队列）',
+    `${q.consumers}/${q.consumersTotal} driver=${q.driver} durable=${q.durable}`,
+  );
+  assert(
+    typeof ready.body?.data?.version === 'string' &&
+      Number.isInteger(ready.body?.data?.uptimeSec),
+    'M5-0 就绪探针回显版本与运行时长（灰度 / 回滚判据）',
+    `version=${ready.body?.data?.version} uptimeSec=${ready.body?.data?.uptimeSec}`,
+  );
+  // 探针**免鉴权**（编排器要打），故出参按「会被人看见」设计：失败原因只进服务端日志
+  const probeRaw = JSON.stringify(ready.body);
+  assert(
+    !/password|secret|passwd|127\.0\.0\.1|localhost|3306|6379|sqlite|\.env/i.test(probeRaw),
+    'M5-0 免鉴权探针不泄露主机 / 端口 / 连接串',
+    probeRaw.slice(0, 160),
+  );
+  // 对照：@Public 是**特例**而非常态 —— 受保护端点在无 token 时仍须拦
+  const guarded = await call('GET', '/admin/finance/withdrawals');
+  assert(
+    guarded.status === 401,
+    'M5-0 对照：受保护端点无 token 仍返回 401',
+    `status=${guarded.status} code=${guarded.body?.code}`,
+  );
+
   // ---------- 1. 登录（A1） ----------
   const login = await call('POST', '/auth/login', { body: { code: 'dev:1001' } });
   const token = login.body?.data?.token;

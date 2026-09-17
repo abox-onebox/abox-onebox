@@ -1,0 +1,167 @@
+# ============================================================
+# ABox 一盒 · 生产编排（M5-0）
+# ============================================================
+#
+# 用法：
+#   cp .env.example .env.prod          # 然后按《部署运维手册》§4 填生产值
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+# ⚠️ 本文件**未在真机执行过**（开发机无 Docker，见《部署运维手册 v1.0》§9）。
+#
+# ⚠️ 与开发用的 docker-compose.yml 的关系：
+#   那份只管**依赖**（MySQL/Redis/MinIO），应用在宿主机上用 ts-node 跑。
+#   这份是**整套**：依赖 + api + admin 都在容器里，供 M5 灰度上线用。
+#   两份不共用服务名（容器名带 -prod 后缀），避免同机同时起时互相顶掉。
+#
+# ---- 设计要点 ----
+# 1. **依赖不暴露宿主端口**：mysql / redis 只在内部网络可见。
+#    开发期要连怎么办？走 `docker compose exec` 或临时加端口映射，不要长期开着。
+# 2. **密钥全部走 .env.prod**（不进仓库）。用 `${VAR:?msg}` 语法 ——
+#    变量缺失时 compose **直接拒绝启动**，而不是悄悄用默认弱口令上线。
+# 3. `init: true`：给容器一个 1 号进程收尸 + 转发信号，与
+#    `app.enableShutdownHooks()` 配套（没有它，SIGTERM 可能在 sh 那层就被吞掉）。
+# 4. 日志限制大小：不限制的话 json-file 驱动会把磁盘打满，而那是**服务全挂**。
+
+name: abox-prod
+
+services:
+  # ------------------------------------------------------------
+  # 依赖
+  # ------------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: abox-mysql-prod
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?缺少 MYSQL_ROOT_PASSWORD（见 .env.prod）}
+      MYSQL_DATABASE: ${DB_DATABASE:-abox_onebox}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      # ⚠️ 必须与应用的 mysql 连接 timezone='+08:00' 一致，
+      #    差 8 小时会让「日切」类跑批算错日子
+      - --default-time-zone=+08:00
+      - --max-connections=200
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks: [abox-net]
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-p${MYSQL_ROOT_PASSWORD}']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: '50m'
+        max-file: '5'
+
+  redis:
+    image: redis:7-alpine
+    container_name: abox-redis-prod
+    restart: unless-stopped
+    # 有密码才开鉴权（REDIS_PASSWORD 为空则不加 requirepass，与 .env 口径一致）
+    command: >
+      sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then
+               redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD";
+             else
+               redis-server --appendonly yes;
+             fi'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      TZ: Asia/Shanghai
+    volumes:
+      - redis-data:/data
+    networks: [abox-net]
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli ${REDIS_PASSWORD:+-a "$$REDIS_PASSWORD"} ping | grep -q PONG']
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    logging: *default-logging
+
+  # ------------------------------------------------------------
+  # 应用
+  # ------------------------------------------------------------
+  api:
+    image: ${REGISTRY:-abox}/api:${TAG:-latest}
+    build:
+      # ⚠️ context 必须是仓库根（monorepo workspace 依赖），不是 apps/api-server
+      context: .
+      dockerfile: apps/api-server/Dockerfile
+      args:
+        APP_VERSION: ${TAG:-latest}
+    container_name: abox-api-prod
+    restart: unless-stopped
+    init: true
+    env_file: [.env.prod]
+    environment:
+      NODE_ENV: production
+      TZ: Asia/Shanghai
+      APP_VERSION: ${TAG:-latest}
+      APP_PORT: '3000'
+      DB_DRIVER: mysql
+      DB_HOST: mysql
+      DB_PORT: '3306'
+      DB_DATABASE: ${DB_DATABASE:-abox_onebox}
+      QUEUE_DRIVER: redis
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # 仅本地存储模式需要；走 COS 时可以去掉
+      - api-uploads:/app/data/uploads
+    networks: [abox-net]
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          # 单楼灰度体量（500 单/日）下这个额度有充裕余量；
+          # 限制的意义是**别让一个失控进程拖垮整台宿主机**
+          cpus: '2'
+          memory: 1g
+
+  admin:
+    image: ${REGISTRY:-abox}/admin:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/admin-web/Dockerfile
+    container_name: abox-admin-prod
+    restart: unless-stopped
+    init: true
+    ports:
+      # 唯一对外的入口。上线时前置 HTTPS（见《部署运维手册》§5.3）
+      - '${ADMIN_PORT:-8080}:80'
+    depends_on:
+      # 用 service_started 而不是 service_healthy：nginx 只是静态托管，
+      # 若等 api healthy，则「api 起不来 → 后台也起不来」，连看后台都看不了
+      api:
+        condition: service_started
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1/ || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # nginx 只需写缓存/临时目录，根文件系统可挂只读（最小权限）
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    networks: [abox-net]
+    logging: *default-logging
+
+networks:
+  abox-net:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
+  api-uploads:

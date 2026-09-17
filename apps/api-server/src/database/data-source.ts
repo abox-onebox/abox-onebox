@@ -34,7 +34,15 @@ const LOG_LEVELS: LogLevel[] = ['error', 'warn'];
 
 const baseOptions = {
   entities: ALL_ENTITIES,
-  migrations: [join(__dirname, 'migrations/*.ts')],
+  // ⚠️ 必须同时匹配 .ts 与 .js（M5-0 修正）：
+  //    开发机走 `typeorm-ts-node-commonjs -d src/…`，此时 __dirname = src/database，
+  //    命中 `*.ts`；而**生产镜像**里源码已被删除、只剩编译产物，跑的是
+  //    `typeorm migration:run -d dist/database/data-source.js`，
+  //    __dirname = dist/database，那里只有 `*.js`。
+  //    旧写法写死 `*.ts` → 生产环境「一个迁移都找不到」，
+  //    而 TypeORM 对此**不报错**，只输出 "No migrations are found" 就正常退出
+  //    —— 于是「部署成功但表结构没更新」，直到第一个写请求炸在缺列上。
+  migrations: [join(__dirname, 'migrations/*.{ts,js}')],
   // sqlite = 本地零依赖开发模式：直接由实体同步建表（无需跑 MySQL 专用 DDL 迁移）
   // mysql  = 结构由 migration 管理，synchronize 恒 false
   synchronize: driver === 'sqlite',

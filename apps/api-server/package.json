@@ -13,6 +13,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json --passWithNoTests",
     "db:migrate": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
     "db:migrate:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
+    "db:migrate:dist": "typeorm migration:run -d dist/database/data-source.js",
+    "db:migrate:dist:revert": "typeorm migration:revert -d dist/database/data-source.js",
     "db:seed": "ts-node -r tsconfig-paths/register src/database/seeds/seed.ts"
   },
   "dependencies": {

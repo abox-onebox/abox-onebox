@@ -37,7 +37,9 @@ abox-onebox/                            ← 项目根目录
 ├── .prettierrc.json
 ├── .eslintrc.cjs
 ├── commitlint.config.cjs
-├── docker-compose.yml                  ← 本地依赖（MySQL / Redis）
+├── docker-compose.yml                  ← 本地依赖（MySQL / Redis，仅开发）
+├── docker-compose.prod.yml             ← 【M5-0】生产编排（mysql / redis / api / admin 四服务 · 依赖不暴露宿主端口）
+├── .dockerignore                       ← 【M5-0】构建上下文裁剪（排除 .env* / data / node_modules / dist）
 ├── .env.example
 ├── docs/                               ← 项目文档（开发期唯一事实来源）
 │   ├── ABox一盒PRDv2.1.md
@@ -53,17 +55,28 @@ abox-onebox/                            ← 项目根目录
 │   ├── ABox一盒协作规范v1.0.md             ← 阶段四产出（分支 / 提交 / 评审 / DoD）
 │   ├── ABox一盒开发里程碑计划v1.0.md        ← 阶段四产出（M1–M5 + 验收标准）
 │   ├── ABox一盒开发基线冻结清单v1.0.md      ← 基线冻结（现行/废弃 + SHA-256）
-│   ├── ABox一盒部署运维手册v1.0.md          ← 待产出（M5 前补齐）
+│   ├── ABox一盒部署运维手册v1.0.md          ← 【M5-0】已产出（拓扑 / 密钥纪律 / 部署流程 / 监控 / 备份恢复 / 应急预案 / 遗留风险）
+│   ├── ABox一盒自营结算口径定义v1.0.md      ← 结算口径权威（M3-9 起）
 │   └── api/                            ← 自动生成的接口文档（Swagger 输出）
 ├── scripts/                            ← 全局脚本
-│   ├── setup.sh                        ← 一键初始化项目
-│   ├── db-migrate.sh                   ← 数据库迁移
-│   ├── db-seed.sh                      ← 种子数据
-│   └── deploy.sh                       ← 一键部署
+│   ├── setup.sh                        ← 一键初始化项目（PowerShell 版：setup.ps1）
+│   ├── init.sql                        ← MySQL 初始化（供 docker 入口挂载）
+│   ├── sync-docs.mjs                   ← 根文档 → docs/ 镜像同步
+│   ├── gate.mjs                        ← 免 pnpm 门禁执行器（15 道）
+│   ├── e2e-m1.mjs / e2e-m2.mjs / e2e-m3.mjs   ← 端到端验收（真实起服务 + 真实 HTTP）
+│   ├── lib/e2e-server.mjs              ← e2e 共用托管（端口隔离 + 进程树回收 + 健康轮询）
+│   ├── deploy.sh                       ← 【M5-0】一键部署（预检 → 备份 → 起依赖 → 构建 → 迁移 → up → 健康验证）
+│   ├── rollback.sh                     ← 【M5-0】回滚（默认不退迁移，`--with-migrate-revert` 才退）
+│   ├── backup-db.sh                    ← 【M5-0】数据库备份（mysqldump --single-transaction + 空导出检查）
+│   ├── restore-db.sh                   ← 【M5-0】数据库恢复（破坏性 · 必须 `--yes` · 回滚前自动备份）
+│   └── healthcheck.sh                  ← 【M5-0】健康检查（退出码 0/1/2，可直接进 CI / cron）
 ├── apps/
 │   ├── miniprogram/                    ← uni-app 小程序（用户端 + 团长端「同端叠加身份」）
 │   ├── admin-web/                      ← Vue3 后台（运营后台 + 供应商后台，按 role 过滤菜单）
+│   │   ├── Dockerfile                  ← 【M5-0】静态站镜像（nginx）
+│   │   └── nginx.conf                  ← 【M5-0】SPA fallback / 反代 / 安全头
 │   └── api-server/                     ← NestJS 后端 API
+│       └── Dockerfile                  ← 【M5-0】多阶段构建（非 root / tzdata / HEALTHCHECK / exec CMD）
 └── packages/
     ├── shared-types/                   ← 前后端共享 TS 类型
     ├── shared-utils/                   ← 共享工具（时间处理、加密等）
@@ -72,6 +85,8 @@ abox-onebox/                            ← 项目根目录
 ```
 
 > ⚠️ **不再有独立「楼长端」工程**：原型与业务均为 4 角色，团长兼任取餐分发。
+> ⚠️ **`docker-compose.yml` 与 `docker-compose.prod.yml` 是两套东西**：前者只起本地依赖、给开发者手动跑（app 直跑 node），后者是**生产全栈编排**（含 api / admin 两个应用镜像）。混用会出现「以为在生产部署，其实起的是本地依赖」。详见《部署运维手册 v1.0》§拓扑。
+> ⚠️ **M5-0 的镜像与脚本未在真机执行过**（本机无 Docker）—— 目录登记的是**产物存在**，不等于**已在生产验证**。
 
 ---
 
@@ -518,6 +533,22 @@ services:
 
 > 相对 v1.0 **移除 RabbitMQ**（D 方向结论：MVP 不引入消息中间件，Redis + BullMQ 足够）。
 
+### 6.1 生产编排 `docker-compose.prod.yml`（M5-0 新增）
+
+> ⚠️ **与上面那份是两套东西**，服务集不同、暴露面不同。混用会出现「以为在部署生产、其实起的是本地依赖」。
+
+| 服务 | 镜像来源 | 暴露宿主端口 | 说明 |
+| --- | --- | --- | --- |
+| `mysql` | `mysql:8.0` | **否** | 仅 compose 内网；`TZ=Asia/Shanghai` + `--default-time-zone=+08:00` |
+| `redis` | `redis:7-alpine` | **否** | 仅 compose 内网（队列驱动） |
+| `api` | `apps/api-server/Dockerfile` | **否**（经 admin 反代） | `init: true`（配套 `enableShutdownHooks`）· `depends_on: healthy` · 非 root · `HEALTHCHECK` 打 `/health` |
+| `admin` | `apps/admin-web/Dockerfile` | **是（唯一对外）** | nginx 静态站 + `/api`、`/static` 反代 + SPA fallback |
+
+- 密钥一律走 `.env.prod`（**不入库**，见 `.gitignore`）；`${MYSQL_ROOT_PASSWORD:?}` 缺值即 **compose 拒绝启动**（fail-fast，不静默用默认密码）
+- 两应用镜像**构建上下文 = 仓库根**（pnpm workspace monorepo，`--frozen-lockfile` 保可复现）
+- 构建时注入 `APP_VERSION` → 探针 `/health/ready` 回显（灰度 / 回滚判据）
+- ⚠️ 本机**无 Docker**，以上**未真机执行**；详见《部署运维手册 v1.0》§遗留风险（R1）
+
 ---
 
 ## 七、关键技术依赖版本（建议锁定）
@@ -743,7 +774,8 @@ echo "  pnpm dev:admin        # 仅启动后台"
 | v2.0.2 | 2026-09-14 | §四 `tasks/` 补入 **`leader-expire.task.ts`**（C2 见习 30 天未促单失效）——原《目录结构 v2.0》漏列，由《订单状态机 v1.0》§3.1 指出并回填 |
 | v2.0.3 | 2026-09-14 | §一 `docs/` 清单补入阶段四产出（协作规范 / 里程碑计划 / 基线冻结清单）与口径权威件《交接包 v1.3》 |
 | v2.0.4 | 2026-09-14 | 对齐 **C11**（佣金个税与出款通道 + 供应商日结）：§四 `finance/` 新增 `payout.service.ts`、`withdraw.service.ts` / `supplier-share.service.ts` 注释补口径；§五 `enums/` 新增 `payout-channel.ts` |
+| **v2.0.5** | 2026-09-17 | **M5-0 部署运维基座落点登记**：§一 根目录新增 `docker-compose.prod.yml` / `.dockerignore`，`apps/admin-web/{Dockerfile,nginx.conf}` 与 `apps/api-server/Dockerfile` 标注为 M5-0 产物；§一 `scripts/` **按实际文件重写**（原列的 `db-migrate.sh` / `db-seed.sh` 从未存在 —— 迁移与种子走 `package.json` script + `gate.mjs`，属**目录文档与仓库不一致**，本次对齐），补入 `gate.mjs` / `e2e-m1,2,3.mjs` / `lib/e2e-server.mjs` / `sync-docs.mjs` / 五个运维脚本；§一 `docs/` 把《部署运维手册 v1.0》由「待产出」改为**已产出**，并补《自营结算口径定义 v1.0》；**新增 §6.1** 生产编排四服务表（暴露面 / 密钥纪律 / 构建上下文 / `APP_VERSION` 注入），并明写「与本地 compose 是两套东西」；⚠️ 同步标注 M5-0 镜像与脚本**未真机执行过** |
 
 ---
 
-*文档结束 · ABox 一盒 · 项目目录结构 v2.0 · 2026-09-14*
+*文档结束 · ABox 一盒 · 项目目录结构 v2.0（现行 v2.0.5） · 2026-09-17*

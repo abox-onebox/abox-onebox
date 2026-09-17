@@ -16,10 +16,24 @@ apps/*/components.d.ts
 .env
 .env.local
 .env.*.local
+# ⚠️ 生产环境文件（含真实 DB 口令 / 微信支付密钥 / 灵活用工凭据）——
+#    与 .env 同等对待。名字里带 prod 的这一条是 M5-0 补的：
+#    原先只忽略了 .env 与 .env.*.local，`.env.prod` 会被 git 收进来。
+.env.prod
+.env.production
 !.env.example
 
 # 本地数据卷
 data/
+
+# 部署状态与备份（M5-0）
+#   .deploy-state 记录当前/上一版 tag，回滚脚本据此找目标；它随机器而变，不入库
+#   backups/ 是 mysqldump 产物，可能含全量业务数据，绝不入库
+.deploy-state
+backups/
+
+# 构建暂存（沙箱 bulk-delete 守卫的对策目录，见《协作规范》）
+_stale-build/
 
 # 运行时产物
 public/qrcodes/

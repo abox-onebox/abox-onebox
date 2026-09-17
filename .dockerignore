@@ -1,0 +1,48 @@
+# ============================================================
+# ABox 一盒 · Docker 构建上下文排除（M5-0）
+#
+# 原则：**镜像里只放运行时需要的东西**。context 越小，构建越快、
+#       越不容易把本地密钥/数据误打进层里（层一旦推上去就删不掉了）。
+# ============================================================
+
+# 依赖与产物（builder 阶段自己装、自己编译）
+node_modules
+**/node_modules
+**/dist
+
+# 本地数据（sqlite 库 / 上传文件 / MySQL 与 Redis 数据卷）
+data
+**/data/mysql
+**/data/redis
+
+# 环境与密钥 —— **绝不进镜像**
+.env
+.env.*
+.env.prod
+!.env.example
+*.pem
+*.key
+*.p12
+
+# 版本控制与 CI
+.git
+.gitignore
+.github
+
+# 文档与测试（运行时不需要）
+docs
+tests
+*.md
+!README.md
+
+# 编辑器 / 系统文件
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# 构建残留与临时文件
+_stale-build
+_tmp_*
+coverage
+*.log
