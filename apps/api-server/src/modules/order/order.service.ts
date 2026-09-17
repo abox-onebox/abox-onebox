@@ -17,7 +17,9 @@ import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { BizConfigService } from '../../common/services/biz-config.service';
 import { maskPhone } from '../../common/utils/crypto';
-import { genOrderNo, genRefundNo } from '../../common/utils/order-no';
+// ⚠️ M4-3：`genRefundNo` 已随「退款单建单下沉到 `RefundService.buildRefundRow`」一并移除
+//    —— 本模块不再自己造退款单号（第二份实现必然漂移）
+import { genOrderNo } from '../../common/utils/order-no';
 import { normalizePage, paginate, PageResult } from '../../common/utils/response';
 import {
   cutoffAtOf,
@@ -37,7 +39,9 @@ import { OperationLog } from '../../database/entities/system.entity';
 import { Dish, Supplier } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
 import { WX_PAY_PROVIDER, WxPayProvider } from '../../providers/wx-pay/wx-pay.provider';
+import { RefundApplyPayload } from '../../queues/queue-payloads';
 import { CommissionService } from '../finance/commission.service';
+import { RefundService } from '../finance/refund.service';
 import { LeaderPromotionService } from '../team-leader/promotion.service';
 import { buildTimeline, explainSelfCancelBlock, userStatusText } from './order-state-machine';
 import { CreateOrderReqDto } from './dto/order.dto';
@@ -128,6 +132,15 @@ export class OrderService {
     private readonly commission: CommissionService,
     /** M4-2 · 4.4 确认后触发 C2 晋级审计（与 L9 一致） */
     private readonly promotion: LeaderPromotionService,
+    /**
+     * M4-3 · 退款单构建 + 通道执行（事务外）
+     *
+     * ⚠️ 取消订单 / 回调延迟到账都要「退微信实付」，这两条路径原本在 `OrderService`
+     *    里自己写了一遍「建单 + 调通道」（`refundViaWxpay`），与 `RefundService`
+     *    的退款链路是**两套实现**。M4-3 起统一走 `RefundService`：
+     *    建单（事务内）与通道调用（事务外，失败入队重试）只有一处实现。
+     */
+    private readonly refundService: RefundService,
   ) {}
 
   /**
@@ -438,35 +451,64 @@ export class OrderService {
     const payAmountFen = toFen(order.payAmount);
     let refundInitiated = false;
 
-    await this.dataSource.transaction(async (m: EntityManager) => {
-      if (status === OrderStatus.PENDING_PAY) {
-        // 未支付：解冻余额即可（T4 前半段，未收款无需退款）
-        if (balanceUsedFen > 0) {
-          await this.releaseBalance(m, userId, balanceUsedFen, order.orderNo);
-        }
-      } else {
-        // 已支付：退回余额部分 + 原路退微信部分（系统自动，T4 后半段）
-        if (balanceUsedFen > 0) {
-          await this.refundBalance(m, userId, balanceUsedFen, order.orderNo);
-        }
-        if (payAmountFen > 0) {
-          refundInitiated = await this.refundViaWxpay(m, order, payAmountFen, '截单前用户自助取消');
-        }
-      }
+    // 事务内：**只落 DB**（余额退回 + 建微信退款单 + 订单取消），不调外部通道（M4-3）
+    const refundPayload = await this.dataSource.transaction(
+      async (m: EntityManager): Promise<RefundApplyPayload | null> => {
+        let payload: RefundApplyPayload | null = null;
 
-      await m.getRepository(Order).update(
-        { id: order.id },
-        {
-          status: OrderStatus.CANCELLED,
-          cancelledAt: now,
-          version: (order.version ?? 0) + 1,
-        },
-      );
-    });
+        if (status === OrderStatus.PENDING_PAY) {
+          // 未支付：解冻余额即可（T4 前半段，未收款无需退款）
+          if (balanceUsedFen > 0) {
+            await this.releaseBalance(m, userId, balanceUsedFen, order.orderNo);
+          }
+        } else {
+          // 已支付：退回余额部分 + **建单**原路退微信部分（T4 后半段）
+          if (balanceUsedFen > 0) {
+            await this.refundBalance(m, userId, balanceUsedFen, order.orderNo);
+          }
+          if (payAmountFen > 0) {
+            const row = await this.refundService.buildRefundRow(
+              m,
+              order,
+              payAmountFen,
+              '截单前用户自助取消',
+            );
+            if (row) {
+              payload = {
+                refundId: Number(row.id),
+                orderNo: order.orderNo,
+                refundNo: row.refundNo,
+                wxFen: payAmountFen,
+                totalFen: toFen(Number(order.totalAmount)),
+                reason: '截单前用户自助取消',
+              };
+            }
+          }
+        }
+
+        await m.getRepository(Order).update(
+          { id: order.id },
+          {
+            status: OrderStatus.CANCELLED,
+            cancelledAt: now,
+            version: (order.version ?? 0) + 1,
+          },
+        );
+
+        return payload;
+      },
+    );
+
+    // 事务外：调微信通道（同步试一次，失败入队重试 —— 不回滚已落库的取消与余额退回）
+    if (refundPayload) {
+      const r = await this.refundService.deliverOrQueueRefund(refundPayload);
+      refundInitiated = r.ok;
+    }
 
     this.logger.log(
       `订单已取消 orderNo=${orderNo} 原状态=${status} 退余额=${balanceUsedFen}分 ` +
-        `原路退款=${payAmountFen}分 已发起=${refundInitiated}`,
+        `原路退款=${payAmountFen}分 通道受理=${refundInitiated}` +
+        (refundPayload && !refundInitiated ? '（已入队重试）' : ''),
     );
 
     return {
@@ -922,15 +964,21 @@ export class OrderService {
 
     // 幂等：已是 paid 及之后的状态，直接返回（微信重复通知）
     if (order.status !== OrderStatus.PENDING_PAY) {
-      if (order.status === OrderStatus.CANCELLED) {
+      if (order.status === OrderStatus.CANCELLED && amountFen > 0) {
         // 状态机 §七 风险项：回调延迟到账（>30min 已取消）→ 自动原路退款 + 告警
         this.logger.error(
           `⚠️ 支付回调延迟到达，订单已取消 orderNo=${orderNo}，将自动原路退款 ${amountFen} 分`,
         );
-        if (amountFen > 0) {
-          await this.dataSource.transaction(async (m) => {
-            await this.refundViaWxpay(m, order, amountFen, '回调延迟到达（订单已取消）自动退款');
-          });
+        // M4-3：建单在事务内、通道调用走队列（异常路径不要求即时，自愈优先）。
+        // ⚠️ 三处「退微信实付」的路径（取消 / 延迟到账 / 审批退款）从此共用
+        //    RefundService 的建单 + 通道执行，不再各写一套。
+        const r = await this.refundService.refundLatePayment(
+          orderNo,
+          amountFen,
+          '回调延迟到达（订单已取消）自动退款',
+        );
+        if (!r.queued) {
+          this.logger.error(`⚠️ 自动退款未入队（${r.reason ?? '-'}），订单 ${orderNo} 需人工核对`);
         }
       }
       return { changed: false, reason: `status=${order.status}` };
@@ -1302,69 +1350,6 @@ export class OrderService {
       '取消订单退回（原余额支付部分）',
       orderNo,
     );
-  }
-
-  /**
-   * 调微信原路退款并落 `ab_refund`
-   *
-   * ⚠️ C6 三段式：截单**前**用户自助取消走**系统自动退款**（本方法），
-   *    截单**后**必须走「团长代退申请 → 后台审批」，不得由本方法直接触发。
-   * ⚠️ C9：反向结算（成本项 + 佣金冲销、毛利留存）在截单后才产生，
-   *    故截单前取消**不写** `ab_supplier_share` 冲销，仅置 `reversed=0`。
-   * @returns 是否已向微信发起退款
-   */
-  private async refundViaWxpay(
-    m: EntityManager,
-    order: Order,
-    amountFen: number,
-    reason: string,
-  ): Promise<boolean> {
-    const refundNo = genRefundNo();
-    const repo = m.getRepository(Refund);
-
-    // 幂等：同一订单不应产生第二条「非驳回」退款单
-    const existed = await repo.findOne({
-      where: { orderId: order.id, status: Not('rejected') },
-    });
-    if (existed) {
-      this.logger.warn(`订单 ${order.orderNo} 已存在退款单 ${existed.refundNo}，跳过重复发起`);
-      return false;
-    }
-
-    const row = await repo.save(
-      repo.create({
-        refundNo,
-        orderId: order.id,
-        orderNo: order.orderNo,
-        userId: order.userId,
-        teamLeaderId: order.teamLeaderId ?? null,
-        applySource: 'user',
-        amount: toYuanStr(amountFen),
-        reasonType: 'other',
-        reason,
-        status: 'refunding',
-        reversed: 0,
-      }),
-    );
-
-    const result = await this.wxPay.refund({
-      orderNo: order.orderNo,
-      refundNo,
-      refundFen: amountFen,
-      totalFen: toFen(order.totalAmount),
-      reason,
-    });
-
-    const succeeded = result.status === 'SUCCESS' || result.status === 'PROCESSING';
-    await repo.update(
-      { id: row.id },
-      {
-        status: succeeded ? 'refunded' : 'failed',
-        wxRefundNo: result.refundId,
-        refundedAt: succeeded ? new Date() : null,
-      },
-    );
-    return succeeded;
   }
 }
 

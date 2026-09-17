@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Not, Repository } from 'typeorm';
 
 import {
   ORDER_STATUS_VIEW,
@@ -13,13 +13,17 @@ import {
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
+import { QueueService } from '../../common/queue/queue.service';
 import { money, round2, toFen } from '../../common/utils/money';
 import { genRefundNo } from '../../common/utils/order-no';
 import { toBjIso } from '../../common/utils/time';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { Order, Refund } from '../../database/entities/order.entity';
+import { OperationLog } from '../../database/entities/system.entity';
 import { WX_PAY_PROVIDER, WxPayProvider } from '../../providers/wx-pay/wx-pay.provider';
 import { MessageService } from '../message/message.service';
+import { NOTIFY_PAGES } from '../admin/template/message-template.specs';
+import { RefundApplyPayload } from '../../queues/queue-payloads';
 import { RefundApplyReqDto } from './dto/finance.dto';
 import { ReversalResult, ReversalService } from './reversal.service';
 
@@ -32,8 +36,31 @@ import { ReversalResult, ReversalService } from './reversal.service';
  * ① 申请  团长代退申请（M2 · applyByLeader）  → ab_refund.status='applying' + 订单转 refund_applying
  *                                             ⚠️ 资金零变动（不动订单金额、不发起退款、不回退分账）
  * ② 审批  后台 D41 通过 / D42 驳回            → approved / rejected（属 M3-4 批次）
- * ③ 实退  执行退款（本文件的 executeRefund）  → 微信原路退 + 反向结算 + 状态收口
+ * ③ 实退  执行退款                            → 账务冲销落库（事务） + 微信原路退（事务外） + 收口
  * ```
+ *
+ * ## ⭐ M4-3：外部通道调用已移出 DB 事务
+ *
+ * **改造前**：`executeRefund` 在事务内**先调微信退款**，失败即抛 `40010` 让整个事务回滚。
+ * 这样确实避免了「有退款单但没退款」的哑单，但存在**更严重且不可自愈**的反面：
+ * **微信退款成功之后，事务若因任何原因失败（冲销报错 / 连接断），钱已经出去了，
+ * 而系统里没有退款单、订单也没变** —— 账实不符，且没有任何机制能发现它。
+ *
+ * **改造后**：③ 拆成「事务内」与「事务外」两段：
+ * ```text
+ * 事务 A（纯 DB，先提交）  冲销（余额退回 / 佣金反冲）+ 退款单 status='refunding'
+ *                          + 订单收口 refunded
+ *       ↓ 提交（此后**不可能**出现「钱退了但系统没记录」）
+ * 事务外                  调微信退款（外部副作用）
+ *       ├─ 成功 → 事务 B：退款单 → refunded + wx_refund_no + refunded_at
+ *       └─ 失败 → 退款单 → failed + **入队 `refund-apply` 退避重试**
+ * ```
+ * 重试的安全性由 `refundNo` 保证：它是微信侧的幂等键（`out_refund_no`），
+ * 重试携带同一个号 → 微信识别为同一笔退款，**不会重复出款**。
+ *
+ * ⚠️ 因此失败时的对外语义也变了：不再是「整个退款没发生、请重试」，
+ * 而是「**已受理，微信通道那一段待重试**」—— 退款单 `failed` + 队列重试中，
+ * 重试耗尽会写一条 `module=queue` 的操作日志供人工接手。
  *
  * 本文件已实现：
  *   · `applyByLeader`（① 第一段 · M2）
@@ -87,6 +114,8 @@ export class RefundService {
     private readonly reversal: ReversalService,
     @Inject(WX_PAY_PROVIDER) private readonly wxPay: WxPayProvider,
     private readonly message: MessageService,
+    private readonly queue: QueueService,
+    @InjectRepository(OperationLog) private readonly opLogRepo: Repository<OperationLog>,
   ) {}
 
   // ==========================================================================
@@ -232,6 +261,9 @@ export class RefundService {
     wxRefundedFen: number;
     balanceRefundedFen: number;
     reversal: ReversalResult;
+    /** ⭐ M4-3：微信通道是否已受理（`false` = 已入队重试） */
+    wxDelivered: boolean;
+    retryQueued: boolean;
     tips: string;
   }> {
     const order = await this.orderRepo.findOne({ where: { orderNo } });
@@ -290,15 +322,25 @@ export class RefundService {
           orderStatusBefore: order.status,
         }),
       );
-      return this.executeRefund(m, order, refund);
+      return this.settleRefundDb(m, order, refund);
     });
 
     this.logger.warn(
-      `后台强制退款：操作人#${operatorId} 订单 ${orderNo} 退款单 ${result.refund.refundNo} ` +
+      `后台强制退款（账务已落库，待通道执行）：操作人#${operatorId} 订单 ${orderNo} 退款单 ${result.refund.refundNo} ` +
         `合计 ¥${money(refundableFen / 100)}（微信 ¥${money(result.wxFen / 100)} + 余额 ¥${money(result.balanceFen / 100)}）` +
         ` 佣金冲销 ¥${money(result.reversal.commissionReversedFen / 100)}` +
         ' 供应商应付=不冲减（自营口径）',
     );
+
+    // 阶段 2（事务外）：调微信通道；失败则入队退避重试，**不回滚已落库的账务**
+    const delivery = await this.deliverOrQueueRefund({
+      refundId: Number(result.refund.id),
+      orderNo: order.orderNo,
+      refundNo: result.refund.refundNo,
+      wxFen: result.wxFen,
+      totalFen: toFen(Number(order.totalAmount)),
+      reason: `后台强制退款：${input.reason}`,
+    });
 
     await this.notifyRefundResult(
       { userId: order.userId ?? null, orderNo: order.orderNo },
@@ -309,12 +351,17 @@ export class RefundService {
     return {
       refundNo: result.refund.refundNo,
       orderNo: order.orderNo,
-      status: RefundStatus.REFUNDED,
+      status: delivery.ok ? RefundStatus.REFUNDED : RefundStatus.FAILED,
       refundedFen: refundableFen,
       wxRefundedFen: result.wxFen,
       balanceRefundedFen: result.balanceFen,
       reversal: result.reversal,
-      tips: '退款已发起，微信原路退回 1–3 个工作日到账；余额抵扣部分已即时退回余额',
+      /** ⭐ M4-3：微信通道是否已受理（`false` = 已排入队列重试，见 `tips`） */
+      wxDelivered: delivery.ok,
+      retryQueued: !delivery.ok,
+      tips: delivery.ok
+        ? '退款已发起，微信原路退回 1–3 个工作日到账；余额抵扣部分已即时退回余额'
+        : '账务冲销与余额退回已完成；**微信退款通道暂时失败，已自动排队重试**，无需重复提交',
     };
   }
 
@@ -355,6 +402,9 @@ export class RefundService {
     orderStatusBefore: string | null;
     auditorId: number;
     auditAt: string;
+    /** ⭐ M4-3：微信通道是否已受理（`false` = 已入队重试） */
+    wxDelivered: boolean;
+    retryQueued: boolean;
     tips: string;
   }> {
     const result = await this.dataSource.transaction(async (m) => {
@@ -395,21 +445,32 @@ export class RefundService {
       refund.version = (refund.version ?? 0) + 1;
       const approved = await m.save(refund);
 
-      const executed = await this.executeRefund(m, order, approved);
+      const settled = await this.settleRefundDb(m, order, approved);
       return {
-        ...executed,
+        ...settled,
         orderStatusBefore: refund.orderStatusBefore ?? null,
-        // 事务外发通知需要的信息：只带出**必要字段**，不把已脱离会话的实体拿到外面
+        // 事务外发通知 / 调通道需要的信息：只带出**必要字段**，不把已脱离会话的实体拿到外面
         notifyTarget: { userId: order.userId ?? null, orderNo: order.orderNo },
+        orderTotalFen: toFen(Number(order.totalAmount)),
       };
     });
 
     this.logger.log(
-      `D41 审批通过：审批人#${adminId} 退款单 ${result.refund.refundNo} 订单 ${result.refund.orderNo} ` +
+      `D41 审批通过（账务已落库，待通道执行）：审批人#${adminId} 退款单 ${result.refund.refundNo} 订单 ${result.refund.orderNo} ` +
         `合计 ¥${money(toFen(Number(result.refund.amount)) / 100)}` +
         `（微信 ¥${money(result.wxFen / 100)} + 余额 ¥${money(result.balanceFen / 100)}）` +
         ` 佣金冲销 ¥${money(result.reversal.commissionReversedFen / 100)}`,
     );
+
+    // 阶段 2（事务外）：调微信通道；失败则入队退避重试，**不回滚已落库的账务**
+    const delivery = await this.deliverOrQueueRefund({
+      refundId: Number(result.refund.id),
+      orderNo: result.refund.orderNo,
+      refundNo: result.refund.refundNo,
+      wxFen: result.wxFen,
+      totalFen: result.orderTotalFen,
+      reason: result.refund.reason ?? '后台审批退款',
+    });
 
     await this.notifyRefundResult(
       result.notifyTarget,
@@ -420,7 +481,7 @@ export class RefundService {
     return {
       refundNo: result.refund.refundNo,
       orderNo: result.refund.orderNo,
-      status: RefundStatus.REFUNDED,
+      status: delivery.ok ? RefundStatus.REFUNDED : RefundStatus.FAILED,
       refundedFen: toFen(Number(result.refund.amount)),
       wxRefundedFen: result.wxFen,
       balanceRefundedFen: result.balanceFen,
@@ -428,7 +489,12 @@ export class RefundService {
       orderStatusBefore: result.orderStatusBefore,
       auditorId: adminId,
       auditAt: (result.refund.auditAt ?? new Date()).toISOString(),
-      tips: '退款已发起，微信原路退回 1–3 个工作日到账；余额抵扣部分已即时退回余额',
+      /** ⭐ M4-3：微信通道是否已受理（`false` = 已排入队列重试，见 `tips`） */
+      wxDelivered: delivery.ok,
+      retryQueued: !delivery.ok,
+      tips: delivery.ok
+        ? '退款已发起，微信原路退回 1–3 个工作日到账；余额抵扣部分已即时退回余额'
+        : '账务冲销与余额退回已完成；**微信退款通道暂时失败，已自动排队重试**，无需重复审批',
     };
   }
 
@@ -524,18 +590,24 @@ export class RefundService {
   // ==========================================================================
 
   /**
-   * 实际退款（C6 第三段）—— **必须在事务内调用**
+   * 实际退款 · **事务内那一段**（C6 第三段 · M4-3 拆分）
    *
-   * 顺序刻意如此：
-   *   1. 先调微信退款（外部副作用，不可回滚）—— 失败即抛 `40010` 让整个事务回滚，
-   *      此时 `ab_refund` 随事务消失，不会留下「有退款单但没退款」的哑单
-   *   2. 再走账务冲销（佣金 / 应付 / 余额）—— 与订单状态在同一事务，账单一致
-   *   3. 最后收口状态（退款单 → `refunded`、订单 → `refunded`）
+   * ⚠️ **本方法不调任何外部通道** —— 这是 M4-3 的核心改动（理由见类头）。
+   * 它只做「钱在账本上的定稿」：
+   *   1. 账务冲销（余额退回 / 佣金反冲；自营口径下**不冲减供应商应付**）
+   *   2. 退款单 → 有微信金额时 `refunding`（通道那段由 `attemptWxRefund` 收口）；
+   *      **纯余额退款**（无微信实付）没有通道那一段，直接 `refunded`
+   *   3. 订单 → `refunded`
    *
-   * ⚠️ 退款金额拆两路：**微信实付**走通道原路退，**余额抵扣**直接退回余额
+   * ## 为什么订单此时就能置 `refunded`
+   * 余额抵扣部分**已即时退回**，微信实付部分对外承诺「1–3 个工作日到账」（文案一直如此）。
+   * 订单状态表达的是「**这笔业务已受理退款**」，而「**通道是否已受理**」由退款单状态
+   * （`refunding` → `refunded` / `failed`）表达 —— 两个状态各说一件事，不再混为一谈。
+   *
+   * ⚠️ 金额拆两路：**微信实付**走通道原路退，**余额抵扣**直接退回余额
    *    （它当初就没走微信，喂给通道会被微信拒；喂进去了则是重复出款）。
    */
-  private async executeRefund(
+  private async settleRefundDb(
     m: EntityManager,
     order: Order,
     refund: Refund,
@@ -544,30 +616,11 @@ export class RefundService {
     const wxFen = toFen(Number(order.payAmount));
     const balanceFen = toFen(Number(order.balanceUsed));
 
-    let wxRefundNo: string | null = null;
-    if (wxFen > 0) {
-      const r = await this.wxPay.refund({
-        orderNo: order.orderNo,
-        refundNo: refund.refundNo,
-        refundFen: wxFen,
-        totalFen: toFen(Number(order.totalAmount)),
-        reason: refund.reason ?? '后台退款',
-      });
-      if (r.status !== 'SUCCESS' && r.status !== 'PROCESSING') {
-        throw new BizException(
-          ErrorCode.REFUND_FAILED,
-          `微信退款未受理（状态 ${r.status}），订单未变更，可稍后重试`,
-        );
-      }
-      wxRefundNo = r.refundId;
-    }
-
-    // 账务冲销（余额退回 / 佣金反冲 / 应付冲减）
+    // 账务冲销（余额退回 / 佣金反冲；自营口径：不冲减供应商应付）
     const reversal = await this.reversal.applyRefundEffects(m, order, refund);
 
-    refund.status = RefundStatus.REFUNDED;
-    refund.wxRefundNo = wxRefundNo;
-    refund.refundedAt = now;
+    refund.status = wxFen > 0 ? RefundStatus.REFUNDING : RefundStatus.REFUNDED;
+    refund.refundedAt = wxFen > 0 ? null : now;
     refund.auditorId = refund.auditorId ?? null;
     refund.auditAt = refund.auditAt ?? now;
     refund.reversed = 1;
@@ -589,6 +642,175 @@ export class RefundService {
       .execute();
 
     return { refund: saved, wxFen, balanceFen, reversal };
+  }
+
+  // ==========================================================================
+  // ③ 通道执行（事务外 · 可重试）—— M4-3
+  // ==========================================================================
+
+  /**
+   * 单次尝试：调微信退款 → 收口退款单
+   *
+   * **由队列消费者调用**（`refund-apply.consumer`），也是 `deliverOrQueueRefund`
+   * 内部首次同步尝试的执行体。抛错 = 需要重试（交给队列的退避策略）。
+   *
+   * ## 幂等（**允许自动重试的前提**）
+   *   · 单据已是 `refunded` → 直接返回（上一次其实成功了，只是收口那一步没跑完）；
+   *   · 微信侧用 `refundNo`（`out_refund_no`）作幂等键：同一个号重复请求，
+   *     微信识别为**同一笔**退款，因此重试**不会变成重复出款**。
+   *
+   * ⚠️ 单据已被驳回（`rejected`）时不重试：那是一条本不该存在的任务，
+   *    重试三次只会白等 —— 记一条 WARN 后正常结束（异常由死信机制兜不住，
+   *    所以这里**必须自己判断**，见 `queue.types.ts` 的处理器契约）。
+   */
+  async attemptWxRefund(payload: RefundApplyPayload): Promise<void> {
+    const refund = await this.refundRepo.findOne({ where: { id: Number(payload.refundId) } });
+    if (!refund) {
+      throw new BizException(
+        ErrorCode.REFUND_NOT_FOUND,
+        `退款单 #${payload.refundId} 不存在，无法执行通道退款`,
+      );
+    }
+
+    if (refund.status === RefundStatus.REFUNDED) return;
+
+    if (refund.status === RefundStatus.REJECTED) {
+      this.logger.warn(`退款单 ${refund.refundNo} 已驳回，跳过通道退款（队列任务作废，不再重试）`);
+      return;
+    }
+
+    // 纯余额退款：没有通道那一段，直接收口
+    if (payload.wxFen <= 0) {
+      await this.finalizeWxRefund(Number(refund.id), null);
+      return;
+    }
+
+    const r = await this.wxPay.refund({
+      orderNo: payload.orderNo,
+      // ⭐ 幂等键：重试必须带**同一个** refundNo
+      refundNo: payload.refundNo,
+      refundFen: payload.wxFen,
+      totalFen: payload.totalFen,
+      reason: payload.reason.slice(0, 128),
+    });
+    if (r.status !== 'SUCCESS' && r.status !== 'PROCESSING') {
+      // 抛错 → 队列按退避重试（`refundNo` 保证不会重复出款）
+      throw new Error(`微信退款未受理（状态 ${r.status}）`);
+    }
+
+    await this.finalizeWxRefund(Number(refund.id), r.refundId);
+  }
+
+  /**
+   * 事务外：**首次同步尝试 + 失败入队重试**
+   *
+   * 三条路径共用（正常退款审批 / 后台强制退款 / 订单取消），因此是 `public`：
+   *   · `finance` 内部：`forceRefund` / `approveByAdmin`
+   *   · `order` 模块：`cancel`（截单前自助取消）、`markPaid`（延迟到账自动退款）
+   *
+   * 保留「同步试一次」的原因：微信退款正常情况下是**秒级**的，同步成功时
+   * 用户/运营立即看到「已退款」，与改造前的体验一致；只有失败才转入异步重试。
+   *
+   * @returns `ok=false` 表示通道未受理、**已入队重试**（不是「什么都没做」）
+   */
+  async deliverOrQueueRefund(payload: RefundApplyPayload): Promise<{ ok: boolean }> {
+    if (payload.wxFen <= 0) return { ok: true };
+
+    try {
+      await this.attemptWxRefund(payload);
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.error(`微信退款失败（退款单 ${payload.refundNo}），已转入队列重试：${msg}`);
+      await this.markWxRefundFailed(payload.refundId, msg);
+      await this.enqueueRefundRetry(payload);
+      return { ok: false };
+    }
+  }
+
+  /**
+   * 入队重试（**入队失败也要留痕**）
+   *
+   * ⚠️ 这里是整套自动重试的**唯一入口**：如果这里静默失败（Redis 抖动），
+   *    「微信退款失败」这件事就既不会重试、也不会有人知道 —— 账务已冲销、
+   *    余额已退回，用户却永远收不到微信那部分钱。故入队失败时**必须**写一条
+   *    操作日志（`module=queue`），让它进入运维能查到的范围。
+   */
+  private async enqueueRefundRetry(payload: RefundApplyPayload): Promise<boolean> {
+    try {
+      await this.queue.enqueue('refund-apply', payload);
+      return true;
+    } catch (e) {
+      this.logger.error(
+        `⚠️ 退款重试任务入队失败（退款单 ${payload.refundNo}）：${(e as Error).message} —— ` +
+          '该笔退款不会自动重试，需人工介入',
+      );
+      await this.writeRetryLostLog(payload, (e as Error).message);
+      return false;
+    }
+  }
+
+  /** 退款单收口为已退款（事务 B · 独立短事务，与业务事务解耦） */
+  private async finalizeWxRefund(refundId: number, wxRefundNo: string | null): Promise<void> {
+    await this.refundRepo
+      .createQueryBuilder()
+      .update(Refund)
+      .set({
+        status: RefundStatus.REFUNDED,
+        wxRefundNo,
+        refundedAt: new Date(),
+        version: () => 'version + 1',
+      })
+      .where('id = :id', { id: Number(refundId) })
+      .execute();
+  }
+
+  /**
+   * 标记「通道那一段失败」
+   *
+   * ⚠️ 只改退款单状态与备注，**不回调账务与订单** —— 它们已经按「已受理」定稿，
+   *    回退会造成「余额退回来了又扣走」这种用户可见的反复。
+   *    原因**追加**到 `audit_remark`（不覆盖审批备注，运营两头都看得到）。
+   */
+  private async markWxRefundFailed(refundId: number, errMsg: string): Promise<void> {
+    try {
+      const row = await this.refundRepo.findOne({ where: { id: Number(refundId) } });
+      const merged = [row?.auditRemark, `通道失败：${errMsg}`]
+        .filter(Boolean)
+        .join(' | ')
+        .slice(0, 256);
+      await this.refundRepo
+        .createQueryBuilder()
+        .update(Refund)
+        .set({ status: RefundStatus.FAILED, auditRemark: merged, version: () => 'version + 1' })
+        .where('id = :id', { id: Number(refundId) })
+        .execute();
+    } catch (e) {
+      // 标记失败不能影响「入队重试」这个主动作
+      this.logger.warn(`标记退款单失败态时出错（不影响重试）：${(e as Error).message}`);
+    }
+  }
+
+  /** 「重试入口丢失」操作日志（入队失败时写，见 `enqueueRefundRetry`） */
+  private async writeRetryLostLog(payload: RefundApplyPayload, err: string): Promise<void> {
+    try {
+      await this.opLogRepo.insert({
+        adminUserId: null,
+        module: 'queue',
+        action: '重试任务入队失败',
+        targetId: payload.orderNo,
+        requestData: { refundNo: payload.refundNo, wxFen: payload.wxFen },
+        snapshot: {
+          source: 'system',
+          reason: err.slice(0, 256),
+          hint:
+            '微信退款已失败且重试任务未能入队（队列不可用）。账务已冲销、余额已退回，' +
+            '**微信实付部分未退**，需人工核对该笔退款单后手工重试。',
+        },
+      });
+    } catch (e) {
+      this.logger.error(`写「重试入队失败」操作日志也未成功：${(e as Error).message}`);
+    }
   }
 
   /**
@@ -621,7 +843,10 @@ export class RefundService {
       const result = await this.message.notify({
         scene: 'refund_result',
         userId: target.userId,
-        page: 'pages/order/detail',
+        // ⚠️ M4-3 修正：原值 `pages/order/detail` 与 `pages.json` 的真实路由
+        //    （`pages/order-detail/order-detail`）不符 —— 投递日志显示成功，
+        //    但用户点开通知会落到不存在的页面。改用 `NOTIFY_PAGES` 单一真相。
+        page: NOTIFY_PAGES.orderDetail,
         variables: {
           orderNo: target.orderNo,
           refundNo,
@@ -643,6 +868,104 @@ export class RefundService {
         `退款通知异常（订单 ${target.orderNo}）：${e instanceof Error ? e.message : String(e)}`,
       );
     }
+  }
+
+  /**
+   * 特殊通道：支付回调**延迟到达**且订单已取消 → 自动原路退款
+   *
+   * 场景：订单在 T-1 24:00 截单时因未支付被取消，而微信回调之后才到达
+   * （微信侧或网络延迟）。钱收了、单没了 → 必须原路退回，否则就是「收了钱没给饭」。
+   *
+   * ## 与原实现的区别（M4-3）
+   * 原实现把「建单 + 调微信」放在**同一个事务**里（`OrderService.refundViaWxpay`），
+   * 现在拆成：事务内只建单（DB）→ 事务后**入队**执行通道退款。
+   *
+   * 为什么这条路径**不做同步首次尝试**：它是**罕见异常路径**（用户已取消、
+   * 钱会退回，不要求秒级），异步反而更稳 —— 回调路径本就该尽快返回，
+   * 且入队后的重试由队列负责，不需要微信再回调一次。
+   *
+   * @returns `queued=false` 时看 `reason`（订单不存在 / 已有未终结退款单）
+   */
+  async refundLatePayment(
+    orderNo: string,
+    amountFen: number,
+    reason: string,
+  ): Promise<{ queued: boolean; refundNo?: string; reason?: string }> {
+    const order = await this.orderRepo.findOne({ where: { orderNo } });
+    if (!order) return { queued: false, reason: 'order_not_found' };
+
+    const payload = await this.dataSource.transaction(async (m) => {
+      const row = await this.buildRefundRow(m, order, amountFen, reason);
+      if (!row) return null;
+      const p: RefundApplyPayload = {
+        refundId: Number(row.id),
+        orderNo: order.orderNo,
+        refundNo: row.refundNo,
+        wxFen: amountFen,
+        totalFen: toFen(Number(order.totalAmount)),
+        reason,
+      };
+      return p;
+    });
+
+    if (!payload) return { queued: false, reason: 'exists' };
+
+    // 异常路径：不做同步尝试，直接入队（理由见方法注释）
+    const queued = await this.enqueueRefundRetry(payload);
+
+    this.logger.warn(
+      `回调延迟到账自动退款：订单 ${orderNo} 退款单 ${payload.refundNo} 金额 ${amountFen} 分` +
+        `（入队${queued ? '成功' : '失败，需人工介入'}）`,
+    );
+
+    return { queued, refundNo: payload.refundNo };
+  }
+
+  /**
+   * 事务内：为「不走审批的即时退款」建一条退款单（**幂等**）
+   *
+   * 服务两个通道（都是「钱已收、要立即退」的场景）：
+   *   · **订单取消**（截单前用户自助取消 · `order.service.cancel`）
+   *   · **支付回调延迟到达且订单已取消**（`order.service.markPaid` → `refundLatePayment`）
+   *
+   * ## 两个刻意的选择
+   * 1. **不走冲销**（`reversed=0`）：这两个场景订单都还没截单/出餐，没有佣金与
+   *    供应商应付需要反冲；余额抵扣部分由调用方负责（取消链路释放冻结）。
+   *    若在这里硬套 `applyRefundEffects`，会去冲一笔并不存在的佣金。
+   * 2. **幂等返回 `null`**：同一订单已有非驳回退款单时不建第二条 ——
+   *    微信回调可能重复到达，取消接口也可能被并发调用。
+   *
+   * ⚠️ **只建单、不调通道** —— 通道调用属事务外（`deliverOrQueueRefund`），
+   *    这是 M4-3 的核心纪律：外部副作用绝不能与 DB 事务同生共死。
+   */
+  async buildRefundRow(
+    m: EntityManager,
+    order: Order,
+    wxFen: number,
+    reason: string,
+  ): Promise<Refund | null> {
+    const existed = await m.findOne(Refund, {
+      where: { orderId: Number(order.id), status: Not(RefundStatus.REJECTED) },
+    });
+    if (existed) return null;
+
+    return m.save(
+      m.create(Refund, {
+        refundNo: genRefundNo(),
+        orderId: Number(order.id),
+        orderNo: order.orderNo,
+        userId: Number(order.userId),
+        teamLeaderId: order.teamLeaderId ?? null,
+        applySource: RefundApplySource.USER,
+        amount: money(wxFen / 100),
+        reasonType: RefundReasonType.OTHER,
+        reason: reason.slice(0, 256),
+        status: RefundStatus.REFUNDING,
+        auditorId: null,
+        auditAt: null,
+        reversed: 0,
+      }),
+    );
   }
 
   /** 订单是否存在未终结的退款申请（供订单视图标注） */

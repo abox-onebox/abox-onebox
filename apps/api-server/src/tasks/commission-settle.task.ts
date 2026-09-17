@@ -63,6 +63,16 @@ export class CommissionSettleTask {
         (r.skipped ? ` · 跳过 ${r.skipped} 条` : ''),
     );
 
+    // ⭐ 通知入队结果**必须喊出来**（M4-3）：入队失败不影响入账（这是队列的本分），
+    //    于是它就成了一条「不写在这里就没人知道」的静默失败 —— 钱到账了，
+    //    团长却没收到通知，而团长只会在小程序里看到「入账了但没提醒」。
+    if (r.notifyQueued < r.leaders.length) {
+      this.logger.warn(
+        `佣金入账通知入队不完整 date=${date}：${r.notifyQueued}/${r.leaders.length} 个团长` +
+          ' —— 未入队者不会收到通知（**入账本身已完成**），需查 `ab_operation_log`（module=queue）',
+      );
+    }
+
     // 跳过项**必须显式喊出来**（团长档案不存在多半是脏数据）；不静默丢弃。
     if (r.skippedReasons.length) {
       this.logger.warn(`佣金入账 date=${date} 有跳过项：${r.skippedReasons.join('；')}`);

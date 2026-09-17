@@ -9,6 +9,7 @@ import {
   MESSAGE_CHANNEL_LABEL,
   MESSAGE_TEMPLATE_SPEC_MAP,
   missingForEnable,
+  specState,
 } from '../admin/template/message-template.specs';
 
 export interface NotifyInput {
@@ -82,17 +83,9 @@ export class MessageService {
     }
 
     const row = await this.tplRepo.findOne({ where: { scene: input.scene } });
-    const state = row
-      ? {
-          enabled: row.enabled,
-          wechatTemplateId: row.wechatTemplateId ?? null,
-          groupContent: row.groupContent ?? null,
-        }
-      : {
-          enabled: spec.seed.enabled,
-          wechatTemplateId: spec.seed.wechatTemplateId,
-          groupContent: spec.seed.groupContent || null,
-        };
+    // ⚠️ M4-3：改用 `specState()` 单一换算口（原先此处与 `MessageTemplateService.toView`、
+    //    订阅侧各写了一遍同样的三元表达式 —— 三份副本，改一处就漂移）
+    const state = specState(spec, row);
 
     if (state.enabled !== 1) {
       return { delivered: false, reason: `场景「${spec.label}」未启用` };

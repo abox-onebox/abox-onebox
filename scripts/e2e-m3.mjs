@@ -125,13 +125,15 @@
  * 用法：node scripts/e2e-m3.mjs
  * 端口：默认 3103（`E2E_PORT` 可覆盖）。gate.mjs 的 `verify` 串跑时三脚本各占一端口。
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import {
   BASE,
   DB_PATH,
   PORT,
+  ROOT,
   assertPortFree,
   installCleanupHooks,
   makeCall,
@@ -6669,8 +6671,8 @@ async function main() {
 
     // ---------------------------------------------------------- A. 清单结构
     assert(
-      list0?.list?.length === 5,
-      'D59 场景清单 = **5 个场景**（与原型 P36「消息推送策略」卡片的 5 行逐一对应）',
+      list0?.list?.length === 6,
+      '⭐ D59 场景清单 = **6 个场景** —— 原型 P36 是 5 行，第 6 行 `commission_settled`（团长佣金入账通知）由 M4-3 新增：两段式佣金（T 日计佣 / T+1 入账）若不通知，团长看到的是「确认了却没钱」，会被当成漏结',
       `count=${list0?.list?.length}`,
     );
     assert(
@@ -6716,12 +6718,18 @@ async function main() {
     // ---------------------------------------------------------- B. 接线状态如实标注
     const liveTpl = (list0?.list ?? []).filter((t) => t.wiring === 'live');
     const pendingTpl = (list0?.list ?? []).filter((t) => t.wiring === 'pending');
+    const liveScenes = liveTpl.map((t) => t.scene).sort().join(',');
     assert(
-      liveTpl.length === 1 &&
-        liveTpl[0].scene === 'refund_result' &&
-        String(liveTpl[0].consumedBy).includes('refund.service'),
-      '⭐ **接线状态如实**：一期只有「退款结果通知」有真实投递点（`refund.service`），其余 4 个场景标 `pending` —— 与 M3-10「9 项未接线」同一纪律',
-      `live=${liveTpl.length} pending=${pendingTpl.length}`,
+      liveTpl.length === 3 &&
+        liveScenes === 'commission_settled,leader_apply,refund_result' &&
+        liveTpl.every((t) => String(t.consumedBy).includes('.service')),
+      '⭐⭐ **接线状态如实**：M4-3 后**三个场景**有真实投递点 —— `refund_result`（M3-12）·' +
+        '`leader_apply`（M4-3）· `commission_settled`（M4-3）；其余 3 个仍标 `pending`。' +
+        '⚠️ 里程碑 4.10 原文列的是「支付成功 / 出餐提醒 / 取餐通知 / 退款结果」，本批**刻意收窄**：' +
+        '`user_order_status` 按原型「简化原则」不推、`leader_delivery` 一期走微信群人工、' +
+        '`merchant_cook` 收件人是供应商（非用户小程序身份）—— 三者「接了也没有真实收件人」，' +
+        '接了反而是假绿。**宁可如实标 pending，也不假装已贯通**',
+      `live=${liveScenes || '无'} pending=${pendingTpl.length}`,
     );
     assert(
       pendingTpl.every((t) => !!t.pendingReason),
@@ -6752,7 +6760,7 @@ async function main() {
       (list0?.list ?? [])
         .filter((t) => t.scene !== 'leader_delivery')
         .every((t) => t.enabled === false),
-      '⭐ 其余 4 个场景**均未启用** —— 一期没有微信订阅消息模板 ID，启用必然发不出去；如实显示「未启用」远好过假装已启用',
+      '⭐ 其余 5 个场景**均未启用** —— 一期没有微信订阅消息模板 ID，启用必然发不出去；如实显示「未启用」远好过假装已启用（M4-3 接线 `leader_apply` / `commission_settled` 后仍是 0，**接线与启用是两件事**：代码接好了，配置还没到）',
       `已启用的其余场景=${(list0?.list ?? [])
         .filter((t) => t.scene !== 'leader_delivery' && t.enabled)
         .map((t) => t.scene)
@@ -7142,7 +7150,7 @@ async function main() {
           (t.groupContent ?? null) === s.groupContent
         );
       }),
-      'D60 还原校验：5 个场景**逐字段**回到初始值（三项都比对 —— 少比一项就会留下脏状态，且它以「下一次偶发失败」的形式出现）',
+      'D60 还原校验：6 个场景**逐字段**回到初始值（三项都比对 —— 少比一项就会留下脏状态，且它以「下一次偶发失败」的形式出现）',
       '',
     );
   }
@@ -9679,6 +9687,560 @@ async function main() {
         Object.values(left29).every((v) => v === 0),
         '§29 夹具还原：退款单 / 订单 / 佣金 / 余额 / 团长 / 用户全部清除 —— 佣金行与余额行不还原，下一次重跑的平台负债就会凭空多出 ¥6.96，并让 D38↔D33 的对账断言在「两次读之间」产生假绿',
         `r=${left29.r} o=${left29.o} c=${left29.c} b=${left29.b} l=${left29.l} u=${left29.u}`,
+      );
+    }
+  }
+
+  // ==========================================================================
+  // §30 M4-3 队列消费者 + 订阅消息投递点（4.9 / 4.10）
+  // ==========================================================================
+  //
+  // 本节的三个核心不变量：
+  //   ① ⭐⭐ **外部通道调用已移出 DB 事务** —— 微信退款失败时**不回滚账务**
+  //      （旧实现：事务内先调通道，失败即整笔回滚 → 「钱退了系统没记录」的反面
+  //      「单子回滚了钱也没退」都能发生）。失败改为**入队退避重试**，
+  //      `refundNo` 作微信幂等键保证重试不会重复出款。
+  //   ② ⭐ **失败要说得出话**：重试耗尽 → 进死信 + 写 `ab_operation_log`
+  //      （`module=queue`）—— 队列最大的风险不是「失败」而是「静默失效」。
+  //   ③ ⭐ **接线 ≠ 启用**：`leader_apply` / `commission_settled` 已接线（`wiring=live`），
+  //      但一期没有微信模板 ID → 场景仍未启用 → **不投递、不留日志、不算任务失败**。
+  //
+  // ⚠️ 隔离日期避开 §18–§29 已用过的 today ± {1,10,60,90,130,190,200,205,208,209,210,212,365}
+  // ⚠️ 队列驱动由 gate 注入 `QUEUE_DRIVER=memory`（本机无 Redis）+ `QUEUE_BACKOFF_BASE_MS=20`
+  //    （把退避压到毫秒级，否则「验证重试」要真等好几秒）。
+  // ==========================================================================
+  {
+    log('\n§30 M4-3 队列消费者 + 订阅消息投递点（4.9 / 4.10）');
+
+    const Q30 = '/admin/queue';
+    const TPL30 = '/admin/system/templates';
+    const SCH30 = '/admin/schedule';
+    const PREFIX30 = `E2E30${stamp}`;
+    const D30S = addDaysStr(bjToday(), -213); // 结算出餐日
+    const D30R = addDaysStr(bjToday(), -214); // 通道失败注入单
+    const D30K = addDaysStr(bjToday(), -215); // 通道成功对照单
+    const AT30 = `${bjToday()} 02:00:00.000`;
+    const PAID30 = (d) => `${d} 02:00:00.000`;
+
+    /**
+     * ⚠️ 与 `apps/api-server/src/providers/wx-pay/mock-wx-pay.provider.ts` 的
+     *    `MOCK_REFUND_FAIL_MARKER` **必须字面一致**。不一致时下面的断言会
+     *    **立刻红**（退款会成功 → `retryQueued=false`），不会静默跳过 ——
+     *    这是「测试侧复制一个字面量」可以接受的**唯一**理由：不一致是自曝的。
+     */
+    const FAIL_MARK = '__mock_refund_fail__';
+
+    const qRow = (stats, queue) => (stats?.queues ?? []).find((t) => t.queue === queue);
+    /** 轮询队列计数直到条件成立（异步消费，不能读一次就断言） */
+    const waitQueue30 = async (queue, pred, timeout = 5000) => {
+      const deadline = Date.now() + timeout;
+      let last = null;
+      for (;;) {
+        const r = await call('GET', Q30, { token: adminToken });
+        last = qRow(r.body?.data, queue);
+        if (last && pred(last)) return last;
+        if (Date.now() > deadline) return last;
+        await sleep(100);
+      }
+    };
+
+    // ---------------------------------------------------------- A. 队列状态端点
+    const q30 = await call('GET', Q30, { token: adminToken });
+    const q30d = q30.body?.data;
+    assert(
+      q30.body?.code === 0 && q30d?.driver === 'memory' && q30d?.durable === false,
+      '⭐ §30 `GET /admin/queue` **如实报告「这个队列会不会丢任务」**：e2e 走 `QUEUE_DRIVER=memory` → `driver=memory` + `durable=false` —— M4-3 刻意**不做静默降级**（`KvService` 那种「连不上就退回内存 + WARN」在队列上不成立：丢一条「退款待重试」既无报错也无处可查）',
+      `code=${q30.body?.code} driver=${q30d?.driver} durable=${q30d?.durable}`,
+    );
+    assert(
+      (q30d?.queues ?? []).length === 3 &&
+        (q30d?.queues ?? []).map((t) => t.queue).sort().join(',') ===
+          'order-paid,refund-apply,settle-orders',
+      '§30 三个队列（支付后续 / 退款后续 / 结算后续）**全部在册**，且空桶也出现 —— 早期调用（健康检查早于消费者注册）不会得到「队列不存在」的错觉',
+      `queues=${(q30d?.queues ?? []).map((t) => t.queue).join(',')}`,
+    );
+    assert(
+      (q30d?.queues ?? []).every(
+        (t) =>
+          !!t.label &&
+          ['waiting', 'active', 'delayed', 'failed', 'completed'].every(
+            (k) => typeof t[k] === 'number',
+          ),
+      ) &&
+        Number(q30d?.attempts) === 3 &&
+        Number(q30d?.backoffBaseMs) > 0,
+      '§30 每队列下发五项计数 + `attempts`/`backoffBaseMs` 运行参数；⭐ `attempts=3` 在两个驱动下都表示**总共执行 3 次**（不是「重试 3 次」）—— 语义对齐是「换驱动不改行为」的底线',
+      `attempts=${q30d?.attempts} backoff=${q30d?.backoffBaseMs}`,
+    );
+    assert(
+      String(q30d?.note ?? '').includes('重启即丢'),
+      '⭐ 驱动说明文案随状态一起下发（端上/运维不再各写一份）：「memory = 进程内，**进程重启即丢**，且多实例部署时任务不跨实例分发」',
+      `note 含关键词=${String(q30d?.note ?? '').includes('重启即丢')}`,
+    );
+
+    // ---- 权限：只读运行态，白名单**不含** finance / viewer（与 D47–D50 看板相反）
+    const finOnQ30 = await call('GET', Q30, { token: fin2.token });
+    const supOnQ30 = await call('GET', Q30, { token: sup2.token });
+    const op30Name = `e2e_op30_${stamp}`;
+    const mkOp30 = await call('POST', '/admin/system/accounts', {
+      token: adminToken,
+      body: { username: op30Name, password: PWD, role: 'operator', realName: 'e2e 运营（队列只读）' },
+    });
+    const op30 = await adminLogin(op30Name, PWD);
+    const opOnQ30 = await call('GET', Q30, { token: op30.token });
+    assert(
+      finOnQ30.body?.code === 10003 && supOnQ30.body?.code === 10003,
+      '⭐ §30 队列端点两级白名单：**finance / 供应商都不在白名单** → 10003 —— 与 D47–D50 看板（含 viewer）刻意相反：那边是**业务数据**（只读角色本就该看），这里是**运行态实现细节**（驱动名/积压/重试参数），给业务观察者看没有用途，只是扩大暴露面',
+      `finance=${finOnQ30.body?.code} supplier=${supOnQ30.body?.code}`,
+    );
+    assert(
+      mkOp30.body?.code === 0 && opOnQ30.body?.code === 0,
+      '§30 白名单**含 operator**（运维要能第一时间看到「退款任务在重试」）—— 与 P39 打包任务同一考量',
+      `mk=${mkOp30.body?.code} operator=${opOnQ30.body?.code}`,
+    );
+
+    // ---------------------------------------------------------- B. 夹具原料
+    const base30 = readDb(
+      `SELECT b.id AS bid, b.building_group_id AS gid, m.id AS smid, a.id AS aid
+         FROM ab_building b, ab_set_meal m, ab_meal_assignment a
+        WHERE b.building_group_id IS NOT NULL
+        ORDER BY b.id, m.id, a.id LIMIT 1`,
+    );
+    const openB30 = readDb(
+      `SELECT b.id AS bid FROM ab_building b
+        WHERE b.status = 1 AND b.building_group_id IS NOT NULL
+        ORDER BY b.id LIMIT 1`,
+    );
+    assert(
+      !!base30 && !!openB30,
+      '§30 前置：夹具原料齐备（有楼群的楼 / 套餐 / 分配行 + 1 个在营楼用于团长申请）',
+      `bid=${Number(base30?.bid)} gid=${Number(base30?.gid)} op=${Number(openB30?.bid)}`,
+    );
+
+    if (base30 && openB30) {
+      const B30 = Number(base30.bid);
+      const G30 = Number(base30.gid);
+      const SM30 = Number(base30.smid);
+      const A30 = Number(base30.aid);
+      const OPENB30 = Number(openB30.bid);
+
+      // 专用团长账号（不能借既有团长 —— 别人账上已有余额会让「入账前余额不变」这类断言假绿）
+      const L30CODE = `${PREFIX30}l`;
+      const L30OPENID = `mock_openid_${L30CODE}`;
+      writeDb(
+        'INSERT INTO ab_user (openid, nickname, gender, status, version, created_at, updated_at) VALUES (?, ?, 0, 1, 0, ?, ?)',
+        [L30OPENID, `${PREFIX30}队列团长`, AT30, AT30],
+      );
+      const uid30 = Number(readDb('SELECT id FROM ab_user WHERE openid = ?', [L30OPENID])?.id ?? 0);
+      writeDb(
+        'INSERT INTO ab_team_leader (user_id, building_id, phone, real_name, level, commission_rate, status, total_orders, total_commission, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0.00, 0, ?, ?)',
+        [uid30, B30, `139${String(stamp).slice(-8)}`, `${PREFIX30}队列团长`, 'formal', '0.0900', AT30, AT30],
+      );
+      const lid30 = Number(
+        readDb('SELECT id FROM ab_team_leader WHERE user_id = ?', [uid30])?.id ?? 0,
+      );
+
+      const INS_O30 =
+        'INSERT INTO ab_order (order_no, user_id, team_leader_id, building_id, building_group_id, set_meal_id, assignment_id, meal_date, quantity, unit_price, total_amount, balance_used, discount_amount, pay_amount, status, version, paid_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, 0, ?, ?, ?)';
+      const mkOrder30 = (no, date, status, qty) => {
+        const total = qty * 25.8;
+        writeDb(INS_O30, [
+          no,
+          uid30,
+          lid30,
+          B30,
+          G30,
+          SM30,
+          A30,
+          date,
+          qty,
+          '25.80',
+          total.toFixed(2),
+          total.toFixed(2),
+          status,
+          PAID30(date),
+          AT30,
+          AT30,
+        ]);
+        return Number(readDb('SELECT id FROM ab_order WHERE order_no = ?', [no])?.id ?? 0);
+      };
+      const INS_P30 =
+        "INSERT INTO ab_payment_log (order_id, order_no, transaction_id, pay_amount, pay_method, status, paid_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'wxpay_jsapi', 'success', ?, ?, ?)";
+      const mkPay30 = (orderId, no, amount, txn, date) =>
+        writeDb(INS_P30, [orderId, no, txn, amount, PAID30(date), AT30, AT30]);
+
+      // 结算日：1 张 completed 单 + 1 条 **pending** 佣金（4.5 的输入）
+      const o30S1 = mkOrder30(`${PREFIX30}S1`, D30S, 'completed', 1);
+      writeDb(
+        "INSERT INTO ab_commission (order_id, order_no, team_leader_id, leader_level, rate, base_amount, quantity, amount, type, status, settled_at, meal_date, payout_channel, tax_withheld_amount, created_at, updated_at) VALUES (?, ?, ?, 'formal', '0.0900', ?, ?, ?, 'normal', 'pending', NULL, ?, 'FLEX_MANUAL', '0.00', ?, ?)",
+        [
+          o30S1,
+          `${PREFIX30}S1`,
+          lid30,
+          '25.80',
+          1,
+          '2.32',
+          D30S,
+          AT30,
+          AT30,
+        ],
+      );
+
+      // 退款两单：R1 走失败注入、K1 走成功对照（各 2 份 = 51.60，微信全额实付）
+      const o30R1 = mkOrder30(`${PREFIX30}R1`, D30R, 'paid', 2);
+      mkPay30(o30R1, `${PREFIX30}R1`, '51.60', `${PREFIX30}TXR`, D30R);
+      const o30K1 = mkOrder30(`${PREFIX30}K1`, D30K, 'paid', 2);
+      mkPay30(o30K1, `${PREFIX30}K1`, '51.60', `${PREFIX30}TXK`, D30K);
+
+      // 申请团长用的干净用户（不能复用 uid30 —— 他已是团长，会撞 20007）
+      const A30CODE = `${PREFIX30}a`;
+      const A30OPENID = `mock_openid_${A30CODE}`;
+      writeDb(
+        'INSERT INTO ab_user (openid, nickname, gender, status, version, created_at, updated_at) VALUES (?, ?, 0, 1, 0, ?, ?)',
+        [A30OPENID, `${PREFIX30}申请者`, AT30, AT30],
+      );
+      const uidA30 = Number(readDb('SELECT id FROM ab_user WHERE openid = ?', [A30OPENID])?.id ?? 0);
+      const uA30 = await userLogin(`dev:${A30CODE}`);
+
+      // -------------------------------------------------------- C. settle-orders（真跑批）
+      const cmBefore30 = readDb(
+        "SELECT status FROM ab_commission WHERE order_no = ? AND status = 'pending'",
+        [`${PREFIX30}S1`],
+      );
+      const balBefore30 = readDb('SELECT balance FROM ab_balance WHERE user_id = ?', [uid30]);
+      assert(
+        cmBefore30?.status === 'pending' && !balBefore30,
+        '§30 前置：佣金行 `pending` 且**尚无余额账户**（入账前后对比才有意义）',
+        `cm=${cmBefore30?.status} 账户=${balBefore30 ? '有' : '无'}`,
+      );
+
+      const settle30 = await call('POST', `${SCH30}/commission-settle/run`, {
+        token: adminToken,
+        body: { date: D30S },
+      });
+      const s30 = settle30.body?.data?.result;
+      assert(
+        settle30.body?.code === 0 && s30?.settled === 1 && s30?.leaders?.length === 1,
+        '§30 4.5 佣金入账：1 条 `pending` → `settled` + 进团长余额',
+        `code=${settle30.body?.code} settled=${s30?.settled} leaders=${s30?.leaders?.length}`,
+      );
+      assert(
+        s30?.notifyQueued === 1,
+        '⭐ §30 **入账后按团长逐个入队通知**（`notifyQueued=1`）—— 不按「整批一条」：订阅消息必须能寻址到具体收件人，整批载荷没有收件人，消费者只能写日志，「通知用户」实际没发生却看起来成功；拆成一人一条后独立重试、死信粒度到人',
+        `notifyQueued=${s30?.notifyQueued} leaders=${s30?.leaders?.length}`,
+      );
+
+      const sq30 = await waitQueue30('settle-orders', (t) => t.completed >= 1 && t.waiting === 0);
+      assert(
+        !!sq30 && sq30.completed >= 1 && sq30.failed === 0 && sq30.waiting === 0,
+        '⭐ §30 结算通知任务**被消费且正常结束**（`completed≥1` / `failed=0`）—— 场景 `commission_settled` 未启用（缺模板 ID）时 `notify()` 返回 `delivered=false`，这是**如实状态、不是失败**：把它当失败去重试三次再进死信，会让真正的故障淹没在「每天一条假死信」里',
+        `completed=${sq30?.completed} failed=${sq30?.failed} waiting=${sq30?.waiting}`,
+      );
+      const msg30 = readDb('SELECT COUNT(*) AS c FROM ab_message WHERE user_id = ?', [uid30]);
+      assert(
+        Number(msg30?.c ?? -1) === 0,
+        '⭐ §30 **未启用 = 不投递且不留日志**（`ab_message` 的语义是「发过什么」）—— 与 M3-12 同口径，本批新增的两个投递点不得开例外',
+        `ab_message 行数=${msg30?.c}`,
+      );
+
+      const settle30b = await call('POST', `${SCH30}/commission-settle/run`, {
+        token: adminToken,
+        body: { date: D30S },
+      });
+      const s30b = settle30b.body?.data?.result;
+      assert(
+        settle30b.body?.code === 0 && s30b?.settled === 0 && s30b?.notifyQueued === 0,
+        '⭐ §30 结算通知**幂等**：重跑 `settled=0` **且 `notifyQueued=0`** —— 入账是幂等的，通知也必须跟着幂等，否则重跑一次就给团长重复发一遍「你的佣金已入账」',
+        `settled=${s30b?.settled} notifyQueued=${s30b?.notifyQueued}`,
+      );
+
+      // -------------------------------------------------------- D. refund-apply（失败 → 重试耗尽 → 死信）
+      const dlBefore30 = Number(
+        readDb(
+          "SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = 'queue' AND action = '任务重试耗尽'",
+        )?.c ?? 0,
+      );
+      const failCountBefore30 = (await call('GET', Q30, { token: adminToken })).body?.data;
+      const raFailBefore30 = qRow(failCountBefore30, 'refund-apply')?.failed ?? 0;
+
+      const rf30 = await call('POST', `/admin/orders/${PREFIX30}R1/force-refund`, {
+        token: adminToken,
+        body: {
+          reason: `e2e 通道失败注入 ${FAIL_MARK}`,
+          reasonType: 'quality',
+          amountFen: 5160,
+        },
+      });
+      const rf30d = rf30.body?.data;
+      assert(
+        rf30.body?.code === 0 &&
+          rf30d?.wxDelivered === false &&
+          rf30d?.retryQueued === true &&
+          rf30d?.status === 'failed',
+        '⭐⭐ §30 **外部通道调用已移出 DB 事务**：微信退款失败时接口仍返回 `code=0`（**账务已落库、绝不回滚**），并明确回带 `wxDelivered=false` + `retryQueued=true` + 单据 `failed` —— 改造前是「事务内先调通道、失败即整笔回滚（40010）」，那会同时留下两个方向的错：通道成功而事务回滚 = **钱退了系统没记录**；通道失败则整笔退款作废、运营只能从头再来',
+        `code=${rf30.body?.code} wxDelivered=${rf30d?.wxDelivered} retryQueued=${rf30d?.retryQueued} status=${rf30d?.status}`,
+      );
+      assert(
+        rf30d?.tips && String(rf30d.tips).length > 0,
+        '§30 失败时**下发人话说明**（`tips`）—— 运营看到「退款失败」必须同时知道「钱到底退没退、接下来会怎样」，否则只会收到一通电话',
+        `tips=${String(rf30d?.tips ?? '').slice(0, 60)}…`,
+      );
+
+      const ordRow30 = readDb('SELECT status, pay_amount FROM ab_order WHERE order_no = ?', [
+        `${PREFIX30}R1`,
+      ]);
+      const rfRow30 = readDb(
+        'SELECT status, wx_refund_no, audit_remark FROM ab_refund WHERE order_no = ?',
+        [`${PREFIX30}R1`],
+      );
+      assert(
+        ordRow30?.status === 'refunded' && rfRow30?.status === 'failed',
+        '⭐⭐ §30 账务与通道**各自定稿、互不牵制**：订单已是 `refunded`（账务按「已受理」收口），退款单是 `failed`（通道那段待重试）—— 这一对正是「失败不回滚账务」的机械证据；若改成回滚，用户会看到「余额退回来了又扣走」',
+        `order=${ordRow30?.status} refund=${rfRow30?.status}`,
+      );
+      assert(
+        (rfRow30?.wx_refund_no ?? null) === null,
+        '§30 未受理的通道**不写 `wx_refund_no`** —— 留空才是诚实的：写个假的单号等于伪造凭证，对账时无从分辨',
+        `wx_refund_no=${rfRow30?.wx_refund_no ?? 'NULL'}`,
+      );
+
+      const dl30 = await waitDb(
+        "SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = 'queue' AND action = '任务重试耗尽'",
+        [],
+        (r) => Number(r.c) > dlBefore30,
+        { timeout: 6000, interval: 100 },
+      );
+      assert(
+        Number(dl30?.c ?? 0) > dlBefore30,
+        '⭐⭐ §30 **重试耗尽 → 进死信 + 写操作日志**（`module=queue` / `action=任务重试耗尽`）—— 队列最大的风险不是「失败」而是**静默失效**：重试耗尽的含义是「这件事已经没有人再管了」，只打一条日志（会随轮转消失）不够，必须落在运营会主动去查的表里（与 M3-15 对账告警同一张表）',
+        `死信行 前=${dlBefore30} 后=${dl30?.c}`,
+      );
+      const dlRow30 = readDb(
+        "SELECT target_id, request_data, snapshot FROM ab_operation_log WHERE module = 'queue' AND action = '任务重试耗尽' ORDER BY id DESC LIMIT 1",
+      );
+      const parse30 = (v) => {
+        if (v === null || v === undefined) return {};
+        if (typeof v === 'object') return v;
+        try {
+          return JSON.parse(String(v));
+        } catch {
+          return {};
+        }
+      };
+      const dlPayload30 = parse30(dlRow30?.request_data);
+      const dlSnap30 = parse30(dlRow30?.snapshot);
+      assert(
+        dlRow30?.target_id === 'refund-apply' &&
+          Number(dlPayload30?.attempts) === 3 &&
+          !!dlPayload30?.payload?.refundNo,
+        '⭐ §30 死信日志**可人工处理**：`target_id` 指出是哪个队列、`requestData.payload` 带业务主键（`refundNo`）、`attempts=3` 证明正好执行 3 次后停止 —— 「任务失败」四个字无法执行，必须能顺着它找到**具体哪一笔退款**',
+        `target=${dlRow30?.target_id} attempts=${dlPayload30?.attempts} refundNo=${dlPayload30?.payload?.refundNo ? '有' : '无'}`,
+      );
+      assert(
+        typeof dlSnap30?.hint === 'string' && dlSnap30.hint.includes('可安全重放'),
+        '§30 死信快照带**下一步指引**（「支付/退款类任务幂等，可安全重放」）—— 指引写进数据而不是只写进代码注释',
+        `hint=${String(dlSnap30?.hint ?? '').slice(0, 40)}…`,
+      );
+
+      const qAfterFail30 = (await call('GET', Q30, { token: adminToken })).body?.data;
+      const raFailAfter30 = qRow(qAfterFail30, 'refund-apply')?.failed ?? 0;
+      assert(
+        raFailAfter30 > raFailBefore30,
+        '⭐ §30 队列状态里的 `failed` **= 重试耗尽进死信**（不是「失败过一次」——中间重试仍在 waiting/delayed）—— 口径写在出参里，避免运维把「重试中」读成「已经放弃」',
+        `failed 前=${raFailBefore30} 后=${raFailAfter30}`,
+      );
+
+      // -------------------------------------------------------- E. 成功对照（同一条链路）
+      const rfK30 = await call('POST', `/admin/orders/${PREFIX30}K1/force-refund`, {
+        token: adminToken,
+        body: { reason: 'e2e 通道成功对照', reasonType: 'quality', amountFen: 5160 },
+      });
+      const rfK30d = rfK30.body?.data;
+      const rfRowK30 = readDb('SELECT status, wx_refund_no FROM ab_refund WHERE order_no = ?', [
+        `${PREFIX30}K1`,
+      ]);
+      assert(
+        rfK30.body?.code === 0 &&
+          rfK30d?.wxDelivered === true &&
+          rfK30d?.retryQueued === false &&
+          rfK30d?.status === 'refunded',
+        '⭐ §30 对照：通道正常 → `wxDelivered=true` / `retryQueued=false` / 单据 `refunded`，**同步试一次**保留（微信退款正常是秒级，用户/运营立即看到结果），只有失败才转异步',
+        `wxDelivered=${rfK30d?.wxDelivered} retryQueued=${rfK30d?.retryQueued} status=${rfK30d?.status}`,
+      );
+      assert(
+        rfRowK30?.status === 'refunded' && /^mock_refund_/.test(String(rfRowK30?.wx_refund_no)),
+        '§30 成功时**收口 `refunded` + 落 `wx_refund_no`**（通道凭证）—— 与失败时的 NULL 正好构成「单据字段如实反映通道真实结果」',
+        `status=${rfRowK30?.status} no=${rfRowK30?.wx_refund_no}`,
+      );
+
+      // -------------------------------------------------------- F. leader_apply 投递点
+      const ap30 = await call('POST', '/leader/apply', {
+        token: uA30.token,
+        body: {
+          buildingId: OPENB30,
+          phone: `137${String(stamp).slice(-8)}`,
+          realName: `${PREFIX30}申请者`,
+          agreementVersion: 'v1.0',
+        },
+      });
+      assert(
+        ap30.body?.code === 0 && ap30.body?.data?.isLeader === true,
+        '⭐ §30 L17 接上「团长申请确认」通知后，**通知失败不影响申请**：仍返回 `isLeader=true` —— 通知是**既成事实的告知**，绝不能把一笔成功的申请变成失败（`MessageService.notify` 不抛异常 + 服务内再兜一层 try）',
+        `code=${ap30.body?.code} isLeader=${ap30.body?.data?.isLeader}`,
+      );
+      const apMsg30 = readDb('SELECT COUNT(*) AS c FROM ab_message WHERE user_id = ?', [uidA30]);
+      const apTpl30 = readDb('SELECT enabled, wechat_template_id FROM ab_message_template WHERE scene = ?', [
+        'leader_apply',
+      ]);
+      assert(
+        apTpl30?.enabled === 0 && Number(apMsg30?.c ?? -1) === 0,
+        '⭐ §30 场景 `leader_apply` **已接线但未启用**（缺微信模板 ID）→ 不投递、不留日志、**也不算任务失败** —— 「接线（`wiring=live`）」与「启用（`enabled=1`）」是两件事，本批把两者都如实暴露：代码接好了，配置还没到',
+        `enabled=${apTpl30?.enabled} ab_message=${apMsg30?.c}`,
+      );
+
+      // -------------------------------------------------------- G. 订阅授权清单（端上真正需要的那一半）
+      const sub30 = await call('GET', '/me/subscribe/templates', { token: uA30.token });
+      const sub30d = sub30.body?.data;
+      assert(
+        sub30.body?.code === 0 && (sub30d?.list ?? []).length === 0,
+        '⭐ §30 一期订阅授权清单**必然为空**：没有微信账号 → 模板 ID 全空 → 没有可授权的对象。端上此时**什么都不做**，而不是拿假 ID 去调 `requestSubscribeMessage`',
+        `code=${sub30.body?.code} list=${(sub30d?.list ?? []).length}`,
+      );
+      assert(
+        String(sub30d?.note ?? '').includes('43101') &&
+          String(sub30d?.note ?? '').includes('通常是正常的'),
+        '⭐⭐ §30 口径**必须下发**：「列表为空**通常是正常的**」+「微信订阅消息为**一次性授权**，没授权服务端推不出去（微信回 `43101 用户拒绝接收`）」—— 「必推项」指的是**产品意图**（原型：退款结果必推），不是「无需用户同意」；不写明，端上会把空清单当故障、运营会以为必推是自动的',
+        `note 长度=${String(sub30d?.note ?? '').length}`,
+      );
+
+      // 给 commission_settled 临时配上模板 ID + 启用 → 清单里必须**恰好出现这一条**
+      const tpl30 = await call('GET', TPL30, { token: adminToken });
+      const t30 = (list, scene) => (list ?? []).find((t) => t.scene === scene);
+      const cmTpl30 = t30(tpl30.body?.data?.list, 'commission_settled');
+      const rrTpl30 = t30(tpl30.body?.data?.list, 'refund_result');
+      assert(
+        !!cmTpl30?.id && !!rrTpl30?.id,
+        '§30 前置：模板行已持久化（D59 出参带 id）',
+        `commission_settled=#${cmTpl30?.id} refund_result=#${rrTpl30?.id}`,
+      );
+      assert(
+        cmTpl30?.requestSubscribe === true &&
+          cmTpl30?.wiring === 'live' &&
+          cmTpl30?.subscribeTemplateId === null,
+        '§30 出参带 `requestSubscribe`（场景是否属用户端需求）+ `subscribeTemplateId`（**此刻实际可授权的模板 ID**，null = 不该请求）—— 页面据此解释「为什么后台能看到场景、用户却收不到」',
+        `req=${cmTpl30?.requestSubscribe} wiring=${cmTpl30?.wiring} id=${cmTpl30?.subscribeTemplateId ?? 'NULL'}`,
+      );
+
+      const setTpl30 = await call('PUT', `${TPL30}/${cmTpl30.id}`, {
+        token: adminToken,
+        body: { wechatTemplateId: `E2E30_TPL_${stamp}`, enabled: 1 },
+      });
+      const sub30b = await call('GET', '/me/subscribe/templates', { token: uA30.token });
+      const sub30bList = sub30b.body?.data?.list ?? [];
+      assert(
+        setTpl30.body?.code === 0 &&
+          sub30bList.length === 1 &&
+          sub30bList[0]?.scene === 'commission_settled' &&
+          sub30bList[0]?.templateId === `E2E30_TPL_${stamp}`,
+        '⭐⭐ §30 配好模板 ID + 启用后，清单**恰好出现这一条**（模板 ID 由服务端下发，端上不硬编码 —— 硬编码等于第二份真相：运营换模板后端上还在请求旧 ID，两边都不报错）',
+        `code=${setTpl30.body?.code} list=${sub30bList.map((t) => t.scene).join(',') || '空'}`,
+      );
+      assert(
+        !sub30bList.some((t) => t.scene === 'refund_result'),
+        '⭐ §30 **四条件过滤真的在过滤**：`refund_result` 同样是「用户端场景 + 已接线 + 需授权」，但**没配模板 ID** → 不进清单（没有可授权的对象，请求了也白请求）',
+        `包含 refund_result=${sub30bList.some((t) => t.scene === 'refund_result')}`,
+      );
+      assert(
+        (tpl30.body?.data?.list ?? []).every((t) => t.requestSubscribe !== true || t.wiring === 'live'),
+        '⭐ §30 结构性不变式：`requestSubscribe=true` 的场景**必须已接线**（否则就是「索权不用」—— 向用户要一个我们根本不会用的授权，微信平台明确反对）',
+        '',
+      );
+      const restoreTpl30 = await call('PUT', `${TPL30}/${cmTpl30.id}`, {
+        token: adminToken,
+        body: { wechatTemplateId: null, enabled: 0 },
+      });
+      assert(
+        restoreTpl30.body?.code === 0,
+        '§30 模板还原（临时启用只为本节断言，改完立刻恢复 —— 模板是**全局**的，留着脏状态会让下一次运行偶发失败）',
+        `code=${restoreTpl30.body?.code}`,
+      );
+
+      // ------------------------------------- G2. 跨端落地页一致性（机械校验）
+      // ⚠️ 这条断言防的是一类**四处都不报错**的静默失效：`refund_result` 的通知落地页
+      //    曾硬编码成 `pages/order/detail`，而 `pages.json` 里的真实路由是
+      //    `pages/order-detail/order-detail` —— 投递日志显示「成功」，微信也照发，
+      //    用户点开通知却落到一个不存在的页面，**服务端与微信两侧都不会报错**
+      //    （微信不校验 `page`，服务端也不解析小程序路由）。
+      //    故此处把 `NOTIFY_PAGES` 与 `pages.json` 做一次**机械对账**：
+      //    凡服务端会下发给微信的落地页，端上必须真存在。
+      const specSrc30 = readFileSync(
+        join(ROOT, 'apps/api-server/src/modules/admin/template/message-template.specs.ts'),
+        'utf8',
+      );
+      const notifyBlock30 =
+        /export const NOTIFY_PAGES\s*=\s*\{([\s\S]*?)\}\s*as const;/.exec(specSrc30)?.[1] ?? '';
+      const notifyPages30 = [...notifyBlock30.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+      const declaredPages30 = new Set(
+        (
+          JSON.parse(readFileSync(join(ROOT, 'apps/miniprogram/src/pages.json'), 'utf8')).pages ?? []
+        ).map((p) => p.path),
+      );
+      const dangling30 = notifyPages30.filter((p) => !declaredPages30.has(p));
+      assert(
+        notifyPages30.length >= 3 && dangling30.length === 0,
+        '⭐⭐ §30 服务端下发的**落地页必须在小程序里真实存在**（`NOTIFY_PAGES` ⊆ `pages.json`）—— 订阅消息的 `page` 是**唯一的跨端字符串契约**，写错时微信照收、服务端照发、端上点开却落到空白页，四处都不报错；这条机械对账是它唯一的防线',
+        `pages=${notifyPages30.length} dangling=${dangling30.join(',') || '无'}`,
+      );
+
+      // -------------------------------------------------------- H. 夹具还原
+      writeDb("DELETE FROM ab_operation_log WHERE module = 'queue' AND action = '任务重试耗尽'");
+      writeDb('DELETE FROM ab_admin_user WHERE username = ?', [op30Name]);
+      // ⚠️ **不删模板行**（只还原取值）：它是种子里就有的行，删掉会让「单跑 e2e:m3」的第二次
+      //    运行在这一节前置断言上红（id 取不到）。模板是全局共享状态，本节只借不改
+      writeDb('DELETE FROM ab_balance_log WHERE user_id = ?', [uid30]);
+      writeDb('DELETE FROM ab_balance WHERE user_id = ?', [uid30]);
+      writeDb('DELETE FROM ab_commission WHERE team_leader_id = ?', [lid30]);
+      writeDb('DELETE FROM ab_refund WHERE order_no LIKE ?', [`${PREFIX30}%`]);
+      writeDb('DELETE FROM ab_payment_log WHERE order_no LIKE ?', [`${PREFIX30}%`]);
+      writeDb('DELETE FROM ab_order WHERE order_no LIKE ?', [`${PREFIX30}%`]);
+      writeDb('DELETE FROM ab_team_leader WHERE user_id = ?', [uid30]);
+      writeDb('DELETE FROM ab_team_leader WHERE user_id = ?', [uidA30]);
+      writeDb('DELETE FROM ab_user WHERE openid = ?', [L30OPENID]);
+      writeDb('DELETE FROM ab_user WHERE openid = ?', [A30OPENID]);
+      const left30 = {
+        o: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_order WHERE order_no LIKE ?', [`${PREFIX30}%`])?.c ??
+            -1,
+        ),
+        c: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_commission WHERE team_leader_id = ?', [lid30])?.c ??
+            -1,
+        ),
+        b: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_balance WHERE user_id = ?', [uid30])?.c ?? -1,
+        ),
+        r: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_refund WHERE order_no LIKE ?', [`${PREFIX30}%`])?.c ??
+            -1,
+        ),
+        l: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_team_leader WHERE user_id IN (?, ?)', [uid30, uidA30])
+            ?.c ?? -1,
+        ),
+        u: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_user WHERE openid IN (?, ?)', [L30OPENID, A30OPENID])
+            ?.c ?? -1,
+        ),
+        q: Number(
+          readDb(
+            "SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = 'queue' AND action = '任务重试耗尽'",
+          )?.c ?? -1,
+        ),
+      };
+      assert(
+        Object.values(left30).every((v) => v === 0),
+        '§30 夹具还原：订单 / 佣金 / 余额 / 退款单 / 团长 / 用户 / 死信日志全部清除 —— 不还原会让下一次重跑的平台负债凭空多出佣金，并让 D38↔D33 的对账断言在「两次读之间」产生假绿',
+        `o=${left30.o} c=${left30.c} b=${left30.b} r=${left30.r} l=${left30.l} u=${left30.u} q=${left30.q}`,
       );
     }
   }

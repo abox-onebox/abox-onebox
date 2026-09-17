@@ -52,7 +52,22 @@ const PATH_SEP = IS_WIN ? ';' : ':';
  * 边界（不改变 `@Cron` 触发时刻、不影响存量 `new Date()` 落库）见 time.ts 顶部注释。
  */
 const E2E_CLOCK_HOUR = '20';
-const CLOCK_ENV = { ABOX_SHIFT_TO_HOUR: E2E_CLOCK_HOUR };
+
+/**
+ * ── M4-3：队列驱动显式注入 ────────────────────────────────────────────────
+ * 队列**刻意不做静默降级**（`QUEUE_DRIVER=redis` 时连不上 Redis 会拒绝启动，
+ * 理由见 `common/queue/queue.types.ts`：静默退化成进程内队列会让任务悄无声息地
+ * 只存在于某个实例的内存里）。因此测试进程**必须显式声明**走进程内队列 ——
+ * 不能依赖 `apps/api-server/.env`（CI 里没有该文件）。
+ *
+ * `QUEUE_BACKOFF_BASE_MS=20` 把重试退避压到毫秒级：否则「验证失败后重试成功」
+ * 这条断言要真等 1s + 2s。
+ */
+const RUNTIME_ENV = {
+  ABOX_SHIFT_TO_HOUR: E2E_CLOCK_HOUR,
+  QUEUE_DRIVER: 'memory',
+  QUEUE_BACKOFF_BASE_MS: '20',
+};
 
 /** 各门禁：cwd 相对仓库根；cmd 与 package.json script 保持一致 */
 const GATES = {
@@ -72,15 +87,15 @@ const GATES = {
   seed: {
     cwd: 'apps/api-server',
     cmd: 'ts-node -r tsconfig-paths/register src/database/seeds/seed.ts',
-    env: CLOCK_ENV,
+    env: RUNTIME_ENV,
   },
   // M1 端到端验收：真实起服务 + 真实 HTTP，覆盖验收标准 1–5（含幂等回放与 40004 分支）
   // env.E2E_PORT：两个 e2e 各用独立端口，串跑时互不干扰（详见 scripts/lib/e2e-server.mjs）
-  'e2e:m1': { cwd: '.', cmd: 'node scripts/e2e-m1.mjs', group: 'e2e', env: { E2E_PORT: '3101', ...CLOCK_ENV } },
+  'e2e:m1': { cwd: '.', cmd: 'node scripts/e2e-m1.mjs', group: 'e2e', env: { E2E_PORT: '3101', ...RUNTIME_ENV } },
   // M2 端到端验收：团长申请即生效（C3）+ 身份守卫 + floor 落库 + 等级口径回归
-  'e2e:m2': { cwd: '.', cmd: 'node scripts/e2e-m2.mjs', group: 'e2e', env: { E2E_PORT: '3102', ...CLOCK_ENV } },
+  'e2e:m2': { cwd: '.', cmd: 'node scripts/e2e-m2.mjs', group: 'e2e', env: { E2E_PORT: '3102', ...RUNTIME_ENV } },
   // M3 端到端验收：后台登录/锁定/吊销 + 主体隔离 + 角色白名单 + 操作日志
-  'e2e:m3': { cwd: '.', cmd: 'node scripts/e2e-m3.mjs', group: 'e2e', env: { E2E_PORT: '3103', ...CLOCK_ENV } },
+  'e2e:m3': { cwd: '.', cmd: 'node scripts/e2e-m3.mjs', group: 'e2e', env: { E2E_PORT: '3103', ...RUNTIME_ENV } },
 };
 
 /** 组合门禁别名 */

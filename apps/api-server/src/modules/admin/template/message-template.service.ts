@@ -16,6 +16,8 @@ import {
   MessageTemplateState,
   findUnknownVariables,
   missingForEnable,
+  specState,
+  subscribeTemplateOf,
 } from './message-template.specs';
 
 /** 出参：单个渠道的状态 */
@@ -54,6 +56,15 @@ export interface MessageTemplateItemView {
   /** 场景级接线状态：`live` = 有代码投递点 */
   wiring: string;
   pendingReason?: string;
+  /**
+   * 是否属于「用户端应请求订阅授权」的场景（M4-3）
+   *
+   * 页面上它的用途是解释一件事：**为什么经营后台能看到场景、用户却收不到** ——
+   * 微信订阅消息是一次性授权，没授权就推不出去（`43101`）。
+   */
+  requestSubscribe: boolean;
+  /** 当前**实际**可被用户授权的模板 ID（`null` = 此刻不该请求授权，见 specs 四条件） */
+  subscribeTemplateId: string | null;
   consumedBy: string;
   note?: string;
   /** 现在能否启用（= `blockers` 为空） */
@@ -95,7 +106,7 @@ const FIELD_LABEL: Record<string, string> = {
  *
  * ## 为什么**不引入缓存**
  *
- * 全表 5 行、只在「管理页打开」与「产生一条退款通知」时读取，属低频路径；
+ * 全表 6 行、只在「管理页打开」与「产生一条退款/入账通知」时读取，属低频路径；
  * 一次主键索引查询的开销远小于引入进程内缓存后必须维护的失效逻辑
  * （M3-10 的 `BizConfigService` 之所以有缓存，是因为配置在**每次下单/结算**
  * 都被读）。**没有缓存，就没有「写完忘了失效」这一类 bug**。
@@ -298,14 +309,8 @@ export class MessageTemplateService {
   }
 
   private toView(spec: MessageTemplateSpec, row?: MessageTemplate): MessageTemplateItemView {
-    // 库中无行 → 用声明里的种子值展示，并标记 `persisted=false`
-    const state: MessageTemplateState = row
-      ? this.snapshot(row)
-      : {
-          enabled: spec.seed.enabled,
-          wechatTemplateId: spec.seed.wechatTemplateId,
-          groupContent: spec.seed.groupContent || null,
-        };
+    // 库中无行 → 用声明里的种子值展示，并标记 `persisted=false`（换算口见 `specState`）
+    const state: MessageTemplateState = specState(spec, row);
 
     const blockers = missingForEnable(spec, state);
 
@@ -339,6 +344,8 @@ export class MessageTemplateService {
       },
       wiring: spec.wiring,
       pendingReason: spec.pendingReason,
+      requestSubscribe: spec.requestSubscribe,
+      subscribeTemplateId: subscribeTemplateOf(spec, state),
       consumedBy: spec.consumedBy,
       note: spec.note,
       canEnable: blockers.length === 0,

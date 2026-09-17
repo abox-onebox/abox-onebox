@@ -110,10 +110,12 @@ import type { OrderDetailResult } from '@abox/shared-types';
 import { cancelOrder, fetchOrderDetail } from '@/api/order';
 import { ApiError, CODE_REFUND_NOT_ALLOWED } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
+import { useSubscribeMessage } from '@/composables/use-subscribe-message';
 import { fenToYuanText, formatMealDate, maskPhone } from '@/utils/format';
 import { navigateBack, pageQuery, switchTab } from '@/utils/router';
 
 const { run, loading } = useRequest();
+const subscribe = useSubscribeMessage();
 
 const detail = ref<OrderDetailResult | null>(null);
 const errorHint = ref('请返回订单列表重试');
@@ -152,6 +154,16 @@ async function confirm(): Promise<void> {
   if (submitting.value) return;
   submitting.value = true;
   try {
+    // ⭐ M4-3：请求「退款结果通知」订阅授权（`refund_result` —— 原型标注的**必推项**）
+    //
+    // ⚠️ 「必推」是**产品意图**，不是「无需用户同意」：微信订阅消息是一次性授权，
+    //    没授权就推不出去（微信回 `43101`）。所以必须在**用户点击的这一下**要授权，
+    //    否则「退款必推」在微信侧根本发不出去 —— 而这条链路此前完全缺失。
+    // 位置在第一个 `await` 之前（手势窗口），模板清单由 `onLoad` 预加载。
+    subscribe.requestFor(['refund_result'], (results) => {
+      console.log('[subscribe] refund_result', results);
+    });
+
     const res = await run(() => cancelOrder(orderNo.value));
     cancelled.value = true;
     uni.showToast({
@@ -195,6 +207,8 @@ function goList(): void {
 
 onLoad((options) => {
   orderNo.value = pageQuery(options as Record<string, unknown>, 'orderNo');
+  // 预加载订阅模板清单（**不在点击回调里拉** —— 手势窗口会失效，见 composable 头注）
+  void subscribe.preload();
   void load();
 });
 </script>

@@ -37,6 +37,19 @@ export interface AppConfig {
   };
   /** 定时任务 / 队列消费者总开关（开发期可关，避免无意义跑批） */
   tasksEnabled: boolean;
+  /**
+   * 队列重试参数（M4-3）
+   *
+   * 两驱动（redis / memory）共用同一组数字，语义对齐：
+   * 失败重试 `attempts` 次，退避 `backoffBaseMs * 2^(attempt-1)`。
+   * e2e 通过 `QUEUE_BACKOFF_BASE_MS=20` 把退避压到毫秒级，否则验证重试要真等好几秒。
+   */
+  queue: {
+    attempts: number;
+    backoffBaseMs: number;
+    /** redis 驱动的 Worker 并发（memory 驱动为串行泵，不受此项影响） */
+    concurrency: number;
+  };
   /** Mock 行为参数（PROVIDER_MODE=mock 时生效） */
   mock: {
     wxOpenidPrefix: string;
@@ -72,6 +85,11 @@ export default registerAs('app', (): AppConfig => ({
     providerMode: str(process.env.PROVIDER_MODE, 'mock') as ProviderMode,
   },
   tasksEnabled: bool(process.env.TASKS_ENABLED, true),
+  queue: {
+    attempts: num(process.env.QUEUE_ATTEMPTS, 3),
+    backoffBaseMs: num(process.env.QUEUE_BACKOFF_BASE_MS, 1000),
+    concurrency: num(process.env.QUEUE_CONCURRENCY, 2),
+  },
   mock: {
     wxOpenidPrefix: str(process.env.MOCK_WX_OPENID_PREFIX, 'mock_openid_'),
     payAutoSuccess: bool(process.env.MOCK_PAY_AUTO_SUCCESS, true),

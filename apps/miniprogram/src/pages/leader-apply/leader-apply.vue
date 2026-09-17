@@ -137,6 +137,7 @@ import { LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
 import { fetchMe } from '@/api/auth';
 import { applyLeader } from '@/api/leader';
 import { toastApiError, useRequest } from '@/composables/use-request';
+import { useSubscribeMessage } from '@/composables/use-subscribe-message';
 import { useLeaderStore } from '@/stores/leader';
 import { useUserStore } from '@/stores/user';
 import { switchTab } from '@/utils/router';
@@ -154,6 +155,7 @@ const LADDER: readonly LeaderLevel[] = [
 ];
 
 const { run } = useRequest();
+const subscribe = useSubscribeMessage();
 const userStore = useUserStore();
 const leaderStore = useLeaderStore();
 
@@ -235,6 +237,16 @@ async function submit(): Promise<void> {
 
   submitting.value = true;
   try {
+    // ⭐ M4-3：请求「团长申请确认」订阅授权（`leader_apply`）
+    //
+    // 位置刻意在**第一个 await 之前**：微信只允许在用户点击的**同步流程**里弹授权框，
+    // 一旦先 await 了网络请求，手势窗口就关了（`fail can only be invoked by user
+    // TAP gesture`）。模板清单由 `onLoad` 的 `preload()` 提前缓存好，故此处可同步调用。
+    // 它**不阻塞**下面的申请 —— 授权失败照样申请成功（授权只影响「将来能不能收到通知」）。
+    subscribe.requestFor(['leader_apply'], (results) => {
+      console.log('[subscribe] leader_apply', results);
+    });
+
     const res = await run(() =>
       applyLeader({
         buildingId,
@@ -265,6 +277,8 @@ async function submit(): Promise<void> {
 }
 
 onLoad(() => {
+  // 预加载订阅模板清单（**不在点击回调里拉** —— 见 `use-subscribe-message` 头注）
+  void subscribe.preload();
   void refresh();
 });
 </script>

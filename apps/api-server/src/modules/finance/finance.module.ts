@@ -11,6 +11,7 @@ import {
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { Order, PaymentLog, Refund } from '../../database/entities/order.entity';
 import { Dish, Supplier, SupplierDishDaily } from '../../database/entities/supplier.entity';
+import { OperationLog } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
 import { MessageModule } from '../message/message.module';
@@ -90,6 +91,15 @@ import { WithdrawService } from './withdraw.service';
       Supplier,
       Dish,
       SupplierDishDaily,
+      // ⭐ M4-3：`RefundService` 在「退款重试入队失败」时要落一条 `module=queue`
+      //    操作日志（那是「账务已冲销、钱却没退也没重试」的唯一留痕）。
+      //    ⚠️ **必须在此显式注册**：`CommonModule` 虽然 `@Global()` 且
+      //    `forFeature([TeamLeader, OperationLog])`，但它的 `exports` 里没有
+      //    `TypeOrmModule` —— `@Global()` 只让该模块**自己 exports 的东西**全局可见，
+      //    从别处 import 进来的 provider 不会二次导出。故 `OperationLogRepository`
+      //    在 FinanceModule 上下文不可解析（启动即 `Nest can't resolve dependencies`）。
+      //    与 `tasks.module.ts` / `admin.module.ts` 的既有做法一致：谁注入谁注册。
+      OperationLog,
     ]),
     // M3-12：退款成功后的「退款结果通知」投递口（必推项，见 message-template.specs）
     MessageModule,

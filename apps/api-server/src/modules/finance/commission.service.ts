@@ -1,17 +1,21 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, DataSource, EntityManager, FindOptionsWhere, Repository } from 'typeorm';
 
 import { LEADER_LEVEL_META, LeaderLevel, WithdrawStatus } from '@abox/shared-types';
 
 import { BizConfigService } from '../../common/services/biz-config.service';
+import { QueueService } from '../../common/queue/queue.service';
 import { monthRangeOf, todayBj } from '../../common/utils/time';
-import { round2 } from '../../common/utils/money';
+import { money, round2 } from '../../common/utils/money';
 import { normalizePage, paginate } from '../../common/utils/response';
 import { Balance, BalanceLog, Commission } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { Order } from '../../database/entities/order.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
+import { SettleOrdersPayload } from '../../queues/queue-payloads';
+import { MessageService } from '../message/message.service';
+import { NOTIFY_PAGES } from '../admin/template/message-template.specs';
 import {
   AdminCommissionsQueryDto,
   AdminSettleCommissionsDto,
@@ -76,6 +80,15 @@ export interface CommissionSettleView {
   amountFen: number;
   quantity: number;
   leaders: CommissionSettleLeaderView[];
+  /**
+   * 已入队「佣金入账通知」的团长数（M4-3）
+   *
+   * ⭐ 为什么要在出参里给这个数：入队失败**不会**让入账失败（这是队列的本分），
+   *    于是它就成了一个「不出现在任何地方就没人知道」的静默失败。
+   *    给出来之后：`notifyQueued < leaders.length` 直接说明「有人入账了但通知没发出去」，
+   *    e2e 也能断言，运维照 `ab_operation_log`（`module=queue`）查详情。
+   */
+  notifyQueued: number;
   /** 跳过的**原因**（不静默丢弃：运营必须能看见「为什么没结」） */
   skippedReasons: string[];
   /** ⚠️ 口径说明（一期 `pending` 常态为 0 的原因 —— 必须下发给端上） */
@@ -105,13 +118,20 @@ export const COMMISSION_SETTLE_NOTE =
 
 @Injectable()
 export class CommissionService {
+  private readonly logger = new Logger(CommissionService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(Commission) private readonly commissionRepo: Repository<Commission>,
     @InjectRepository(Balance) private readonly balanceRepo: Repository<Balance>,
     @InjectRepository(BalanceLog) private readonly balanceLogRepo: Repository<BalanceLog>,
     @InjectRepository(Withdraw) private readonly withdrawRepo: Repository<Withdraw>,
+    // M4-3：入账通知要用 `leader → userId` 找收件人（团长表已在 FinanceModule forFeature）
+    @InjectRepository(TeamLeader) private readonly teamLeaderRepo: Repository<TeamLeader>,
     private readonly bizConfig: BizConfigService,
+    // M4-3：入账后「通知团长」的任务入队口（消费者 `queues/settle-orders.consumer.ts`）
+    private readonly queue: QueueService,
+    private readonly message: MessageService,
   ) {}
 
   /**
@@ -682,6 +702,7 @@ export class CommissionService {
         amountFen: 0,
         quantity: 0,
         leaders: [],
+        notifyQueued: 0,
         skippedReasons: [],
         note: COMMISSION_SETTLE_NOTE,
       };
@@ -697,6 +718,8 @@ export class CommissionService {
 
     const leaders: CommissionSettleLeaderView[] = [];
     const skippedReasons: string[] = [];
+    /** 通知种子：事务内收集（要用到 `list` 里的 mealDate），**事务提交后才入队** */
+    const notices: SettleOrdersPayload[] = [];
     let settled = 0;
     let skipped = 0;
     let amountFen = 0;
@@ -753,8 +776,19 @@ export class CommissionService {
           amountFen: credited.amountFen,
           quantity: credited.quantity,
         });
+
+        // 通知种子（**只收集，不入队** —— 事务还没提交，此时入队可能发出「假入账」通知）
+        notices.push({
+          mealDate: this.commonMealDate(list, date),
+          leaderId,
+          settledCount: credits.length,
+          amountFen: credited.amountFen,
+        });
       }
     });
+
+    // ⭐ 入队必须在**事务提交之后**：事务若回滚，钱没入账却已发通知 = 退款链路同款「说不清」。
+    const notifyQueued = await this.enqueueSettleNotices(notices);
 
     return {
       date,
@@ -764,9 +798,109 @@ export class CommissionService {
       amountFen,
       quantity,
       leaders,
+      notifyQueued,
       skippedReasons,
       note: COMMISSION_SETTLE_NOTE,
     };
+  }
+
+  /**
+   * 派发「佣金入账通知」任务（**入队失败绝不影响入账结果**）
+   *
+   * 逐个团长入队：某一条失败只影响那一个人（`enqueue` 单个抛错不中断整批），
+   * 且失败必须**喊出来** —— 入账已发生、通知没发，是运营需要知道的状态。
+   *
+   * @returns 成功入队的条数（`< notices.length` 说明有团长收不到通知）
+   */
+  private async enqueueSettleNotices(notices: SettleOrdersPayload[]): Promise<number> {
+    let queued = 0;
+    for (const n of notices) {
+      try {
+        await this.queue.enqueue('settle-orders', n);
+        queued += 1;
+      } catch (e) {
+        this.logger.error(
+          `⚠️ 佣金入账通知入队失败（团长 #${n.leaderId}，${n.mealDate}）：` +
+            `${e instanceof Error ? e.message : String(e)} —— 该团长收不到入账通知（**入账本身已完成**）`,
+        );
+      }
+    }
+    return queued;
+  }
+
+  /**
+   * 团长本次入账的归属出餐日（用于通知文案）
+   *
+   * 正常路径下 D35 的 `date` 必填且与佣金行一致（跑批由 `ScheduleService` 推导「昨日」），
+   * 只有**手动补跑不带日期**时才会出现「一个团长跨多个出餐日」。
+   * 那种情况下取**最近的一天**并沿用批次 `date`：通知文案只需要一个日期，
+   * 精确到日的明细在小程序佣金页里（那里按 `meal_date` 完整展示）。
+   */
+  private commonMealDate(list: Commission[], batchDate: string | null): string {
+    const dates = [...new Set(list.map((r) => String(r.mealDate)))].sort();
+    if (dates.length === 1) return dates[0];
+    return batchDate ?? dates[dates.length - 1] ?? '';
+  }
+
+  /**
+   * 投递一条「佣金入账通知」（**由队列消费者调用**，M4-3）
+   *
+   * ## 为什么通知逻辑在这里，而不在消费者里
+   *
+   * `leader → userId → openid` 的换算是**本模块的数据**（消费者不该为了发一条通知
+   * 去 `forFeature` 团长表）；且这条文案的变量必须与
+   * `MESSAGE_TEMPLATE_SPECS.commission_settled` 的白名单一致 —— 两者放同一个仓库层级
+   * 才好一起改。消费者只做「拿到载荷 → 调本方法」（与 `order-paid` 调 `markPaid`
+   * 完全同构）。
+   *
+   * ## 三种结局（**抛错 = 需要重试**，见 `queue.types.ts` 处理器契约）
+   *
+   * | 情况 | 处理 |
+   * |------|------|
+   * | 团长档案不存在 | WARN 后**正常结束**（脏数据，重试三次也不会有档案） |
+   * | 场景未启用 / 缺模板 ID | `notify()` 返回 `delivered=false`，**正常结束**（如实状态，不是失败） |
+   * | 查库异常 | 抛出 → 队列退避重试 |
+   *
+   * ⚠️ 通知**失败不重试到天荒地老**：重试三次仍投不出去 → 进死信 + 写
+   *    `ab_operation_log`（`module=queue`），由运维看，而不是无限重推骚扰用户。
+   */
+  async notifySettled(payload: SettleOrdersPayload): Promise<void> {
+    const leader = await this.teamLeaderRepo.findOne({ where: { id: Number(payload.leaderId) } });
+    if (!leader) {
+      this.logger.warn(
+        `入账通知跳过：团长 #${payload.leaderId} 档案不存在（${payload.mealDate}，` +
+          `${payload.settledCount} 笔）—— 入账已完成，仅通知无处可发`,
+      );
+      return;
+    }
+
+    const amount = money(payload.amountFen / 100) ?? '0.00';
+    try {
+      const r = await this.message.notify({
+        scene: 'commission_settled',
+        userId: Number(leader.userId),
+        page: NOTIFY_PAGES.leaderCommission,
+        variables: {
+          mealDate: payload.mealDate,
+          amount,
+          settledCount: String(payload.settledCount),
+        },
+        wxData: {
+          mealDate: { value: payload.mealDate },
+          amount: { value: amount },
+          settledCount: { value: String(payload.settledCount) },
+        },
+      });
+      if (!r.delivered) {
+        this.logger.log(`入账通知未投递（团长 #${payload.leaderId}）：${r.reason ?? '-'}`);
+      }
+    } catch (e) {
+      // `MessageService.notify()` 已承诺不抛异常，此处兜底只为「通知永远不会
+      // 变成队列任务失败」——否则一次通知故障会白跑三次重试再进死信。
+      this.logger.warn(
+        `入账通知异常（团长 #${payload.leaderId}）：${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 }
 

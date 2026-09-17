@@ -12,11 +12,14 @@ import {
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { maskAccount } from '../../common/utils/crypto';
+import { toBjIso } from '../../common/utils/time';
 import { Building } from '../../database/entities/building.entity';
 import { Balance, Commission } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { User } from '../../database/entities/user.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
+import { NOTIFY_PAGES } from '../admin/template/message-template.specs';
+import { MessageService } from '../message/message.service';
 import {
   ApplyLeaderReqDto,
   LeaderAgreementReqDto,
@@ -56,6 +59,8 @@ export class TeamLeaderService {
     private readonly inviteService: LeaderInviteService,
     private readonly levelService: LeaderLevelService,
     private readonly dataSource: DataSource,
+    // M4-3：申请成为团长后的「提交确认」通知（场景 `leader_apply`）
+    private readonly message: MessageService,
   ) {}
 
   /**
@@ -115,7 +120,52 @@ export class TeamLeaderService {
       return saved;
     });
 
+    // ⭐ M4-3：通知投递在**事务提交之后**（`leader_apply` 场景）
+    //    放进事务里就是「事务回滚了、祝贺通知却已发出」—— 与退款通知同一条纪律。
+    await this.notifyLeaderApplied(userId, now);
+
     return { isLeader: true, leader: await this.toProfile(leader, building.name) };
+  }
+
+  /**
+   * 「团长申请提交确认」通知（M4-3 接线 `leader_apply`）
+   *
+   * ## 为什么 C3「提交即生效、无审核」也需要通知
+   *
+   * 「即生效」解决的是**权限**（提交完立刻能进团长端），但解决不了**认知**：
+   * 刚成为团长的人不知道佣金怎么算、余额去哪看、什么时候开始计佣 —— 这些都在
+   * 小程序里，而**刚上任的人不会自己去找**。通知是把他领进门的唯一动作。
+   *
+   * ## 三条纪律
+   *
+   * 1. **事务外调用**（调用点已在 `apply()` 的事务之后）；
+   * 2. **失败不影响申请结果** —— `MessageService.notify()` 已承诺不抛异常，
+   *    此处再兜一层 try：一次通知故障绝不能让「申请成功」变成「申请失败」；
+   * 3. **未启用就静默跳过**（一期没有微信模板 ID，`leader_apply` 的启用闸门会
+   *    拦住启用）—— 这是**如实状态**：代码接好了，配置还没到。
+   */
+  private async notifyLeaderApplied(userId: number, at: Date): Promise<void> {
+    try {
+      const applyAt = toBjIso(at) ?? '';
+      const leaderLevel = LEADER_LEVEL_META[LeaderLevel.TRAINEE]?.label ?? LeaderLevel.TRAINEE;
+      const r = await this.message.notify({
+        scene: 'leader_apply',
+        userId,
+        page: NOTIFY_PAGES.leaderWorkbench,
+        variables: { applyAt, leaderLevel },
+        wxData: {
+          applyAt: { value: applyAt },
+          leaderLevel: { value: leaderLevel },
+        },
+      });
+      if (!r.delivered) {
+        this.logger.log(`团长申请通知未投递（user=${userId}）：${r.reason ?? '-'}`);
+      }
+    } catch (e) {
+      this.logger.warn(
+        `团长申请通知异常（user=${userId}）：${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   /** L18 · 勾选同意《团长合作协议》（补签 / 版本升级重签；申请时已含一次） */

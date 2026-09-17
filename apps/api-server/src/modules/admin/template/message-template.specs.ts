@@ -37,6 +37,38 @@ export const MESSAGE_CHANNEL_LABEL: Record<MessageChannel, string> = {
 };
 
 /**
+ * 通知点击后跳转的小程序页（**唯一真相**，M4-3 新增）
+ *
+ * ## 为什么要有这个常量
+ *
+ * 订阅消息的 `page` 参数若写错，用户**点开通知会落到「页面不存在」**——
+ * 而且这条错误**没有任何日志会报**（微信侧只管投递，不管页面存不存在），
+ * 属于典型「静默失效」：投递日志显示 `success`，用户体验是坏的。
+ *
+ * M4-3 之前 `refund_result` 硬编码的是 `pages/order/detail`，而
+ * `apps/miniprogram/src/pages.json` 里的真实路由是 `pages/order-detail/order-detail`
+ * —— 正好是这个坑。抽取成常量后，**两个投递点共用一份**，以后新增场景
+ * 也从这里选，不再各自手抄。
+ *
+ * ⚠️ 真值来源是 `apps/miniprogram/src/pages.json`（跨 app，无法在编译期校验）。
+ *    改动小程序路由时**必须**同步改这里 —— 否则就是上面那种「投递成功但点不开」。
+ *    二期可考虑由 `pages.json` 生成，一期保持手抄 + 本注释。
+ */
+export const NOTIFY_PAGES = {
+  /** 订单详情（退款结果通知的落地页） */
+  orderDetail: 'pages/order-detail/order-detail',
+  /** 团长佣金明细（佣金入账通知的落地页） */
+  leaderCommission: 'pages/leader/commission',
+  /**
+   * 团长工作台（团长申请确认通知的落地页）
+   *
+   * 选工作台而非「我的」：刚申请的团长需要的是**下一步做什么**（今日战报 / 分享物料 /
+   * 佣金规则入口都在工作台），而不是一个身份展示页。
+   */
+  leaderWorkbench: 'pages/leader/workbench',
+} as const;
+
+/**
  * 渠道的**必要条件** —— 启用闸门的唯一依据
  *
  * `wechat_subscribe` 缺模板 ID 时投递**必然失败**（微信侧无从知道用哪个模板）；
@@ -81,6 +113,26 @@ export interface MessageTemplateSpec {
   mandatory: boolean;
   /** 变量白名单 —— `groupContent` 里只允许出现这些 `{{变量}}` */
   variables: string[];
+  /**
+   * 是否需要在**用户小程序端**向用户请求订阅授权（M4-3）
+   *
+   * ## 为什么必须是机器可读的布尔值，而不是从 `audience` 文本反推
+   *
+   * 微信订阅消息是**一次性授权**：用户没点过「允许」的场景，服务端再推也是白推
+   * （微信回 `43101 用户拒绝接收`）。所以「该场景要不要请求授权」是一个
+   * **投递成败的前置事实**，必须能被执行代码直接读取。
+   * 从 `audience` 这个中文展示串里 `includes('团长')` 反推 —— 改一次文案就静默失效，
+   * 正是本项目反复栽的形态。
+   *
+   * ## 判定标准（三条全中才为 `true`）
+   *
+   * 1. 收件人是**用户/团长**（同一小程序身份）——供应商端与后台不在此列；
+   * 2. 场景走 `wechat_subscribe` 渠道（微信群人工通知不需要授权）；
+   * 3. 代码**真有**投递点（`wiring === 'live'`）—— **`pending` 场景必须为 `false`**：
+   *    向用户索要一个我们根本不会用的授权，是「索权不用」，既骚扰用户、也是
+   *    微信平台明确反对的行为。
+   */
+  requestSubscribe: boolean;
   /** 代码消费点（**事实**，不是设计意图；`—` 表示还没有投递点） */
   consumedBy: string;
   /** 场景级接线状态 */
@@ -98,7 +150,18 @@ export interface MessageTemplateSpec {
 }
 
 /**
- * 5 个场景（与原型 P36 的 5 行逐一对应）
+ * 6 个场景
+ *
+ * ## ⚠️ 与原型 P36 的关系（必须如实说明，别让它变成「两个真相」）
+ *
+ * 前 5 行与原型 P36「消息推送策略」的 5 行**逐一对应**（`user_order_status` /
+ * `leader_delivery` / `merchant_cook` / `leader_apply` / `refund_result`）。
+ * 第 6 行 `commission_settled` 是 **M4-3 新增**：原型没写这一行，但它对应
+ * 已实现的两段式佣金链路（T 日确认计佣 → T+1 02:00 入账，见 M4-2 定稿），
+ * 入账后**必须通知团长**（否则团长只能自己去小程序翻余额，两段式会变成投诉源）。
+ *
+ * → 后台 P36 页面会显示 **6 行**。这不是页面写错了，是代码事实比原型多了 1 行；
+ *   若运营问「为什么多了」，答案在本段。
  *
  * ⚠️ 增删场景必须同时改这里 **和** 种子（`seeds/seed.ts`）——
  *    种子由本清单派生，不存在第二份场景列表。
@@ -112,6 +175,8 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     trigger: '订单状态流转（已支付 / 已出餐 / 配送中）',
     mandatory: false,
     variables: ['orderNo', 'statusText', 'mealDate'],
+    // `pending` → 不请求授权：索权却不用，是明确该避免的行为
+    requestSubscribe: false,
     consumedBy: '—（一期无投递点）',
     wiring: 'pending',
     pendingReason:
@@ -137,6 +202,8 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     trigger: '餐送达办公楼楼下（约 11:30）',
     mandatory: false,
     variables: ['buildingName', 'mealDate', 'arriveTime', 'quantity'],
+    // 微信群人工通知：不经过微信订阅消息，无需授权
+    requestSubscribe: false,
     consumedBy: '—（一期无投递点，靠人工发群）',
     wiring: 'pending',
     pendingReason:
@@ -160,6 +227,8 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     trigger: '截单后（T-1 24:00 之后）',
     mandatory: false,
     variables: ['mealDate', 'centerName', 'dishCount'],
+    // 收件人是**供应商**（独立主体、不是用户小程序身份）→ 不由用户端请求授权
+    requestSubscribe: false,
     consumedBy: '—（一期无投递点）',
     wiring: 'pending',
     pendingReason:
@@ -179,10 +248,15 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     trigger: '提交团长申请即时',
     mandatory: false,
     variables: ['applyAt', 'leaderLevel'],
-    consumedBy: '—（一期无投递点）',
-    wiring: 'pending',
-    pendingReason:
-      '团长申请为 C3「申请即生效、无审核」，申请成功页已即时反馈；推送提醒待二期接入。',
+    requestSubscribe: true,
+    consumedBy:
+      'team-leader/team-leader.service.ts → MessageService.notify()（M4-3 接线·提交后事务外）',
+    wiring: 'live',
+    note:
+      '⭐ M4-3 接线：C3「申请即生效、无审核」**不等于**无需通知 —— 团长当场并不知道' +
+      '「佣金怎么算、去哪看余额、什么时候开始生效」，这些都写在小程序里，' +
+      '而**刚成为团长的人不会自己去找**。通知投递在申请事务**提交之后**：' +
+      '事务回滚了通知却已发出，就是「祝贺你成为团长」的假消息。',
     seed: {
       enabled: 0,
       wechatTemplateId: null,
@@ -198,6 +272,7 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     trigger: '退款到账即触达',
     mandatory: true,
     variables: ['orderNo', 'amount', 'refundedAt'],
+    requestSubscribe: true,
     consumedBy: 'finance/refund.service.ts → MessageService.notify()（M3-12 接线）',
     wiring: 'live',
     note:
@@ -211,6 +286,31 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
       wechatTemplateId: null,
       groupContent:
         '【ABox 退款】订单 {{orderNo}} 已于 {{refundedAt}} 退款 ¥{{amount}}，请留意到账。',
+    },
+  },
+  {
+    scene: 'commission_settled',
+    label: '团长佣金入账通知',
+    audience: '团长',
+    channels: ['wechat_subscribe'],
+    trigger: '佣金入账完成（T+1 02:00 `commission-settle` 跑批之后）',
+    mandatory: false,
+    variables: ['mealDate', 'amount', 'settledCount'],
+    requestSubscribe: true,
+    consumedBy:
+      'finance/commission.service.ts → MessageService.notify()（M4-3 接线·队列 settle-orders）',
+    wiring: 'live',
+    note:
+      '⭐ 两段式佣金的**必要配套**：T 日确认计佣、T+1 02:00 才入账（见 `COMMISSION_SETTLE_NOTE`），' +
+      '中间隔了一夜。若不通知，团长在小程序里看到的是「昨天确认了却没钱」——两段式本身没问题，' +
+      '但**不解释就会被当成漏结**。注意通知中**不含订单明细**：明细在佣金页看，通知塞不下也会过期。',
+    seed: {
+      // 与 refund_result 同理：场景已接线（live），但一期没有微信订阅消息模板 ID，
+      // 启用闸门会拦住启用 → 如实显示「未启用（缺模板 ID）」而不是假装在发。
+      enabled: 0,
+      wechatTemplateId: null,
+      groupContent:
+        '【ABox 佣金】你 {{mealDate}} 的佣金 ¥{{amount}}（{{settledCount}} 笔）已入账，可在小程序查看明细。',
     },
   },
 ];
@@ -237,6 +337,45 @@ export interface MessageTemplateState {
   enabled: number;
   wechatTemplateId: string | null;
   groupContent: string | null;
+}
+
+/** 库中行的最小形状（`ab_message_template` 的三个可编辑字段） */
+export interface MessageTemplateRowLike {
+  enabled: number;
+  wechatTemplateId?: string | null;
+  groupContent?: string | null;
+}
+
+/**
+ * ⭐ **「库中行（或没有行）→ 生效状态」的唯一换算口**（M4-3 提取）
+ *
+ * 三处需要它：管理侧 `toView`（出参展示）、投递侧 `MessageService.notify`（判能不能发）、
+ * 订阅侧 `MessageSubscribeService`（判能不能请求授权）。
+ *
+ * ⚠️ 提取的**理由**：这三处原先各自写了一遍三元表达式，形状完全相同 —— 属于
+ *    「同一件事写三遍」，任一处被改（例如将来库表加一个字段）就会漂移成
+ *    「管理页说已启用、投递侧判定不该发」。**规则单点、访问路径各自**，
+ *    与 `missingForEnable` / `stats.constants.ts` 同一纪律。
+ *
+ * ⚠️ `groupContent` 的 `|| null`：种子里的 `''` 表示「没有文案」，
+ *    与库中的 `NULL` 必须同义 —— 否则「未配置」会有两种表示（M3-12 已裁过一次）。
+ */
+export function specState(
+  spec: MessageTemplateSpec,
+  row?: MessageTemplateRowLike | null,
+): MessageTemplateState {
+  if (row) {
+    return {
+      enabled: row.enabled,
+      wechatTemplateId: row.wechatTemplateId ?? null,
+      groupContent: row.groupContent ?? null,
+    };
+  }
+  return {
+    enabled: spec.seed.enabled,
+    wechatTemplateId: spec.seed.wechatTemplateId,
+    groupContent: spec.seed.groupContent || null,
+  };
 }
 
 /**
@@ -286,3 +425,58 @@ export function findUnknownVariables(content: string, allowed: readonly string[]
   }
   return [...found];
 }
+
+/**
+ * ⭐ **用户端该请求哪些场景的订阅授权（唯一判定口）** —— M4-3
+ *
+ * 返回该场景**当前**应让用户授权的微信模板 ID；返回 `null` = 本场景此刻不该请求授权。
+ *
+ * ## 四个条件，缺一不可
+ *
+ * | 条件 | 不满足时的后果 |
+ * |------|----------------|
+ * | `spec.requestSubscribe` | 非用户端场景（供应商 / 微信群）会去骚扰用户要一个用不上的授权 |
+ * | `spec.wiring === 'live'` | 索权却不用（代码根本没有投递点）—— 微信平台明确反对 |
+ * | `state.enabled === 1` | 场景关着，就算授权了也不会发 —— 用户的「允许」被浪费 |
+ * | `wechatTemplateId` 非空 | 没有模板 ID 就**没有可授权的对象**：`requestSubscribeMessage` 的 `tmplIds` 必须来自微信公众平台，传空/瞎编会被微信拒（`20001` 等） |
+ *
+ * ## 为什么放在 specs 里（与 `missingForEnable` 同一纪律）
+ *
+ * 「哪些场景该请求授权」既决定**投递能不能成功**（没授权就推不出去），
+ * 又决定**端上向用户显示什么**。两边各写一遍必然漂移 —— 项目里已经有过
+ * 「管理侧允许启用、投递侧判定不可发」的死角，这里不重犯。
+ *
+ * ⚠️ 一期**必然返回空数组**：没有微信账号 → `wechat_template_id` 全为空 →
+ *    第 4 条直接不成立。这不是接口坏了（见 `MESSAGE_SUBSCRIBE_NOTE`），
+ *    端上拿到空数组时**什么都不做**，而不是拿假 ID 去调微信。
+ */
+export function subscribeTemplateOf(
+  spec: MessageTemplateSpec,
+  state: MessageTemplateState,
+): string | null {
+  if (!spec.requestSubscribe) return null;
+  if (spec.wiring !== 'live') return null;
+  if (state.enabled !== 1) return null;
+  const id = state.wechatTemplateId;
+  if (id === null || id === undefined || String(id).trim() === '') return null;
+  return String(id).trim();
+}
+
+/**
+ * 用户端接口的口径说明（**必须下发** —— 端上不复制第二份文案）
+ *
+ * ⚠️ 「空列表」有两种完全不同的含义，不写清楚端上就会当成一种：
+ *    · **正常**：一期没有微信账号 → 没有模板 ID → 无场景可授权（当前状态）；
+ *    · **异常**：运营把所有场景都关掉了。
+ *    两者端上表现相同（不请求授权），但排查方向相反。
+ */
+export const MESSAGE_SUBSCRIBE_NOTE =
+  '本清单 = **当前可以让用户授权**的订阅消息场景（条件：用户端场景 · 已接线 · 已启用 · ' +
+  '已配置微信模板 ID，四条全中）。列表为空**通常是正常的**：一期尚未申请微信账号，' +
+  '所有场景的模板 ID 均为空，故没有可授权的对象 —— 此时端上**不应**调用订阅接口，' +
+  '更不能用假 ID 去调。' +
+  '② 微信订阅消息为**一次性授权**：用户点过一次「允许」，服务端才推得出去（否则微信回 ' +
+  '`43101 用户拒绝接收`）。故「必推项」在微信侧也**必须先拿到授权** —— ' +
+  '原型说「退款结果必推」指的是产品意图，不是「无需用户同意」。' +
+  '③ ⚠️ 模板 ID 由运营在后台（P36）配置，**端上不得硬编码** —— 硬编码等于第二份真相，' +
+  '运营换模板后端上还在请求旧 ID。';
