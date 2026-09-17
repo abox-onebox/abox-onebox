@@ -393,11 +393,11 @@ apps/api-server/
 │   │   │   ├── withdraw.service.ts     ← 提现申请与审批（申请 → 审批 → 生成打款批次）
 │   │   │   ├── payout.service.ts       ← 佣金出款批次（**C11**：灵活用工平台代发 + 个税代扣；一期清单导出 + 回执登记）
 │   │   │   └── dto/
-│   │   ├── message/                    ← 消息推送
+│   │   ├── message/                    ← 消息推送（M3-12 投递侧 + M4-3 订阅侧）
 │   │   │   ├── message.module.ts
-│   │   │   ├── message.service.ts
-│   │   │   ├── wechat-template.service.ts
-│   │   │   └── templates/
+│   │   │   ├── message.service.ts      ← 投递口 `notify()`（不抛异常，问题收敛进出参）
+│   │   │   ├── message.controller.ts   ← U18 订阅授权清单
+│   │   │   └── message-subscribe.service.ts ← 可授权模板的四条件过滤（M4-3）
 │   │   ├── stats/                      ← 数据统计
 │   │   │   ├── stats.module.ts
 │   │   │   ├── stats.controller.ts
@@ -411,6 +411,11 @@ apps/api-server/
 │   │       ├── operation-log/
 │   │       ├── config/
 │   │       └── dashboard/
+│   ├── queues.backend → common/queue/  ← ⚠️ 实际落点在 `src/common/queue/`（随 CommonModule 全局可用）：
+│   │   ├── queue.service.ts            ← 统一入队口（`enqueue` / `register`）
+│   │   ├── queue.types.ts              ← 处理器契约（**抛错 = 需要重试**，自行判断可终止任务）
+│   │   ├── memory.queue.backend.ts     ← 进程内驱动（e2e / 本地 · **durable=false 如实上报**）
+│   │   └── redis.queue.backend.ts      ← BullMQ 驱动（生产 · 连不上**拒绝启动**，fail-closed）
 │   ├── tasks/                          ← 定时任务（时间点已按 L3 / PRD §1.2 校正）
 │   │   ├── tasks.module.ts
 │   │   ├── schedule.service.ts         ← @nestjs/schedule
@@ -422,11 +427,13 @@ apps/api-server/
 │   │   ├── supplier-share.task.ts      ← T+1 02:00 生成供应商应付结算单
 │   │   ├── reconciliation.task.ts      ← 每日 04:00 对账
 │   │   └── leader-expire.task.ts       ← 每日 03:00 见习团长 30 天未促单失效（C2）
-│   ├── queues/                         ← 消息队列消费者（MVP 用 Redis + BullMQ）
+│   ├── queues/                         ← 消息队列消费者（MVP 用 Redis + BullMQ · M4-3 实装）
 │   │   ├── queues.module.ts
-│   │   ├── order-paid.consumer.ts
-│   │   ├── refund-apply.consumer.ts
-│   │   └── settle-orders.consumer.ts
+│   │   ├── queue-payloads.ts           ← 三个队列的**载荷契约**（单一真相）
+│   │   ├── queue-admin.controller.ts   ← Q1 GET /admin/queue 运行态可见性
+│   │   ├── order-paid.consumer.ts      ← 薄适配层：注册 + 转发，业务逻辑仍在原服务
+│   │   ├── refund-apply.consumer.ts    ← → RefundService.attemptWxRefund（失败注入点见 mock provider）
+│   │   └── settle-orders.consumer.ts   ← → CommissionService.notifySettled（**按团长逐条**载荷）
 │   └── health/
 │       └── health.controller.ts        ← /health
 ├── test/
