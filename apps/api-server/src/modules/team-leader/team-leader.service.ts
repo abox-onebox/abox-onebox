@@ -190,7 +190,12 @@ export class TeamLeaderService {
    *   供端上逐条引导）：
    *     ① 可用余额 / 冻结余额未清零 —— 钱在账上却失去提现入口会造成事实上的资金悬空
    *     ② 存在在途提现申请（pending/approved/paying）—— 审批链仍指向一个已离职团长
-   *     ③ 存在待结算佣金（`ab_commission.status='pending'`）—— 将来入账无归属
+   *     ③ 存在待入账佣金（`ab_commission.status='pending'`）—— 次日跑批入账时无归属
+   *
+   * ⭐ **本条（③）自 2026-09-17 M4-2 两段式起才真正会触发** —— 原先佣金在确认收货时
+   *   即时入账（直接写 `settled`），生产链路里 `pending` 恒为 0，这条守卫是**死代码**
+   *   （《缺陷与陷阱》#52）。两段式让 `pending` 成为每天都会出现的正常中间态，守卫
+   *   随之「复活」，故 e2e §29 为它补了正向用例：**有 pending 佣金时必须拒绝退出**。
    *
    * 【幂等】退出后 `status=2`，重复调用会被 `LeaderGuard` / `requireActiveLeader`
    *   以 `20003` 拒绝；端上另配 `Idempotency-Key`，同键重放返回首次结果（不重复执行）。
@@ -288,7 +293,9 @@ export class TeamLeaderService {
     if (pendingCommission > 0) {
       blockers.push({
         code: 'COMMISSION_PENDING',
-        text: `有 ${pendingCommission} 笔佣金待结算`,
+        // ⚠️ 文案要给出**下一步怎么做**，不能只说「有 N 笔」（错误码是行动指引）：
+        //    两段式下待入账会在次日 02:00 跑批后自动清零，故顺带告知可退出时机。
+        text: `有 ${pendingCommission} 笔佣金待入账（次日 02:00 自动入账后方可退出）`,
         count: pendingCommission,
       });
     }

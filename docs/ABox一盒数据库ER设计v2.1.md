@@ -632,7 +632,7 @@ PARTITION BY RANGE (TO_DAYS(`created_at`)) (
 | `ab_building` | 不变 |
 | `ab_dish` | 不变 |
 | `ab_payment_log` | 不变 |
-| `ab_commission` | 不变（流水表；佣金比例由 4 级阶梯 8/9/10/12% 配置驱动 · C2） |
+| `ab_commission` | 不变（流水表；佣金比例由 4 级阶梯 8/9/10/12% 配置驱动 · C2）。⭐ **M4-2 起 `status` 走两段式**：`pending`（T 日 14:00 计佣，**钱还没进余额**）→ `settled`（T+1 02:00 入账）；退款落在 `pending` 窗口时置 `cancelled`（**不写负行**） |
 | `ab_supplier_share` | 不变（⚠️ 2026-09-16 自营口径：语义已从「分账流水」改为「**半成品采购应付流水**」，**零 DDL**；`payee_type` 恒 `supplier`，`distribution_center` 冻结；**M3-9 已实装**：出单 / 列表 / 付款登记 / 未出单异常清单 + 供应商端 S9 自查，**幂等走软层不建唯一索引**——本表要容纳 `type='reversal'` 负行，同键正负两行是合法冲销） |
 | `ab_admin_user` | **+`supplier_id`**（供应商后台账号绑定 `ab_supplier.id`；NULL = 运营账号）· 见下方 §5.1 |
 | `ab_operation_log` | **+`snapshot`**（JSON，操作者/角色/时刻，审计回放）· 见下方 §5.1 |
@@ -682,8 +682,8 @@ ALTER TABLE `ab_operation_log`
 | --- | --- | --- |
 | `ab_refund` | 新增一行（`apply_source='admin'`，`status='refunding' → 'refunded'`）· **`reversed=1` + `reversed_at`** | `reversed` 是「反向结算已执行」幂等位；`cancelled_at` 在 `ab_order` 上近似承载退款时刻（无独立 `refunded_at` 列） |
 | `ab_order` | `status='refunded'` · `cancelled_at=now` | 退款是**终态**；`cancelled_at` 复用为「异常区时间线」的发生时间 |
-| `ab_commission` | **新增一行** `type='reversal'`（`amount` / `quantity` **取负**）+ 原 `normal` 行 `status='cancelled'` | **C9：原记录不得改写**。金额改成 0 会让佣金明细的「发生额」永久失真 |
-| `ab_balance` / `ab_balance_log` | 余额退回（`type='refund'`,`direction=+1`）/ 佣金冲销（`direction=−1`） | 余额**允许被扣成负数**：佣金已提现就形成欠款，由后续佣金抵扣；硬拦会把退款卡死 |
+| `ab_commission` | **两段式下分两条路径**（M4-2 · 2026-09-17）：① 退款落在**未入账窗口**（`pending`）→ **只置原 `normal` 行 `status='cancelled'`**、**不新增反向行**（钱从未进过余额）；② 佣金**已入账**（`settled`）→ **新增一行** `type='reversal'`（`amount` / `quantity` 取负）**且**原 `normal` 行 `status='cancelled'` | **C9：原记录不得改写** —— 两条路径都保持原行金额为原值（改成 0 会让佣金明细的「发生额」永久失真）。⚠️ 旧实现只写路径②，在 `pending` 窗口下会**从余额里扣一笔从未入账的钱**（甚至扣成负数形成假欠款），而余额本就可为负 → **不报任何错** |
+| `ab_balance` / `ab_balance_log` | 余额退回（`type='refund'`,`direction=+1`）/ 佣金冲销（**仅 `settled` 路径**：`direction=−1`）。⭐ **佣金仍为 `pending` 时不产生任何余额流水** | 余额**允许被扣成负数**：佣金已提现就形成欠款，由后续佣金抵扣；硬拦会把退款卡死。⚠️ 但「允许为负」不等于「可以凭空扣」—— `pending` 窗口下扣的是**从未入账的钱** |
 | ~~`ab_supplier_share`~~ | ⛔ **已作废（2026-09-16 自营口径）** —— 原文：「未付款行 → 直接扣减（扣空置 `status='reversed'`）；已付款行 → 写反向流水（`type='reversal'`）挂下期抵扣」 | 作废理由：该口径成立的前提是「供应商按用户卖出的份数**分账**」。自营下应付基数是**实收量**，半成品已交付 → **退款不冲减供应商应付**。`type='reversal'` 改义为「应付单算错」的**纠错冲销**。✅ **回退已完成（M3-9）**：`reversal.service.ts` 移除 `reverseSupplierShares()`，退款不再触碰本表 |
 
 **关键字段速查**

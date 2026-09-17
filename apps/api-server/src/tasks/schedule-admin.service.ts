@@ -3,10 +3,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ErrorCode } from '../common/constants/error-code';
 import { BizException } from '../common/exceptions/biz.exception';
 import { isRealDate, todayBj } from '../common/utils/time';
+import { AutoConfirmTask } from './auto-confirm.task';
+import { CommissionSettleTask } from './commission-settle.task';
 import { CutoffTask } from './cutoff.task';
 import { DeliveryGenerateTask } from './delivery-generate.task';
 import { LeaderExpireTask } from './leader-expire.task';
 import { MealPublishTask } from './meal-publish.task';
+import { ReconciliationTask } from './reconciliation.task';
 import { ScheduleService, TASK_SCHEDULES, TaskName, isTaskName } from './schedule.service';
 import { SupplierShareTask } from './supplier-share.task';
 
@@ -69,14 +72,21 @@ export class ScheduleAdminService {
     mealPublish: MealPublishTask,
     cutoff: CutoffTask,
     deliveryGenerate: DeliveryGenerateTask,
+    autoConfirm: AutoConfirmTask,
+    commissionSettle: CommissionSettleTask,
     supplierShare: SupplierShareTask,
+    reconciliation: ReconciliationTask,
     leaderExpire: LeaderExpireTask,
   ) {
     this.runners = new Map<TaskName, (date: string) => Promise<unknown>>([
       ['meal-publish', (d) => mealPublish.runOnce(d)],
       ['cutoff', (d) => cutoff.runOnce(d)],
       ['delivery-generate', (d) => deliveryGenerate.runOnce(d)],
+      // M4-2：结算链路三个任务（此前 `implemented=false`，现已补齐）
+      ['auto-confirm', (d) => autoConfirm.runOnce(d)],
+      ['commission-settle', (d) => commissionSettle.runOnce(d)],
       ['supplier-share', (d) => supplierShare.runOnce(d)],
+      ['reconciliation', (d) => reconciliation.runOnce(d)],
       ['leader-expire', (d) => leaderExpire.runOnce(d)],
     ]);
   }
@@ -170,9 +180,17 @@ const DATE_KIND_LABEL: Record<string, string> = {
   none: '与出餐日无关（全量扫描）',
 };
 
-/** 未实装任务的补齐批次说明 */
-const PENDING_NOTE: Partial<Record<TaskName, string>> = {
-  'auto-confirm': '将于 M4-2（结算链路）实装',
-  'commission-settle': '将于 M4-2（结算链路）实装',
-  reconciliation: '将于 M4-2（结算链路）实装',
-};
+/**
+ * 未实装任务的补齐批次说明
+ *
+ * ⭐ **M4-2 后本表为空** —— 8 个任务全部实装（日切 3 + 结算 3 + 既有 2），
+ * `GET /admin/schedule` 的 `summary.implemented` 应为 `8/8`。
+ *
+ * ⚠️ **本表刻意保留**（而不是连同 `implemented` 字段一起删掉）：`implemented` 不是
+ *    手写常量，而是 `runners.has(task)` 的**派生值** —— 将来若有人只往
+ *    `TASK_SCHEDULES` 里加了任务却没写执行口，页面会自动如实显示「未实装」，
+ *    而不是让一个「看起来在跑、其实只打了一行日志」的占位任务冒充已上线
+ *    （#50「声明与闸门是同一件事的两面」）。跨批次实装的任务在此登记批次说明，
+ *    留空则回落到下面的通用文案。
+ */
+const PENDING_NOTE: Partial<Record<TaskName, string>> = {};

@@ -23,6 +23,13 @@
  *   · L20 退出团长 —— 资金闸门 20008（余额/冻结/在途提现）· 缺键 10001 ·
  *     停职保留档案 · 退出后全量 `/leader/*` 20003 · 可复职（重置见习）
  *
+ * ⭐ **2026-09-17 M4-2：佣金改「两段式」**（旧口径为「取餐确认即时入账」）——
+ *    本套件的 L9 → L10/L11 段随之改写：确认收货只**计佣**
+ *    （`ab_commission.status='pending'`，**余额分文未动**），入账由 D35
+ *    （`POST /admin/finance/commissions/settle`，即 `commission-settle.task`
+ *    的同一执行口）完成。故脚本在 L9 之后显式补一次「次日入账」再验余额与提现，
+ *    并把「两段式」本身（pending 不入账 / 入账后归零 / 重复入账幂等）逐条钉死。
+ *
  * 用法：node scripts/e2e-m2.mjs
  * ⚠️ 前置：先跑一次 `node scripts/gate.mjs seed`（干净数据库）
  *
@@ -75,6 +82,17 @@ async function login(code) {
     isLeader: r.body?.data?.isLeader,
     raw: r.body,
   };
+}
+
+/**
+ * 管理员登录 —— 本套件只在「D35 佣金入账」一处用到它
+ *
+ * ⚠️ D35 与 `commission-settle.task` 是**同一个执行口**（`settlePending`）。
+ *    这里走真实 HTTP 端点而非直连 SQL，是为了让「跑批入账」这条路径也被用例覆盖。
+ */
+async function adminLogin(username, password) {
+  const r = await call('POST', '/auth/admin-login', { body: { username, password } });
+  return { code: r.body?.code, token: r.body?.data?.token, raw: r.body };
 }
 
 function readDb(sql, params = []) {
@@ -580,6 +598,56 @@ async function main() {
   const commCount = readDb('SELECT COUNT(*) n FROM ab_commission WHERE order_id = (SELECT id FROM ab_order WHERE order_no = ?)', [orderNo]);
   assert(Number(commCount?.n) === 1, 'L9 幂等：同一订单只产生一条佣金流水', `rows=${commCount?.n}`);
 
+  // ==========================================================================
+  // 4.4 ⭐ M4-2 两段式：确认只「计佣」，入账由 D35（= commission-settle.task）完成
+  // ==========================================================================
+  const balPending = await call('GET', '/leader/balance', { token: lming.token });
+  assert(
+    balPending.body?.data?.balanceFen === 0 &&
+      balPending.body?.data?.pendingCommissionFen === 1548,
+    'M4-2 两段式①：确认后佣金停在 pending，**余额分文未动**',
+    `balanceFen=${balPending.body?.data?.balanceFen} pendingFen=${balPending.body?.data?.pendingCommissionFen}`,
+  );
+  const commRow = readDb(
+    'SELECT status, settled_at FROM ab_commission WHERE order_id = ' +
+      '(SELECT id FROM ab_order WHERE order_no = ?)',
+    [orderNo],
+  );
+  assert(
+    commRow?.status === 'pending' && commRow?.settled_at == null,
+    'M4-2 两段式①：佣金行落 `pending` 且 `settled_at` 为空（**尚未入账**，不是丢了）',
+    `status=${commRow?.status} settledAt=${commRow?.settled_at}`,
+  );
+
+  // 入账（D35 = commission-settle.task 的同一执行口）
+  const admin = await adminLogin('admin', 'admin123');
+  const settle1 = await call('POST', '/admin/finance/commissions/settle', {
+    token: admin.token,
+    body: { date: TODAY },
+  });
+  assert(
+    settle1.body?.code === 0 && settle1.body?.data?.settled === 1,
+    'M4-2 两段式②：D35 佣金入账把 pending 置 settled（settled=1）',
+    `code=${settle1.body?.code} scanned=${settle1.body?.data?.scanned} settled=${settle1.body?.data?.settled} skipped=${settle1.body?.data?.skipped}`,
+  );
+  const balSettled = await call('GET', '/leader/balance', { token: lming.token });
+  assert(
+    balSettled.body?.data?.balanceFen === 1548 &&
+      balSettled.body?.data?.pendingCommissionFen === 0,
+    'M4-2 两段式②：入账后余额 = 佣金净额 ¥15.48，待入账归零',
+    `balanceFen=${balSettled.body?.data?.balanceFen} pendingFen=${balSettled.body?.data?.pendingCommissionFen}`,
+  );
+  const settle2 = await call('POST', '/admin/finance/commissions/settle', {
+    token: admin.token,
+    body: { date: TODAY },
+  });
+  const balAfterRetry = await call('GET', '/leader/balance', { token: lming.token });
+  assert(
+    settle2.body?.data?.scanned === 0 && balAfterRetry.body?.data?.balanceFen === 1548,
+    'M4-2 两段式②：重复入账 scanned=0 且余额不变（幂等，不重复加钱）',
+    `scanned=${settle2.body?.data?.scanned} balanceFen=${balAfterRetry.body?.data?.balanceFen}`,
+  );
+
   // ---- 4.4 L10 佣金明细 / L11 余额
   const comm = await call('GET', `/leader/commissions?range=day&date=${TODAY}`, { token: lming.token });
   const cs = comm.body?.data;
@@ -604,7 +672,7 @@ async function main() {
   assert(b?.minWithdrawFen === 1000, 'L11 最低提现额 ¥10.00 来自 ab_config', `minFen=${b?.minWithdrawFen}`);
   assert(
     b?.pendingCommissionFen === 0,
-    'L11 佣金已入账（无待结算余额），可用额即佣金净额',
+    'L11 中途入账后待入账归零（两段式：入账前该值=佣金净额，入账后=0）',
     `pendingCommissionFen=${b?.pendingCommissionFen}`,
   );
 

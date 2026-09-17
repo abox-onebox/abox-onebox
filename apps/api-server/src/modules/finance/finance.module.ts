@@ -122,8 +122,11 @@ import { WithdrawService } from './withdraw.service';
     WithdrawService,
     RefundService,
     ReversalService,
-    // 导出给 `tasks/supplier-share.task.ts`（T+1 02:00 跑批共用同一执行口）
+    // 导出给 `tasks/supplier-share.task.ts`（T+1 02:10 跑批共用同一执行口）
     SupplierShareService,
+    // M4-2 导出给 `tasks/reconciliation.task.ts`（每日 04:00 跑批走**同一个**
+    // `reconcile()` —— 保证「跑批看到的数」与「运营点开 D43 页面看到的数」永远一致）
+    ReconciliationService,
   ],
 })
 export class FinanceModule {}

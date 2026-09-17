@@ -35,7 +35,7 @@
     <ab-empty-state
       v-else-if="!list.length"
       text="本期间暂无佣金"
-      hint="佣金在「取餐确认 / 一键分发」后按实发份数即时入账"
+      hint="佣金在「取餐确认 / 一键分发」后按实发份数计佣，次日 02:00 自动入账"
       action-text="去取餐确认"
       @action="goPickup"
     />

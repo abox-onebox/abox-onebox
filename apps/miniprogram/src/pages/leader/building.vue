@@ -39,7 +39,7 @@
           </view>
         </view>
         <view class="actions">
-          <text class="actions__hint">确认收货后可一键分发，佣金按实发份数入账</text>
+          <text class="actions__hint">确认收货后可一键分发，佣金按实发份数计佣、次日入账</text>
           <text class="actions__link" @tap="goPickup">去确认 ›</text>
         </view>
       </view>

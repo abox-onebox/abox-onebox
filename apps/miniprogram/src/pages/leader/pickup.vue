@@ -63,12 +63,13 @@
           <text class="kv__v">{{ done.confirmedQuantity }} 份</text>
         </view>
         <view class="kv">
-          <text class="kv__k">本次佣金</text>
+          <text class="kv__k">本次计佣</text>
           <text class="kv__v kv__v--strong">¥{{ done.commissionYuan }}</text>
         </view>
         <text class="done__tips">
           佣金按「实发份数 × 单价 ×
-          {{ (done.rate * 100).toFixed(0) }}%」即时入账，可前往佣金中心查看
+          {{ (done.rate * 100).toFixed(0) }}%」计佣，将于次日 02:00
+          自动入账到余额，届时可在佣金中心查看
         </text>
         <view class="done__acts">
           <text class="done__link" @tap="goCommission">看佣金 ›</text>
@@ -118,7 +119,8 @@
           {{ submitting ? '分发中…' : `一键分发（${selectedQuantity} 份）` }}
         </button>
         <text class="submit__hint">
-          分发后订单转为「已完成」，佣金按「实发份数」即时入账；重复提交不会重复计佣
+          分发后订单转为「已完成」，佣金按「实发份数」计佣（次日 02:00
+          自动入账）；重复提交不会重复计佣
         </text>
       </view>
     </template>

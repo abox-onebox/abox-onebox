@@ -137,13 +137,21 @@ export class ReversalService {
   /**
    * 佣金反向冲销
    *
-   * 三种「无需冲销」的情形，各自有明确原因（都不算错误）：
+   * 四种「无需扣余额」的情形，各自有明确原因（都不算错误）：
    *   · 该单**从未计佣**（截单前取消 / 未走到 `completed`）→ 无原行
    *   · 已有冲销行（重复退款 / 重放）→ `uk_commission_order_type` 唯一索引兜底
+   *   · **原佣金仍为 `pending`（已计佣、尚未入账）→ 直接作废原行，见下** ⭐ M4-2 新增
    *   · 找不到团长（数据异常）→ 仍写冲销行，但不动余额，`notes` 里留痕
    *
    * ⚠️ 余额允许被扣成负数：团长可能已经把佣金提现走了。这不是 bug ——
    *    真实业务里就是要形成「欠款」由其后续佣金抵扣，硬拦会把退款卡死。
+   *
+   * ⭐ **两段式（M4-2）带来的新分支**：佣金两段式后，`pending` 成为每天都会出现的
+   *    正常中间态（T 日确认计佣 → T+1 02:00 入账）。用户在**这个窗口内**申请退款，
+   *    原佣金还停在 `pending`，钱**从未进过团长余额**。此时若照 `settled` 的路径走，
+   *    会从余额里扣一笔**从未入账**的钱 —— 团长余额被凭空扣减、甚至扣成负数形成
+   *    **假欠款**，而且**没有任何地方会报错**（余额本来就可以为负，见上）。
+   *    故 `pending` 必须单独走「只作废、不动钱」的路径。
    */
   private async reverseCommission(
     m: EntityManager,
@@ -162,6 +170,29 @@ export class ReversalService {
     if (existed) {
       notes.push(`佣金冲销已存在（${existed.id}），跳过`);
       return { reversedFen: 0, quantity: 0 };
+    }
+
+    /**
+     * ⭐ 关键分支：原佣金仍为 `pending` —— 钱还在「待入账」，从未进过余额。
+     *
+     * 处理：**只把原行作废（`pending → cancelled`），不写冲销行、不写余额流水**。
+     *   · 净效果与 `settled` 路径**一致**（这笔佣金不再支付），故出参仍如实报
+     *     「冲销了多少」（`reversedFen` = 原行金额）—— 端上「本次冲掉佣金 ¥X」
+     *     的展示与已入账情形无差别，不需要分叉。
+     *   · 但**账目形态不同**：不写冲销行，是因为钱没有发生过，没有可反向的账；
+     *     写一条 -X 的冲销行反而会凭空多出一笔「支出」。
+     */
+    if (origin.status === 'pending') {
+      origin.status = 'cancelled';
+      await m.save(origin);
+      notes.push(
+        `该单佣金尚未入账（pending），已直接作废、**未动余额** —— ` +
+          `退款发生在「T 日确认计佣」与「T+1 02:00 入账」之间`,
+      );
+      return {
+        reversedFen: toFen(Math.abs(Number(origin.amount))),
+        quantity: -Math.abs(Number(origin.quantity)),
+      };
     }
 
     const amountYuan = -Math.abs(Number(origin.amount));

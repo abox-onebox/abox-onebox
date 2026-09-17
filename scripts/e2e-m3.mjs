@@ -1864,7 +1864,7 @@ async function main() {
     assert(
       rfD?.reversal?.commissionReversedFen === 619 &&
         rfD?.reversal?.commissionReversedQuantity === -2,
-      'D11 反向结算：佣金按**原行金额取负**冲销（2 份 → −2 份 · 619 分）',
+      'D11 反向结算：出参恒为「金额正、份数为负」（2 份 → −2 份 · 619 分）—— 端上据此按 `−X` 展示，**与佣金是否已入账无关**，故端上不需要分叉',
       `reversed=${rfD?.reversal?.commissionReversedFen} qty=${rfD?.reversal?.commissionReversedQuantity}`,
     );
 
@@ -1873,21 +1873,31 @@ async function main() {
       [noB],
     );
     assert(
-      commRows.length === 2 &&
+      commRows.length === 1 &&
         commRows[0].type === 'normal' &&
         commRows[0].status === 'cancelled' &&
-        Number(commRows[0].amount) > 0 &&
-        commRows[1].type === 'reversal' &&
-        Number(commRows[1].amount) < 0,
-      'C9 原记录**不得改写**：冲销写新行（金额取负），原行只翻 status=cancelled（发生额永久保真）',
+        Number(commRows[0].amount) > 0,
+      '⭐⭐ C9（**两段式新增分支**）：退款落在「已计佣、尚未入账」窗口时，**只把原行作废（`pending → cancelled`）、不写负向冲销行** —— 钱**从未进过余额**，凭空写一条 −619 的冲销行反而会多记一笔支出；原行**金额保持原值**（发生额历史不可改写）',
       JSON.stringify(commRows.map((r) => `${r.type}/${r.status}/${r.amount}`)),
+    );
+    assert(
+      String((rfD?.reversal?.notes ?? []).join('；')).includes('未动余额'),
+      '⭐ D11 `notes` 如实说明「退款发生在 T 日确认计佣与 T+1 02:00 入账之间，故未动余额」—— 运营看到团长余额没变时，必须能立刻分辨这是**设计**而非漏算',
+      `${String((rfD?.reversal?.notes ?? []).join('；')).slice(0, 52)}…`,
     );
 
     const balAfter = readDb('SELECT balance FROM ab_balance WHERE user_id = 1001');
+    // ⚠️ 判据必须写成「**前后相等**」，不能写成「等于 0」：
+    //    · 单跑 `seed e2e:m3` 时该用户连余额行都还没建（两个查询双 `null` → 归一到 0）；
+    //    · 而 `verify` 串跑（seed → m1 → m2 → m3）时，m1/m2 已给该用户留下**非零**余额。
+    //    写「必须等于 0」只在串跑下红，且失败原因与被测行为毫无关系（同《缺陷与陷阱》#48：
+    //    **夹具形态变了，不变量没变**）。而「未动」本来就是**差分**语义 —— 旧实现照 `settled`
+    //    路径扣，会让 after = before − 619，这条断言照样抓得到。
+    const balFenOfB = (r) => (r ? Math.round(Number(r.balance) * 100) : 0);
     assert(
-      Math.round((Number(balBefore?.balance) - Number(balAfter?.balance)) * 100) === 619,
-      'D11 佣金冲销同步扣减团长余额（余额**允许为负** —— 已提现就形成欠款由后续佣金抵扣，硬拦会把退款卡死）',
-      `${balBefore?.balance} → ${balAfter?.balance}`,
+      balFenOfB(balBefore) === balFenOfB(balAfter),
+      '⭐⭐ D11 **两段式下余额一分未动**：退款落在待入账窗口（`pending`）→ 既不扣余额、也没有「确认即入账」的 +619 —— 钱**从未入账**，不该扣；旧实现下这里会看到「余额 −619」，甚至扣成负数形成**假欠款**（余额本就允许为负），而且**没有任何地方会报错**',
+      `余额行 ${balBefore || balAfter ? `${balBefore?.balance ?? '无'} → ${balAfter?.balance ?? '无'}` : '无（未建账户）'}`,
     );
 
     // ------------------------------------------------ 自营口径：退款不动供应商应付
@@ -7549,8 +7559,8 @@ async function main() {
         `scanned=${settle2?.data?.scanned} settled=${settle2?.data?.settled} 仍pending=${orphanStillPending?.c} Δbal=${fenOf(balAfter2?.balance) - fenOf(balAfter?.balance)}`,
       );
       assert(
-        !!settle2?.data?.note && /即时入账/.test(String(settle2.data.note)),
-        '⭐ D35 `note` **每次都下发**（不只在 0 条时）—— 它要说明「一期佣金在取餐确认时即时入账，故待入账常态为 0，这不是故障」，否则「点了按钮 0 条」一定被当成故障报上来',
+        !!settle2?.data?.note && /两段式/.test(String(settle2.data.note)),
+        '⭐ D35 `note` **每次都下发**（不只在 0 条时）—— 它要说明「**佣金两段式**：确认收货即计佣写 `pending`、T+1 02:00 跑批入账，故 `pending` 是每天的常态、不是故障」，否则「点了按钮 0 条」一定被当成故障报上来',
         `${String(settle2?.data?.note ?? '').slice(0, 36)}…`,
       );
 
@@ -8611,8 +8621,10 @@ async function main() {
   //      （14:00），但 `dateKind` 分别是「次日」与「当日」—— 必须由接口如实下发。
   //      这是 M4 头号陷阱：cron 只写「几点跑」、不写「动哪一天」，写反了照样编译通过、
   //      甚至部分断言仍然是绿的。
-  //   ② 未实装任务**如实标注**（`implemented=false` + `pendingNote`）且补跑被明确拒绝 ——
-  //      不把「只打了一行日志」的占位任务伪装成已上线。
+  //   ② M4-2 后 **8 个任务全部实装**（`implemented=true` + `pendingNote=null`）——
+  //      `implemented` 是执行口 `runners.has()` 的**派生值**、不是手写常量：
+  //      将来只往声明表加任务却不写执行口，接口会**如实降级**为未实装，
+  //      而不是让「只打了一行日志」的占位任务冒充已上线。
   //   ③ ⭐ 补跑与跑批**共用同一执行口**：不传日期时按声明表推导，与跑批同一天。
   //   ④ ⭐ 截单三分支一次跑全：未支付→`cancelled`（**且解冻余额**）、已支付→`cut_off`
   //      （不可逆）、备料量基数**定格**。第三项是本次修的真实缺口 —— `sold_count`
@@ -8769,13 +8781,21 @@ async function main() {
         '§28 全量扫描型任务（`leader-expire`）`dateKind=null`（与出餐日无关）且已实装',
         `dateKind=${JSON.stringify(t28('leader-expire')?.dateKind)} implemented=${t28('leader-expire')?.implemented}`,
       );
-      const notYet28 = ['auto-confirm', 'commission-settle', 'reconciliation'].filter(
-        (n) => t28(n)?.implemented !== false || !String(t28(n)?.pendingNote ?? '').includes('M4-2'),
-      );
+      const allTasks28 = [
+        'meal-publish',
+        'cutoff',
+        'delivery-generate',
+        'auto-confirm',
+        'commission-settle',
+        'supplier-share',
+        'reconciliation',
+        'leader-expire',
+      ];
+      const notImpl28 = allTasks28.filter((n) => t28(n)?.implemented !== true);
       assert(
-        notYet28.length === 0,
-        '⭐ §28 未实装任务**如实标注**（`implemented=false` + `pendingNote` 指明补齐批次）—— 把占位任务显示成「已上线」比不显示更伤运营信任',
-        `未如实标注：${notYet28.join(',') || '无'}`,
+        sched28.body?.data?.summary?.implemented === 8 && notImpl28.length === 0,
+        '⭐ §28 M4-2 后 **8 个任务全部实装**（`summary.implemented = 8/8`，无 `pendingNote` 残留）—— `implemented` 是执行口 `runners.has()` 的**派生值**而非手写常量：将来只往声明表加任务却不写执行口，这里会如实暴露，而不是让占位任务冒充已上线',
+        `implemented=${sched28.body?.data?.summary?.implemented} 未实装：${notImpl28.join(',') || '无'}`,
       );
 
       // ------------------------------------------------------ C. 补跑闸门
@@ -8788,15 +8808,18 @@ async function main() {
         '§28 未知任务名补跑 → 10001（不静默什么都不做）',
         `code=${unknown28.body?.code} msg=${unknown28.body?.message}`,
       );
-      const pending28 = await call('POST', `${SCH28}/auto-confirm/run`, {
+      // M4-2 后已无「尚未实装」的拒绝分支 —— 补跑必须回显**真实结果**（该隔离日无订单 → 空结果是正常）
+      const run28 = await call('POST', `${SCH28}/auto-confirm/run`, {
         token: adminToken,
-        body: { date: D28P },
+        body: { date: D28F },
       });
+      const run28d = run28.body?.data?.result;
       assert(
-        pending28.body?.code === 10001 &&
-          String(pending28.body?.message ?? '').includes('尚未实装'),
-        '⭐ §28 未实装任务补跑被**明确拒绝**（10001 + 指明补齐批次）—— 静默返回「完成」会让运营以为已经跑过',
-        `code=${pending28.body?.code} msg=${pending28.body?.message}`,
+        run28.body?.code === 0 &&
+          run28d?.confirmedCount === 0 &&
+          run28d?.notDelivered?.count === 0,
+        '⭐ §28 已实装任务补跑 → `code=0` 且回显**真实结果**（隔离日无订单，`confirmedCount=0`）—— 空结果**不是故障**：静默报错会让运营以为跑批挂了，静默返回假「完成」会让运营以为已经跑过',
+        `code=${run28.body?.code} confirmed=${run28d?.confirmedCount} msg=${String(run28.body?.message ?? '').slice(0, 30)}`,
       );
       const badDate28 = await call('POST', `${SCH28}/cutoff/run`, {
         token: adminToken,
@@ -9102,6 +9125,560 @@ async function main() {
         Object.values(left28).every((v) => v === 0),
         '§28 夹具还原：订单 / 分配行 / 配送单 / 生产计划 / 余额行 / 夹具用户全部清除 —— 余额行与用户不还原，下一次重跑的平台负债就会凭空多出 ¥5.80，并让 D38↔D33 的对账断言在「两次读之间」产生假绿',
         `o=${left28.o} a=${left28.a} d=${left28.d} p=${left28.p} b=${left28.b} u=${left28.u}`,
+      );
+    }
+  }
+
+  // ==========================================================================
+  // §29 M4-2 结算链路（4.4 自动确认 + 4.5 佣金入账 + 4.7 对账）
+  //
+  // ⚠️ 同样**不依赖下单窗口**（同 §18–§28 纪律）：订单 / 佣金 / 余额夹具**全部直插**，
+  //    三个任务一律经**补跑接口**用**显式日期**驱动。
+  //
+  // ⚠️ 三个**隔离日期**（避开 §18–§28 已占用的 today ± {1,10,60,90,130,190,200,205,212,365}）：
+  //    · D29C = today − 208  结算日出餐日 → 4.4 自动确认 + 4.5 佣金入账
+  //    · D29R = today − 209  **对账不平**（有订单、无流水）
+  //    · D29B = today − 210  **对账已平**（订单与流水一一匹配）
+  //
+  // 本节钉死十条不变量：
+  //   ① ⭐⭐ **佣金两段式**（2026-09-17 用户裁定）：4.4 计佣**只写 `pending`、不动余额**；
+  //      「事实」（`total_orders`）在**计佣**时累加，「钱」（`total_commission` / 余额）
+  //      在**入账**时累加。两者记在一起会让「补入账」把单数重复加上去。
+  //   ② ⭐ 4.4 **只转 `delivered`**：`paid`/`cut_off`/`cooked`/`delivering` 是**履约异常**，
+  //      如实计数、**不改状态** —— 缺关键事实时不猜（fail-closed）。
+  //   ③ 无归属团长（`team_leader_id` 为空）的单**收口但不计佣**。
+  //   ④ 三个任务重复触发**都不产生重复数据**（幂等）。
+  //   ⑤ 4.5 与 D35 是**同一执行口**；两段式后 `pending` 是常态、`scanned=0` 不是故障。
+  //   ⑥ ⭐ #52 停职守卫**自 M4-2 起才真正触发**：有 `pending` 佣金时**拒绝退团**，
+  //      入账后该条**自动解除** —— 此前生产链路里 `pending` 恒为 0，这条守卫是**死代码**。
+  //   ⑦ ⭐ 对账锚的是**支付日**（`paid_at`），不是出餐日（财务域唯一例外）。
+  //   ⑧ ⭐ 对账**不平才写操作日志**（`module='finance'` / `action='对账不平'` / `target_id=日期`）；
+  //      平的日期**不写**（否则一年 365 条噪音把操作日志页淹掉）。
+  //   ⑨ ⭐ 告警里必须带「**仅本地三头、不等于已与微信侧对平**」的 caveat（#55）——
+  //      一期无商户号 / 无账单，把「内部对平」说成「与微信对平」是最危险的一类假绿。
+  //   ⑩ ⭐ `monthOrdersOf` 只数**正常行**（`type='normal'` 且 `pending|settled`）：
+  //      计入 `pending`（否则晋级晚一天），**排除冲销行**（否则退款把月单**加回**、可刷晋级）。
+  // ==========================================================================
+  {
+    log('\n§29 M4-2 结算链路（自动确认 / 佣金入账 / 对账）');
+
+    const SCH29 = '/admin/schedule';
+    const PREFIX29 = `E2E29${stamp}`;
+    const D29C = addDaysStr(bjToday(), -208);
+    const D29R = addDaysStr(bjToday(), -209);
+    const D29B = addDaysStr(bjToday(), -210);
+    /** 直插 datetime 一律 **UTC** 格式（理由同 §27/§28：TypeORM 按 UTC 落库与查询） */
+    const AT29 = `${bjToday()} 02:00:00.000`;
+    /** 支付日锚点：对账按 `paid_at` 切日，故每张单的 `paid_at` 必须落在自己的目标日期上 */
+    const PAID29 = (d) => `${d} 02:00:00.000`;
+
+    // ---------------------------------------------------------- A. 夹具原料
+    const base29 = readDb(
+      `SELECT b.id AS bid, b.building_group_id AS gid, m.id AS smid, a.id AS aid
+         FROM ab_building b, ab_set_meal m, ab_meal_assignment a
+        WHERE b.building_group_id IS NOT NULL
+        ORDER BY b.id, m.id, a.id LIMIT 1`,
+    );
+    assert(
+      !!base29,
+      '§29 前置：结算夹具原料齐备（1 个有楼群的楼 / 1 套餐 / 1 分配行）',
+      `bid=${Number(base29?.bid)} gid=${Number(base29?.gid)} smid=${Number(base29?.smid)} aid=${Number(base29?.aid)}`,
+    );
+
+    if (base29) {
+      const B29 = Number(base29.bid);
+      const G29 = Number(base29.gid);
+      const SM29 = Number(base29.smid);
+      const A29 = Number(base29.aid);
+
+      // 夹具团长：**专用账号**。不能借既有团长 —— 既有团长账上可能已有余额 / 佣金行，
+      // 「入账前余额不变」这类断言会因为别人的钱而**假绿**（§26/§28 同一条教训）。
+      // `openid` 走 mock 前缀，故可用 `dev:<code>` 反查登录，拿到 token 打 `/leader/*`。
+      const L29CODE = `${PREFIX29}l`;
+      const L29OPENID = `mock_openid_${L29CODE}`;
+      writeDb(
+        'INSERT INTO ab_user (openid, nickname, gender, status, version, created_at, updated_at) VALUES (?, ?, 0, 1, 0, ?, ?)',
+        [L29OPENID, `${PREFIX29}结算团长`, AT29, AT29],
+      );
+      const uid29 = Number(readDb('SELECT id FROM ab_user WHERE openid = ?', [L29OPENID])?.id ?? 0);
+      writeDb(
+        'INSERT INTO ab_team_leader (user_id, building_id, phone, real_name, level, commission_rate, status, total_orders, total_commission, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0.00, 0, ?, ?)',
+        [uid29, B29, '1380013****', `${PREFIX29}结算团长`, 'formal', '0.0900', AT29, AT29],
+      );
+      const lid29 = Number(
+        readDb('SELECT id FROM ab_team_leader WHERE user_id = ?', [uid29])?.id ?? 0,
+      );
+      const l29 = await userLogin(`dev:${L29CODE}`);
+
+      const INS_O29 =
+        'INSERT INTO ab_order (order_no, user_id, team_leader_id, building_id, building_group_id, set_meal_id, assignment_id, meal_date, quantity, unit_price, total_amount, balance_used, discount_amount, pay_amount, status, version, paid_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, 0, ?, ?, ?)';
+      /** 造一张订单；`leaderId` 传 `null` 造「无归属团长」的单 */
+      const mkOrder29 = (no, date, status, qty, leaderId = lid29) => {
+        const total = qty * 25.8;
+        writeDb(INS_O29, [
+          no,
+          uid29,
+          leaderId,
+          B29,
+          G29,
+          SM29,
+          A29,
+          date,
+          qty,
+          '25.80',
+          total.toFixed(2),
+          total.toFixed(2),
+          status,
+          PAID29(date),
+          AT29,
+          AT29,
+        ]);
+        return Number(readDb('SELECT id FROM ab_order WHERE order_no = ?', [no])?.id ?? 0);
+      };
+      const INS_P29 =
+        "INSERT INTO ab_payment_log (order_id, order_no, transaction_id, pay_amount, pay_method, status, paid_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'wxpay_jsapi', 'success', ?, ?, ?)";
+      const mkPay29 = (orderId, no, amount, txn, date) =>
+        writeDb(INS_P29, [orderId, no, txn, amount, PAID29(date), AT29, AT29]);
+
+      // ---- 结算日出餐日（D29C）：9 张单，覆盖 4.4 的四类分支 ----
+      const o29D1 = mkOrder29(`${PREFIX29}D1`, D29C, 'delivered', 2); // 应确认 + 计佣
+      // 补一条支付流水：J2 段要对这张单走「已入账佣金被退款」的 settled 路径，退款服务需要支付通道凭证
+      mkPay29(o29D1, `${PREFIX29}D1`, '51.60', `${PREFIX29}TXD1`, D29C);
+      const o29D2 = mkOrder29(`${PREFIX29}D2`, D29C, 'delivered', 1); // 应确认 + 计佣
+      mkOrder29(`${PREFIX29}P1`, D29C, 'paid', 1); // 履约异常：未送达
+      mkOrder29(`${PREFIX29}C1`, D29C, 'cut_off', 1); // 履约异常：已截单未送达
+      mkOrder29(`${PREFIX29}V1`, D29C, 'delivering', 1); // 履约异常：配送中
+      mkOrder29(`${PREFIX29}K1`, D29C, 'cooked', 1); // 履约异常：已出餐未送达
+      mkOrder29(`${PREFIX29}X1`, D29C, 'completed', 1); // 已终态：不该被再动
+      mkOrder29(`${PREFIX29}N1`, D29C, 'delivered', 1, null); // 无归属团长：收口不计佣
+      mkOrder29(`${PREFIX29}Z1`, D29C, 'cancelled', 1); // 已取消：不该被再动
+
+      // ---- 对账不平日（D29R）：1 张已付款订单，**故意不建流水** ----
+      mkOrder29(`${PREFIX29}R1`, D29R, 'completed', 1);
+      // ---- 对账已平日（D29B）：1 张订单 + 1 条一一匹配的成功流水 ----
+      const o29B1 = mkOrder29(`${PREFIX29}B1`, D29B, 'completed', 1);
+      mkPay29(o29B1, `${PREFIX29}B1`, '25.80', `${PREFIX29}TXB`, D29B);
+
+      /** 佣金行夹具（供 `monthOrdersOf` 口径断言，`meal_date` 落**当月**才有意义） */
+      const INS_CM29 =
+        "INSERT INTO ab_commission (order_id, order_no, team_leader_id, leader_level, rate, base_amount, quantity, amount, type, status, settled_at, meal_date, payout_channel, tax_withheld_amount, created_at, updated_at) VALUES (?, ?, ?, 'formal', '0.0900', ?, ?, ?, ?, ?, ?, ?, 'FLEX_MANUAL', '0.00', ?, ?)";
+
+      const cm29 = (no) =>
+        readDb('SELECT status, settled_at, amount, quantity FROM ab_commission WHERE order_no = ?', [
+          no,
+        ]);
+      const leader29 = () =>
+        readDb(
+          'SELECT total_orders, total_commission, month_orders FROM ab_team_leader WHERE id = ?',
+          [lid29],
+        );
+
+      // -------------------------------------------------------- B. 4.4 自动确认（第一段）
+      const conf29 = await call('POST', `${SCH29}/auto-confirm/run`, {
+        token: adminToken,
+        body: { date: D29C },
+      });
+      const c29 = conf29.body?.data?.result;
+      assert(
+        conf29.body?.code === 0 && conf29.body?.data?.date === D29C && c29?.confirmedCount === 2,
+        '§29 4.4 补跑按**传入日期**执行并回显 `date`（补跑与跑批共用同一执行口，故补跑的数与跑批一致）',
+        `code=${conf29.body?.code} date=${conf29.body?.data?.date} confirmed=${c29?.confirmedCount}`,
+      );
+      assert(
+        c29?.confirmedQuantity === 3 && c29?.commissionFen === 696,
+        '⭐ §29 4.4 确认 **2 单 / 3 份** 并计佣 **¥6.96**（= round2(51.60×9%) + round2(25.80×9%)）—— 费率取**计佣时的等级快照**（正式 9%），不是「当前费率」',
+        `份数=${c29?.confirmedQuantity} 佣金分=${c29?.commissionFen}`,
+      );
+      assert(
+        c29?.notDelivered?.count === 4 &&
+          c29?.notDelivered?.byStatus?.paid === 1 &&
+          c29?.notDelivered?.byStatus?.cut_off === 1 &&
+          c29?.notDelivered?.byStatus?.delivering === 1 &&
+          c29?.notDelivered?.byStatus?.cooked === 1,
+        '⭐⭐ §29 4.4 **只转 `delivered`**：`paid`/`cut_off`/`cooked`/`delivering` 共 4 单报为**履约异常** —— 在 14:00 替一张**没送到**的单确认收货，比不确认危险得多（它会把「货没到」这个事实永久抹掉）',
+        `异常=${c29?.notDelivered?.count} byStatus=${JSON.stringify(c29?.notDelivered?.byStatus)}`,
+      );
+      assert(
+        c29?.orphanConfirmed === 1,
+        '§29 4.4 无归属团长的 `delivered` 单：**收口但不计佣** —— 履约已发生必须闭环；但没有佣金对象时不猜团长（佣金归零比佣金错付安全）',
+        `orphan=${c29?.orphanConfirmed}`,
+      );
+
+      const st29 = readRows(
+        'SELECT order_no, status FROM ab_order WHERE order_no LIKE ? ORDER BY order_no',
+        [`${PREFIX29}%`],
+      );
+      const st29of = new Map(st29.map((r) => [String(r.order_no), String(r.status)]));
+      const tag29 = (s) => (st29of.get(`${PREFIX29}${s}`) ?? '缺失').padEnd(9);
+      assert(
+        st29of.get(`${PREFIX29}D1`) === 'completed' &&
+          st29of.get(`${PREFIX29}D2`) === 'completed' &&
+          st29of.get(`${PREFIX29}P1`) === 'paid' &&
+          st29of.get(`${PREFIX29}C1`) === 'cut_off' &&
+          st29of.get(`${PREFIX29}V1`) === 'delivering' &&
+          st29of.get(`${PREFIX29}K1`) === 'cooked' &&
+          st29of.get(`${PREFIX29}X1`) === 'completed' &&
+          st29of.get(`${PREFIX29}N1`) === 'completed' &&
+          st29of.get(`${PREFIX29}Z1`) === 'cancelled',
+        '⭐ §29 状态已落库：`delivered → completed`；履约异常四单**原样不动**；已终态 / 已取消的**不被再动**',
+        ['D1', 'D2', 'P1', 'C1', 'V1', 'K1', 'X1', 'N1', 'Z1']
+          .map((k) => `${k}=${tag29(k)}`)
+          .join(' '),
+      );
+
+      const cmD1 = cm29(`${PREFIX29}D1`);
+      const cmD2 = cm29(`${PREFIX29}D2`);
+      assert(
+        String(cmD1?.status) === 'pending' &&
+          cmD1?.settled_at === null &&
+          Number(cmD1?.amount) === 4.64 &&
+          String(cmD2?.status) === 'pending' &&
+          cmD2?.settled_at === null &&
+          Number(cmD2?.amount) === 2.32,
+        '⭐⭐ §29 **两段式第一段**：计佣只写 `ab_commission(status=pending)` 且 `settled_at` 为空 —— 钱**没有**进余额，为退款留出约 12 小时冷静期（自营下退款不冲减供应商采购款，佣金若已提走即平台双亏）',
+        `D1=${cmD1?.status}/${cmD1?.settled_at}/${cmD1?.amount} D2=${cmD2?.status}/${cmD2?.settled_at}/${cmD2?.amount}`,
+      );
+      assert(
+        Number(cm29(`${PREFIX29}N1`)?.amount ?? 0) === 0 &&
+          Number(
+            readDb('SELECT COUNT(*) AS c FROM ab_commission WHERE order_id = ?', [
+              Number(readDb('SELECT id FROM ab_order WHERE order_no = ?', [`${PREFIX29}N1`])?.id ?? 0),
+            ])?.c ?? -1,
+          ) === 0,
+        '§29 无归属团长的单**不产生佣金行**（`ab_commission` 里查无此单）',
+        `佣金行数=0`,
+      );
+
+      const ld29a = leader29();
+      assert(
+        Number(ld29a?.total_orders) === 3 &&
+          Number(ld29a?.total_commission) === 0 &&
+          !readDb('SELECT balance FROM ab_balance WHERE user_id = ?', [uid29]),
+        '⭐⭐ §29 **「事实」与「钱」分开记**：计佣后 `total_orders`=3（事实，计佣时累加）而 `total_commission`=0 且**余额账户都还没建**（钱，入账时才动）—— 若把事实也留到入账才记，补入账会把单数**重复加上去**并污染 `last_order_at`',
+        `total_orders=${ld29a?.total_orders} total_commission=${ld29a?.total_commission} 余额行=${readDb('SELECT balance FROM ab_balance WHERE user_id = ?', [uid29]) ? '有' : '无'}`,
+      );
+
+      // -------------------------------------------------------- C. #52 停职守卫（复活）
+      const quit29a = await call('POST', '/leader/quit', {
+        token: l29.token,
+        idem: `${PREFIX29}quit-pending`,
+        body: { reason: 'e2e · 有 pending 佣金' },
+      });
+      const blk29a = (quit29a.body?.data?.blockers ?? []).map((b) => b.code);
+      assert(
+        quit29a.body?.code === 20008 &&
+          blk29a.includes('COMMISSION_PENDING') &&
+          !blk29a.includes('BALANCE_NOT_CLEARED'),
+        '⭐⭐ §29 #52 守卫**自 M4-2 才真正会触发**：有 `pending` 佣金时退团被拒（且此时余额为 0，故**唯一**阻碍就是待入账佣金）—— 此前佣金在确认时就即时入账，生产链路里 `pending` 恒为 0，这条守卫是**从未被执行过的死代码**',
+        `code=${quit29a.body?.code} blockers=${blk29a.join(',') || '无'}`,
+      );
+
+      // -------------------------------------------------------- D. 4.4 幂等
+      const conf29b = await call('POST', `${SCH29}/auto-confirm/run`, {
+        token: adminToken,
+        body: { date: D29C },
+      });
+      const c29b = conf29b.body?.data?.result;
+      const cmCount29 = Number(
+        readDb('SELECT COUNT(*) AS c FROM ab_commission WHERE team_leader_id = ?', [lid29])?.c ?? -1,
+      );
+      assert(
+        conf29b.body?.code === 0 &&
+          c29b?.confirmedCount === 0 &&
+          c29b?.notDelivered?.count === 4 &&
+          cmCount29 === 2,
+        '⭐ §29 4.4 **幂等**：重跑 `confirmedCount=0`（已确认的不再动）、异常计数不变、佣金行**仍为 2 条** —— 逐单条件更新 + `uk_commission_order_type` 双层保险',
+        `confirmed=${c29b?.confirmedCount} 异常=${c29b?.notDelivered?.count} 佣金行=${cmCount29}`,
+      );
+
+      // -------------------------------------------------------- E. 4.5 佣金入账（第二段）
+      const settle29 = await call('POST', `${SCH29}/commission-settle/run`, {
+        token: adminToken,
+        body: { date: D29C },
+      });
+      const s29 = settle29.body?.data?.result;
+      assert(
+        settle29.body?.code === 0 &&
+          settle29.body?.data?.date === D29C &&
+          s29?.scanned === 2 &&
+          s29?.settled === 2 &&
+          s29?.amountFen === 696,
+        '⭐ §29 4.5 佣入账：扫到 2 条 `pending` → 全部入账 **¥6.96**（与 D35 是**同一个 `settlePending()`**，不存在第二套入账逻辑）',
+        `code=${settle29.body?.code} scanned=${s29?.scanned} settled=${s29?.settled} 金额分=${s29?.amountFen}`,
+      );
+      assert(
+        String(s29?.note ?? '').includes('两段式'),
+        '§29 D35 出参 `note` 如实下发**两段式**口径（旧文案写「一期即时入账、pending 常态为 0」—— 沿用会让运营把每天的常态误判成故障，去查一批正常数据）',
+        `note=${String(s29?.note ?? '').slice(0, 40)}…`,
+      );
+
+      const cmD1b = cm29(`${PREFIX29}D1`);
+      const bal29 = readDb('SELECT balance, total_in FROM ab_balance WHERE user_id = ?', [uid29]);
+      const ld29b = leader29();
+      assert(
+        String(cmD1b?.status) === 'settled' &&
+          cmD1b?.settled_at !== null &&
+          Number(bal29?.balance) === 6.96 &&
+          Number(bal29?.total_in) === 6.96 &&
+          Number(ld29b?.total_commission) === 6.96,
+        '⭐⭐ §29 **两段式第二段**：入账后佣金行 `settled` + `settled_at` 非空、余额 0 → **¥6.96**、`total_in` 同步、团长 `total_commission` 同步 —— 三处**同源**（`creditCommissions` 是唯一把佣金写进余额的地方）',
+        `状态=${cmD1b?.status} settled_at=${cmD1b?.settled_at ? '有' : '空'} 余额=${bal29?.balance} total_in=${bal29?.total_in} total_commission=${ld29b?.total_commission}`,
+      );
+      const blog29 = readDb(
+        "SELECT COUNT(*) AS c, COALESCE(SUM(amount), 0) AS s FROM ab_balance_log WHERE user_id = ? AND type = 'commission' AND direction = 1",
+        [uid29],
+      );
+      assert(
+        Number(blog29?.c) === 2 && Math.round(Number(blog29?.s) * 100) === 696,
+        '§29 入账**逐笔**留余额流水（2 条 `commission` / `direction=+1` / 合计 ¥6.96）—— 余额每一次变动都要有据可查（与 L11 余额、L19 流水可相互验算）',
+        `流水数=${blog29?.c} 合计分=${Math.round(Number(blog29?.s) * 100)}（原值 ${blog29?.s}）`,
+      );
+
+      // -------------------------------------------------------- F. 4.5 幂等
+      const settle29b = await call('POST', `${SCH29}/commission-settle/run`, {
+        token: adminToken,
+        body: { date: D29C },
+      });
+      const s29b = settle29b.body?.data?.result;
+      const bal29b = readDb('SELECT balance FROM ab_balance WHERE user_id = ?', [uid29]);
+      assert(
+        settle29b.body?.code === 0 && s29b?.scanned === 0 && s29b?.settled === 0,
+        '⭐ §29 4.5 **幂等**：重跑 `scanned=0`（无 `pending` 可入账）—— 且这个 0 是**正常**的，不是「钱没结」',
+        `scanned=${s29b?.scanned} settled=${s29b?.settled}`,
+      );
+      assert(
+        Number(bal29b?.balance) === 6.96,
+        '§29 重跑**不加钱**（余额仍 ¥6.96）—— 逐行 `UPDATE ... WHERE status="pending"` 以 `affected` 判定归属，并发重复入账进 `skipped`',
+        `余额=${bal29b?.balance}`,
+      );
+
+      // -------------------------------------------------------- G. #52 守卫随入账自动解除
+      const quit29b = await call('POST', '/leader/quit', {
+        token: l29.token,
+        idem: `${PREFIX29}quit-settled`,
+        body: { reason: 'e2e · 入账后' },
+      });
+      const blk29b = (quit29b.body?.data?.blockers ?? []).map((b) => b.code);
+      assert(
+        quit29b.body?.code === 20008 &&
+          !blk29b.includes('COMMISSION_PENDING') &&
+          blk29b.includes('BALANCE_NOT_CLEARED'),
+        '⭐ §29 #52 守卫**随入账自动解除**：`COMMISSION_PENDING` 消失、转为 `BALANCE_NOT_CLEARED`（钱已入账但未清零）—— 守卫不是「永久拉黑」，而是精确表达「资金链路还没走完」',
+        `blockers=${blk29b.join(',') || '无'}`,
+      );
+
+      // -------------------------------------------------------- H. monthOrders 口径（含 pending · 排冲销）
+      writeDb(INS_CM29, [
+        9000291,
+        `${PREFIX29}MO1`,
+        lid29,
+        '51.60',
+        2,
+        '4.64',
+        'normal',
+        'pending',
+        null,
+        bjToday(),
+        AT29,
+        AT29,
+      ]);
+      const audit29a = await call('POST', '/leader/level/audit', { token: l29.token });
+      const a29a = audit29a.body?.data;
+      assert(
+        audit29a.body?.code === 0 && a29a?.monthOrders === 2,
+        '⭐ §29 `monthOrdersOf` **计入 `pending`**：当月一条 `pending` 佣金（2 份）即算 **月单 2** —— 若只数 `settled`，团长晋级会**晚一天**（确认翌日才升）',
+        `monthOrders=${a29a?.monthOrders}`,
+      );
+      // 冲销行（同一订单号 + 负份数）：旧口径 `SUM(CASE WHEN type='reversal' THEN -quantity ELSE quantity END)`
+      // 会把它**加回**成 4 —— 退款反而让月单变大、可刷晋级。
+      writeDb(INS_CM29, [
+        9000291,
+        `${PREFIX29}MO1`,
+        lid29,
+        '51.60',
+        -2,
+        '-4.64',
+        'reversal',
+        'settled',
+        AT29,
+        bjToday(),
+        AT29,
+        AT29,
+      ]);
+      const audit29b = await call('POST', '/leader/level/audit', { token: l29.token });
+      const a29b = audit29b.body?.data;
+      assert(
+        audit29b.body?.code === 0 && a29b?.monthOrders === 2,
+        '⭐⭐ §29 `monthOrdersOf` **排除冲销行**：追加一条 `reversal`（负份数）后月单**仍为 2** —— 旧 CASE 表达式会算出 **4**，即「退款越多、月单越大」，可直接刷出金牌/首席',
+        `monthOrders=${a29b?.monthOrders}（旧口径会得 4）`,
+      );
+
+      // -------------------------------------------------------- I. 4.7 对账（不平）
+      const recon29 = await call('POST', `${SCH29}/reconciliation/run`, {
+        token: adminToken,
+        body: { date: D29R },
+      });
+      const r29 = recon29.body?.data?.result;
+      assert(
+        recon29.body?.code === 0 &&
+          recon29.body?.data?.date === D29R &&
+          r29?.balanced === false &&
+          r29?.diffCount >= 1 &&
+          r29?.alerted === true,
+        '⭐ §29 4.7 对账发现**不平**（D29R 有 1 张已付款订单却无任何流水）→ `balanced=false` 且**落了告警**',
+        `code=${recon29.body?.code} balanced=${r29?.balanced} 差异数=${r29?.diffCount} alerted=${r29?.alerted}`,
+      );
+      assert(
+        r29?.channelSource === 'local_only' && r29?.billAvailable === false,
+        '⭐⭐ §29 4.7 **不许假装已与微信对平**（#55）：出参强制 `channel.source=local_only` + `billAvailable=false` —— 一期无商户号 / 无账单，若报成「已对平」，真正危险的差异（微信收了钱、系统不知道）将永远不可见',
+        `source=${r29?.channelSource} billAvailable=${r29?.billAvailable}`,
+      );
+      const alog29 = readDb(
+        "SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = 'finance' AND action = '对账不平' AND target_id = ?",
+        [D29R],
+      );
+      const asnap29 = readDb(
+        "SELECT snapshot FROM ab_operation_log WHERE module = 'finance' AND action = '对账不平' AND target_id = ?",
+        [D29R],
+      );
+      assert(
+        Number(alog29?.c) === 1 && String(asnap29?.snapshot ?? '').includes('微信'),
+        '⭐ §29 不平**写操作日志**（`module=finance` / `action=对账不平` / `target_id=日期`）且快照里带「**不等于已与微信侧对平**」的 caveat —— 告警必须落在运营看得见的页面上，不能只写进服务器日志（没人会主动翻）',
+        `日志数=${alog29?.c} caveat=${String(asnap29?.snapshot ?? '').includes('微信') ? '有' : '无'}`,
+      );
+
+      const recon29b = await call('POST', `${SCH29}/reconciliation/run`, {
+        token: adminToken,
+        body: { date: D29R },
+      });
+      const r29b = recon29b.body?.data?.result;
+      const alog29b = readDb(
+        "SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = 'finance' AND action = '对账不平' AND target_id = ?",
+        [D29R],
+      );
+      assert(
+        recon29b.body?.code === 0 &&
+          r29b?.alerted === false &&
+          String(r29b?.alertSkippedReason ?? '').includes('已有告警') &&
+          Number(alog29b?.c) === 1,
+        '⭐ §29 4.7 告警**幂等**：同一天重跑不再重复写（日志仍 1 条，`alerted=false` + 原因）—— 否则每次补跑都会在操作日志里堆一串重复告警',
+        `alerted=${r29b?.alerted} 日志数=${alog29b?.c} 原因=${String(r29b?.alertSkippedReason ?? '').slice(0, 24)}…`,
+      );
+
+      const recon29c = await call('POST', `${SCH29}/reconciliation/run`, {
+        token: adminToken,
+        body: { date: D29B },
+      });
+      const r29c = recon29c.body?.data?.result;
+      const alog29c = readDb(
+        "SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = 'finance' AND action = '对账不平' AND target_id = ?",
+        [D29B],
+      );
+      assert(
+        recon29c.body?.code === 0 &&
+          r29c?.balanced === true &&
+          r29c?.alerted === false &&
+          Number(alog29c?.c) === 0,
+        '⭐ §29 4.7 **平的日期不写日志**（D29B 订单与流水一一匹配 → `balanced=true`、`alerted=false`、操作日志 0 条）—— 一年 365 条「已平」噪音会把这一页淹掉，真正的告警反而看不见',
+        `balanced=${r29c?.balanced} alerted=${r29c?.alerted} 日志数=${alog29c?.c}`,
+      );
+
+      // -------------------------------------------------------- J. 时刻表：结算三任务的目标日期语义
+      const sched29 = await call('GET', SCH29, { token: adminToken });
+      const rows29 = sched29.body?.data?.list ?? [];
+      const t29 = (n) => rows29.find((r) => r.task === n) ?? null;
+      assert(
+        t29('reconciliation')?.dateKind === 'yesterday' &&
+          String(t29('reconciliation')?.dateKindLabel ?? '').includes('前一日') &&
+          t29('commission-settle')?.dateKind === 'yesterday' &&
+          t29('auto-confirm')?.dateKind === 'today',
+        '⭐⭐ §29 **`reconciliation` 对「昨日」**（M4-2 改正，文档原写 `today` 是错的）：04:00 对「今日」只能核 `00:00–04:00` 这 4 小时切片，昨日 23:00 后的流水要等**次日**才被覆盖 —— 等于每天都漏核一段',
+        `recon=${t29('reconciliation')?.dateKind}/${t29('reconciliation')?.dateKindLabel} settle=${t29('commission-settle')?.dateKind} confirm=${t29('auto-confirm')?.dateKind}`,
+      );
+
+      // ------------------------------------------- J2. 已入账佣金的退款冲销（settled 路径）
+      // 原 §13 的「写负行 + 扣余额」覆盖随两段式迁到这里 —— 在**隔离夹具**里跑，
+      // 不再依赖 leader#1 的既有余额，也不会给后续章节留下余额漂移。
+      const rf29 = await call('POST', `/admin/orders/${PREFIX29}D1/force-refund`, {
+        token: adminToken,
+        body: { reason: 'e2e 餐品异物 · 现场客诉', reasonType: 'quality', amountFen: 5160 },
+      });
+      const rf29d = rf29.body?.data;
+      assert(
+        rf29.body?.code === 0 && rf29d?.status === 'refunded' && rf29d?.refundedFen === 5160,
+        '§29 已入账佣金对应的订单可正常退款（D29C 的 D1 单 · 可退额 5160 分 = 51.60）',
+        `code=${rf29.body?.code} status=${rf29d?.status} refunded=${rf29d?.refundedFen}`,
+      );
+      assert(
+        rf29d?.reversal?.commissionReversedFen === 464 &&
+          rf29d?.reversal?.commissionReversedQuantity === -2,
+        '§29 冲销出参恒为「金额正、份数为负」（4.64 → −2 份）—— 与待入账分支的**出参形态一致**（§13 已验），端上不需要分叉',
+        `reversed=${rf29d?.reversal?.commissionReversedFen} qty=${rf29d?.reversal?.commissionReversedQuantity}`,
+      );
+      const rfRows29 = readRows(
+        'SELECT type, status, amount FROM ab_commission WHERE order_id = (SELECT id FROM ab_order WHERE order_no = ?) ORDER BY id',
+        [`${PREFIX29}D1`],
+      );
+      assert(
+        rfRows29.length === 2 &&
+          rfRows29[0].type === 'normal' &&
+          rfRows29[0].status === 'cancelled' &&
+          Number(rfRows29[0].amount) > 0 &&
+          rfRows29[1].type === 'reversal' &&
+          Number(rfRows29[1].amount) < 0,
+        '⭐⭐ §29 **已入账**佣金被退款时走 `reversal` 路径（C9）：写负向冲销新行、原行只翻 `status=cancelled`、**原金额保留** —— 发生额永久保真，历史不可改写',
+        JSON.stringify(rfRows29.map((r) => `${r.type}/${r.status}/${r.amount}`)),
+      );
+      const bal29c = readDb('SELECT balance FROM ab_balance WHERE user_id = ?', [uid29]);
+      assert(
+        Math.round(Number(bal29c?.balance) * 100) === 232,
+        '§29 已入账佣金被冲销 → 余额同步扣减（6.96 − 4.64 = **¥2.32**）—— 与 §13 的待入账分支正好构成**两条路径的分水岭**：钱进过余额才扣得回来',
+        `余额=${bal29c?.balance}`,
+      );
+      assert(
+        Number(rf29d?.reversal?.supplierShareAdjusted ?? -1) === 0 &&
+          rf29d?.reversal?.supplierShareMode === 'not_applicable',
+        '§29 自营口径（2026-09-16 裁定 1）：用户退款**不冲减**供应商采购应付（`supplierShareMode=not_applicable`）—— 半成品在出餐日已交付，钱照付；改了这条会立刻撞红',
+        `adjusted=${rf29d?.reversal?.supplierShareAdjusted} mode=${rf29d?.reversal?.supplierShareMode}`,
+      );
+
+      // -------------------------------------------------------- K. 夹具还原
+      writeDb("DELETE FROM ab_operation_log WHERE action = '对账不平' AND target_id IN (?, ?)", [
+        D29R,
+        D29B,
+      ]);
+      writeDb('DELETE FROM ab_balance_log WHERE user_id = ?', [uid29]);
+      writeDb('DELETE FROM ab_balance WHERE user_id = ?', [uid29]);
+      writeDb('DELETE FROM ab_commission WHERE team_leader_id = ?', [lid29]);
+      writeDb('DELETE FROM ab_refund WHERE order_no LIKE ?', [`${PREFIX29}%`]);
+      writeDb('DELETE FROM ab_payment_log WHERE order_no LIKE ?', [`${PREFIX29}%`]);
+      writeDb('DELETE FROM ab_order WHERE order_no LIKE ?', [`${PREFIX29}%`]);
+      writeDb('DELETE FROM ab_team_leader WHERE user_id = ?', [uid29]);
+      writeDb('DELETE FROM ab_user WHERE openid = ?', [L29OPENID]);
+
+      const left29 = {
+        o: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_order WHERE order_no LIKE ?', [`${PREFIX29}%`])?.c ??
+            -1,
+        ),
+        c: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_commission WHERE team_leader_id = ?', [lid29])?.c ??
+            -1,
+        ),
+        b: Number(readDb('SELECT COUNT(*) AS c FROM ab_balance WHERE user_id = ?', [uid29])?.c ?? -1),
+        l: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_team_leader WHERE user_id = ?', [uid29])?.c ?? -1,
+        ),
+        u: Number(readDb('SELECT COUNT(*) AS c FROM ab_user WHERE openid = ?', [L29OPENID])?.c ?? -1),
+        r: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_refund WHERE order_no LIKE ?', [`${PREFIX29}%`])?.c ??
+            -1,
+        ),
+      };
+      assert(
+        Object.values(left29).every((v) => v === 0),
+        '§29 夹具还原：退款单 / 订单 / 佣金 / 余额 / 团长 / 用户全部清除 —— 佣金行与余额行不还原，下一次重跑的平台负债就会凭空多出 ¥6.96，并让 D38↔D33 的对账断言在「两次读之间」产生假绿',
+        `r=${left29.r} o=${left29.o} c=${left29.c} b=${left29.b} l=${left29.l} u=${left29.u}`,
       );
     }
   }

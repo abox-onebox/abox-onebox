@@ -299,12 +299,19 @@ export class LeaderOrderService {
       /** 本次真正完成状态推进的订单数（乐观锁 affected） */
       confirmedCount: affected,
       confirmedQuantity: accrued.quantity,
-      /** 本次入账佣金（分）—— 验收标准 3：实发份数 × 等级费率 */
+      /**
+       * 本次**计佣**金额（分）—— 验收标准 3：实发份数 × 等级费率
+       *
+       * ⚠️ **不是「本次到账金额」**（M4-2 两段式后语义变化）：佣金先记 `pending`，
+       *    T+1 02:00 由 `commission-settle.task` 统一入账。端上文案须写明
+       *    「将于次日 02:00 入账」，否则团长确认后看不到余额变，会以为钱丢了。
+       */
       commissionFen: accrued.amountFen,
       commissionYuan: (accrued.amountFen / 100).toFixed(2),
+      /** 本次确认的订单单号（端上展示「已确认哪几单」） */
+      orderNos: accrued.orderNos,
       rate,
       level,
-      orderNos: accrued.orderNos,
       repeated: false,
       confirmedAt: now,
     };

@@ -33,7 +33,7 @@ import { addDays, now, todayBj } from '../common/utils/time';
  * | `auto-confirm` | T 14:00 | **今日** | D 日 14:00 确认的是 D 日已送达的单 |
  * | `commission-settle` | T+1 02:00 | **昨日** | 入账的是 D 日已完成订单的佣金 |
  * | `supplier-share` | T+1 02:10 | **昨日** | 应付对象是**已发生**的交付 |
- * | `reconciliation` | 04:00 | **今日** | 对当日账 |
+ * | `reconciliation` | 04:00 | **昨日** | 核**完整自然日**；04:00 对「今日」只能核 4 小时切片 |
  * | `leader-expire` | 03:00 | `null` | 全量扫描，与出餐日无关 |
  *
  * ⚠️ `cutoff` / `delivery-generate` / `auto-confirm` 三个任务的 cron 落在**同一个
@@ -217,13 +217,13 @@ export const TASK_SCHEDULES: Record<TaskName, TaskSchedule> = {
     cron: '0 0 14 * * *',
     timeZone: TZ,
     dateKind: 'today',
-    what: 'T 日 14:00 自动确认收货 + 计佣',
+    what: 'T 日 14:00 自动确认收货（仅 delivered）+ 计佣（写 pending，次日入账）',
   },
   'commission-settle': {
     cron: '0 0 2 * * *',
     timeZone: TZ,
     dateKind: 'yesterday',
-    what: 'T+1 02:00 佣金入账到团长余额',
+    what: 'T+1 02:00 佣金入账到团长余额（把 T 日确认产生的 pending 置 settled）',
   },
   'supplier-share': {
     cron: '0 10 2 * * *',
@@ -234,8 +234,15 @@ export const TASK_SCHEDULES: Record<TaskName, TaskSchedule> = {
   reconciliation: {
     cron: '0 0 4 * * *',
     timeZone: TZ,
-    dateKind: 'today',
-    what: '每日 04:00 与微信支付对账',
+    /**
+     * ⭐ `yesterday`，**不是 `today`**（2026-09-17 M4-2 改正，原文档写 today 是错的）
+     *
+     * 04:00 跑批若对「今日」，核对的只是 `00:00–04:00` 这 4 小时切片，而昨日
+     * 23:00 之后的流水要等**次日**才被覆盖到 —— 等于每天都漏核一段。改对「昨日」后
+     * 核的是**完整自然日**，且 T 日的下单窗口（T-1 14:00–23:00）此时已闭合、流水齐全。
+     */
+    dateKind: 'yesterday',
+    what: '每日 04:00 对账（核对**昨日**本地三方流水；不谎称已与微信对平）',
   },
   'leader-expire': {
     cron: '0 0 3 * * *',

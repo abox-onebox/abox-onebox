@@ -318,7 +318,7 @@ export interface SettleCommissionsResult {
   leaders: SettleCommissionsLeader[];
   /** 跳过原因（不静默丢弃 —— 运营必须能看见「为什么没结」） */
   skippedReasons: string[];
-  /** ⚠️ 口径说明：一期 `scanned` 常态为 0 的原因（**必须展示**，否则会被当成故障） */
+  /** ⚠️ 口径说明：两段式后 `pending` 是常态、`scanned=0` 的确切含义（**必须展示**，否则会被当成故障） */
   note: string;
 }
 
@@ -326,8 +326,9 @@ export interface SettleCommissionsResult {
  * D35 佣金入账（幂等 · 手动触发 / 补跑）
  *
  * **整批单事务**：要么全入账、要么全不入账；并发重复入账按行跳过，不会重复加钱。
- * ⚠️ 一期佣金在「取餐确认」时即时入账，故 `scanned` 常态为 0 —— 这不是故障，
- *    端上必须把返回的 `note` 展示出来。
+ * ⚠️ **佣金两段式**：计佣（确认收货时写 `pending`）与入账（T+1 02:00 进余额）分两个
+ *    时点，故 `pending` 是**每天的常态**；`scanned=0` 只在当天没有新确认订单时出现 ——
+ *    这**不是故障**，端上必须把返回的 `note` 展示出来。
  */
 export const settleCommissions = (payload: SettleCommissionsPayload = {}) =>
   http.post<SettleCommissionsResult>('/admin/finance/commissions/settle', payload);

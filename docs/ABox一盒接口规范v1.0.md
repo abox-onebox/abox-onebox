@@ -933,7 +933,7 @@ ab_meal_assignment(status=active) × ab_set_meal_item
 | D34 汇总 | `summary` 按**同一过滤条件的全量**（不受分页影响，与 D8/D36/D40 同一约定）+ `byLevel[]` 按等级拆分（财务问的是「今天首席/金牌各发多少」）。e2e 断言 `Σ byLevel = netFen`、`pageSize=1` 时汇总不变 |
 | D34 手机号 | 一律 `phoneMasked` —— 团长档案里存的**本身就是脱敏号**，此处不额外开后门 |
 | ⭐⭐ D35 的定位 | = M4 **`commission-settle.task`（T+1 02:00 佣金入账）的同一执行口**（`CommissionService.settlePending`）。跑批上线只需把 `@Cron` 接到本方法，**不另写第二套入账逻辑** |
-| ⭐⭐ **一期 `pending` 常态为 0** | 佣金在 L9 取餐确认时**即时入账**（`accrueForOrders` 直接写 `settled`）。故 D35 出参**必须**带 `note` 说明「这不是故障、也不是钱没结」—— 否则「点了按钮 0 条」一定被当成故障报上来（同 M3-10 的「如实标注」纪律） |
+| ⭐⭐ **两段式（2026-09-17 M4-2 定稿）：`pending` 是每天都出现的正常中间态** | 计佣（L9 取餐确认 / 4.4 自动确认）只写 `ab_commission(status='pending')`、**不动余额**；`settlePending` 是**唯一**把钱写进团长余额的地方（T+1 02:00 的 `commission-settle.task` 与 D35 共用它）。故 D35 出参**必须**带 `note` 说明「`scanned=0` 不是故障、也不是钱没结」—— 否则「点了按钮 0 条」一定被当成故障报上来（同 M3-10 的「如实标注」纪律）。⭐ 本次改动同时**激活**了一条此前从未运行过的守卫：`collectQuitBlockers` 的「有未结算佣金不得停职」（《缺陷与陷阱》#52） |
 | ⭐ D35 **刻意不做「补计佣」** | `ab_order` **没有**「下单/确认时刻的团长等级」快照 → 任何事后补计佣都只能用团长**当前**等级，团长晋级后会**多算佣金**。这是**结构性缺口**（非实现 bug），故 D35 严格限定为「`pending` → `settled` 入账」，并在《缺陷与陷阱》登记 |
 | D35 原子与并发 | **整批单事务**（要么全入账、要么全不入账，不留「一半团长到账」）；逐行 `UPDATE ... WHERE id=? AND status='pending'`，以 `affected` 判定归属 —— 并发下已被别处入账的行进 `skipped` 而不是重复加钱 |
 | D35 无归属 | 团长档案不存在 → `skipped` + **`skippedReasons`**（人话，含「X 条佣金跳过」）。**不猜、不建号、不静默丢弃** |
@@ -1227,7 +1227,7 @@ approve
 ### 6.8 定时任务（M4-1 · 跑批与手动补跑）
 
 > 权威清单：《订单状态机与全链路流转 v1.0》§3。**M4 分三批推进**：
-> **M4-1 日切链路**（本批 · 4.1/4.2/4.3 + 调度基座 + 补跑接口）· M4-2 结算链路（4.4/4.5/4.7）·
+> **M4-1 日切链路 ✅**（4.1/4.2/4.3 + 调度基座 + 补跑接口）· **M4-2 结算链路 ✅（本批 · 4.4/4.5/4.7）** ·
 > M4-3 队列消费者与订阅消息（4.10–4.12）。
 > **本批零 DDL、零新增错误码。**
 
@@ -1246,10 +1246,10 @@ approve
 | `meal-publish` | T-1 14:00 | **`tomorrow`（次日）** | 开团：次日套餐上架（4.1） | ✅ 已实装 |
 | `cutoff` | T 00:00 | `today`（当日） | 截单：未支付兜底取消 / 已支付锁定 / 定格备料量（4.2） | ✅ 已实装 |
 | `delivery-generate` | T 00:30 | `today` | 按楼群生成配送单（4.3） | ✅ 已实装 |
-| `auto-confirm` | T 14:00 | `today` | 自动确认收货（4.4） | M4-2 |
-| `commission-settle` | T+1 02:00 | `yesterday`（前一日） | 佣金入账（4.5） | M4-2 |
+| `auto-confirm` | T 14:00 | `today` | 自动确认收货（4.4 · **只转 `delivered`**）+ 计佣（写 `pending`） | ✅ 已实装（M4-2） |
+| `commission-settle` | T+1 02:00 | `yesterday`（前一日） | 佣金入账（4.5 · `pending → settled` + 进余额） | ✅ 已实装（M4-2） |
 | `supplier-share` | T+1 02:10 | `yesterday` | 供应商应付结算（4.6） | ✅ 已实装（M3-9） |
-| `reconciliation` | 04:00 | `today` | 对账（4.7） | M4-2 |
+| `reconciliation` | 04:00 | **`yesterday`（前一日 · 2026-09-17 由 `today` 改正）** | 对账（4.7 · 核昨日完整自然日 · 按支付日切日） | ✅ 已实装（M4-2） |
 | `leader-expire` | 03:00 | `null`（与出餐日无关） | 见习团长 30 天失效（4.8） | ✅ 已实装（M2） |
 
 | 项 | 口径 |
@@ -1259,7 +1259,7 @@ approve
 | ⭐ **补跑与跑批共用同一执行口** | 任务的 `runOnce(date)` 就是其 cron 处理器内部调用的那一个方法，补跑只做「推导日期 + 调它」。故「跑批算出来的数」与「手动补跑算出来的数」在结构上不可能不同 |
 | ⭐ **补跑刻意不加锁** | 锁（`KvService.setNx`，键 = 任务 + 目标日期）的语义是「同一目标日期只跑一次（防并发重入）」，而补跑的动机恰恰是「跑批没跑成」—— 被锁挡住就失去用途。重复补跑的安全性由**业务幂等**保证（以 `meal_date` 为键） |
 | ⭐ **跑批不落库运行记录** | 项目不变量「派生值不落库」。要查「昨夜跑了什么」看日志，不查表 |
-| ⭐ **实装状态如实标注** | 未实装任务出参 `implemented:false` + `pendingNote`（点明补齐批次），且**补跑被明确拒绝**（`10001`）。把「只打一行日志」的占位任务显示成「已上线」，比不显示更伤运营信任（同 D57–D60 的接线状态标注纪律） |
+| ⭐ **实装状态如实标注** | 未实装任务出参 `implemented:false` + `pendingNote`（点明补齐批次），且**补跑被明确拒绝**（`10001`）。把「只打一行日志」的占位任务显示成「已上线」，比不显示更伤运营信任（同 D57–D60 的接线状态标注纪律）。⭐ **M4-2 后 8/8 全部实装**（`summary.implemented === 8`）；`PENDING_NOTE` 表**刻意保留为空表** —— `implemented` 是 `runners.has(task)` 的**派生值**而非手写常量，将来「只加声明、不写执行口」时页面会自动如实显示「未实装」 |
 | ⭐⭐ **日期校验必须是 `isRealDate`** | `date` 非法 → `10001`。**不能只做格式校验**：`2026-02-30` 格式合法但日历上不存在，放行后 `Date.UTC` 会**静默滚动**到 `2026-03-02` —— 运营以为在补跑「2 月 30 日」并看到「完成」，实际批量改了 3 月 2 日的订单（《缺陷与陷阱》#56 / #60） |
 | ⭐ **`date` 缺省时的推导与跑批同源** | 走同一个 `ScheduleService.targetDate(kind)`；`dateKind=null` 的任务（`leader-expire`）缺省取**当日** |
 | 权限（**两级**） | 类级 `@Roles('super_admin','admin')` —— **不含 `operator`**：补跑是**改写历史数据**的高危操作（把一个已过去的日期重新跑一遍），不是日常作业。与 P39 打包任务（含 `operator`）的取舍**相反，理由也相反**：那边是「运营每天都要用」，这边是「出事才用一次，且必须有人负责」。也不含 `viewer` / `finance`（只读角色不该有改写历史的能力）。未登录 `10002`；其它角色 `10003` |
@@ -1274,6 +1274,33 @@ approve
 > 语义明确为「**截单定格的已售份数**」：截单前不承诺准确，截单后不再变。
 > 同一时点还会**覆盖刷新**生产计划（`freezeProducePlan`，只覆盖未开工父行）—— 否则截单前被访问
 > 而惰性生成的偏小计划会一直留到供应商手里。
+
+**M4-2 实现口径（4.4 自动确认 · 4.5 佣金入账 · 4.7 对账 · 结算链路）**
+
+> 落点 `tasks/auto-confirm.task.ts` · `tasks/commission-settle.task.ts` · `tasks/reconciliation.task.ts` ·
+> `modules/order/order.service.ts`（`autoConfirmByDate`）· `modules/finance/commission.service.ts`
+> （`accrueForOrders` / `settlePending` / `monthOrdersOf`）· `modules/finance/reversal.service.ts` ·
+> `modules/finance/reconciliation.service.ts`（`reconcile`）。
+> 验收 `scripts/e2e-m3.mjs` **§29**（10 条不变量 · **不依赖下单窗口**）+ **§28** 三条「未实装」断言翻转为 8/8。
+> **零 DDL · 零新增错误码。**
+
+| 项 | 口径 |
+| --- | --- |
+| ⭐⭐ **佣金两段式（本批头号决策）** | `T 日 14:00 计佣（`pending`，不动余额）` → `T+1 02:00 入账（`settled` + 进余额）`。**计佣与入账是两个动词、两处落点**：`accrueForOrders` **只写 `ab_commission(status='pending')`**，`creditCommissions` 是**唯一**把钱写进余额的地方（只被 `settlePending` 调用）。旧实现「确认即入账」把两件事合成一件，退款窗口里就必然出问题（见下） |
+| ⭐⭐ **退款的两条冲销路径（C9）** | ① **退款落在 `pending` 窗口** → **只把原行作废**（`pending → cancelled`），**不写负向冲销行、不动余额**，`notes` 明写「未动余额」；② **已入账（`settled`）** → 写 `type='reversal'` 负行 **+ 扣余额**。⭐ 旧实现只有路径②：在 ① 的窗口下会**从余额里扣一笔从未入账的钱**，而余额**允许为负** → 可能扣成负数形成**假欠款**，且**没有任何地方会报错**（《缺陷与陷阱》#62） |
+| ⭐ 出参符号与「是否已入账」**无关** | `commissionReversedFen` **恒正**、`commissionReversedQuantity` **恒负**（端上按 `−X` 展示）。故端上**不需要**按「是否已入账」分叉 —— 一笔 `pending` 的佣金被退款，份数照样回退，只是钱没动 |
+| ⭐⭐ 4.4 **只转 `delivered`** | `autoConfirmByDate` 只把 `status='delivered'` 的单转 `completed`；`pending_pay` / `paid` / `cut_off` / `cooked` / `delivering` / `refund_applying` / `refunding` **一律原样不动**，进 `notDelivered.byStatus` 并 `logger.warn`。**异常态 fail-closed**：到 14:00 还没送达是**履约异常**，把它当「确认收货」处理等于把异常洗成正常单（且佣金照计）。⚠️ 与 L9 手动确认刻意**宽严不同**：团长在楼下收款时可能面对 `delivering` 刚到货的实况，故 L9 放行 `delivered` / `delivering` |
+| ⭐ **无归属团长** | 到了确认条件但订单没有归属团长 → 仍转 `completed` 并**收口计佣为 0**（`orphanConfirmed` 计数 + 日志），**不猜、不建号**（同 D35 `skippedReasons` 纪律） |
+| ⭐⭐ 4.5 与 **D35 同一执行口** | `CommissionSettleTask.runOnce()` 就是 `CommissionService.settlePending()` —— 与后台「手动触发佣金入账」端点**同一个方法**。不存在第二套入账逻辑，故「跑批入账的数」与「运营点按钮入账的数」结构上不可能不同 |
+| ⭐ `pending` 是**常态**、`scanned=0` 不是故障 | 两段式后每天都有 `pending` 待入账。`scanned=0` 只在「当天没有新确认的订单」时出现，**记 log 不记 warn** —— 否则运营每天凌晨被一条假告警吵醒 |
+| ⭐ **不做「补计佣」** | 只把**已存在的** `pending` 行入账，不扫描「该计佣却没有佣金行的订单」（`ab_order` 没有确认时刻的团长等级快照 → 只能读**当前**等级 → 晋级后必然多算且无法自证）。《缺陷与陷阱》#51 |
+| ⭐⭐ **#52 停职守卫复活** | `collectQuitBlockers` 的「存在未结算佣金则拦截停职」在两段式前**恒不触发**（`pending` 永远为 0）—— 是**死代码**。两段式后 `pending` 天天存在，这条守卫**真正开始运行**（e2e §29 直插 `pending` 钉死）。这正是「**枚举值若永不产生，所有以它为判据的守卫都是死代码**」的兑现 |
+| ⭐⭐ 4.7 `reconciliation` 目标日期 = **昨日**（2026-09-17 改正） | 文档原写 `today`。04:00 对「今日」只能核 `00:00–04:00` 这 **4 小时切片**，昨日 23:00 后的流水要等次日才被覆盖 → **每天都漏核一段**。改对「昨日」后核的是**完整自然日**，且 T 日下单窗口（T-1 14:00–23:00）此时已闭合、流水齐全 |
+| ⭐ **对账锚 = 支付日** | `reconcile()` 按 `paid_at` 切日（**财务域唯一不指出餐日的端点**，与 D33/D34/D36 刻意偏离）。e2e 用「造一笔支付日落在目标日、出餐日在别的日子」的夹具钉死 |
+| ⭐⭐ **不平才写日志，平了不写** | 发现不平 → 落一条 `ab_operation_log`（`module='finance'` / `action='对账不平'` / `target_id=日期`），后台「操作日志」页直接可见、可人工跟进（**零 DDL**，不建对账异常表）。**平的日期不写** —— 否则一年 365 条噪音会把这页淹掉。**幂等**：同一天已有告警行则不重复写（补跑只回报 `alerted=false` + `alertSkippedReason`）。这也是「**不能把告警藏在服务器日志里**」的落实 —— 没人会主动翻服务器日志 |
+| ⭐⭐ 告警里**必须**带 caveat | 告警快照含 `caveat`（「仅本地三头核对，**不等于已与微信侧对平**（一期无商户号与账单文件）」）+ `channelSource='local_only'` + `billAvailable=false`。「平不平」只针对**本地三头**，微信侧一期根本没核过（#55）—— 这句话**必须写进告警本身**，不能只写在文档里 |
+| ⭐⭐ `monthOrdersOf` 的**双计**（已修） | 月度单量的旧写法 `SUM(CASE WHEN type='reversal' THEN -quantity ELSE quantity END)` 配合 `status` 过滤，会让**退款单先被 `status` 排除、又被 `CASE` 加回**（`reversal` 行 `quantity` 为负、`CASE` 又翻成正）→ 月单**不降反平**，可凭退款刷 C2 晋级。现只数 `type='normal' AND status IN ('pending','settled')`（《缺陷与陷阱》#63） |
+| 两个任务的验证方式 | **跑批验收走补跑接口** `POST /admin/schedule/{task}/run` 而非等 cron（`@Cron` 是静态元数据，不受时钟注入影响）；e2e §29 用**隔离日期**（today−208 / −209 / −210，避开 §18–§28 已占偏移）造夹具，跑完全量还原（含 `ab_refund`） |
 
 ---
 

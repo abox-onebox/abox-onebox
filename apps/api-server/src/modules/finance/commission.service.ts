@@ -49,6 +49,8 @@ export interface CommissionCredit {
   level?: string;
   /** 自定义流水文案；缺省由 `creditCommissions` 按等级/费率生成 */
   remark?: string;
+  /** 提现/发放渠道（取佣金行自己的 `payout_channel`；缺省 `FLEX_MANUAL` 灵活用工） */
+  channel?: string;
 }
 
 /** D35 出参：按团长拆分的入账明细（运营最关心「谁到账了多少」） */
@@ -83,15 +85,23 @@ export interface CommissionSettleView {
 /**
  * D35 的口径说明（**必须下发**）
  *
- * 「点了按钮 0 条」听起来像故障。这段文案把「为什么是 0」说清楚：
- * 一期佣金在取餐确认时即时入账，`pending` 只是 M4 跑批上线后的中间态。
+ * ⭐ **2026-09-17 · M4-2 定稿：佣金改为两段式** —— 本文案随之重写。
+ *
+ * 旧版写的是「一期佣金即时入账，故 `pending` 常态为 0 条」；两段式上线后
+ * **`pending` 是每天都会出现的正常中间态**，若继续沿用旧文案，运营看到
+ * 「待入账 N 条」会以为出了故障，反而去查一批正常数据。
+ *
+ * ⚠️ 两段式的**业务理由**（不是技术偏好）：自营口径下用户退款**不冲减**供应商
+ *   采购款（钱照付，《自营结算口径定义》§5.1）。若佣金在确认当时就入账并被提走，
+ *   一单退款就变成平台**双亏** —— 货钱付了、佣金也追不回。隔夜入账（T 日 14:00
+ *   确认 → T+1 02:00 入账，约 12 小时）为退款留出一段冷静期。
  */
 export const COMMISSION_SETTLE_NOTE =
   '佣金入账 = 把 `ab_commission.status=pending` 的行置为 settled 并计入团长余额。' +
-  '⚠️ 一期佣金在「取餐确认」时**即时入账**（`accrueForOrders` 直接写 settled），' +
-  '故正常情况下待入账为 0 条、本端点返回 scanned=0 —— 这不是故障，也不是「钱没结」。' +
-  '本端点是 M4 `commission-settle.task`（T+1 02:00 佣金入账）的**同一执行口**，' +
-  '跑批上线后用于手动补跑，也可用于异常/历史数据的补账。';
+  '⭐ **佣金两段式**：计佣（确认收货时写 pending）与入账（T+1 02:00 跑批进余额）' +
+  '分两个时点，故「待入账 N 条」是**每天的常态**，不是故障、也不是「钱没结」。' +
+  '本端点既是 `commission-settle.task`（T+1 02:00）的**同一执行口**，' +
+  '也用于漏跑批后的手动补跑（传 `date` 限定出餐日；不传 = 全量待入账）。';
 
 @Injectable()
 export class CommissionService {
@@ -417,18 +427,39 @@ export class CommissionService {
   }
 
   /**
-   * 计佣并即时入账（M2 验收标准 3）
+   * 计佣（写 `ab_commission` 的 `pending` 行）——**不入账**
    *
-   * 口径：
+   * ## ⭐ 这是「两段式」的第一段（2026-09-17 · M4-2 定稿）
+   *
+   * ```mermaid
+   * T 日 14:00  确认收货（团长主动 L9 / 系统兜底 4.4）──► ab_commission(status=pending)
+   * T+1 02:00  commission-settle.task ────────────────► status=settled + 进团长余额
+   * ```
+   *
+   * ⚠️ **为什么不再即时入账**（改动的**业务**理由，不是技术偏好）：入账后就是可提现的钱。
+   *   自营口径下用户退款**不冲减**供应商采购款（钱照付，《自营结算口径定义》§5.1）——
+   *   若佣金在确认当时就被提走，一单退款即成为平台**双亏**。隔夜入账留出约 12 小时冷静期。
+   *
+   * ⚠️ **出参 `amountFen` 的语义已变**：从「本次到账金额」变为「**本次计佣金额**」。
+   *   端上文案必须相应改成「将于次日 02:00 入账」—— 否则团长确认后看不到余额变，
+   *   会以为钱丢了。（L9 / 4.4 两侧的出参与文案均已同步。）
+   *
+   * ## 两条路径共用本方法
+   * 口径必须一致，否则同一单经不同路径计佣会得出不同金额：
+   *   · L9 团长主动取餐确认（`leader-order.service.ts`）
+   *   · 4.4 `auto-confirm.task` T 日 14:00 系统自动兜底确认
+   *
+   * ## 口径
    *   · 基数 = **实发份数** × 单价（取订单 `total_amount` = 售价 × 份数）
-   *   · 费率 = 结算时**等级快照**（`ab_commission.leader_level` + `rate`，C2）
+   *   · 费率 = 计佣时**等级快照**（`ab_commission.leader_level` + `rate`，C2）
    *   · 幂等 = `uk_commission_order_type`(orderId, type) 唯一索引 + 先查后写，
    *     重复确认 / 定时任务补跑不会重复计佣
-   *   · 入账 = `ab_commission(status='settled')` + `ab_balance.balance` + 一条
-   *     `ab_balance_log(type='commission', direction=1)`，保证「佣金明细 ↔ 余额流水」一致
    *
-   * ⚠️ M2 阶段由「取餐确认（L9）」即时触发入账；M4 的 `commission-settle.task`
-   *    改为扫描 `pending` 佣金补结算，两者幂等、互不冲突。
+   * ## ⭐ 「事实」与「钱」分开记（两段式的连带后果，务必理解）
+   *   · `total_orders` / `last_order_at`（**事实**）→ 在**计佣**时累加（本节）；
+   *   · `total_commission`（**钱**）→ 在**入账**时累加（`creditCommissions`）。
+   *   若两段式后把「事实」也留到入账才记，`total_orders` 会晚一天且**补跑会重复加**
+   *   （`touchOrderStats` 的补账语义就是「只改账不改事实」）。故事实归事实、钱归钱。
    */
   async accrueForOrders(
     leader: TeamLeader,
@@ -436,15 +467,13 @@ export class CommissionService {
     channel = 'FLEX_MANUAL',
     manager?: EntityManager,
   ): Promise<{ count: number; quantity: number; amountFen: number; orderNos: string[] }> {
-    /**
-     * ⚠️ 计佣（写 `ab_commission`）与**入账**（进余额）是两个动作，此处刻意分开：
-     *   `accrueForOrders` 走「计佣 → 入账」，`settlePending` 走「把已存在的 pending
-     *   行入账」—— 两者必须写**同一套**余额/流水字段，否则同一笔佣金经不同路径
-     *   进账会得出不同的 `balanceAfter`。入账代码只在 `creditCommissions` 一处。
-     */
+    /** ⚠️ 入账代码**只有一处**（`creditCommissions`）—— 本方法不再调用它，勿在此另写。 */
     const run = async (m: EntityManager) => {
       const rate = Number(leader.commissionRate);
-      const credits: CommissionCredit[] = [];
+      let count = 0;
+      let quantity = 0;
+      let amountSum = 0;
+      const orderNos: string[] = [];
 
       for (const order of orders) {
         const exist = await m.findOne(Commission, {
@@ -453,7 +482,7 @@ export class CommissionService {
         if (exist) continue; // 幂等：该单已计佣
 
         const base = Number(order.totalAmount);
-        const quantity = Number(order.quantity || 0);
+        const qty = Number(order.quantity || 0);
         const amount = round2(base * rate);
 
         await m.save(
@@ -464,36 +493,43 @@ export class CommissionService {
             leaderLevel: leader.level,
             rate: leader.commissionRate, // 快照
             baseAmount: base.toFixed(2),
-            quantity,
+            quantity: qty,
             amount: amount.toFixed(2),
             type: 'normal',
-            status: 'settled',
-            settledAt: new Date(),
+            status: 'pending', // ⭐ 两段式：计佣不入账，等 T+1 02:00 跑批
+            settledAt: null,
             mealDate: order.mealDate,
             payoutChannel: channel,
             taxWithheldAmount: '0.00',
           }),
         );
 
-        credits.push({
-          orderNo: order.orderNo,
-          amount,
-          quantity,
-          rate,
-          level: leader.level,
-        });
+        count += 1;
+        quantity += qty;
+        amountSum += amount;
+        orderNos.push(order.orderNo);
       }
 
-      const credited = await this.creditCommissions(m, leader, credits, {
-        channel,
-        touchOrderStats: true,
-      });
+      // 「事实」累加：订单已确认收货 —— 与钱无关，故不等入账。
+      // ⚠️ 只有在真写出新佣金行时才动（`count > 0`），否则重复确认会把单数刷上去。
+      if (count > 0) {
+        await m
+          .createQueryBuilder()
+          .update(TeamLeader)
+          .set({
+            totalOrders: Number(leader.totalOrders) + quantity,
+            lastOrderAt: new Date(),
+          })
+          .where('id = :id', { id: leader.id })
+          .execute();
+      }
 
       return {
-        count: credited.orderNos.length,
-        quantity: credited.quantity,
-        amountFen: credited.amountFen,
-        orderNos: credited.orderNos,
+        count,
+        quantity,
+        /** ⚠️ = **本次计佣金额**（非到账金额），见方法头注释 */
+        amountFen: Math.round(amountSum * 100),
+        orderNos,
       };
     };
 
@@ -501,7 +537,7 @@ export class CommissionService {
   }
 
   /* ------------------------------------------------------------------ *
-   * 入账段（`accrueForOrders` 与 `settlePending` 共用同一段代码）
+   * 入账段（**唯一**把佣金写进余额的地方，仅 `settlePending` 调用）
    * ------------------------------------------------------------------ */
 
   /**
@@ -513,22 +549,26 @@ export class CommissionService {
    *   ② `ab_balance.balance / total_in`（余额快照）
    *   ③ `ab_team_leader.total_commission`（团长维度统计快照，**不参与提现扣减**）
    *
-   * ⚠️ `touchOrderStats` 区分两种来源：
-   *   · `true`（计佣入账）—— 同时累加 `total_orders` 并刷新 `last_order_at`，因为这批
-   *     佣金**对应新发生的订单**；
-   *   · `false`（补结算 pending）—— **只累加佣金**。补入账不是新下单，若顺手把
-   *     `total_orders` 加上去、`last_order_at` 刷新成「今天」，会把团长的活跃度
-   *     和 C2 晋级审计（按 `month_orders`）一起污染。补账只改账，不改事实。
+   * ⚠️ **本方法只改「钱」，从不改「事实」** —— 不碰 `total_orders` / `last_order_at`。
+   *   两段式（M4-2）之后，事实（订单已确认收货）在**计佣**时就已由
+   *   `accrueForOrders` 记过；入账只是把钱搬进余额，属于**补账语义**。若在此再动
+   *   `total_orders`，漏跑批后的补入账会把单数重复加上去、`last_order_at` 也会被
+   *   刷成「补跑那天」，把团长活跃度与 C2 晋级审计（按 `month_orders`）一起污染。
+   *   —— 原本这里有个 `touchOrderStats` 开关区分两种来源；两段式后计佣不再走本方法，
+   *   该开关只剩 `false` 一个取值，成了「永不生效的选项」（《缺陷与陷阱》#52 同族），
+   *   故**直接删除**，让「只改账不改事实」成为本方法的不变量。
+   *
+   * ⚠️ **本方法是把佣金写进余额的唯一实现** —— `accrueForOrders`（计佣）刻意不调用它。
+   *   任何时候要「入账」，都走 `settlePending`，不要在别处另写一遍余额加法，
+   *   否则同一笔佣金经不同路径会得出不同的 `balanceAfter`（本项目头号顽疾「两个真相」）。
    */
   private async creditCommissions(
     m: EntityManager,
     leader: TeamLeader,
     credits: CommissionCredit[],
-    opts: { channel?: string; touchOrderStats?: boolean } = {},
   ): Promise<{ amountFen: number; quantity: number; orderNos: string[] }> {
     if (!credits.length) return { amountFen: 0, quantity: 0, orderNos: [] };
 
-    const channel = opts.channel ?? 'FLEX_MANUAL';
     const account = await m.findOne(Balance, { where: { userId: Number(leader.userId) } });
 
     let balance = Number(account?.balance ?? 0);
@@ -557,7 +597,9 @@ export class CommissionService {
           balanceAfter: balance.toFixed(2),
           relatedId: c.orderNo,
           remark: c.remark ?? `佣金入账 ${levelLabel(level)} ${(rate * 100).toFixed(0)}%`,
-          payoutChannel: channel,
+          // 渠道取**佣金行自己的** `payout_channel`（每行一条流水，故不必强行统一）——
+          // 两段式后补入账可能一次跨多行，各行渠道未必相同，取行值最诚实。
+          payoutChannel: c.channel ?? 'FLEX_MANUAL',
           taxWithheldAmount: '0.00',
         }),
       );
@@ -584,27 +626,14 @@ export class CommissionService {
       );
     }
 
-    // 团长维度统计快照
+    // 团长维度统计快照：**只累加 `total_commission`（钱）**，见方法头注释。
     const totalCommission = round2(Number(leader.totalCommission) + amountSum).toFixed(2);
-    if (opts.touchOrderStats) {
-      await m
-        .createQueryBuilder()
-        .update(TeamLeader)
-        .set({
-          totalCommission,
-          totalOrders: Number(leader.totalOrders) + quantitySum,
-          lastOrderAt: new Date(),
-        })
-        .where('id = :id', { id: leader.id })
-        .execute();
-    } else {
-      await m
-        .createQueryBuilder()
-        .update(TeamLeader)
-        .set({ totalCommission })
-        .where('id = :id', { id: leader.id })
-        .execute();
-    }
+    await m
+      .createQueryBuilder()
+      .update(TeamLeader)
+      .set({ totalCommission })
+      .where('id = :id', { id: leader.id })
+      .execute();
 
     return { amountFen: Math.round(amountSum * 100), quantity: quantitySum, orderNos };
   }
@@ -616,14 +645,18 @@ export class CommissionService {
   /**
    * D35 · 把 `ab_commission.status='pending'` 的佣金入账（进余额）。
    *
-   * ⭐ **这是 M4 `commission-settle.task`（T+1 02:00 佣金入账）的同一执行口** ——
-   *   跑批上线后只需把 `@Cron` 接到本方法，不另写第二套入账逻辑。
+   * ⭐ **这是 4.5 `commission-settle.task`（T+1 02:00 佣金入账）的同一执行口** ——
+   *   跑批与运营手动补跑共用本方法，不存在第二套入账逻辑。
    *
-   * ⚠️ **一期 `pending` 常态为 0 条**，这不是故障：M2 的 L9 取餐确认走
-   *   `accrueForOrders` **即时入账**（直接写 `settled`）。本端点的真实用途是
-   *   ① M4 跑批改为「确认写 `pending` → 次日 02:00 入账」两步后的手动补跑；
-   *   ② 异常/历史数据的补账。故出参**如实**返回 `scanned=0` 并附 `note` 说明，
-   *   不伪造「已处理 N 条」。
+   * ⚠️ **两段式（M4-2 定稿）之后，`pending` 是每天都会出现的正常中间态** ——
+   *   T 日确认收货计佣写 `pending`，T+1 02:00 由本方法入账。故 `scanned=0` 只在
+   *   「当天没有新确认的订单」时才出现，属正常；`scanned>0` 更是正常。
+   *   **不要**再把 `scanned=0` 解释成「钱没结」（旧版注释如此，已随两段式改写）。
+   *
+   * ⚠️ 本方法**不做「补计佣」**：它只把**已经存在的** pending 行入账，不会去扫描
+   *   「该计佣却没有佣金行的订单」。原因是订单表没有「下单/确认时刻的团长等级」快照，
+   *   事后补算只能读团长**当前**等级 —— 中间晋级过的团长会被**多算**，且事后无法
+   *   证明算错了（《缺陷与陷阱》#51）。**做一个会算错的补算，比不做更危险。**
    *
    * 幂等与并发：
    *   · 逐行 `UPDATE ... WHERE id=? AND status='pending'`，以 `affected` 判定归属 ——
@@ -631,7 +664,7 @@ export class CommissionService {
    *   · **整批单事务**：任一步失败全部回滚（要么全入账、要么全不入账），
    *     不留「一半团长到账、一半没到」的中间态。
    *
-   * `settledAt` 取**系统当前时间**（补跑时刻）而非业务时点 —— 对账要诚实的时间戳，
+   * `settledAt` 取**系统当前时间**（跑批/补跑时刻）而非业务时点 —— 对账要诚实的时间戳，
    * 且 `ab_commission.meal_date` 已记录业务归属日，两者语义不冲突。
    */
   async settlePending(dto: AdminSettleCommissionsDto): Promise<CommissionSettleView> {
@@ -701,15 +734,14 @@ export class CommissionService {
             // 快照取自佣金行本身（补账时团长等级可能已变）
             rate: Number(r.rate),
             level: r.leaderLevel,
+            channel: r.payoutChannel ?? undefined,
             remark: `佣金入账（补结算）${levelLabel(r.leaderLevel)} ${(Number(r.rate) * 100).toFixed(0)}%`,
           });
         }
 
         if (!credits.length) continue;
 
-        const credited = await this.creditCommissions(m, leader, credits, {
-          touchOrderStats: false, // 补账只改账、不改「下单事实」
-        });
+        const credited = await this.creditCommissions(m, leader, credits);
         settled += credits.length;
         amountFen += credited.amountFen;
         quantity += credited.quantity;

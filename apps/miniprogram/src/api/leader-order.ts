@@ -208,7 +208,12 @@ export interface PickupConfirmDone {
   confirmedCount: number;
   /** 本次计入佣金的份数（**计佣基数 = 实发份数**） */
   confirmedQuantity: number;
-  /** 本次入账佣金（整数分） */
+  /**
+   * 本次**计佣**金额（整数分）—— 注意**不是「已到账」**
+   *
+   * ⚠️ 佣金两段式（M4-2）：确认收货只计佣（写 `pending`），
+   *    T+1 02:00 才由跑批入账到余额。端上文案必须写明入账时点。
+   */
   commissionFen: number;
   /** 同金额的元字符串，如 `'15.48'` */
   commissionYuan: string;

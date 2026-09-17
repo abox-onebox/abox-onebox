@@ -53,7 +53,7 @@
         </view>
         <text class="card__foot">
           佣金按「实发份数」结算（已分发 {{ data.today.completedQuantity }} 份 × 单价 ×
-          {{ ratePercent }}%），取餐确认后才入账
+          {{ ratePercent }}%），取餐确认后计佣、次日 02:00 入账
         </text>
       </view>
 

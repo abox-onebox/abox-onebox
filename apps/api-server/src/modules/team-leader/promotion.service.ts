@@ -77,6 +77,33 @@ export class LeaderPromotionService {
   /**
    * 当月已完成份数（C2「月单」）
    *
+   * ## ⭐ 口径一：`pending` + `settled` 都要算（2026-09-17 · M4-2 两段式定稿）
+   *
+   * ⚠️ 原先只算 `status='settled'`。两段式（计佣写 `pending` → T+1 02:00 入账）上线后，
+   *   若继续只算 `settled`，**一个纯资金动作会把一条业务判定拖慢一天**：团长 T 日
+   *   确认的 30 单已让 `month_orders` 达标，却要等 T+1 02:00 入账才被认定为「金牌」。
+   *   而「月单」问的是**本月促成了多少单**（事实），不是「多少钱已入账」（钱）。
+   *   仍**排除** `cancelled`（佣金被冲销 = 该单退款，事实已不成立）。
+   *
+   * ## ⭐ 口径二：只数 `type='normal'` 且未被冲销的行（同批修真 bug）
+   *
+   * 原实现是 `SUM(CASE WHEN type='reversal' THEN -quantity ELSE quantity END)`，
+   * 配合 `status='settled'` 过滤 —— **两者互相抵消不掉，反而重复计**：
+   *   · 冲销时 `reverseCommission` 会把**原行**置 `cancelled`（→ 被 status 条件排除，−q）
+   *   · 同时写一条 `type='reversal'`、`quantity` **为负**的冲销行（`-q`）
+   *   · 而 CASE 里 `-c.quantity` 把负号**又翻正**（`+q`）
+   * 净效果：退款单被排除后又加了回来 —— **月单不降反平**，团长可以靠退款单把
+   * `month_orders` 刷到达标线而晋级（C2 是真金白银的费率提升）。
+   *
+   * 修法：本方法只回答「**本月有几份有效订单**」，故只取正常行、且已被冲销的行
+   * 自然被 `status` 排除；**冲销行整体不参与计数**（钱的反向已由「原行被排除」体现，
+   * 再加一条负数量就是重复扣）。写成 `type='normal'` + `status IN (pending, settled)`
+   * 是**单一真相**的表述 —— 不要再引入按 `type` 分叉的 CASE。
+   *
+   * ⚠️ 判据：凡以 `ab_commission.status` 为条件的统计，先问「**它统计的是事实还是钱**」；
+   *    事实类（单数、份数、活跃度）不看资金状态、也不能把冲销行当独立事件累加，
+   *    钱类（余额、待入账）才看状态。
+   *
    * @param at 归月基准（缺省今日）；e2e 可用它构造确定性断言
    */
   async monthOrdersOf(leaderId: number, at: string = todayBj()): Promise<number> {
@@ -85,12 +112,11 @@ export class LeaderPromotionService {
     const raw = await this.dataSource
       .getRepository(Commission)
       .createQueryBuilder('c')
-      .select(
-        "COALESCE(SUM(CASE WHEN c.type = 'reversal' THEN -c.quantity ELSE c.quantity END), 0)",
-        'qty',
-      )
+      .select('COALESCE(SUM(c.quantity), 0)', 'qty')
       .where('c.teamLeaderId = :id', { id: leaderId })
-      .andWhere('c.status = :st', { st: 'settled' })
+      // ⭐ 只数正常行；已被冲销的原行为 cancelled、冲销行为 reversal，两者都排除
+      .andWhere("c.type = 'normal'")
+      .andWhere('c.status IN (:...st)', { st: ['pending', 'settled'] })
       .andWhere('c.mealDate BETWEEN :from AND :to', { from, to })
       .getRawOne<{ qty: number | string }>();
 

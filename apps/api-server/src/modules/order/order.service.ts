@@ -23,6 +23,7 @@ import {
   cutoffAtOf,
   isAfterCutoff,
   isOrderable,
+  now,
   payExpireAt,
   toBjIso,
   tomorrowBj,
@@ -36,6 +37,8 @@ import { OperationLog } from '../../database/entities/system.entity';
 import { Dish, Supplier } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
 import { WX_PAY_PROVIDER, WxPayProvider } from '../../providers/wx-pay/wx-pay.provider';
+import { CommissionService } from '../finance/commission.service';
+import { LeaderPromotionService } from '../team-leader/promotion.service';
 import { buildTimeline, explainSelfCancelBlock, userStatusText } from './order-state-machine';
 import { CreateOrderReqDto } from './dto/order.dto';
 
@@ -54,6 +57,41 @@ export interface CutoffByDateResult {
   /** ③ 备料量定格（按楼群） */
   soldByGroup: Array<{ buildingGroupId: number; quantity: number }>;
   totalSoldQuantity: number;
+}
+
+/** 自动确认兜底出参（`autoConfirmByDate` · 跑批与手动补跑共用同一形状） */
+export interface AutoConfirmByDateResult {
+  date: string;
+  /** 本次推进为 `completed` 的订单数 */
+  confirmedCount: number;
+  confirmedQuantity: number;
+  /** 本次**计佣**金额（分）—— 两段式：将于次日 02:00 入账，**不是已到账** */
+  commissionFen: number;
+  /** 按团长拆分（运营最关心「谁被确认了多少」） */
+  leaders: Array<{
+    leaderId: number;
+    leaderName: string;
+    count: number;
+    quantity: number;
+    commissionFen: number;
+  }>;
+  /**
+   * ⭐ 该出餐日**既未送达、也未取消/退款**的订单 —— **履约异常**，如实计数、**不改状态**。
+   *
+   * T 日 11:30 应已送达，到 14:00 仍停在 `paid`/`cut_off`/`cooked`/`delivering`，
+   * 说明出餐或配送环节掉了链子。**不猜**（既不能当已送达而确认，也不能替运营取消），
+   * 只如实报出来，由人工处理 —— fail-closed。
+   */
+  notDelivered: { count: number; byStatus: Record<string, number>; orderNos: string[] };
+  /**
+   * 无归属团长、但订单仍被确认完成的数量。
+   *
+   * 履约**已经发生**（货送到了），状态必须收口；但 `team_leader_id` 为空时**没有佣金对象**，
+   * 故**不猜团长**（不按楼栋反推），只计数并告警 —— 佣金归零比佣金错付安全。
+   */
+  orphanConfirmed: number;
+  /** 本次确认后触发晋级的团长（C2），供日志与端上展示 */
+  promotions: Array<{ leaderId: number; from: string; to: string; rate: number }>;
 }
 
 /**
@@ -86,7 +124,26 @@ export class OrderService {
     private readonly dataSource: DataSource,
     private readonly bizConfig: BizConfigService,
     @Inject(WX_PAY_PROVIDER) private readonly wxPay: WxPayProvider,
+    /** M4-2 · 4.4 自动确认兜底要计佣（与 L9 共用同一计佣口径） */
+    private readonly commission: CommissionService,
+    /** M4-2 · 4.4 确认后触发 C2 晋级审计（与 L9 一致） */
+    private readonly promotion: LeaderPromotionService,
   ) {}
+
+  /**
+   * 14:00 仍未送达即视为**履约异常**的状态集（`autoConfirmByDate` 用）
+   *
+   * ⚠️ 只列「仍在履约途中」的状态：`completed`/`cancelled` 是正常终态，退款各态
+   *    有自己的流程（用户主动发起，不是履约事故），故都不算异常。
+   *    `pending_pay` 在截单时就应被兜底取消，若 14:00 还存在也是异常 —— 一并纳入。
+   */
+  private static readonly NOT_DELIVERED_STATUSES: OrderStatus[] = [
+    OrderStatus.PENDING_PAY,
+    OrderStatus.PAID,
+    OrderStatus.CUT_OFF,
+    OrderStatus.COOKED,
+    OrderStatus.DELIVERING,
+  ];
 
   // ==========================================================================
   // U6 · 创建订单
@@ -575,6 +632,233 @@ export class OrderService {
       locked: { count: lockedNos.length, orderNos: lockedNos, totalQuantity: lockedQuantity },
       soldByGroup: sold.byGroup,
       totalSoldQuantity: sold.totalQuantity,
+    };
+  }
+
+  // ==========================================================================
+  // 自动确认兜底（T 日 14:00 · T11）—— 跑批入口，由 `tasks/auto-confirm.task.ts` 委托
+  // ==========================================================================
+
+  /**
+   * 自动确认兜底：把 `delivered` 的单批量转 `completed` 并计佣
+   *
+   * 口径依据：《订单状态机与全链路流转 v1.0》§3 「T 日 14:00 auto-confirm.task ⚠️锚点2
+   * 自动确认收货」+ §二 T11（`delivered → completed`，系统批量）。
+   *
+   * ## 为什么要它
+   * 团长可能根本不点「一键分发」（忘了 / 忙 / 失联）。若没有兜底，这些单会永远停在
+   * `delivered`：**订单不闭环、佣金不到账、用户端一直显示「待取餐」**。这条任务是
+   * 「**不依赖人操作**」的兜底能力 —— 团长配合时走 L9（即时），不配合时走它。
+   *
+   * ## ⭐ 只转 `delivered`（用户 2026-09-17 裁定）
+   * 状态机 T11 只写了一条边：`delivered → completed`。仍停在 `paid`/`cut_off`/`cooked`/
+   * `delivering` 的单说明**货没送到**（T 日 11:30 应已送达）—— 那是**履约异常**，
+   * 不是「该确认没确认」。对它们：
+   *   · **不改状态**（既不能当已送达而确认，也不能替运营取消）
+   *   · 计入出参 `notDelivered` 并按状态分类，让运营看见
+   *   —— fail-closed：**缺关键事实时不猜**（同 M3-8 `50009`、D41 `40014` 的纪律）。
+   *
+   * ⚠️ 已知口径差异（**待裁决，见文档**）：`L9 confirmPickup` 放行 `delivering`
+   *    （团长能确认「配送中」的单），本方法不放行。两者宽严不同是**刻意**的 ——
+   *    团长站在现场，他确认「我收到了」是有信息支撑的；而系统在 14:00 只凭状态
+   *    推断，`delivering` 也可能是「正在路上」，替用户确认收货风险更大。
+   *
+   * ## 幂等
+   * 逐单条件更新（`WHERE id=? AND status='delivered'`），以 `affected` 判定归属 ——
+   * 并发下已被 L9 或上一次跑批确认过的单 `affected=0`，跳过、且**不计佣**
+   * （计佣本身还有 `uk_commission_order_type` 兜底，双层保险）。
+   * 故**重跑与手动补跑都安全**，且能补上「上次因故没跑到的单」。
+   *
+   * ## 事务边界：**按团长分批**
+   * 每个团长一个事务（而不是全量一个大事务）：某个团长的数据异常不会把其他团长的
+   * 确认与佣金一起回滚掉。代价是理论上可能「A 团长成功、B 团长失败」—— 而失败会
+   * 触发锁释放（见 `ScheduleService.run()`），补跑一遍即可，且补跑是幂等的。
+   *
+   * ⚠️ **晋级审计在事务外**（与 L9 一致）：钱已经计了，审计失败不该把「已确认 + 已计佣」
+   *    整体回滚，故只记日志、不抛错。
+   */
+  async autoConfirmByDate(
+    date: string,
+    operatorId?: number | null,
+  ): Promise<AutoConfirmByDateResult> {
+    const at = now();
+    const logRepoOf = (m: EntityManager) => m.getRepository(OperationLog);
+
+    // ---- ① 履约异常：14:00 仍未送达（如实计数，绝不改状态）------------------
+    const abnormal = await this.orderRepo.find({
+      where: { mealDate: date, status: In(OrderService.NOT_DELIVERED_STATUSES) },
+      order: { id: 'ASC' },
+    });
+    const byStatus: Record<string, number> = {};
+    for (const o of abnormal) byStatus[o.status] = (byStatus[o.status] ?? 0) + 1;
+
+    // ---- ② 待确认：delivered（按团长分组）----------------------------------
+    const delivereds = await this.orderRepo.find({
+      where: { mealDate: date, status: OrderStatus.DELIVERED },
+      order: { id: 'ASC' },
+    });
+
+    const byLeader = new Map<number, Order[]>();
+    const orphans: Order[] = [];
+    for (const o of delivereds) {
+      const lid = o.teamLeaderId == null ? null : Number(o.teamLeaderId);
+      if (!lid) {
+        orphans.push(o);
+        continue;
+      }
+      const list = byLeader.get(lid) ?? [];
+      list.push(o);
+      byLeader.set(lid, list);
+    }
+
+    const leaders: AutoConfirmByDateResult['leaders'] = [];
+    const promotions: AutoConfirmByDateResult['promotions'] = [];
+    let confirmedCount = 0;
+    let confirmedQuantity = 0;
+    let commissionFen = 0;
+
+    for (const [leaderId, orders] of byLeader) {
+      const leader = await this.leaderRepo.findOne({ where: { id: leaderId } });
+      if (!leader) {
+        // 团长档案已不存在 → 单仍要收口（履约已发生），但**不猜团长、不计佣**。
+        // 归入 orphan 统计（下面统一处理），并留下告警。
+        this.logger.warn(`自动确认：团长档案 #${leaderId} 不存在，${orders.length} 单转无归属处理`);
+        orphans.push(...orders);
+        continue;
+      }
+
+      const outcome = await this.dataSource.transaction(async (m: EntityManager) => {
+        const transitioned: Order[] = [];
+        for (const o of orders) {
+          // 条件更新：仅当仍是 `delivered` 才推进（防与 L9 / 重复跑批并发）
+          const upd = await m
+            .createQueryBuilder()
+            .update(Order)
+            .set({ status: OrderStatus.COMPLETED, completedAt: at })
+            .where('id = :id', { id: o.id })
+            .andWhere('status = :st', { st: OrderStatus.DELIVERED })
+            .execute();
+          if ((upd.affected ?? 0) === 0) continue;
+
+          transitioned.push(o);
+          // 状态机 §2.1.5：每次迁移落 `ab_operation_log`。跑批没有 HTTP 请求，
+          // 全局拦截器不生效，故在此**显式写入**（来源标 system）。
+          await logRepoOf(m).insert({
+            adminUserId: operatorId ?? null,
+            module: 'order',
+            action: '自动确认收货',
+            targetId: String(o.id),
+            requestData: { orderNo: o.orderNo, mealDate: date, teamLeaderId: leaderId },
+            snapshot: {
+              fromStatus: OrderStatus.DELIVERED,
+              toStatus: OrderStatus.COMPLETED,
+              source: 'system',
+              reason: 'T 日 14:00 自动确认兜底（团长未确认收货）',
+            },
+          });
+        }
+
+        // 计佣：只对**本次真正推进**的单计（口径与 L9 共用 `accrueForOrders`，写 pending）
+        const acc = await this.commission.accrueForOrders(leader, transitioned, 'FLEX_MANUAL', m);
+        return { transitioned, acc };
+      });
+
+      confirmedCount += outcome.transitioned.length;
+      confirmedQuantity += outcome.acc.quantity;
+      commissionFen += outcome.acc.amountFen;
+
+      if (outcome.transitioned.length) {
+        leaders.push({
+          leaderId,
+          leaderName: leader.realName ?? '',
+          count: outcome.transitioned.length,
+          quantity: outcome.acc.quantity,
+          commissionFen: outcome.acc.amountFen,
+        });
+      }
+
+      // C2 晋级审计（事务外，与 L9 一致）：计佣即改变「月单」，故必须重算。
+      // ⚠️ `monthOrdersOf` 两段式后已改为统计 `pending + settled`
+      //    （见 `promotion.service.ts`），否则晋级会晚一天。
+      try {
+        const audit = await this.promotion.audit(leaderId);
+        if (audit?.promoted) {
+          promotions.push({
+            leaderId,
+            from: audit.before,
+            to: audit.after,
+            rate: audit.rate,
+          });
+        }
+      } catch (e) {
+        this.logger.warn(
+          `自动确认：团长 #${leaderId} 晋级审计失败（不影响确认与计佣）：${(e as Error).message}`,
+        );
+      }
+    }
+
+    // ---- ③ 无归属团长的单：收口但不计佣 ------------------------------------
+    let orphanConfirmed = 0;
+    if (orphans.length) {
+      await this.dataSource.transaction(async (m: EntityManager) => {
+        for (const o of orphans) {
+          const upd = await m
+            .createQueryBuilder()
+            .update(Order)
+            .set({ status: OrderStatus.COMPLETED, completedAt: at })
+            .where('id = :id', { id: o.id })
+            .andWhere('status = :st', { st: OrderStatus.DELIVERED })
+            .execute();
+          if ((upd.affected ?? 0) === 0) continue;
+
+          orphanConfirmed += 1;
+          await logRepoOf(m).insert({
+            adminUserId: operatorId ?? null,
+            module: 'order',
+            action: '自动确认收货',
+            targetId: String(o.id),
+            requestData: { orderNo: o.orderNo, mealDate: date },
+            snapshot: {
+              fromStatus: OrderStatus.DELIVERED,
+              toStatus: OrderStatus.COMPLETED,
+              source: 'system',
+              reason: '无归属团长的单：履约已发生，收口但不计佣',
+            },
+          });
+        }
+      });
+    }
+
+    const notDeliveredCount = abnormal.length;
+    this.logger.log(
+      `自动确认 date=${date} 确认 ${confirmedCount} 单（${confirmedQuantity} 份 / ${leaders.length} 个团长）` +
+        `计佣 ¥${(commissionFen / 100).toFixed(2)}（pending，次日 02:00 入账）` +
+        `· 无归属收口 ${orphanConfirmed} 单` +
+        `· 履约异常 ${notDeliveredCount} 单${notDeliveredCount ? '（需人工处理）' : ''}` +
+        (operatorId ? `（操作人#${operatorId}）` : '（跑批）'),
+    );
+    if (notDeliveredCount) {
+      this.logger.warn(
+        `自动确认 date=${date} 有 ${notDeliveredCount} 单到 14:00 仍未送达` +
+          `（${Object.entries(byStatus)
+            .map(([s, n]) => `${s}=${n}`)
+            .join(' / ')}）—— 已保持原状态，请检查出餐与配送环节`,
+      );
+    }
+
+    return {
+      date,
+      confirmedCount,
+      confirmedQuantity,
+      commissionFen,
+      leaders,
+      notDelivered: {
+        count: notDeliveredCount,
+        byStatus,
+        orderNos: abnormal.map((o) => o.orderNo),
+      },
+      orphanConfirmed,
+      promotions,
     };
   }
 

@@ -115,9 +115,11 @@ export class FinanceAdminController {
       '`date` 可限定出餐日，缺省 = 全部待入账。**整批单事务**：任一步失败全部回滚，' +
       '不留「一半团长到账」的中间态；并发的重复入账以逐行 `affected` 判定后进 `skipped`，' +
       '不会重复加钱。\n\n' +
-      '⚠️ **一期 `scanned` 常态为 0**：佣金在「取餐确认」时即时入账（`settled`），' +
-      '`pending` 是 M4 两步结算上线后的中间态 —— 出参 `note` 会把这句话原样带给操作人，' +
-      '避免「点了按钮 0 条」被当成故障。',
+      '⚠️ **佣金两段式（2026-09-17 定稿）**：计佣（确认收货时写 `pending`）与入账' +
+      '（T+1 02:00 跑批进余额）分两个时点，故 **`pending` 是每天都存在的正常中间态**，' +
+      '`scanned=0` 只在「当天没有新确认的订单」时出现 —— 出参 `note` 会把这句话原样' +
+      '带给操作人，避免「点了按钮 0 条」被当成故障。两段式为退款留出约 12 小时冷静期' +
+      '（自营口径下退款不冲减供应商采购款，佣金若已提走即平台双亏）。',
   })
   settleCommissions(@Body() dto: AdminSettleCommissionsDto) {
     return this.commission.settlePending(dto);

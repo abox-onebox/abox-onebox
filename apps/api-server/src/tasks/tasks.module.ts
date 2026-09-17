@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { OperationLog } from '../database/entities/system.entity';
 import { DeliveryModule } from '../modules/delivery/delivery.module';
 import { FinanceModule } from '../modules/finance/finance.module';
 import { MealModule } from '../modules/meal/meal.module';
@@ -28,23 +30,29 @@ import { LeaderExpireTask } from './leader-expire.task';
  *    它从 `TASK_SCHEDULES` 推导。这是对 M4 头号陷阱「同刻不同日」的防御
  *    （`meal-publish` 与 `auto-confirm` 同刻触发，却分属明日 / 今日）。
  *
- * ## 委托关系
+ * ## 委托关系（M4-2 后 8 个任务全部实装）
  * | 任务 | 委托目标 |
  * | --- | --- |
  * | `meal-publish` | `MealModule.MealAdminService.publishByDate()` |
  * | `cutoff` | `OrderModule.OrderService.cutoffByDate()` + `SupplierModule.SupplierService.freezeProducePlan()` |
  * | `delivery-generate` | `DeliveryModule.DeliveryService.generateByDate()` |
- * | `auto-confirm` | `OrderModule`（批量确认）+ `FinanceModule.CommissionService`（计佣） |
+ * | `auto-confirm` | `OrderModule.OrderService.autoConfirmByDate()`（内含批量确认 + 计佣 + 晋级审计） |
  * | `commission-settle` | `FinanceModule.CommissionService.settlePending()` |
  * | `supplier-share` | `FinanceModule.SupplierShareService.runDaily()` |
- * | `reconciliation` | `FinanceModule.ReconciliationService.reconcile()` |
+ * | `reconciliation` | `FinanceModule.ReconciliationService.reconcile()`（不入账，只读 + 不平告警） |
  * | `leader-expire` | `TeamLeaderModule.LeaderPromotionService.expireTrainees()` |
  *
  * ⚠️ 依赖方向全部**单向**（`TasksModule → 各业务模块`），业务模块不反向依赖本模块，
  *    因此不存在循环。
+ *
+ * ⚠️ `forFeature([OperationLog])` 只给 `reconciliation` 用：跑批发现对账不平时要落一条
+ *    **持久告警**（用户 2026-09-17 裁定「落操作日志」，零 DDL）。放任务层而非
+ *    `ReconciliationService` 里，是为了保住该服务「**纯读视图**」的契约
+ *    （D43 两接口都不写库，见 finance.module.ts 头注）。
  */
 @Module({
   imports: [
+    TypeOrmModule.forFeature([OperationLog]),
     TeamLeaderModule,
     FinanceModule,
     MealModule,
