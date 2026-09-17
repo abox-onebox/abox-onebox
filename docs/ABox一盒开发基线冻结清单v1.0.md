@@ -30,10 +30,10 @@
 | 原型版本 | v4.10.0（37 页，已部署；结算成本项可配置版） |
 | 现行资产 | 33 份 |
 | 已废弃资产 | 7 份（存档，勿参考） |
-| 工程骨架 | `abox-onebox/` · **526 个文件**（阶段四产出） |
+| 工程骨架 | `abox-onebox/` · **600 个文件**（阶段四产出） |
 | 数据库表 | **27 张**（ER v2.1：23 张 + 评审新增 `ab_leader_invite` + M2 新增 `ab_withdraw` + M3-8 新增 `ab_supplier_dish_center_daily` + M3-12 新增 `ab_message_template`）· ⚠️ **表数对齐 ≠ 结构对齐**：自 2026-09-17（M5-2 · #76）起，「实体 → 迁移」的**逐表逐列**对齐由门禁 **`schema:parity`** 机械保证（27 表 / 394 列），且**开发期用 sqlite 建表、生产用迁移建表**这一分叉已由此门禁兜住 |
 | 技术栈 | uni-app(Vue3+TS) + NestJS + MySQL 8 + Redis 7 + 微信支付 V3；**佣金出款走灵活用工平台代发**（C11，见目录结构 v2.0） |
-| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `0bfa19b`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
+| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `a74697b`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
 | 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**；M1（后端 + 小程序基座）· M2（团长端全链路）已端到端验收；**M3（运营后台 + 供应商端）已完成（M3-1 ~ M3-15）**：已落地 M3-1 后台鉴权基座 · M3-2 套餐编排 D1–D7 · M3-3 订单中心 D8–D12 · M3-4 退款审批 D40–D42 · M3-5 后台团长管理 D19–D22 · M3-6 后台供应商管理 + 集散 D23–D32 · M3-7 后台办公楼与楼群 D13–D18 · M3-8 供应商端出餐确认 S1–S3 · M3-9 应付结算 S9（自营口径首次实装）· M3-10 系统配置 D57–D58 · M3-11 数据看板 D47–D50 · **M3-12 通知模板 D59–D60** · **M3-13 财务端点 D33–D35** · **M3-14 余额账户管理与调整 D38–D39** · **M3-15 微信支付对账 D43 + 发票管理 D44** · **M4-0 契约级修正 + S3 打包任务迁运营后台** · **M4-1 日切链路（4.1/4.2/4.3 + 调度基座 + 手动补跑）** · **M4-2 结算链路（4.4/4.5/4.7）** · **M4-3 队列贯通（BullMQ 三消费者 + 订阅消息投递点 + 外部通道移出 DB 事务）** · **M4-4 提现审批（D45 列表 + D46/D46a/D46b/D46c 四动作 · 资金链收口）** · **M5-0 部署运维基座（探针分级 + 优雅关闭 + 生产迁移 glob + 双镜像 / compose.prod / 5 脚本 + 部署运维手册；修真缺陷 #71–#75）** · **M5-1 配送单人工修正（D61/D62 · 收口挂账 #61）** · **M5-2 生产迁移补齐 + 结构对账门禁（收口 #76 · 补 2 表 9 列 1 索引 + `schema:parity`）** · **M5-3 试运营交付 + 安全自检 + #49 时间类配置接调度（收口 #49 · 门禁 16 → 18 道）**；⭐ **M5 主线（三方联调 + 灰度上线）仍被外部条件阻塞**（5.2 压测 / 5.4 真机部署 / 5.5 灰度 / 5.6 演练），故 M5-0/1/2 是**前置子批次 ≠ M5**；《部署运维手册 v1.0》**已产出**（M5-0），其中 **R2 已由 M5-2 升级为「结构已机械对账」** |
 
 ---
@@ -62,7 +62,7 @@
 | 18 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四）· ⭐ v1.1.13（2026-09-17）M5 段**四个子批次**（M5-0 / 1 / 2 / 3）：**M5-0 部署运维基座** + **M5-1 配送单人工修正**（D61/D62 · 收口挂账 #61）+ **M5-2 生产迁移补齐 + 结构对账门禁**（收口 #76 · 补 2 表 9 列 1 索引 + `schema:parity`）+ **M5-3 试运营交付 + 安全自检 + #49 时间类配置接调度**（收口 #49 · **关单** · `gate.mjs` 16 → **18 道**）；M5 段标注 4 项**外部条件阻塞**（5.2 压测 / 5.4 真机部署 / 5.5 灰度 / 5.6 演练）（⚠️ 子批次是前置 **≠ M5**；验收标准 4 条**全部要求真机执行**，三个子批次的完成**均不构成**对它们的满足） | 137,256 | `f1e5e50cace6` |
 | 19 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 · 2026-09-17 **M5-1 加 D61 `GET /admin/deliveries` + D62 `PUT /admin/deliveries/{id}`（配送单人工修正）+ 错误码 30016/30017** · 2026-09-16 S9 应付结算改「采购应付」口径 · 2026-09-17 **M5-3 #49 接线**（§6.7 五个时刻键 `unwired`→`live` + 新增「业务时刻」组 6→7 + D58 接受 **`24:00`** + **跨键自洽校验**「开团必须早于截单」；§6.8 S1 出参增 `registeredCron` / `effectiveAt` / `summary.registered`，`dateKind` 改为**由时间轴派生**）—— **零新增错误码** | 247,381 | `cbfbae723193` |
 | 20 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 26 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor + ab_refund.order_status_before）· 2026-09-16 M3-5 后台团长管理零 DDL（§5.4）· M3-6 ab_supplier 补 7 列（§5.5：资质审核四列 + license_expire_at + invoice_title + takeout_links）· M3-7 ab_building 增 population + 状态三态（§5.6，唯一 DDL、无新表）· **M3-8 新增 ab_supplier_dish_center_daily**（§3.6.1，供应商出餐确认分中心明细）· **M3-12 新增 ab_message_template**（§3.9，通知模板 5 场景 —— 场景定义留在代码里，库表只存可编辑部分；**合计 27 张表**）· ⭐ **M5-2 两处更正**（《缺陷与陷阱》#76）：**§5.3 `ab_refund.order_status_before` 类型 `tinyint` → `VARCHAR(16)`**（原文档记录**与代码不符** —— 代码写入的是 `order.status` 字符串；**文档比代码更错的场合，机械对账的源必须是代码**）+ 新增 **§5.8 迁移↔实体结构对齐**（缺口 2 表 9 列 1 索引 / 为何长期未发现 / 增量补法 / `schema:parity` 门禁 / ⚠️ **边界：ER 仍是三份结构表述里唯一无自动校验的一份**）+ 表数总览补警示「**表数对齐 ≠ 结构对齐**」 | 70,884 | `9dfb9bddbbcb` |
-| 21 | `ABox一盒本地开发手册v1.0.md` | 不依赖云资源的本地开发手册（四驱动开关 · 本地跑通登录→下单→支付→回调） | 20,337 | `09791d525d3a` |
+| 21 | `ABox一盒本地开发手册v1.0.md` | 不依赖云资源的本地开发手册（四驱动开关 · 本地跑通登录→下单→支付→回调） | 28,632 | `244bced23402` |
 | 22 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 · 2026-09-17 **M5-3**：`set_meal.cutoff_time` 由 `23:59` 更正为 **`24:00`**（#49 —— 模型缺 `24:00` 这个值，把「配置 23:59 / cron 00:00」的 1 分钟偏差固化了下来） | 26,403 | `17c6030ca37c` |
 | 23 | `ABox一盒自营结算口径定义v1.0.md` | 自营口径下结算定义（2026-09-16 定稿）· 4 条裁定 + 2 条不变量：**退款不冲减供应商应付** / 计费基数取**实收量** / 应付对象**仅供应商采购款** / siteFee 改**自有场所摊销**；S9 出单 fail-closed + 幂等键；错误码预留 50012–50014 | 21,869 | `3085fad7f658` |
 | 24 | `ABox一盒表结构评审意见v1.0.md` | ER 评审结论（阶段二）· P0×6 + 4 张补齐 DDL | 24,817 | `53e5f67f568c` |
@@ -70,7 +70,7 @@
 | 26 | `ABox一盒设计token规范v1.0.html` | 设计与实现共用视觉变量 | 20,375 | `34faff40f86e` |
 | 27 | `ABox一盒账号资源与密钥清单v1.0.md` | 外部资源核对表（阶段三）· 含 C10/C11 结算与出款通道定案 | 16,157 | `3ccb06fe9245` |
 | 28 | `ABox一盒部署运维手册v1.0.md` | 【M5-0 · M5-2 增补】生产部署与运行手册（2026-09-17）· 环境矩阵 / 拓扑（本地 compose 与 `docker-compose.prod.yml` 是两套东西）/ 密钥纪律 / 部署流程（含首次核对 9 项）/ 禁发窗口 / 两级探针监控 + 8 任务时刻表 + 队列观测 / 备份恢复 / **应急预案 6 类** / 日巡检清单 / ⚠️ **遗留风险 9 条（R1 Docker 未真机执行 · R2 生产库从未跑迁移 · R3 e2e 用 sqlite · R4 微信回调未验 · R5 未压测 · R6 HTTPS 未配 · R7 镜像未瘦身 · R8 账号未到位 · R9 食品经营许可证）** · ⭐ **v1.0.1（M5-2）：R2 升级**为「**结构已机械对账**（`schema:parity` · 27 表 / 394 列）+ 仍需真机空库首迁预演」，并补明「**两支迁移都要 applied**」与 `migration:show` 核对步骤 —— ⚠️ **不写成已验**：本机无 Docker / 无 MySQL | 26,624 | `a43d2d044c5e` |
-| 29 | `ABox一盒项目目录结构v2.0.md` | Monorepo 布局 · 端页模块映射 · ⭐ v2.0.8（2026-09-17 M5-3 落点：§四 `common/utils/` 补 **`order-timeline.ts`**（业务时刻唯一真相）/ **`tz.ts`** · 新增 **`common/security/`**（`route-audit.ts` 越权全量机械对账 / `security-scan.ts` 密钥+日志扫描）· `tasks/` 补 **`schedule.registrar.ts`**（cron 运行时注册 + 热重载）并标注「8 个任务类均不含 `@Cron`」；§一 `gate.mjs` 16 道 → **18 道**）· v2.0.7（2026-09-17 M5-2 落点：§四 `database/` 补 **`schema-parity.ts`**（迁移↔实体机械对账 · 门禁名 `schema:parity`）+ `migrations/` 登记为**两支**并标注「**两支合并推演才等于实体**」；§一 `gate.mjs` 15 道 → **16 道**）· v2.0.6 M5-1 落点（§四 `modules/delivery/` 由占位改**实装**说明 + §三 `views/order/delivery.vue` / `api/delivery.ts` + §五 `enums/delivery-status.ts`（收敛两处重复映射）+ §10.3 补 P39 与配送单管理两行；⚠️ 同时更正 v2.0.5 的一处事实错误 —— `db-migrate.sh` / `db-seed.sh` **确实存在**，只是 `pnpm --filter` 的薄包装且本机 pnpm 不可用，实际走 `gate.mjs`）· v2.0.5 M5-0 部署落点（`docker-compose.prod.yml` / 双 Dockerfile / nginx.conf / `.dockerignore` / 五个运维脚本）· v2.0.2 补 leader-expire.task | 47,258 | `940a4b0cd381` |
+| 29 | `ABox一盒项目目录结构v2.0.md` | Monorepo 布局 · 端页模块映射 · ⭐ v2.0.8（2026-09-17 M5-3 落点：§四 `common/utils/` 补 **`order-timeline.ts`**（业务时刻唯一真相）/ **`tz.ts`** · 新增 **`common/security/`**（`route-audit.ts` 越权全量机械对账 / `security-scan.ts` 密钥+日志扫描）· `tasks/` 补 **`schedule.registrar.ts`**（cron 运行时注册 + 热重载）并标注「8 个任务类均不含 `@Cron`」；§一 `gate.mjs` 16 道 → **18 道**）· v2.0.7（2026-09-17 M5-2 落点：§四 `database/` 补 **`schema-parity.ts`**（迁移↔实体机械对账 · 门禁名 `schema:parity`）+ `migrations/` 登记为**两支**并标注「**两支合并推演才等于实体**」；§一 `gate.mjs` 15 道 → **16 道**）· v2.0.6 M5-1 落点（§四 `modules/delivery/` 由占位改**实装**说明 + §三 `views/order/delivery.vue` / `api/delivery.ts` + §五 `enums/delivery-status.ts`（收敛两处重复映射）+ §10.3 补 P39 与配送单管理两行；⚠️ 同时更正 v2.0.5 的一处事实错误 —— `db-migrate.sh` / `db-seed.sh` **确实存在**，只是 `pnpm --filter` 的薄包装且本机 pnpm 不可用，实际走 `gate.mjs`）· v2.0.5 M5-0 部署落点（`docker-compose.prod.yml` / 双 Dockerfile / nginx.conf / `.dockerignore` / 五个运维脚本）· v2.0.2 补 leader-expire.task | 49,225 | `a397de61e05c` |
 | 30 | `手机测试指南.md` | 原型真机测试方式 | 5,615 | `fdadff0b2889` |
 | 31 | `prototype/index.html` | 可点击原型 v4.10.0（37 页 · 结算成本项可配置版 · 已部署线上） | 275,848 | `6069906879d5` |
 | 32 | `prototype/README.md` | 原型变更日志（已刷新至 v4.10.0，页索引 37 页；页面归属仍以《目录结构 v2.0》§十 为准） | 43,872 | `4ced2a5caa17` |
@@ -94,7 +94,7 @@
 
 ## 四、工程骨架 `abox-onebox/`（阶段四产出）
 
-**总计 526 个文件**，按区域分布：
+**总计 600 个文件**，按区域分布：
 
 | 区域 | 文件数 |
 | --- | --- |
@@ -115,7 +115,7 @@
 | `_tmp_spawn_probe.mjs` | 1 |
 | `apps/admin-web` | 93 |
 | `apps/api-server` | 241 |
-| `apps/miniprogram` | 80 |
+| `apps/miniprogram` | 151 |
 | `commitlint.config.cjs` | 1 |
 | `data` | 1 |
 | `docker-compose.prod.yml` | 1 |
@@ -139,7 +139,8 @@
 | `scripts/gate.mjs` | 1 |
 | `scripts/healthcheck.sh` | 1 |
 | `scripts/init.sql` | 1 |
-| `scripts/lib` | 1 |
+| `scripts/lib` | 3 |
+| `scripts/local-test.mjs` | 1 |
 | `scripts/restore-db.sh` | 1 |
 | `scripts/rollback.sh` | 1 |
 | `scripts/setup-husky.mjs` | 1 |
@@ -364,7 +365,7 @@
 | 210 | `apps/admin-web/nginx.conf` |  | 3,305 | `0eb4c5474918` |
 | 211 | `docker-compose.prod.yml` |  | 5,808 | `85f01e367392` |
 | 212 | `.dockerignore` |  | 926 | `e4a3dcab4d26` |
-| 213 | `.gitignore` |  | 1,248 | `dcc6b578d768` |
+| 213 | `.gitignore` |  | 1,578 | `99ae69df286f` |
 | 214 | `scripts/deploy.sh` |  | 8,206 | `5e9aae4f188b` |
 | 215 | `scripts/rollback.sh` |  | 7,066 | `397a434f0147` |
 | 216 | `scripts/backup-db.sh` |  | 4,707 | `96fe5750bf4a` |
