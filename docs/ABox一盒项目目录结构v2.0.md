@@ -62,7 +62,7 @@ abox-onebox/                            ← 项目根目录
 │   ├── setup.sh                        ← 一键初始化项目（PowerShell 版：setup.ps1）
 │   ├── init.sql                        ← MySQL 初始化（供 docker 入口挂载）
 │   ├── sync-docs.mjs                   ← 根文档 → docs/ 镜像同步
-│   ├── gate.mjs                        ← 免 pnpm 门禁执行器（15 道）
+│   ├── gate.mjs                        ← 免 pnpm 门禁执行器（16 道，M5-2 增 `schema:parity`）
 │   ├── e2e-m1.mjs / e2e-m2.mjs / e2e-m3.mjs   ← 端到端验收（真实起服务 + 真实 HTTP）
 │   ├── lib/e2e-server.mjs              ← e2e 共用托管（端口隔离 + 进程树回收 + 健康轮询）
 │   ├── db-migrate.sh / db-seed.sh      ← ⚠️ `pnpm --filter` 的**薄包装**（各 5 行）；本机 pnpm 不可用，实际迁移与种子走 `gate.mjs`
@@ -336,9 +336,11 @@ apps/api-server/
 │   │   └── app.config.ts
 │   ├── database/
 │   │   ├── database.module.ts
-│   │   ├── data-source.ts              ← TypeORM data source
-│   │   ├── migrations/                 ← 数据库迁移
-│   │   │   └── 1700000000000-init.ts
+│   │   ├── data-source.ts              ← TypeORM data source（`synchronize: driver === 'sqlite'`）
+│   │   ├── schema-parity.ts            ← ⭐ M5-2「迁移推演 ≡ 实体真库」机械对账（`gate.mjs` 门禁 `schema:parity`）
+│   │   ├── migrations/                 ← 数据库迁移（**两支合并推演才等于实体结构**）
+│   │   │   ├── 1700000000000-init.ts           25 张表（基础结构）
+│   │   │   └── 1700000000001-parity-fix.ts     ⭐ M5-2 补 2 表 + 9 列 + 1 索引（#76 修复载体，幂等可重入）
 │   │   └── seeds/                      ← 种子数据（¥25.80 / 4 级佣金 / 4 集散中心 / 12 楼）
 │   │       └── seed.ts
 │   ├── modules/
@@ -781,7 +783,8 @@ echo "  pnpm dev:admin        # 仅启动后台"
 | v2.0.4 | 2026-09-14 | 对齐 **C11**（佣金个税与出款通道 + 供应商日结）：§四 `finance/` 新增 `payout.service.ts`、`withdraw.service.ts` / `supplier-share.service.ts` 注释补口径；§五 `enums/` 新增 `payout-channel.ts` |
 | **v2.0.5** | 2026-09-17 | **M5-0 部署运维基座落点登记**：§一 根目录新增 `docker-compose.prod.yml` / `.dockerignore`，`apps/admin-web/{Dockerfile,nginx.conf}` 与 `apps/api-server/Dockerfile` 标注为 M5-0 产物；§一 `scripts/` **按实际文件重写**（原列的 `db-migrate.sh` / `db-seed.sh` 从未存在 —— 迁移与种子走 `package.json` script + `gate.mjs`，属**目录文档与仓库不一致**，本次对齐），补入 `gate.mjs` / `e2e-m1,2,3.mjs` / `lib/e2e-server.mjs` / `sync-docs.mjs` / 五个运维脚本；§一 `docs/` 把《部署运维手册 v1.0》由「待产出」改为**已产出**，并补《自营结算口径定义 v1.0》；**新增 §6.1** 生产编排四服务表（暴露面 / 密钥纪律 / 构建上下文 / `APP_VERSION` 注入），并明写「与本地 compose 是两套东西」；⚠️ 同步标注 M5-0 镜像与脚本**未真机执行过** |
 | **v2.0.6** | 2026-09-17 | **M5-1 配送单人工修正落点登记**：§四 `modules/delivery/` 由「占位两行」改为**带接口说明的实装**（D61 `GET /admin/deliveries` · D62 `PUT /admin/deliveries/{id}` · 份数对比与 4.3 跑批共用 `aggregateOrderQuantity()` · `version` 乐观锁）；§三 `admin-web` 补 `views/order/delivery.vue` 与 `api/delivery.ts` 注释；§五 `enums/` 补 `delivery-status.ts`（**收敛**原两处逐字重复的状态映射）；§十 新增 **§10.3 两行** —— P39「加工场所打包」（M4-0b 迁入，服务端早已实装但**本表从未登记**，本次补齐）+ 配送单管理（M5-1 新增 · **原型无对应页**，故 `page` 记 `—` 不编造型号）。⚠️ 本表自 v2.0.4 之后的 M4-0…M4-4 各批次**未逐批登记**（本次只补与 M5-1 直接相关的落点，其余仍缺）。⚠️ **同时更正 v2.0.5 的一处事实错误**：`scripts/db-migrate.sh` / `db-seed.sh` **确实存在于仓库**（`git log --diff-filter=A` 指向仓库重建提交 `0e9552e`），当时写成「从未存在」不准确 —— 准确说法是「这两个脚本只是 `pnpm --filter api-server db:migrate|db:seed` 的**薄包装**（各 5 行），而本机 pnpm 不可用，**实际迁移与种子走 `gate.mjs`**」；§一 清单已补回这两个脚本并就地标注 |
+| **v2.0.7** | 2026-09-17 | **M5-2 迁移补齐与结构对账工具落点登记**：§四 `database/` 补 **`schema-parity.ts`**（迁移推演 ↔ 实体真库机械对账，`gate.mjs` 门禁名 `schema:parity`）并把 `migrations/` 登记为**两支** —— `1700000000000-init.ts`（25 张表）+ **`1700000000001-parity-fix.ts`**（M5-2 补 2 表 + 9 列 + 1 索引，《缺陷与陷阱》#76 的修复载体 · 幂等可重入），并就地标注 ⚠️ **「两支合并推演才等于实体结构」**（单看 init 会少 2 表 9 列，是刻意的）；§一 `gate.mjs` 由「15 道」改为「**16 道**」（增 `schema:parity`）。⚠️ 本表仍有 M4-0…M4-4 各批次**未逐批登记**的历史欠账 |
 
 ---
 
-*文档结束 · ABox 一盒 · 项目目录结构 v2.0（现行 v2.0.6） · 2026-09-17*
+*文档结束 · ABox 一盒 · 项目目录结构 v2.0（现行 v2.0.7） · 2026-09-17*

@@ -455,7 +455,7 @@ docker compose -f docker-compose.prod.yml restart redis
 | # | 风险 | 影响 | 上线前必须做什么 |
 | --- | --- | --- | --- |
 | R1 | **Docker 产物从未真机执行**（开发机无 Docker）：两个 Dockerfile、`docker-compose.prod.yml`、`nginx.conf` | 构建可能失败（pnpm workspace + alpine） | 按 §5.1 逐项过；先在一台测试机完整跑一次 |
-| R2 | **生产库从未执行过迁移**（开发全程用 sqlite 的 `synchronize` 自动建表） | 首次迁移可能因 DDL 差异失败 | 首次部署前在**空库**上预演一次；确认 `Init1700000000000` 输出 executed |
+| R2 | **生产库从未执行过迁移**（开发全程用 sqlite 的 `synchronize` 自动建表）。⭐ **M5-2 升级**：**「迁移推演 ≡ 实体结构」已由 `schema:parity` 门禁机械保证**（全库 27 表 / 394 列逐表逐列对账，且检查器**每次运行自证能报出人为缺口**）；⚠️ **但「结构对」≠「跑得通」** —— 本机无 Docker / 无 MySQL，**MySQL 上真跑一次仍未做过** | 首次迁移可能因 **MySQL 方言差异**（如 `information_schema` 守卫行为、`JSON` 列、字符集 / `ENGINE` 子句）失败；⚠️ 另注：DDL 已按 #76 补齐为 **2 支迁移**（`1700000000000-init` 25 表 + `1700000000001-parity-fix` 补 2 表 9 列 1 索引），**两支都要 applied** 才等于实体结构 | 首次部署前在**空库**上预演一次；`typeorm migration:show` 必须列出 **两支** 且都为 `[X]`（`Init1700000000000` 与 `ParityFix1700000000001`）；再跑一次 `gate.mjs schema:parity` 确认结构一致 |
 | R3 | **e2e 跑的是 sqlite + memory 驱动**，生产是 mysql + redis | 驱动差异带来的问题 e2e 覆盖不到 | 在灰度环境跑一遍核心链路（下单 → 支付 → 出餐 → 确认 → 结算） |
 | R4 | **微信支付真实回调未验证**（无商户号/证书） | 支付链路上线即断 | 拿到商户号后先在**测试商户**跑通回调验签 |
 | R5 | **未做压测**（M5 5.2：500 单/日无超时） | 峰值下性能未知 | 灰度期观察真实峰值；别用「多开楼」代替压测 |
@@ -481,3 +481,4 @@ docker compose -f docker-compose.prod.yml restart redis
 | 日期 | 版本 | 变更 | 作者 |
 | --- | --- | --- | --- |
 | 2026-09-17 | v1.0 | 首版：M5-0 部署运维基座 —— 两级探针（liveness/readiness）+ 优雅关闭、双镜像与生产编排、部署/回滚/备份/恢复/探针五脚本、禁发窗口、应急预案、遗留风险 9 条 | 项目总监 |
+| 2026-09-17 | v1.0.1 | **M5-2 同步：R2 升级** —— 「迁移推演 ≡ 实体结构」已由 `schema:parity` 门禁机械保证（27 表 / 394 列）；⚠️ 但**不写成已验**（本机无 Docker/MySQL，MySQL 真跑仍待空库预演）；R2 的「上线前必须做什么」补明 **两支迁移都要 applied** + 用 `migration:show` 核对 + 复跑 `schema:parity` | 项目总监 |

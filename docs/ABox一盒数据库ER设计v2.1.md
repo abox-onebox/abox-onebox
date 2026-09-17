@@ -3,6 +3,7 @@
 > 基于 ER v2.0 增量修订，回填《MVP 优化交接包 v1.1》C2/C3/C4/C6/C9 裁决（2026-09-14）
 > 前置：v1.0 ER 设计（已废弃）；核心差异见 § 一
 > **工程增量（2026-09-15 ~ 09-16）**：§5.1 M3 补丁 · §5.3 M3-4 `ab_refund.order_status_before` · §5.4 M3-5 零 DDL · **§5.5 M3-6 `ab_supplier` 补 7 列**
+> **2026-09-17（M5-2）**：**§5.3 列类型更正**（`order_status_before`：`tinyint` → `VARCHAR(16)`）· **§5.8 迁移 ↔ 实体 结构对齐**（补 2 表 9 列 + 新增 `schema:parity` 门禁）
 
 ---
 
@@ -702,13 +703,22 @@ ALTER TABLE `ab_operation_log`
 
 | 项 | 说明 |
 | --- | --- |
-| 列名 | `order_status_before`（`tinyint`，可空） |
+| 列名 | `order_status_before`（**`VARCHAR(16)`**，可空）—— ⚠️ 本节原写 `tinyint`，**M5-2 更正**，理由见下方 |
 | 语义 | 这笔退款申请**提交时**订单所处的状态（`pending_pay` / `paid` / `preparing` / `delivering` / `completed` …） |
 | 写入时机 | `applyByLeader`（C6 第一段 · 团长代退）与 `forceRefund`（D11 · 后台强制退款，审计留痕） |
 | 读取时机 | `rejectByAdmin`（D42 · 驳回）—— 把订单从当前的 `refund_applying` 回退到本列记录的状态 |
 | 为什么必须有 | 订单状态机对退款分支**只有单向箭头**（`paid → refund_applying`），反向没有边。不记原状态，驳回时就**无家可回** —— 只能猜一个默认值，猜错就把订单放回错误状态 |
 | 缺失如何处理 | **fail-closed → 40014**：缺列值（历史数据/脏写）时**拒绝驳回**，而不是回退到某个默认状态。宁可让运营走人工，也不静默把订单状态写错 |
 | 可空性 | 允许为 `NULL`（历史行），但 D42 读到 `NULL` 即报 40014 —— 可空是兼容，不是「可以不写」 |
+
+> ⚠️ **类型更正（M5-2 · 2026-09-17）**：本节原把本列记为 `tinyint`，**与代码不符**。
+> 证据（两处独立来源）：① `refund.service.ts` 的 `applyByLeader` / `forceRefund` 两个写入点
+> 赋的都是 `order.status` —— 一个**状态字符串**（`paid` / `cut_off` / `delivering` / `completed` …）；
+> ② `refund-admin.service.ts` 出参对它跑 `adminStatusText(r.orderStatusBefore)`，该函数吃的是状态
+> **字符串**，喂 `tinyint` 只会输出空文案。
+> 若真按 `tinyint` 建列，MySQL 在严格模式下对 `'paid'` 这类值会**直接报错**（非严格模式则静默截断成 `0`），
+> 后果正是这一列要防的事：**D42 驳回把订单放回一个错误状态**。故真实类型 = **`VARCHAR(16)`**
+> （最长取值 `refund_applying` 15 字符）。本处更正与 §5.8 的迁移补齐同批完成。
 
 ### 5.4 M3-5 后台团长管理：**零 DDL 变更**
 
@@ -804,6 +814,48 @@ ALTER TABLE `ab_building`
 ⚠️ **「主/备集散中心 + 路线号」不落库**：`delivery-map` 视图与 D13/D16 出参里的 `mainDcId` / `backupDcId` / `routeNo` 全部由 `ab_distribution_center.service_groups`（M3-6）**实时派生**，楼栋上不存副本。落库就要有定时任务去刷，改一次集散配置就会造出「配置已改、楼栋还显示老集散」的不一致。
 
 ⚠️ **DDL 总量**：25 张表不变（M2 的 `ab_withdraw` 之后**无新增表**）；`ab_building` 是本批次唯一被改的表。
+
+### 5.8 M5-2 迁移 ↔ 实体 结构对齐（**有 DDL 变更 · 补 2 表 + 9 列 + 1 索引**）
+
+> 本节**不是新功能**，而是补上此前**从未生效**的结构变更：全仓只有一支迁移
+> `1700000000000-init.ts`（25 张表），而实体有 **27 张表** —— 缺口来自 M3-4 / M3-6 / M3-7 /
+> M3-8 / M3-12 五批 DDL **只改了实体与本 ER、没改迁移**（《缺陷与陷阱》**#76**）。
+
+| 缺口 | 内容 |
+| --- | --- |
+| 整表 **2** 张 | `ab_supplier_dish_center_daily`（M3-8 · §3.6.1）· `ab_message_template`（M3-12 · §3.9） |
+| 列 **9** 个 | `ab_building.population`（M3-7）· `ab_refund.order_status_before`（M3-4）· `ab_supplier` 审核族 7 列（M3-6：`audit_status` / `audit_remark` / `audited_at` / `audited_by` / `license_expire_at` / `invoice_title` / `takeout_links`） |
+| 索引 **1** 个 | `ab_building.idx_building_status`（§5.6 早已声明，迁移里**从未建过**） |
+| 注释对齐 1 处 | `ab_building.status` 由「1合作中 2停用」补成三态文案（**值域扩展，不迁数据**） |
+
+**为什么长期没被发现（本节最该记住的一点）**：`data-source.ts` 里
+`synchronize: driver === 'sqlite'` —— 本地全部验证（`seed` / `e2e:m1,m2,m3`）跑 sqlite 时
+**由实体同步建表，迁移一次都不执行**。于是「实体改了、迁移忘了改」**不在任何失败路径上**：
+e2e 全绿，而生产（MySQL，结构**只由迁移决定**）首迁会建出一个**缺 2 表 9 列**的库，
+第一个查询即 `Unknown column` —— 其中 `ab_refund.order_status_before` 缺失会让
+**C6 退款审批整条链路打不开**（fail-closed 的 `40014` 甚至来不及触发，先炸在查询上）。
+
+**补法**：新增第二支迁移 `1700000000001-parity-fix.ts`（**增量**，**不改 init** ——
+若将来某环境已把 `Init1700000000000` 记为已执行，改 init 会被 TypeORM **静默跳过**，
+缺口照旧）。DDL **逐字取自本 ER**；列与索引**逐项查 `information_schema` 后再加**
+（MySQL 8 不支持 `ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`）
+→ 迁移**可重入**，不依赖「只在空库上跑」这个前提。两处刻意偏差写在迁移文件头
+（引用 id 列统一 `BIGINT UNSIGNED`；§5.3 的类型更正）。
+
+**防复发（本节真正的产物）**：新增门禁 **`schema:parity`**，做**两源机械对账** ——
+**源A** = 从全部迁移推演出的结构（`CREATE TABLE` / `ADD COLUMN` / `MODIFY COLUMN`，
+作用域 = 模块级常量 + `up()`，`down()` 排除）；**源B** = 让 TypeORM 拿 `ALL_ENTITIES`
+在**内存 sqlite** 上真建一次表再读回。两源不一致即红。
+该检查**自带自证能力**：每次运行都人为制造一个缺口，确认自己能报出来 ——
+报不出即失败（**「恒绿的检查」比没有检查更糟**）。
+⚠️ 如实标注的边界：不比长度/精度/默认值/注释（跨驱动表述不同源，强比会淹没真问题）、
+不比索引；未支持的语句形态（`CHANGE COLUMN` / `RENAME` / `CREATE INDEX` / `DROP COLUMN`…）
+**显式报错**，绝不静默跳过。已实测反证：人为删掉迁移里的 `population` → 门禁红并**点名该列**。
+
+⚠️ **本 ER 与代码的一致性仍是人工保证**（本文档不进门禁）：`schema:parity` 只对
+「实体 ↔ 迁移」机械对账，**不读本文件**。三份结构表述里，本 ER 是**唯一没有自动校验的一份** ——
+§5.3 的类型错误正是这种漂移的实例（错了 1 天多，靠 M5-2 手工逐列比对才发现）。
+**凡在本 ER 里写 DDL，必须同步补迁移**，否则下一次 `schema:parity` 会红。
 
 ---
 
@@ -911,9 +963,13 @@ INSERT INTO ab_distribution_center (name, address, contact_name, contact_phone) 
 > **M3-10 / M3-11 零新表**（配置走 `ab_config`、看板纯聚合）、**M3-12 补 `ab_message_template`**（通知模板），
 > **合计 27 张表** —— 与 `apps/api-server/src/database/entities/index.ts` 的 `ALL_ENTITIES` 逐张对齐，
 > 并由 `tests/baseline_manifest.py` 在门禁中校验。
+> ⚠️ **表数对齐 ≠ 结构对齐**（M5-2 的教训）：上面这句原本只保证**表名张数**一致，
+> 而 `ab_message_template` / `ab_supplier_dish_center_daily` 虽在此列名，**迁移里却从未建过**
+> （见 §5.8）。自 2026-09-17 起，「实体 ↔ 迁移」的**逐表逐列**对齐由门禁 **`schema:parity`** 机械保证。
 
 ---
 
 *文档结束 · ABox 一盒 · ER v2.1（回填 C2/C3/C4/C6/C9；阶段一基线一致性修补）· 2026-09-14*
 *2026-09-15 增补：`ab_withdraw` 提现申请单（C11）· `ab_balance_log` 出款字段 · `ab_team_leader` 收款方式三字段 + `floor` 恢复*
 *2026-09-16 增补：`ab_supplier_dish_center_daily`（M3-8 出餐确认明细 · 26 张）· `ab_message_template`（M3-12 通知模板 · **27 张**）*
+*2026-09-17 增补（M5-2 · 《缺陷与陷阱》#76）：⚠️ §5.3 `ab_refund.order_status_before` 类型由 `tinyint` **更正为 `VARCHAR(16)`**（与代码逐行核对后确认）· 新增 §5.8 **迁移 ↔ 实体 结构对齐**（补 2 表 9 列 1 索引 + 门禁 `schema:parity`）· 表数仍 **27***

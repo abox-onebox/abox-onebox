@@ -80,6 +80,21 @@ const GATES = {
   'typecheck:admin': { cwd: 'apps/admin-web', cmd: 'vue-tsc --noEmit' },
   'typecheck:mp': { cwd: 'apps/miniprogram', cmd: 'vue-tsc --noEmit -p tsconfig.json' },
   jest: { cwd: 'apps/api-server', cmd: 'jest --passWithNoTests' },
+  /**
+   * M5-2：**迁移 ↔ 实体 结构机械对账**（缺陷 #76 的防复发门禁）
+   *
+   * 为什么必须有：生产（MySQL）的表结构**只由迁移决定**（`synchronize: driver === 'sqlite'`），
+   * 而 seed / e2e 全跑 sqlite（由**实体**同步建表）→ **迁移一次都不会被执行**。
+   * 于是「实体改了、迁移忘了改」原先**不在任何失败路径上**：e2e 全绿，生产首迁建出残缺库
+   * （实测曾少 2 张表、9 列，其中 `ab_refund.order_status_before` 缺了会让 C6 退款审批直接打不开）。
+   *
+   * 该检查自带**自证能力**：每次运行都会人为制造一个缺口，确认自己能报出来 —— 报不出即失败
+   * （「恒绿的检查」比没有检查更糟）。
+   */
+  'schema:parity': {
+    cwd: 'apps/api-server',
+    cmd: 'ts-node -r tsconfig-paths/register src/database/schema-parity.ts',
+  },
   // outDir：构建前先改名挪走，避免构建工具自己 bulk-rm 被宿主守卫拦截（见文件头说明）
   'build:api': { cwd: 'apps/api-server', cmd: 'nest build', outDir: 'dist' },
   'build:admin': { cwd: 'apps/admin-web', cmd: 'vite build', outDir: 'dist' },
@@ -110,6 +125,7 @@ const ALIASES = {
     'lint',
     'format',
     'typecheck',
+    'schema:parity',
     'jest',
     'build:api',
     'build:admin',

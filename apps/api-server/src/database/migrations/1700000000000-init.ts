@@ -1,7 +1,12 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
- * 初始迁移 —— 24 张表（MySQL 8 · utf8mb4 · InnoDB）
+ * 初始迁移 —— 25 张表（MySQL 8 · utf8mb4 · InnoDB）
+ *
+ * ⚠️ 本迁移**只建 25 张**；全库实体共 27 张。差额（`ab_message_template` /
+ *    `ab_supplier_dish_center_daily` 两张表 + 9 列 + 1 索引）由紧随其后的
+ *    `1700000000001-parity-fix.ts` 补上 —— 那是《缺陷与陷阱》#76 的修复载体。
+ *    两者**合起来**才等于实体结构；`schema:parity` 门禁按「两支迁移合并推演」对账。
  *
  * 依据：《数据库 ER 设计 v2.1》+《表结构评审意见 v1.0》
  *   P0-1 team_leader 补 level / month_orders / invited_formal_count / last_order_at，费率默认 0.08
