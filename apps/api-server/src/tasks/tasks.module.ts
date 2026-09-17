@@ -11,6 +11,7 @@ import { TeamLeaderModule } from '../modules/team-leader/team-leader.module';
 import { ScheduleService } from './schedule.service';
 import { ScheduleAdminService } from './schedule-admin.service';
 import { ScheduleAdminController } from './schedule-admin.controller';
+import { ScheduleRegistrar } from './schedule.registrar';
 import { MealPublishTask } from './meal-publish.task';
 import { CutoffTask } from './cutoff.task';
 import { DeliveryGenerateTask } from './delivery-generate.task';
@@ -49,6 +50,15 @@ import { LeaderExpireTask } from './leader-expire.task';
  *    **持久告警**（用户 2026-09-17 裁定「落操作日志」，零 DDL）。放任务层而非
  *    `ReconciliationService` 里，是为了保住该服务「**纯读视图**」的契约
  *    （D43 两接口都不写库，见 finance.module.ts 头注）。
+ *
+ * ## ⚠️ 任务的 cron 由 `ScheduleRegistrar` **运行时**注册（M5-3 · #49）
+ * 8 个任务类里**没有** `@Cron` 装饰器 —— 它们是**元数据**，在模块加载时求值一次，
+ * 后台改「开团/截单时刻」无法影响，表现为「配了不生效」。改由注册器在
+ * `onModuleInit` 里按**生效配置**生成 cron 并 `SchedulerRegistry.addCronJob()`。
+ * ⚠️ 该注册器**必须出现在 providers 里** —— 漏了它的后果不是报错，而是
+ *    「8 个任务从此都不跑」（e2e 全走补跑接口，发现不了）。注册器内部有逐名核对兜底。
+ *    ⭐ 它还订阅时间轴变更做**热重载**：改「截单时间」这类配置后，cron 立即跟着换，
+ *    无需重启 —— 否则会出现「下单窗口已变、跑批仍按旧时刻跑」的半生效状态。
  */
 @Module({
   imports: [
@@ -64,6 +74,7 @@ import { LeaderExpireTask } from './leader-expire.task';
   providers: [
     ScheduleService,
     ScheduleAdminService,
+    ScheduleRegistrar,
     MealPublishTask,
     CutoffTask,
     DeliveryGenerateTask,

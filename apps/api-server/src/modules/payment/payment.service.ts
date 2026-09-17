@@ -2,6 +2,8 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 
 import type { PayCreateResult, PayNotifyAck } from '@abox/shared-types';
 
+import { ErrorCode } from '../../common/constants/error-code';
+import { BizException } from '../../common/exceptions/biz.exception';
 import { OrderService } from '../order/order.service';
 import { WxpayConfigService } from './wxpay-config';
 import { WxpayService } from './wxpay.service';
@@ -108,8 +110,19 @@ export class PaymentService implements OnModuleInit {
   /**
    * 调试端点：手动触发一笔支付成功（仅 mock 通道）
    * 用途：分步调试「下单 → 支付 → 回调 → 订单转 paid」，无需依赖自动回调延迟。
+   *
+   * ⚠️ **fail-closed 守卫（M5-3 安全自检加固）**：本端点**免鉴权**（`@Public()`），
+   *    若在真实通道下可用，等于「任何人调一次就能把订单变成已支付」。此前它只靠
+   *    「`simulatePaid` 在 provider 接口上是**可选方法**、real 通道恰好没实现」这一
+   *    **隐式约定**兜底 —— 约定不会被任何机械检查守住，将来 real provider 补上该方法
+   *    就会**静默打开**一个免鉴权的改单口子。
+   *    故此处显式按通道拒绝：非 mock 一律抛 `10004`（与「路由不存在」同码，
+   *    不向外暴露该调试端点的存在）。
    */
   async simulatePaid(orderNo: string, amountFen?: number): Promise<{ triggered: boolean }> {
+    if (!this.wxpay.isMock) {
+      throw new BizException(ErrorCode.NOT_FOUND);
+    }
     const fen = amountFen ?? (await this.orderService.payAmountFenOf(orderNo));
     const triggered = await this.wxpay.simulatePaid(orderNo, fen);
     return { triggered };

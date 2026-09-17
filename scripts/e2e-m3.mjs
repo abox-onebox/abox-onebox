@@ -5633,8 +5633,8 @@ async function main() {
     const cfg = Object.fromEntries(flatItems.map((i) => [i.key, i]));
 
     assert(
-      cfgList.body?.code === 0 && (d57?.groups ?? []).length === 6,
-      'D57 按**分组**下发（价格 / 佣金 / 履约成本 / 交易规则 / 客服 / 未接线 共 6 组）',
+      cfgList.body?.code === 0 && (d57?.groups ?? []).length === 7,
+      'D57 按**分组**下发（价格 / 佣金 / 履约成本 / 交易规则 / **业务时刻** / 客服 / 未接线遗留 共 7 组）',
       `code=${cfgList.body?.code} groups=${d57?.groups?.length}`,
     );
     assert(
@@ -5647,8 +5647,8 @@ async function main() {
     const unwired = flatItems.filter((i) => i.wiring === 'unwired');
     const policyItems = flatItems.filter((i) => i.wiring === 'policy');
     assert(
-      unwired.length === 9 && unwired.every((i) => i.editable === false && !!i.unwiredReason),
-      '⭐ 9 项「配了但代码从不读取」的键**如实标注未接线**且不可写 —— 让运营改一个不生效的值，比不给他改更糟',
+      unwired.length === 4 && unwired.every((i) => i.editable === false && !!i.unwiredReason),
+      '⭐ 4 项「配了但代码从不读取」的键**如实标注未接线**且不可写 —— 让运营改一个不生效的值，比不给他改更糟（另 5 项时刻类配置已接线，见下条）',
       `unwired=${unwired.length} 缺原因=${unwired.filter((i) => !i.unwiredReason).length}`,
     );
     assert(
@@ -5656,10 +5656,73 @@ async function main() {
       'D57 两项**策略标识**（`negotiated` / `residual`）标为不可写 —— 它们记录的是策略名，塞个金额进去就把口径记录污染了',
       `policy=${policyItems.length}（${policyItems.map((i) => i.key).join(', ')}）`,
     );
+
+    // ---------------------------------------------------------- A2. ⭐ 缺陷 #49：# 时刻配置真的接线了
+    const timelineGroup = (d57?.groups ?? []).find((g) => g.group === 'timeline');
+    const timelineItems = timelineGroup?.items ?? [];
     assert(
-      !!cfg['set_meal.cutoff_time']?.unwiredReason?.includes('cutoff.task'),
-      '「未接线」原因要能回答**为什么改了没用**，且必须指向**当前真实**的真相源（截单时间配的是 23:59，实际时刻由 `cutoff.task` 取自 `TASK_SCHEDULES` 声明表 —— 文案若还写着「硬编码在 `@Cron` 里」，在 M4-1 之后就是**过时的解释**；M5-1 已纠偏，并要求点明「本键 / 声明表 / 下单窗口三者无机械对账」这一缺口）',
-      `reason=${cfg['set_meal.cutoff_time']?.unwiredReason ?? '无'}`,
+      timelineItems.length === 5 &&
+        timelineItems.every((i) => i.wiring === 'live' && i.editable === true),
+      '⭐ **#49 已接线**：5 个时刻类配置（开团 / 截单 / 送达 / 自动确认 / 佣金结算）由「未接线」升为 `live` 且可写 —— 它们现在真的驱动下单窗口与跑批时刻，而不是只作口径记录',
+      `timeline=${timelineItems.length} live=${timelineItems.filter((i) => i.wiring === 'live').length} 可写=${timelineItems.filter((i) => i.editable).length}`,
+    );
+    assert(
+      timelineItems.every((i) => !!i.consumedBy && i.consumedBy.includes('currentTimeline')),
+      '⭐ 接线键的 `consumedBy` 必须指向**生效值的唯一读法** `currentTimeline()`（写 `DEFAULT_TIMELINE` 就是把「出厂值」当「正在生效的值」，等于再造一层漂移）',
+      `未指向 currentTimeline=${timelineItems.filter((i) => !i.consumedBy?.includes('currentTimeline')).map((i) => i.key).join(',') || '无'}`,
+    );
+
+    // ⭐⭐ 端到端证据：写新时刻 → **跑批时刻必须跟着变**。
+    //    这是「真接线」与「只是把 wiring 标成 live」的分水岭 ——
+    //    若只在启动时读一次配置，这里会读到旧的 `0 0 0 * * *`。
+    const tlWrite = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: 'set_meal.cutoff_time', value: '23:30' }] },
+    });
+    const schedAfterTl = await call('GET', '/admin/schedule', { token: adminToken });
+    const cutoffRow23 = (schedAfterTl.body?.data?.list ?? []).find((t) => t.task === 'cutoff');
+    assert(
+      tlWrite.body?.code === 0 &&
+        cutoffRow23?.effectiveAt === '23:30' &&
+        cutoffRow23?.registeredCron === '0 30 23 * * *',
+      '⭐⭐ 时刻配置**真的驱动了跑批时刻**（端到端）：改 `set_meal.cutoff_time=23:30` → `GET /admin/schedule` 的 `effectiveAt` 与**实际注册的 cron** 同步变为 `0 30 23 * * *`（热重载，无需重启）',
+      `code=${tlWrite.body?.code} effectiveAt=${cutoffRow23?.effectiveAt} registeredCron=${cutoffRow23?.registeredCron}`,
+    );
+    // ⭐⭐ 截单时刻一旦**不跨午夜**，跑批就落在 **T-1 日** —— 目标日期必须随之变成「次日」。
+    //    写死 `today` 的后果是**静默锁错日期**（锁的是 T-1 的订单，而 T-1 的团早已截完），
+    //    表现为「跑批成功、但当天订单一张都没锁」，没有任何报错。
+    assert(
+      cutoffRow23?.dateKind === 'tomorrow',
+      '⭐⭐ 截单时刻不跨午夜（`23:30`）时，`dateKind` 自动变为 **`tomorrow`** —— 目标日期**由时间轴派生**而非写死（写死 `today` 会让「把截单改到 23:30」变成静默锁错日期）',
+      `dateKind=${cutoffRow23?.dateKind} label=${cutoffRow23?.dateKindLabel}`,
+    );
+
+    // ⭐⭐ 跨键自洽性：开团必须早于截单 —— 逐项合法但**组合起来是空窗口**
+    const badPair = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: 'set_meal.publish_time', value: '23:50' }] },
+    });
+    assert(
+      badPair.body?.code === 10001 &&
+        (badPair.body?.data?.fields ?? []).some((f) => String(f).includes('早于截单')),
+      '⭐⭐ **跨键矛盾被拦下**：把开团配到 `23:50`（晚于当时的截单 `23:30`）→ `10001` 且点名「开团必须早于截单」—— 逐项校验全过、系统照跑、**没有任何报错**才是这类配置的真危险（下单窗口成了空区间，谁都下不了单）',
+      `code=${badPair.body?.code} fields=${JSON.stringify(badPair.body?.data?.fields ?? [])}`,
+    );
+
+    // ⭐⭐ `24:00` 是合法截单时刻（= T 日 0 点）：模型必须能表达它
+    const tlBack = await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: 'set_meal.cutoff_time', value: '24:00' }] },
+    });
+    const schedBack = await call('GET', '/admin/schedule', { token: adminToken });
+    const cutoffRow24 = (schedBack.body?.data?.list ?? []).find((t) => t.task === 'cutoff');
+    assert(
+      tlBack.body?.code === 0 &&
+        cutoffRow24?.effectiveAt === '24:00' &&
+        cutoffRow24?.registeredCron === '0 0 0 * * *' &&
+        cutoffRow24?.dateKind === 'today',
+      '⭐⭐ 截单时刻**接受 `24:00`**（= 次日 0 点）并折算为 cron `0 0 0 * * *`、`dateKind` 回到 `today`，展示仍原样写 `24:00`（**不折算成 00:00** —— 折算会让人以为截单在当天早上）。早期模型表达不了 24:00，种子只能写 `23:59` 近似值，1 分钟偏差就此固化（#49 的成因）',
+      `code=${tlBack.body?.code} effectiveAt=${cutoffRow24?.effectiveAt} cron=${cutoffRow24?.registeredCron} dateKind=${cutoffRow24?.dateKind}`,
     );
 
     // ---------------------------------------------------------- B. 值归一
@@ -5713,11 +5776,11 @@ async function main() {
 
     const unwiredWrite = await call('PUT', '/admin/system/configs', {
       token: adminToken,
-      body: { items: [{ key: 'set_meal.cutoff_time', value: '23:30' }] },
+      body: { items: [{ key: 'distribution_center.default_count', value: '5' }] },
     });
     assert(
       unwiredWrite.body?.code === 10001,
-      '⭐ 未接线项**拒绝写入**（而非「写了但不生效」）—— 后者等于给假承诺',
+      '⭐ 未接线项**拒绝写入**（而非「写了但不生效」）—— 后者等于给假承诺（`distribution_center.default_count` 是表驱动之前的遗留计数，无消费方）',
       `code=${unwiredWrite.body?.code}`,
     );
 
@@ -5950,6 +6013,14 @@ async function main() {
         ?.config_value === '0.0800',
       'D58 还原校验：费率回到 `0.0800`（本节的百分数换算不能把原值改坏）',
       `db=${readDb("SELECT config_value FROM ab_config WHERE config_key = 'commission.rate.trainee'")?.config_value}`,
+    );
+    // ⭐ 截单时刻必须回到出厂口径 `24:00` —— 本节拿它做过「时刻配置真的驱动跑批」的探针，
+    //    残留会**改变全平台下单窗口**，把副作用留给后续章节（配置是全局的）。
+    assert(
+      readDb("SELECT config_value FROM ab_config WHERE config_key = 'set_meal.cutoff_time'")
+        ?.config_value === '24:00',
+      '⭐ 还原校验：截单时刻回到 `24:00`（= T 日 0 点）—— 时刻配置的探针若残留，会改动全平台下单窗口',
+      `db=${readDb("SELECT config_value FROM ab_config WHERE config_key = 'set_meal.cutoff_time'")?.config_value}`,
     );
   }
 
@@ -8804,6 +8875,19 @@ async function main() {
         sched28.body?.data?.summary?.implemented === 8 && notImpl28.length === 0,
         '⭐ §28 M4-2 后 **8 个任务全部实装**（`summary.implemented = 8/8`，无 `pendingNote` 残留）—— `implemented` 是执行口 `runners.has()` 的**派生值**而非手写常量：将来只往声明表加任务却不写执行口，这里会如实暴露，而不是让占位任务冒充已上线',
         `implemented=${sched28.body?.data?.summary?.implemented} 未实装：${notImpl28.join(',') || '无'}`,
+      );
+
+      // ⭐⭐ #49 接线后的新防线：cron 改为**运行时注册**，必须证明「真的注册上了」
+      const notReg28 = allTasks28.filter((n) => !t28(n)?.registeredCron);
+      assert(
+        sched28.body?.data?.summary?.registered === 8 && notReg28.length === 0,
+        '⭐⭐ §28 **8 个任务的 cron 全部真的注册进了调度器**（`registeredCron` 非空）—— cron 改由 `ScheduleRegistrar` 运行时注册（#49）后，「注册环节坏了」的表现是**任务永远不跑、且没有任何报错**（e2e 全走补跑接口，发现不了）；故把**实际注册值**下发出来作外部可观测证据',
+        `registered=${sched28.body?.data?.summary?.registered} 未注册：${notReg28.join(',') || '无'}`,
+      );
+      assert(
+        t28('cutoff')?.registeredCron === '0 0 0 * * *' && t28('cutoff')?.effectiveAt === '24:00',
+        '⭐ §28 截单任务的**实际注册 cron 由生效时间轴派生**（`24:00` → `0 0 0 * * *`）而非写死 —— `cron` 是出厂口径、`registeredCron` 是按配置生成并注册的值，两者不同即证明「配置能改跑批时刻」',
+        `cron=${t28('cutoff')?.cron} registeredCron=${t28('cutoff')?.registeredCron} effectiveAt=${t28('cutoff')?.effectiveAt}`,
       );
 
       // ------------------------------------------------------ C. 补跑闸门

@@ -1,7 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { KvService } from '../common/cache/kv.service';
+import {
+  BusinessTimeline,
+  DEFAULT_TIMELINE,
+  cronOf,
+  currentTimeline,
+} from '../common/utils/order-timeline';
 import { addDays, now, todayBj } from '../common/utils/time';
+import { TZ } from '../common/utils/tz';
 
 /**
  * 定时任务调度基座（M4）
@@ -88,7 +95,7 @@ export class ScheduleService {
    *    那是编程错误，不是运行时状况（此类任务本就不该有目标日期）。
    */
   requireDateForTask(task: TaskName, at: Date = now()): string {
-    const kind = TASK_SCHEDULES[task].dateKind;
+    const kind = dateKindFor(task);
     if (!kind) {
       throw new Error(
         `任务 ${task} 声明为 dateKind=null（与出餐日无关），不应取目标日期 —— 请检查调用点`,
@@ -104,7 +111,7 @@ export class ScheduleService {
    * 无目标日期的全量扫描任务 → 用当日（「同一天只跑一次」）。
    */
   private keyDateFor(task: TaskName, at: Date = now()): string {
-    const kind = TASK_SCHEDULES[task].dateKind;
+    const kind = dateKindFor(task);
     return kind ? this.targetDate(kind, at) : todayBj(at);
   }
 
@@ -158,9 +165,6 @@ export class ScheduleService {
 // 调度声明表（唯一真相）
 // =====================================================================
 
-/** 全项目统一时区（与服务端 `bj*` 时间工具同源） */
-const TZ = 'Asia/Shanghai';
-
 /** 锁 TTL：任务可能跑几分钟，30 分钟足够长到不会误放，也短到不会卡住一天 */
 const LOCK_TTL_SEC = 30 * 60;
 const LOCK_PREFIX = 'sched:lock';
@@ -179,8 +183,21 @@ export type TaskName =
   | 'leader-expire';
 
 export interface TaskSchedule {
-  /** cron 表达式（秒级，6 段） */
+  /**
+   * cron 表达式（秒级，6 段）—— **由 `DEFAULT_TIMELINE` 派生**，不是手写字面量。
+   *
+   * ⚠️ 运行时实际注册的 cron 可能**不是**这个值：`ScheduleRegistrar` 会用
+   *    「配置覆写后的生效时间轴」重新生成（见 `cronFor(timeline)`）。
+   *    本字段的用途是「出厂口径」展示与无配置时的默认值。
+   */
   cron: string;
+  /**
+   * 该任务的触发时刻来自时间轴的哪一项（**唯一真相的挂钩点**）。
+   *
+   * 8 个任务全部有值 —— 即「跑批几点触发」全部由 `order-timeline.ts` 决定，
+   * 本文件不再出现任何硬编码时刻（缺陷 #49 的修法）。
+   */
+  timelineKey: keyof BusinessTimeline;
   timeZone: string;
   /** 操作的目标日期；`null` = 与出餐日无关（全量扫描型任务） */
   dateKind: TaskDateKind | null;
@@ -188,67 +205,111 @@ export interface TaskSchedule {
   what: string;
 }
 
+/** 按**指定**时间轴生成某任务的 cron（配置覆写后用这个，而不是读 `spec.cron`） */
+export function cronFor(spec: TaskSchedule, tl: BusinessTimeline = DEFAULT_TIMELINE): string {
+  return cronOf(tl[spec.timelineKey]);
+}
+
 /**
- * 8 个任务的调度声明 —— **口径唯一真相**
+ * 某任务的**目标日期语义** —— 由生效时间轴的派生，**不手写**
+ *
+ * 绝大多数任务与配置无关（`meal-publish` 永远是「前一日 14:00 开昨日的团 → 目标=次日」），
+ * 但 **`cutoff` 是唯一例外**，且这个例外必须显式处理，否则「把截单时刻改成 23:30」会变成
+ * 一次**静默锁错日期**：
+ *
+ * | 截单时刻 | 触发落在哪一天 | cron | 正确的 `dateKind` |
+ * |---|---|---|---|
+ * | `24:00`（默认） | **T 日** 00:00（`24:00` 折算为 0 点） | `0 0 0 * * *` | `today` |
+ * | `23:30` | **T-1 日** 23:30 | `0 30 23 * * *` | `tomorrow` |
+ *
+ * 写成固定的 `today`，前一种对、后一种**错**——锁的是 T-1 的订单，而 T-1 的团早已截完，
+ * 表现为「截单跑批成功了、但 T 日的订单一张都没锁」，**没有任何报错**。
+ */
+export function dateKindFor(
+  task: TaskName,
+  tl: BusinessTimeline = currentTimeline(),
+): TaskDateKind | null {
+  if (task === 'cutoff') {
+    // `24:00` 折算后落在 **T 日** 0 点（目标即当日）；其余时刻落在 **T-1 日**（目标是次日）
+    return tl.cutoff.hour === 24 ? 'today' : 'tomorrow';
+  }
+  return TASK_SCHEDULES[task].dateKind;
+}
+
+/**
+ * 8 个任务的调度声明 —— **口径唯一真相**（时刻部分委托给 `order-timeline.ts`）
  *
  * ⚠️ 任务的 `@Cron()` 与 `targetDate()` 均**从本表读取**，不在任务里写第二遍。
- *    改触发时刻或目标日期，只改这里。
+ *    改触发时刻 → 改 `DEFAULT_TIMELINE`（或后台配置）；**不要**在这里写死 cron 字符串。
  */
 export const TASK_SCHEDULES: Record<TaskName, TaskSchedule> = {
   'meal-publish': {
-    cron: '0 0 14 * * *',
+    timelineKey: 'publish',
+    cron: cronOf(DEFAULT_TIMELINE.publish),
     timeZone: TZ,
     dateKind: 'tomorrow',
-    what: 'T-1 14:00 开团：次日套餐上架，用户可下单',
+    what: 'T-1 开团：次日套餐上架，用户可下单',
   },
   cutoff: {
-    cron: '0 0 0 * * *',
+    timelineKey: 'cutoff',
+    cron: cronOf(DEFAULT_TIMELINE.cutoff),
     timeZone: TZ,
+    /**
+     * ⚠️ 此处是**出厂口径**的展示值；运行时由 `dateKindFor()` 派生 ——
+     * 截单时刻一旦从 `24:00` 改成 `23:30` 这类值，触发日就从 T 日挪到 T-1 日，
+     * 目标日期必须跟着变成 `tomorrow`（否则**静默锁错日期**，见 `dateKindFor()` 注释）。
+     */
     dateKind: 'today',
-    what: 'T-1 24:00 截单：取消未支付 + 锁定已支付 + 推备料量',
+    what: 'T-1 截单：取消未支付 + 锁定已支付 + 推备料量',
   },
   'delivery-generate': {
-    cron: '0 30 0 * * *',
+    timelineKey: 'deliveryGenerate',
+    cron: cronOf(DEFAULT_TIMELINE.deliveryGenerate),
     timeZone: TZ,
     dateKind: 'today',
-    what: 'T 日 00:30 按楼群生成配送单',
+    what: 'T 日按楼群生成配送单',
   },
   'auto-confirm': {
-    cron: '0 0 14 * * *',
+    timelineKey: 'autoConfirm',
+    cron: cronOf(DEFAULT_TIMELINE.autoConfirm),
     timeZone: TZ,
     dateKind: 'today',
-    what: 'T 日 14:00 自动确认收货（仅 delivered）+ 计佣（写 pending，次日入账）',
+    what: 'T 日自动确认收货（仅 delivered）+ 计佣（写 pending，次日入账）',
   },
   'commission-settle': {
-    cron: '0 0 2 * * *',
+    timelineKey: 'commissionSettle',
+    cron: cronOf(DEFAULT_TIMELINE.commissionSettle),
     timeZone: TZ,
     dateKind: 'yesterday',
-    what: 'T+1 02:00 佣金入账到团长余额（把 T 日确认产生的 pending 置 settled）',
+    what: 'T+1 佣金入账到团长余额（把 T 日确认产生的 pending 置 settled）',
   },
   'supplier-share': {
-    cron: '0 10 2 * * *',
+    timelineKey: 'supplierShare',
+    cron: cronOf(DEFAULT_TIMELINE.supplierShare),
     timeZone: TZ,
     dateKind: 'yesterday',
-    what: 'T+1 02:10 生成供应商应付结算单（不拨款 · C10）',
+    what: 'T+1 生成供应商应付结算单（不拨款 · C10）',
   },
   reconciliation: {
-    cron: '0 0 4 * * *',
+    timelineKey: 'reconciliation',
+    cron: cronOf(DEFAULT_TIMELINE.reconciliation),
     timeZone: TZ,
     /**
      * ⭐ `yesterday`，**不是 `today`**（2026-09-17 M4-2 改正，原文档写 today 是错的）
      *
      * 04:00 跑批若对「今日」，核对的只是 `00:00–04:00` 这 4 小时切片，而昨日
      * 23:00 之后的流水要等**次日**才被覆盖到 —— 等于每天都漏核一段。改对「昨日」后
-     * 核的是**完整自然日**，且 T 日的下单窗口（T-1 14:00–23:00）此时已闭合、流水齐全。
+     * 核的是**完整自然日**，且 T 日的下单窗口（T-1 开团–截单前）此时已闭合、流水齐全。
      */
     dateKind: 'yesterday',
-    what: '每日 04:00 对账（核对**昨日**本地三方流水；不谎称已与微信对平）',
+    what: '每日对账（核对**昨日**本地三方流水；不谎称已与微信对平）',
   },
   'leader-expire': {
-    cron: '0 0 3 * * *',
+    timelineKey: 'leaderExpire',
+    cron: cronOf(DEFAULT_TIMELINE.leaderExpire),
     timeZone: TZ,
     dateKind: null,
-    what: '每日 03:00 见习团长 30 天未促单失效（C2）',
+    what: '每日见习团长 30 天未促单失效（C2）',
   },
 };
 

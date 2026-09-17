@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { SchedulerRegistry } from '@nestjs/schedule';
 
 import { ErrorCode } from '../common/constants/error-code';
 import { BizException } from '../common/exceptions/biz.exception';
+import { BizConfigService } from '../common/services/biz-config.service';
+import { formatTimeOfDay } from '../common/utils/order-timeline';
 import { isRealDate, todayBj } from '../common/utils/time';
 import { AutoConfirmTask } from './auto-confirm.task';
 import { CommissionSettleTask } from './commission-settle.task';
@@ -10,7 +13,14 @@ import { DeliveryGenerateTask } from './delivery-generate.task';
 import { LeaderExpireTask } from './leader-expire.task';
 import { MealPublishTask } from './meal-publish.task';
 import { ReconciliationTask } from './reconciliation.task';
-import { ScheduleService, TASK_SCHEDULES, TaskName, isTaskName } from './schedule.service';
+import {
+  ScheduleService,
+  TASK_SCHEDULES,
+  TaskName,
+  dateKindFor,
+  isTaskName,
+} from './schedule.service';
+import { ScheduleRegistrar } from './schedule.registrar';
 import { SupplierShareTask } from './supplier-share.task';
 
 /** 跑批时刻表的一行（`GET /admin/schedule`） */
@@ -34,6 +44,20 @@ export interface ScheduleRow {
   implemented: boolean;
   /** 未实装时说明会由哪个批次补齐（`implemented=false` 才有值） */
   pendingNote: string | null;
+  /**
+   * **实际注册**到调度器的 cron（`null` = 未注册）
+   *
+   * ⭐ 这个字段是「任务真的会被触发吗」的**外部可观测证据**。
+   * `cron` 是**出厂口径**（由 `DEFAULT_TIMELINE` 派生），`registeredCron` 才是
+   * **运行时按生效配置生成并注册**的值 —— 两者不同即说明「配置覆写了时刻」。
+   *
+   * ⚠️ 之所以要把它下发出来：M5-3 把任务从 `@Cron` 装饰器改为动态注册后，
+   *    「注册环节坏了」的表现是**任务永远不跑且没有任何报错**（e2e 全走补跑接口，
+   *    发现不了）。有了本字段，`e2e` 可以直接断言「8 个任务全部注册且时刻正确」。
+   */
+  registeredCron: string | null;
+  /** 生效时刻（`HH:mm`；由生效时间轴给出，与 `registeredCron` 同源） */
+  effectiveAt: string;
 }
 
 export interface ScheduleRunResult {
@@ -69,6 +93,9 @@ export class ScheduleAdminService {
 
   constructor(
     private readonly sched: ScheduleService,
+    private readonly registry: SchedulerRegistry,
+    private readonly bizConfig: BizConfigService,
+    private readonly registrar: ScheduleRegistrar,
     mealPublish: MealPublishTask,
     cutoff: CutoffTask,
     deliveryGenerate: DeliveryGenerateTask,
@@ -91,25 +118,53 @@ export class ScheduleAdminService {
     ]);
   }
 
-  /** 跑批时刻表（8 行全列出，含未实装项 —— 如实告知，而不是隐藏） */
-  list(): { list: ScheduleRow[]; summary: { total: number; implemented: number } } {
+  /**
+   * 跑批时刻表（8 行全列出，含未实装项 —— 如实告知，而不是隐藏）
+   *
+   * ⚠️ 本方法为 **async**：要读生效时间轴（`ab_config` 可覆写时刻），
+   *    故 `cron`（出厂）与 `registeredCron`（实际注册）可能不同 —— 这是特性不是 bug。
+   */
+  async list(): Promise<{
+    list: ScheduleRow[];
+    summary: { total: number; implemented: number; registered: number };
+  }> {
+    // ⭐ 先等「配置变更触发的 cron 热重载」落定：否则可能读到**中间态**
+    //   （旧 job 已删、新 job 未建，页面显示「8 个任务有 3 个没注册」——
+    //   把一次正常变更渲染成故障，比不报更误导人）
+    await this.registrar.settled();
+    const timeline = await this.bizConfig.timeline();
+
     const list = (Object.keys(TASK_SCHEDULES) as TaskName[]).map<ScheduleRow>((task) => {
       const s = TASK_SCHEDULES[task];
       const implemented = this.runners.has(task);
+      const registeredCron = this.registry.doesExist('cron', task)
+        ? String(this.registry.getCronJob(task).cronTime?.source ?? '') || null
+        : null;
+      // ⚠️ 目标日期**由生效时间轴派生**（`cutoff` 会随截单时刻是否跨午夜而变），
+      //    不是读声明表的静态值 —— 否则页面会显示一个与实际跑批不符的 `dateKind`。
+      const kind = dateKindFor(task, timeline);
+
       return {
         task,
         cron: s.cron,
+        registeredCron,
+        effectiveAt: formatTimeOfDay(timeline[s.timelineKey]),
         timeZone: s.timeZone,
-        dateKind: s.dateKind,
-        dateKindLabel: DATE_KIND_LABEL[s.dateKind ?? 'none'],
+        dateKind: kind,
+        dateKindLabel: DATE_KIND_LABEL[kind ?? 'none'],
         what: s.what,
         implemented,
         pendingNote: implemented ? null : (PENDING_NOTE[task] ?? '待后续批次实装'),
       };
     });
+
     return {
       list,
-      summary: { total: list.length, implemented: list.filter((r) => r.implemented).length },
+      summary: {
+        total: list.length,
+        implemented: list.filter((r) => r.implemented).length,
+        registered: list.filter((r) => r.registeredCron !== null).length,
+      },
     };
   }
 
@@ -167,7 +222,8 @@ export class ScheduleAdminService {
    */
   private resolveDate(task: TaskName, date?: string): string {
     if (date) return date;
-    const kind = TASK_SCHEDULES[task].dateKind;
+    // ⚠️ 与跑批**同一函数**（`dateKindFor`），不是读声明表的静态值
+    const kind = dateKindFor(task);
     return kind ? this.sched.targetDate(kind) : todayBj();
   }
 }

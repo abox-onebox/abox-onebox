@@ -86,15 +86,19 @@ async function main(): Promise<void> {
   await cfgRepo.save(
     [
       ['set_meal.default_price', UNIT_PRICE, '套餐默认售价（C1 锁定统一定价）'],
-      ['set_meal.publish_time', '14:00', '开团时间（T-1）'],
-      ['set_meal.cutoff_time', '23:59', '截单时间（语义 = T-1 24:00）'],
+      // ⚠️ 时刻类种子值必须与 `common/utils/order-timeline.ts` 的 `DEFAULT_TIMELINE` **逐字一致**。
+      //    本文件的角色是「把出厂口径落库」；真正的运行时真相是 DEFAULT_TIMELINE，
+      //    两者不一致时会出现「配置页显示 23:59、实际按 00:00 跑」的静默偏差（缺陷 #49）。
+      //    `24:00` 是**合法值**（= 次日 0 点），不是笔误。
+      ['set_meal.publish_time', '14:00', '开团时间（T-1 14:00）'],
+      ['set_meal.cutoff_time', '24:00', '截单时间（T-1 24:00 = T 日 00:00）'],
       ['order.cutoff_window_minutes', '10', '截单前 10 分钟禁止下单'],
-      ['set_meal.delivery_arrival_time', '11:30', '送达办公楼'],
+      ['set_meal.delivery_arrival_time', '11:30', '送达办公楼（T 日 11:30）'],
       ['commission.rate.trainee', '0.0800', '见习团长佣金（C2 锁定）'],
       ['commission.rate.formal', '0.0900', '正式团长佣金（C2 锁定）'],
       ['commission.rate.gold', '0.1000', '金牌团长佣金（C2 锁定）'],
       ['commission.rate.chief', '0.1200', '首席团长佣金（C2 锁定）'],
-      ['commission.auto_confirm_time', '14:00', '自动确认收货（T 日）'],
+      ['commission.auto_confirm_time', '14:00', '自动确认收货（T 日 14:00）'],
       ['commission.settle_hour', '02:00', '佣金结算时点（T+1）'],
       ['commission.min_withdraw', '10.00', '最低提现金额'],
       ['commission.payout_channel', 'FLEX_MANUAL', '出款通道（C11：灵活用工平台人工通道）'],

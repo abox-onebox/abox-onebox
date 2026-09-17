@@ -1,14 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Cron } from '@nestjs/schedule';
 import { Repository } from 'typeorm';
 
 import { OperationLog } from '../database/entities/system.entity';
 import { ReconciliationService } from '../modules/finance/reconciliation.service';
-import { ScheduleService, TASK_SCHEDULES } from './schedule.service';
+import { ScheduleService } from './schedule.service';
 
 const NAME = 'reconciliation' as const;
-const SPEC = TASK_SCHEDULES[NAME];
 
 /** 本任务写入告警时的固定动作名（也是「是否已告警过」的判据，勿随手改） */
 const ALERT_ACTION = '对账不平';
@@ -73,7 +71,15 @@ export class ReconciliationTask {
     @InjectRepository(OperationLog) private readonly opLogRepo: Repository<OperationLog>,
   ) {}
 
-  @Cron(SPEC.cron, { timeZone: SPEC.timeZone })
+  /**
+   * 跑批入口 —— **由 `ScheduleRegistrar` 在运行时按生效配置动态注册**，本类不含 `@Cron`。
+   *
+   * ⚠️ 不用装饰器的原因（缺陷 #49）：`@Cron()` 是**修饰器参数**，在模块加载时求值一次
+   *    后即为静态元数据，后台改「开团/截单时刻」**不可能**影响它 —— 表现为「配了不生效」。
+   *    改为动态注册后，配置变更可热替换（无需重启）。
+   *    ⚠️ 这也意味着**删掉注册逻辑不会有任何报错，只会让任务永远不跑** ——
+   *    故注册器内有逐名核对与启动横幅（见 schedule.registrar.ts）。
+   */
   async handle(): Promise<void> {
     const outcome = await this.sched.run(NAME, (date) => this.runOnce(date));
 

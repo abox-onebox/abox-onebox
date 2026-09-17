@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABox 一盒 · 供应商出餐卡 v1.0</title>
+<style>
+  :root {
+    --bg-cream: #F6F0E5;
+    --bg-cream-light: #FBF7EF;
+    --bg-cream-dark: #EDE3D0;
+    --text-brown: #6E5435;
+    --text-brown-light: #A08A6A;
+    --accent-gold: #C9A876;
+    --accent-gold-dark: #9A7B4F;
+    --border-brown: #E6D9C0;
+    --ok: #5B7C3A;
+    --severe: #C44536;
+    --font-kai: "KaiTi", "STKaiti", "楷体", "Kaiti SC", serif;
+    --mono: "Consolas", "Menlo", "Courier New", monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font-kai);
+    background: var(--bg-cream);
+    color: var(--text-brown);
+    line-height: 1.72;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 0 40px;
+  }
+  .sheet { max-width: 780px; margin: 0 auto; background: #fff; box-shadow: 0 2px 18px rgba(110,84,53,.10); }
+  .wrap { padding: 0 30px 26px; }
+
+  .hero {
+    background: linear-gradient(135deg, #6E5435 0%, #9A7B4F 100%);
+    color: var(--bg-cream);
+    padding: 30px 30px 24px;
+  }
+  .hero .brand { font-size: 12px; letter-spacing: 4px; opacity: .82; }
+  .hero h1 { font-size: 25px; letter-spacing: 2px; font-weight: bold; margin-top: 6px; }
+  .hero .sub { font-size: 12.5px; opacity: .88; margin-top: 8px; letter-spacing: .5px; }
+  .hero .fields { margin-top: 16px; display: flex; gap: 22px; flex-wrap: wrap; font-size: 12.5px; }
+  .hero .fields span { opacity: .9; }
+  .hero .fields i { display: inline-block; width: 108px; border-bottom: 1px solid rgba(246,240,229,.55); font-style: normal; }
+
+  h2 {
+    font-size: 15px; letter-spacing: 1.5px; margin: 22px 0 12px;
+    padding-left: 10px; border-left: 3px solid var(--accent-gold);
+  }
+  h2:first-of-type { margin-top: 20px; }
+  h2 .n {
+    display: inline-block; min-width: 19px; height: 19px; line-height: 19px;
+    text-align: center; background: var(--text-brown); color: var(--bg-cream);
+    border-radius: 50%; font-size: 11px; letter-spacing: 0; margin-right: 7px; vertical-align: 2px;
+  }
+  .note { font-size: 12.5px; color: var(--text-brown-light); margin-top: 8px; }
+
+  .tl .row {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 8px 0; border-bottom: 1px dashed var(--border-brown);
+  }
+  .tl .row:last-child { border-bottom: 0; }
+  .tl .t { flex: none; width: 118px; font-family: var(--mono); font-size: 12.5px; color: var(--accent-gold-dark); font-weight: bold; padding-top: 1px; }
+  .tl .d { flex: 1; }
+  .tl .d b { font-weight: bold; }
+  .tl .d em { font-style: normal; color: var(--text-brown-light); font-size: 12.5px; }
+
+  .acts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .act { background: var(--bg-cream-light); border: 1px solid var(--border-brown); border-radius: 8px; padding: 13px 14px; }
+  .act .h { font-size: 13.5px; font-weight: bold; padding-bottom: 7px; margin-bottom: 8px; border-bottom: 1px solid var(--border-brown); }
+  .act .h span { font-family: var(--mono); font-size: 11px; color: var(--accent-gold-dark); font-weight: normal; }
+  .act ol { margin-left: 16px; font-size: 12.5px; line-height: 1.68; }
+  .act li { margin-bottom: 3px; }
+  .act .path {
+    display: block; margin-top: 8px; font-family: var(--mono); font-size: 11px;
+    color: var(--accent-gold-dark); background: rgba(201,168,118,.14); padding: 3px 7px; border-radius: 4px; line-height: 1.55;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { border: 1px solid var(--border-brown); padding: 7px 10px; text-align: left; }
+  th { background: var(--bg-cream-dark); font-weight: bold; letter-spacing: .5px; }
+  td.num { font-family: var(--mono); color: var(--accent-gold-dark); font-weight: bold; }
+  tr.hi td { background: #FDF6E8; }
+
+  .rules { list-style: none; }
+  .rules li { position: relative; padding-left: 20px; margin-bottom: 7px; font-size: 13px; }
+  .rules li::before {
+    content: ""; position: absolute; left: 4px; top: 10px;
+    width: 6px; height: 6px; border-radius: 50%; background: var(--severe);
+  }
+  .rules li b { color: var(--severe); }
+
+  .callout {
+    margin-top: 12px; border: 1px solid var(--border-brown); border-left: 3px solid var(--accent-gold);
+    background: var(--bg-cream-light); border-radius: 6px; padding: 11px 14px; font-size: 12.5px;
+  }
+  .callout b { color: var(--accent-gold-dark); }
+
+  .foot {
+    margin-top: 22px; padding: 14px 30px; background: var(--bg-cream-dark);
+    font-size: 12.5px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  }
+  .foot b { font-family: var(--mono); color: var(--accent-gold-dark); }
+  .ver { font-size: 11.5px; color: var(--text-brown-light); text-align: center; padding: 12px 30px 0; }
+
+  @media print {
+    @page { size: A4; margin: 10mm; }
+    body { background: #fff; padding: 0; font-size: 12px; }
+    .sheet { max-width: none; box-shadow: none; }
+    .wrap { padding: 0 0 10px; }
+    .hero { padding: 16px 0 14px; }
+    .acts { gap: 8px; }
+    .act { padding: 9px 10px; }
+    h2 { margin: 14px 0 8px; }
+    .ver { padding: 8px 0 0; }
+    .foot { padding: 10px 0; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="hero">
+    <div class="brand">ABox 一盒 · 供应商手册</div>
+    <h1>出餐与对账卡</h1>
+    <div class="sub">按系统下发的份数出餐 → 送达指定加工场所 → 次日结款（人工对公转账）</div>
+    <div class="fields">
+      <span>供应商：<i></i></span>
+      <span>供菜品：<i></i></span>
+      <span>生效日期：<i></i></span>
+    </div>
+  </div>
+
+  <div class="wrap">
+
+    <h2><span class="n">一</span>一天的时间轴（记住三个时刻）</h2>
+    <div class="tl">
+      <div class="row">
+        <div class="t">前一日 24:00</div>
+        <div class="d">
+          <b>截单，系统汇总份数</b> —— ABox 停止收单，自动按菜品汇总，并推送给你<b>明日预计出餐量</b>
+          <em>（此份数是「已付款锁定」的量，按它备料）</em>
+        </div>
+      </div>
+      <div class="row">
+        <div class="t">当日 06:00–09:30</div>
+        <div class="d">
+          <b>出餐并送达指定加工场所</b> —— 按系统下发的<b>分场所数量</b>分开装，送到各指定点
+          <em>（同一天你只做同一道菜，送往多个场所）</em>
+        </div>
+      </div>
+      <div class="row">
+        <div class="t">次日 02:00</div>
+        <div class="d">
+          <b>系统生成应付结算单</b> —— 你在「应付结算明细」里可查；结款走<b>人工对公转账</b>
+        </div>
+      </div>
+    </div>
+
+    <h2><span class="n">二</span>每天三件事</h2>
+    <div class="acts">
+      <div class="act">
+        <div class="h">截单后 <span>前一日 24:00 之后</span></div>
+        <ol>
+          <li>登录供应商端，进入<b>商家工作台</b></li>
+          <li>查看<b>明日预计出餐量</b>，按菜品份数备料</li>
+          <li>份数与我方对不上 → 立即联系运营，<b>不要自行加减</b></li>
+        </ol>
+        <span class="path">商家工作台 → 明日出餐量</span>
+      </div>
+      <div class="act">
+        <div class="h">出餐完成时 <span>当日 06:00–09:30</span></div>
+        <ol>
+          <li>按各加工场所的份数分装、贴标</li>
+          <li>在端上做<b>出餐确认</b>，逐场所录入实出份数</li>
+          <li>确认后安排送达各指定场所</li>
+        </ol>
+        <span class="path">出餐确认</span>
+      </div>
+      <div class="act">
+        <div class="h">次日对账 <span>次日 02:00 之后</span></div>
+        <ol>
+          <li>查<b>应付结算明细</b>，核对份数与金额</li>
+          <li>有疑问当天提出，<b>不要拖到月底</b></li>
+          <li>我方发起对公转账后，请提供<b>收款回单</b>与<b>发票</b></li>
+        </ol>
+        <span class="path">应付结算明细</span>
+      </div>
+    </div>
+
+    <h2><span class="n">三</span>结款口径</h2>
+    <table>
+      <tr>
+        <th style="width:26%">项目</th>
+        <th>规则</th>
+      </tr>
+      <tr class="hi">
+        <td>应付金额</td>
+        <td><b>实收份数 × 出餐日冻结的采购单价</b>。单价在出餐当日<b>定格</b>，之后调价不影响已出餐批次</td>
+      </tr>
+      <tr>
+        <td>结算周期</td>
+        <td><b>日结</b>。当日交付，次日 02:00 生成应付单</td>
+      </tr>
+      <tr>
+        <td>付款方式</td>
+        <td><b>人工对公转账</b>（不走平台支付通道）。付款时需取得<b>回单号</b>，并<b>索取发票</b></td>
+      </tr>
+      <tr>
+        <td>计价依据</td>
+        <td>以系统登记的<b>实收量</b>为准；送达短缺会体现在实收份数里</td>
+      </tr>
+    </table>
+    <div class="callout">
+      <b>为什么是人工转账：</b>ABox 与供应商之间是<b>采购关系</b>（一盒自营），采购款不经过任何第三方支付通道，
+      由 ABox 对公账户直接支付到你的对公账户 —— 每一笔都留回单号与发票，双方账目可核。
+    </div>
+
+    <h2><span class="n">四</span>三条红线（影响结款，请勿操作）</h2>
+    <ul class="rules">
+      <li><b>不要自行增减份数。</b>备料量已由截单后的实际付款订单定格，多出或少出都会造成顾客端缺餐 —— 缺一餐要从应付里核减，并影响后续合作评估。</li>
+      <li><b>不要漏做出餐确认。</b>系统按「实收量」生成应付，没有确认记录就没有对账依据，会直接延误结款。</li>
+      <li><b>不要串场次、串场所。</b>各加工场所的份数不同，送错场所等于两边都缺 —— 请按系统下发的分场所数量分装贴标。</li>
+    </ul>
+
+  </div>
+
+  <div class="foot">
+    <span>份数疑问 / 送达异常：当天联系 ABox 运营，<b>不要等到次日</b></span>
+    <span>ABox 一盒 · 北京巡礼之年科技有限公司</span>
+  </div>
+  <div class="ver">供应商出餐与对账卡 v1.0 · 2026-09-17 · 口径以供应商端实时显示为准，本卡如有不一致以系统为准</div>
+
+</div>
+</body>
+</html>

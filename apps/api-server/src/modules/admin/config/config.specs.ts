@@ -10,20 +10,29 @@
  * 因此这里用**一份声明**同时驱动：D57 出参分组与文案 / D58 白名单与校验 / 前端控件类型。
  *
  * ## ⭐ `wiring` —— 本清单最重要的一列
- * 排查中发现：种子里 **9 个键被配置了，但服务端代码从不读取**。
- *   · 时间类（`set_meal.publish_time` / `cutoff_time` / `delivery_arrival_time` /
- *     `commission.auto_confirm_time` / `commission.settle_hour`）—— 实际调度**硬编码在
- *     `@Cron()` 装饰器里**（NestJS 的 cron 是静态元数据，不读配置）；
- *   · `distribution_center.*`（3 项）/ `supplier.settle_cycle`
- *     —— 相关口径已改由表驱动或由代码常量确定。
+ * 排查中曾发现：种子里 **9 个键被配置了，但服务端代码从不读取**。
+ * 其中 5 个是**时间类**（`set_meal.publish_time` / `cutoff_time` /
+ * `delivery_arrival_time` / `commission.auto_confirm_time` / `commission.settle_hour`）
+ * —— 实际调度**硬编码在 `@Cron()` 装饰器里**（NestJS 的 cron 是编译期静态元数据，不读配置）。
  *
- * 这些键**继续允许在页面上看到**（它们是口径记录，删掉反而丢失信息），
- * 但必须**如实标注「改此值不生效」**，并标为只读。
+ * ⭐ **2026-09-17（缺陷 #49）已接线**：这 5 个键改由 `timeline` 分组承载，
+ * `wiring` 升为 `live` —— 时刻的唯一真相收敛到 `common/utils/order-timeline.ts` 的
+ * `DEFAULT_TIMELINE`，而「跑批 cron」与「下单窗口锚点」都是它的**派生值**：
+ * ```
+ *        DEFAULT_TIMELINE（唯一真相）
+ *              │  ← ab_config 的这 5 个键在此覆写
+ *      ┌───────┴────────┐
+ *      ▼                ▼
+ *  TASK_SCHEDULES     time.ts 锚点函数
+ *  （几点跑批）        （下单窗口 / 送达 / 自动确认）
+ * ```
+ * 于是「改了配置」= 下单窗口与跑批时刻**一起改**，不再是「写了不生效」。
  *
- * ⚠️ 为什么不「顺手把配置接到 cron 上」：那要改 `SchedulerRegistry` 动态注册或
- *    `@Interval` + 运行期判断，会动到**下单窗口**（e2e 全量依赖 14:00–23:00 时间窗），
- *    属独立验收项。混在本批次里，只会让「配置页做完了」掩盖「调度还没接线」。
- *    已登记为独立待办（见《缺陷与陷阱》#49）。
+ * 余下 **4 个键仍为 `unwired`**（`supplier.settle_cycle` / `distribution_center.*` 3 项）
+ * —— 其口径已由表驱动或代码常量确定，保留展示只为留下口径记录，并**如实标注改了不生效**。
+ *
+ * ⚠️ 接线后的额外纪律：任何「时刻」都**只允许**在 `order-timeline.ts` 声明一次。
+ *    在别处再写一遍数字（哪怕是注释里的「14:00」当默认值用）＝ 重新制造 #49。
  */
 
 /** 值的语义类型 —— 决定前端控件与服务端校验规则 */
@@ -122,6 +131,15 @@ export const CONFIG_GROUPS: Array<{ group: string; label: string; description: s
     description: '下单与支付环节的硬约束。改动**立即生效**（进程内缓存同步失效）。',
   },
   {
+    group: 'timeline',
+    label: '业务时刻（联动下单窗口与跑批）',
+    description:
+      '⭐ 这 5 个时刻是**同一份业务时间轴**（`common/utils/order-timeline.ts` 的 `DEFAULT_TIMELINE`）' +
+      '的覆写入口。改任一时刻会**同时**改变三处：① 用户可下单窗口（`publishAtOf` / `cutoffAtOf`）' +
+      '② 对应定时任务的跑批触发时刻（cron 热重载，无需重启）③ 送达 / 自动确认的时点计算。' +
+      '⚠️ 改动**立即生效**且**影响全平台**（含正在进行的开团计划），保存前请二次确认。',
+  },
+  {
     group: 'service',
     label: '客服入口',
     description:
@@ -129,10 +147,11 @@ export const CONFIG_GROUPS: Array<{ group: string; label: string; description: s
   },
   {
     group: 'master',
-    label: '调度与预留（当前未接线）',
+    label: '口径记录与遗留（当前未接线）',
     description:
-      '⚠️ 以下键**改了对系统没有任何影响** —— 它们的值被硬编码在代码或定时任务里。' +
-      '保留展示是为了留下口径记录，避免「这个参数到底定的是多少」只能翻代码。',
+      '⚠️ 以下 4 项**改了对系统没有任何影响** —— 它们的口径已改为表驱动或由代码常量确定；' +
+      '另 1 项为策略标识（非数值）。保留展示是为了留下口径记录，' +
+      '避免「这个参数到底定的是多少」只能翻代码。',
   },
 ];
 
@@ -418,70 +437,82 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     consumedBy: '`BizConfigService.supportContact()` → U17 客服页',
   },
 
-  // ------------------------------------------------------------ master 未接线（如实标注）
-  // ⚠️ 以下 10 项里，9 项为「未接线」、1 项为「策略标识」（`gross_profit_policy`）。
-  //    未接线 = 改了不生效。保留展示 + 只读 + 注明原因，见本文件头部说明。
+  // ------------------------------------------------------------ timeline 业务时刻
+  // ⭐ 缺陷 #49（2026-09-17 接线）：这 5 个键过去是 `unwired`（配了没人读），
+  //    现已接入 `order-timeline.ts` 的生效时间轴 —— 改动会同时影响下单窗口与跑批 cron。
+  //    ⚠️ `consumedBy` 一律指向 `currentTimeline()`：它是「生效值」的唯一读法，
+  //       不要写 `DEFAULT_TIMELINE`（那是出厂值，不是正在生效的值）。
   {
     key: 'set_meal.publish_time',
-    group: 'master',
-    label: '开团时间',
+    group: 'timeline',
+    label: '开团时间（T-1）',
     type: 'time',
     impact: 'master',
-    wiring: 'unwired',
-    description: '口径记录：T-1 14:00 开放次日预订。',
-    unwiredReason:
-      '实际时刻由 `meal-publish.task` 取自 `TASK_SCHEDULES`（`tasks/schedule.service.ts` 的调度声明表），本键不参与调度。',
-    consumedBy: '无 —— 调度硬编码在定时任务装饰器里',
+    wiring: 'live',
+    description:
+      'T-1 14:00 开放**次日**预订 —— 用户可下单窗口的**起点**。' +
+      '⚠️ 改晚会压缩下单时间；改早不影响已生成的套餐（开团动作由 `meal-publish` 跑批触发）。',
+    unit: 'HH:mm',
+    consumedBy:
+      '`currentTimeline().publish` → `publishAtOf()`（下单窗口起点 / U1 开团倒计时）· `meal-publish` 任务跑批时刻',
   },
   {
     key: 'set_meal.cutoff_time',
-    group: 'master',
-    label: '截单时间',
+    group: 'timeline',
+    label: '截单时间（T-1）',
     type: 'time',
     impact: 'master',
-    wiring: 'unwired',
-    description: '口径记录：T-1 24:00 截单（语义 = 当日 23:59）。',
-    unwiredReason:
-      '实际时刻由 `cutoff.task` 取自 `TASK_SCHEDULES`（调度声明表），本键不参与调度；' +
-      '用户可下单窗口另由 `isOrderable()` 计算（截止 23:00）。' +
-      '⚠️ 本键 / 声明表 / 下单窗口**三者没有任何机械对账**，改其一必须人工核对另两处（《缺陷与陷阱》#49）。',
-    consumedBy: '无 —— 调度硬编码在定时任务装饰器里',
+    wiring: 'live',
+    description:
+      'T-1 24:00 截单 —— 口径上等价于 **T 日 00:00**（硬闸：过了就不再收单）。' +
+      '⭐ 本键**接受 `24:00`** 这种写法（表示「次日零点」），这正是截单口径的原生表达。' +
+      '（历史上本键曾被写成 `23:59` 作为近似的替代 —— 那会让「配置页显示的截单时刻」' +
+      '与「实际截单时刻」相差 1 分钟，是数据模型缺 `24:00` 这个值导致的长期偏差，见缺陷 #49。）',
+    unit: 'HH:mm',
+    consumedBy:
+      '`currentTimeline().cutoff` → `cutoffAtOf()`（下单窗口终点 / `isAfterCutoff` 硬闸 / 截单倒计时）· `cutoff` 任务跑批时刻',
   },
   {
     key: 'set_meal.delivery_arrival_time',
-    group: 'master',
-    label: '送达时间',
+    group: 'timeline',
+    label: '送达时间（T 日）',
     type: 'time',
     impact: 'master',
-    wiring: 'unwired',
-    description: '口径记录：次日 11:30 送达办公楼。',
-    unwiredReason: '实际送达时点写在 `ab_delivery_record.expected_at` 的生成逻辑里，不读本键。',
-    consumedBy: '无 —— 送达时点在生成送货记录时计算',
+    wiring: 'live',
+    description: 'T 日 11:30 送达办公楼 —— 送货单 `expectedAt` 与团长端「取餐时间」的基准。',
+    unit: 'HH:mm',
+    consumedBy:
+      '`currentTimeline().arrival` → `arrivalAtOf()`（`ab_delivery_record.expected_at` · 团长工作台取餐时刻）',
   },
   {
     key: 'commission.auto_confirm_time',
-    group: 'master',
-    label: '自动确认收货时间',
+    group: 'timeline',
+    label: '自动确认收货（T 日）',
     type: 'time',
-    impact: 'master',
-    wiring: 'unwired',
-    description: '口径记录：T 日 14:00 自动确认收货。',
-    unwiredReason:
-      '实际时刻由 `auto-confirm.task` 取自 `TASK_SCHEDULES`（调度声明表），本键不参与调度。',
-    consumedBy: '无 —— 调度硬编码在定时任务装饰器里',
+    impact: 'commission',
+    wiring: 'live',
+    description:
+      'T 日 14:00 对**已送达**的订单自动确认收货，并生成 `pending` 佣金（次日入账）。' +
+      '⚠️ 改晚会推迟团长看到收益的时间；不影响已确认的订单。',
+    unit: 'HH:mm',
+    consumedBy:
+      '`currentTimeline().autoConfirm` → `autoConfirmAtOf()`（确认时刻判定）· `auto-confirm` 任务跑批时刻',
   },
   {
     key: 'commission.settle_hour',
-    group: 'master',
-    label: '佣金结算时点',
+    group: 'timeline',
+    label: '佣金结算时点（T+1）',
     type: 'time',
-    impact: 'master',
-    wiring: 'unwired',
-    description: '口径记录：T+1 02:00 结算佣金。',
-    unwiredReason:
-      '实际时刻由 `commission-settle.task` 取自 `TASK_SCHEDULES`（调度声明表），本键不参与调度。',
-    consumedBy: '无 —— 调度硬编码在定时任务装饰器里',
+    impact: 'commission',
+    wiring: 'live',
+    description: 'T+1 02:00 把 T 日确认产生的 `pending` 佣金置为 `settled`（入团长余额）。',
+    unit: 'HH:mm',
+    consumedBy: '`currentTimeline().commissionSettle` → `commission-settle` 任务跑批时刻',
   },
+
+  // ------------------------------------------------------------ master 未接线（如实标注）
+  // ⚠️ 以下 5 项里，4 项为「未接线」（改了不生效）、1 项为「策略标识」。
+  //    未接线 = 改了不生效。保留展示 + 只读 + 注明原因，见本文件头部说明。
   {
     key: 'supplier.settle_cycle',
     group: 'master',
@@ -489,11 +520,12 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     type: 'enum',
     impact: 'master',
     wiring: 'unwired',
-    description: '口径记录：供应商应付**日结**（C11）。',
+    description:
+      '口径记录：供应商应付**日结**（C11）。⚠️ 与「几点跑批」无关 —— 跑批时刻见 `timeline` 分组。',
     options: [{ value: 'daily', label: '日结（T+1）' }],
     unwiredReason:
-      '实际由 `supplier-share.task` 取自 `TASK_SCHEDULES`（调度声明表）并固定为日结，本键不参与调度。',
-    consumedBy: '无 —— 跑批时间硬编码在定时任务装饰器里',
+      '应付单的结算周期固定为**日结**（C11 已裁定，无可选项），实际由 `supplier-share` 服务的业务逻辑承担，本键不参与。',
+    consumedBy: '无 —— 日结是已裁定的唯一口径，无第二个取值可配',
   },
   {
     key: 'distribution_center.default_count',

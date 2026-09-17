@@ -62,7 +62,7 @@ abox-onebox/                            ← 项目根目录
 │   ├── setup.sh                        ← 一键初始化项目（PowerShell 版：setup.ps1）
 │   ├── init.sql                        ← MySQL 初始化（供 docker 入口挂载）
 │   ├── sync-docs.mjs                   ← 根文档 → docs/ 镜像同步
-│   ├── gate.mjs                        ← 免 pnpm 门禁执行器（16 道，M5-2 增 `schema:parity`）
+│   ├── gate.mjs                        ← 免 pnpm 门禁执行器（⭐ **18 道**：M5-2 增 `schema:parity`，M5-3 增 `route:audit` + `security:scan`）
 │   ├── e2e-m1.mjs / e2e-m2.mjs / e2e-m3.mjs   ← 端到端验收（真实起服务 + 真实 HTTP）
 │   ├── lib/e2e-server.mjs              ← e2e 共用托管（端口隔离 + 进程树回收 + 健康轮询）
 │   ├── db-migrate.sh / db-seed.sh      ← ⚠️ `pnpm --filter` 的**薄包装**（各 5 行）；本机 pnpm 不可用，实际迁移与种子走 `gate.mjs`
@@ -323,11 +323,24 @@ apps/api-server/
 │   │   ├── middleware/
 │   │   │   ├── request-id.middleware.ts
 │   │   │   └── rate-limit.middleware.ts
-│   │   └── utils/
-│   │       ├── crypto.ts               ← AES 加密手机号
-│   │       ├── order-no.ts             ← 订单号生成
-│   │       ├── time.ts
-│   │       └── response.ts
+│   │   ├── utils/
+│   │   │   ├── crypto.ts               ← AES 加密手机号
+│   │   │   ├── order-no.ts             ← 订单号生成
+│   │   │   ├── tz.ts                   ← ⭐ M5-3 全项目统一时区常量（时间轴与调度声明表共用，避免两处写）
+│   │   │   ├── order-timeline.ts       ← ⭐⭐ M5-3 **业务时刻的唯一真相**（`DEFAULT_TIMELINE` 9 时刻 +
+│   │   │   │                              `ab_config` 5 键覆写 + `cronOf()` + 进程级生效值 `currentTimeline()`
+│   │   │   │                              + 变更通知）。`TASK_SCHEDULES[*].cron` 与下方 `time.ts` 的锚点
+│   │   │   │                              函数**都是它的派生值** —— 改前同一批时刻在三处各写一遍且无机械
+│   │   │   │                              对账（配置 23:59 / cron 00:00 / 下单窗口 23:00，三者对不齐且不报错 = #49）
+│   │   │   ├── time.ts                 ← 时间**算法**（日期加减 / 时区换算 / 时钟注入）；锚点函数读
+│   │   │   │                              `currentTimeline()`，⚠️ 此处不得再写死 `14` / `11.5` 这类数字
+│   │   │   └── response.ts
+│   │   └── security/                   ← ⭐ M5-3 安全自检两支（`gate.mjs` 门禁 `route:audit` / `security:scan`）
+│   │       ├── route-audit.ts          ← 越权全量机械对账（**运行时反射**读全部 controller 元数据，
+│   │       │                              10 条规则 R1–R10；判据与 `AdminGuard` **逐字对齐**：
+│   │       │                              `roles.length > 0` 才算声明 —— 空 `@Roles()` 是 truthy）
+│   │       └── security-scan.ts        ← 密钥扫描（工作区 + **完整 git 历史**）+ 日志脱敏核查；
+│   │                                     自证样本**拼接构造**以免扫到自身源码（自污染）
 │   ├── config/
 │   │   ├── config.module.ts
 │   │   ├── database.config.ts
@@ -784,7 +797,8 @@ echo "  pnpm dev:admin        # 仅启动后台"
 | **v2.0.5** | 2026-09-17 | **M5-0 部署运维基座落点登记**：§一 根目录新增 `docker-compose.prod.yml` / `.dockerignore`，`apps/admin-web/{Dockerfile,nginx.conf}` 与 `apps/api-server/Dockerfile` 标注为 M5-0 产物；§一 `scripts/` **按实际文件重写**（原列的 `db-migrate.sh` / `db-seed.sh` 从未存在 —— 迁移与种子走 `package.json` script + `gate.mjs`，属**目录文档与仓库不一致**，本次对齐），补入 `gate.mjs` / `e2e-m1,2,3.mjs` / `lib/e2e-server.mjs` / `sync-docs.mjs` / 五个运维脚本；§一 `docs/` 把《部署运维手册 v1.0》由「待产出」改为**已产出**，并补《自营结算口径定义 v1.0》；**新增 §6.1** 生产编排四服务表（暴露面 / 密钥纪律 / 构建上下文 / `APP_VERSION` 注入），并明写「与本地 compose 是两套东西」；⚠️ 同步标注 M5-0 镜像与脚本**未真机执行过** |
 | **v2.0.6** | 2026-09-17 | **M5-1 配送单人工修正落点登记**：§四 `modules/delivery/` 由「占位两行」改为**带接口说明的实装**（D61 `GET /admin/deliveries` · D62 `PUT /admin/deliveries/{id}` · 份数对比与 4.3 跑批共用 `aggregateOrderQuantity()` · `version` 乐观锁）；§三 `admin-web` 补 `views/order/delivery.vue` 与 `api/delivery.ts` 注释；§五 `enums/` 补 `delivery-status.ts`（**收敛**原两处逐字重复的状态映射）；§十 新增 **§10.3 两行** —— P39「加工场所打包」（M4-0b 迁入，服务端早已实装但**本表从未登记**，本次补齐）+ 配送单管理（M5-1 新增 · **原型无对应页**，故 `page` 记 `—` 不编造型号）。⚠️ 本表自 v2.0.4 之后的 M4-0…M4-4 各批次**未逐批登记**（本次只补与 M5-1 直接相关的落点，其余仍缺）。⚠️ **同时更正 v2.0.5 的一处事实错误**：`scripts/db-migrate.sh` / `db-seed.sh` **确实存在于仓库**（`git log --diff-filter=A` 指向仓库重建提交 `0e9552e`），当时写成「从未存在」不准确 —— 准确说法是「这两个脚本只是 `pnpm --filter api-server db:migrate|db:seed` 的**薄包装**（各 5 行），而本机 pnpm 不可用，**实际迁移与种子走 `gate.mjs`**」；§一 清单已补回这两个脚本并就地标注 |
 | **v2.0.7** | 2026-09-17 | **M5-2 迁移补齐与结构对账工具落点登记**：§四 `database/` 补 **`schema-parity.ts`**（迁移推演 ↔ 实体真库机械对账，`gate.mjs` 门禁名 `schema:parity`）并把 `migrations/` 登记为**两支** —— `1700000000000-init.ts`（25 张表）+ **`1700000000001-parity-fix.ts`**（M5-2 补 2 表 + 9 列 + 1 索引，《缺陷与陷阱》#76 的修复载体 · 幂等可重入），并就地标注 ⚠️ **「两支合并推演才等于实体结构」**（单看 init 会少 2 表 9 列，是刻意的）；§一 `gate.mjs` 由「15 道」改为「**16 道**」（增 `schema:parity`）。⚠️ 本表仍有 M4-0…M4-4 各批次**未逐批登记**的历史欠账 |
+| **v2.0.8** | 2026-09-17 | **M5-3 试运营交付 / 安全自检 / #49 时刻接线落点登记**：§四 `common/utils/` 补 **`tz.ts`**（全项目统一时区常量，时间轴与调度声明表共用，避免两处各写一份）+ **`order-timeline.ts`**（⭐ **业务时刻的唯一真相** `DEFAULT_TIMELINE` 9 时刻 —— 跑批 cron 与下单窗口锚点**都是它的派生值**）；新增 **`common/security/`**（`route-audit.ts` 越权全量机械对账 · `security-scan.ts` 密钥 + 日志脱敏扫描，两支并入 `gate.mjs` 门禁）；`tasks/` 补 **`schedule.registrar.ts`**（cron **运行时注册 + 订阅时间轴变更热重载**）并就地标注 ⚠️「**8 个任务类均已不含 `@Cron`**」—— 装饰器参数在模块加载时求值一次即成静态元数据，这正是 #49「配了不生效」的**机制性根因**；§一 `gate.mjs` 由「**16 道**」改为「**18 道**」（增 `route:audit` / `security:scan`）。⚠️ 本表仍有 M4-0…M4-4 各批次**未逐批登记**的历史欠账 |
 
 ---
 
-*文档结束 · ABox 一盒 · 项目目录结构 v2.0（现行 v2.0.7） · 2026-09-17*
+*文档结束 · ABox 一盒 · 项目目录结构 v2.0（现行 v2.0.8） · 2026-09-17*

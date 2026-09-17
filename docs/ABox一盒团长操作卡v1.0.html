@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABox 一盒 · 团长操作卡 v1.0</title>
+<style>
+  :root {
+    --bg-cream: #F6F0E5;
+    --bg-cream-light: #FBF7EF;
+    --bg-cream-dark: #EDE3D0;
+    --text-brown: #6E5435;
+    --text-brown-light: #A08A6A;
+    --accent-gold: #C9A876;
+    --accent-gold-dark: #9A7B4F;
+    --border-brown: #E6D9C0;
+    --ok: #5B7C3A;
+    --severe: #C44536;
+    --font-kai: "KaiTi", "STKaiti", "楷体", "Kaiti SC", serif;
+    --mono: "Consolas", "Menlo", "Courier New", monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font-kai);
+    background: var(--bg-cream);
+    color: var(--text-brown);
+    line-height: 1.72;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 0 40px;
+  }
+  .sheet {
+    max-width: 780px; margin: 0 auto; background: #fff;
+    box-shadow: 0 2px 18px rgba(110,84,53,.10);
+  }
+  .wrap { padding: 0 30px 26px; }
+
+  /* ---------- 头部 ---------- */
+  .hero {
+    background: linear-gradient(135deg, #6E5435 0%, #9A7B4F 100%);
+    color: var(--bg-cream);
+    padding: 30px 30px 24px;
+  }
+  .hero .brand { font-size: 12px; letter-spacing: 4px; opacity: .82; }
+  .hero h1 { font-size: 25px; letter-spacing: 2px; font-weight: bold; margin-top: 6px; }
+  .hero .sub { font-size: 12.5px; opacity: .88; margin-top: 8px; letter-spacing: .5px; }
+  .hero .fields { margin-top: 16px; display: flex; gap: 22px; flex-wrap: wrap; font-size: 12.5px; }
+  .hero .fields span { opacity: .9; }
+  .hero .fields i {
+    display: inline-block; width: 108px; border-bottom: 1px solid rgba(246,240,229,.55);
+    font-style: normal;
+  }
+
+  /* ---------- 通用块 ---------- */
+  h2 {
+    font-size: 15px; letter-spacing: 1.5px; margin: 22px 0 12px;
+    padding-left: 10px; border-left: 3px solid var(--accent-gold);
+    color: var(--text-brown);
+  }
+  h2:first-of-type { margin-top: 20px; }
+  h2 .n {
+    display: inline-block; min-width: 19px; height: 19px; line-height: 19px;
+    text-align: center; background: var(--text-brown); color: var(--bg-cream);
+    border-radius: 50%; font-size: 11px; letter-spacing: 0; margin-right: 7px;
+    vertical-align: 2px;
+  }
+  .note { font-size: 12.5px; color: var(--text-brown-light); margin-top: 8px; }
+
+  /* ---------- 时间轴 ---------- */
+  .tl { margin: 4px 0 0; }
+  .tl .row {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 8px 0; border-bottom: 1px dashed var(--border-brown);
+  }
+  .tl .row:last-child { border-bottom: 0; }
+  .tl .t {
+    flex: none; width: 118px; font-family: var(--mono); font-size: 12.5px;
+    color: var(--accent-gold-dark); font-weight: bold; padding-top: 1px;
+  }
+  .tl .d { flex: 1; }
+  .tl .d b { font-weight: bold; }
+  .tl .d em { font-style: normal; color: var(--text-brown-light); font-size: 12.5px; }
+
+  /* ---------- 三件事 ---------- */
+  .acts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .act {
+    background: var(--bg-cream-light); border: 1px solid var(--border-brown);
+    border-radius: 8px; padding: 13px 14px;
+  }
+  .act .h {
+    font-size: 13.5px; font-weight: bold; padding-bottom: 7px; margin-bottom: 8px;
+    border-bottom: 1px solid var(--border-brown);
+  }
+  .act .h span { font-family: var(--mono); font-size: 11px; color: var(--accent-gold-dark); font-weight: normal; }
+  .act ol { margin-left: 16px; font-size: 12.5px; line-height: 1.68; }
+  .act li { margin-bottom: 3px; }
+  .act .path {
+    display: block; margin-top: 8px; font-family: var(--mono); font-size: 11px;
+    color: var(--accent-gold-dark); background: rgba(201,168,118,.14);
+    padding: 3px 7px; border-radius: 4px; line-height: 1.55;
+  }
+
+  /* ---------- 表格 ---------- */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { border: 1px solid var(--border-brown); padding: 7px 10px; text-align: left; }
+  th { background: var(--bg-cream-dark); font-weight: bold; letter-spacing: .5px; }
+  td.num { font-family: var(--mono); color: var(--accent-gold-dark); font-weight: bold; }
+  tr.hi td { background: #FDF6E8; }
+
+  /* ---------- 红线 ---------- */
+  .rules { list-style: none; }
+  .rules li {
+    position: relative; padding-left: 20px; margin-bottom: 7px; font-size: 13px;
+  }
+  .rules li::before {
+    content: ""; position: absolute; left: 4px; top: 10px;
+    width: 6px; height: 6px; border-radius: 50%; background: var(--severe);
+  }
+  .rules li b { color: var(--severe); }
+
+  /* ---------- 底部 ---------- */
+  .foot {
+    margin-top: 22px; padding: 14px 30px; background: var(--bg-cream-dark);
+    font-size: 12.5px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  }
+  .foot b { font-family: var(--mono); color: var(--accent-gold-dark); }
+  .ver { font-size: 11.5px; color: var(--text-brown-light); text-align: center; padding: 12px 30px 0; }
+
+  @media print {
+    @page { size: A4; margin: 10mm; }
+    body { background: #fff; padding: 0; font-size: 12px; }
+    .sheet { max-width: none; box-shadow: none; }
+    .wrap { padding: 0 0 10px; }
+    .hero { padding: 16px 0 14px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .acts { gap: 8px; }
+    .act { padding: 9px 10px; }
+    h2 { margin: 14px 0 8px; }
+    .ver { padding: 8px 0 0; }
+    .foot { padding: 10px 0; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="hero">
+    <div class="brand">ABox 一盒 · 团长手册</div>
+    <h1>团长操作卡</h1>
+    <div class="sub">一饭四菜 · 次日送达 · 楼内自取 —— 每天照这张卡做三件事就够了</div>
+    <div class="fields">
+      <span>楼栋：<i></i></span>
+      <span>团长：<i></i></span>
+      <span>生效日期：<i></i></span>
+    </div>
+  </div>
+
+  <div class="wrap">
+
+    <h2><span class="n">一</span>一天的时间轴（记住四个时刻）</h2>
+    <div class="tl">
+      <div class="row">
+        <div class="t">前一日 14:00</div>
+        <div class="d">
+          <b>开团</b> —— 次日套餐上架，本楼住户可以下单
+          <em>（开团后即可转发到楼群）</em>
+        </div>
+      </div>
+      <div class="row">
+        <div class="t">前一日 24:00</div>
+        <div class="d">
+          <b>截单</b> —— 系统自动关闭下单，<b>不可再加单</b>
+          <em>（截单前 10 分钟开始，端上会提示「距截单不足 10 分钟」）</em>
+        </div>
+      </div>
+      <div class="row">
+        <div class="t">当日 11:30</div>
+        <div class="d">
+          <b>送达本楼</b> —— 配送人员送达，系统推送取餐通知给已下单住户
+        </div>
+      </div>
+      <div class="row">
+        <div class="t">当日 11:30–12:30</div>
+        <div class="d">
+          <b>取餐窗口</b> —— 住户到指定位置凭手机取餐，你在端上核对并确认
+        </div>
+      </div>
+      <div class="row">
+        <div class="t">当日 14:00</div>
+        <div class="d">
+          <b>自动确认收货 + 计佣</b> —— 无需你操作；佣金入账在 <b>次日 02:00</b>
+        </div>
+      </div>
+    </div>
+
+    <h2><span class="n">二</span>每天三件事</h2>
+    <div class="acts">
+      <div class="act">
+        <div class="h">开团后 <span>当天 14:00 之后</span></div>
+        <ol>
+          <li>打开小程序，进入<b>团长工作台</b></li>
+          <li>确认「明日」套餐已上架、本楼可见</li>
+          <li>从<b>分享中心</b>取本楼专属链接 / 二维码，转发到楼群</li>
+        </ol>
+        <span class="path">团长工作台 → 分享中心</span>
+      </div>
+      <div class="act">
+        <div class="h">截单前 <span>当天 23:50 之前</span></div>
+        <ol>
+          <li>看<b>本楼订单</b>已下单份数</li>
+          <li>在楼群里提醒一次「今晚 24:00 截止」</li>
+          <li>住户问「还能加吗」→ 先看端上倒计时是否已结束</li>
+        </ol>
+        <span class="path">团长工作台 → 订单明细</span>
+      </div>
+      <div class="act">
+        <div class="h">当日 11:30 <span>送达之后</span></div>
+        <ol>
+          <li>打开<b>今日取餐</b>，核对到货份数与待取名单</li>
+          <li>住户来取，核对后点<b>确认取餐</b></li>
+          <li>有人没来 → 记下姓名，在<b>异常订单</b>里反馈</li>
+        </ol>
+        <span class="path">团长工作台 → 今日取餐 / 异常订单</span>
+      </div>
+    </div>
+
+    <h2><span class="n">三</span>你的佣金怎么算</h2>
+    <table>
+      <tr>
+        <th style="width:22%">等级</th>
+        <th style="width:20%">佣金比例</th>
+        <th>成为该等级</th>
+      </tr>
+      <tr class="hi">
+        <td>见习团长</td>
+        <td class="num">8%</td>
+        <td>提交团长申请通过后即为见习，<b>申请通过即生效</b></td>
+      </tr>
+      <tr>
+        <td>正式团长</td>
+        <td class="num">9%</td>
+        <td>当月完成单量与介绍团长数达标后晋级</td>
+      </tr>
+      <tr>
+        <td>金牌团长</td>
+        <td class="num">10%</td>
+        <td>同上，门槛更高一档</td>
+      </tr>
+      <tr>
+        <td>首席团长</td>
+        <td class="num">12%</td>
+        <td>最高等级</td>
+      </tr>
+    </table>
+    <p class="note">
+      · 佣金基数为<b>本楼住户实付金额</b>（¥25.80 / 份），按份累计。<br>
+      · 计佣时点：当日 14:00 自动确认收货后生成；<b>入账到余额</b>为次日 02:00。<br>
+      · 佣金可<b>提现</b>，也可留在余额里消费 —— 提现最低 <b>¥10</b>。<br>
+      · <b>见习团长 30 天内未促单会自动失效</b>，请注意保持开团与转发。
+    </p>
+
+    <h2><span class="n">四</span>三条红线（会被驳回，请勿操作）</h2>
+    <ul class="rules">
+      <li><b>不要向住户收现金。</b>所有下单与支付都在小程序内完成 —— 线下收款系统里没有这笔单，住户拿不到餐、你也拿不到佣金。</li>
+      <li><b>不要承诺截单后加单。</b>截单是系统硬闸，前一日 24:00 之后订单进不来，承诺了必然兑现不了。</li>
+      <li><b>不要替住户改单或退款。</b>退款由住户在端上发起，异常情况走<b>客服</b>，团长端只做「异常反馈」。</li>
+    </ul>
+    <p class="note">
+      住户常见问题（没收到餐 / 菜有问题 / 想退款 / 收不到通知）统一引导添加<b>客服微信</b>，微信号见小程序「我的 → 联系客服」页，以页面实时显示为准。
+    </p>
+
+  </div>
+
+  <div class="foot">
+    <span>遇到端上点不动、数据不对：<b>先截图</b>，再联系客服</span>
+    <span>ABox 一盒 · 北京巡礼之年科技有限公司</span>
+  </div>
+  <div class="ver">团长操作卡 v1.0 · 2026-09-17 · 口径以小程序端实时显示为准，本卡如有不一致以系统为准</div>
+
+</div>
+</body>
+</html>

@@ -1,18 +1,22 @@
 /**
  * 时间工具（服务端 · 统一 Asia/Shanghai = UTC+8）
  *
- * 关键锚点（《订单状态机 v1.0》§1.2）：
- *   开团   T-1 14:00
- *   截单   T-1 24:00（即 T 日 00:00，硬闸）
- *   送达   T 日 11:30
- *   自动确认 T 日 14:00
- *   跑批   T+1 02:00
+ * 关键锚点（《订单状态机 v1.0》§1.2）：开团 T-1 14:00 · 截单 T-1 24:00 · 送达 T 11:30 ·
+ * 自动确认 T 14:00 · 跑批 T+1 02:00。
+ *
+ * ⚠️ **这些时刻本身不在本文件** —— 本文件只管「算法」（日期加减、时区换算），
+ *    时刻的**唯一真相**在 `order-timeline.ts` 的 `DEFAULT_TIMELINE` + 配置覆写。
+ *    本文件的锚点函数（`publishAtOf` / `cutoffAtOf` / `arrivalAtOf` / `autoConfirmAtOf`）
+ *    一律读 `currentTimeline()`（**正在生效的**值），因此后台改配置 → 立即生效。
+ *    ⚠️ 不要在这里写死 `14` / `11.5` 这类数字 —— 那会重新制造缺陷 #49 的三源漂移。
  *
  * 约定：`mealDate` 语义 = **出餐日（T 日）**，格式 `YYYY-MM-DD`。
  *
  * 实现说明：不引入 dayjs 插件（避免打包/运行时差异），直接用「显式带偏移量的
  * 字符串解析」+「UTC 字段做日期加减」，全链路不依赖宿主时区。
  */
+import { currentTimeline } from './order-timeline';
+
 export const TZ_OFFSET_MINUTES = 8 * 60;
 const BJ_OFFSET_MS = TZ_OFFSET_MINUTES * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -26,10 +30,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * （不是「冻住时钟」），因此时间戳单调性、`created_at < paid_at` 这类
  * 先后关系全部保持成立。
  *
- * 为什么需要它：`isOrderable(T)` = `[T-1 14:00, T-1 23:00)` —— **任何**出餐日
- * 在窗口外都不可能下单（T-1 14:00 ≤ now < T-1 23:00 对整数日无解），
- * 于是端到端套件每天只有 9 小时能跑，凌晨到下午 14:00 恒红。这不是被测行为
+ * 为什么需要它：`isOrderable(T)` = `[T-1 开团, T-1 截单 − cutoff_window_minutes)` ——
+ * **任何**出餐日在窗口外都不可能下单（对整数日无解），
+ * 于是端到端套件每天只有约 10 小时能跑，凌晨到下午 14:00 恒红。这不是被测行为
  * 出错，而是断言依赖了环境时钟 —— 真回归会被 15 小时的假红淹没。
+ *
+ * ⚠️ 窗口上界是**算出来的**（`截单时刻 − order.cutoff_window_minutes`，当前为 10 分钟
+ *    → 实际约 `T-1 23:50`），**不是**某个固定时刻。文档与注释里若出现「23:00」这类
+ *    写死的上界，都是 `cutoff_window_minutes` 变更时没同步的过时文案（M5-3 已修正）。
  *
  * 注入方式：`ABOX_SHIFT_TO_HOUR=20` → 把「北京时间小时」平移到 20:00，
  * **日历日不变**（真实 03:00 → 注入 20:00 同日；真实 22:00 → 注入 20:00 同日），
@@ -141,23 +149,43 @@ export function addDays(dateStr: string, days: number): string {
 }
 
 /** `YYYY-MM-DD` + 北京时间时刻 → 绝对时刻 */
+/**
+ * ⚠️ `bjDateTime` 的 `hour` 允许传 **24**：`Date.UTC(y, m, d, 24)` 会自动进位到次日 0 点，
+ *    这正是「T-1 24:00 = T 日 0 点」的精确表达（截单锚点即用此写法）。
+ */
 export function bjDateTime(dateStr: string, hour: number, minute = 0): Date {
   const [y, m, d] = dateStr.split('-').map(Number);
   // UTC+8 换算：UTC 时刻 = 北京时刻 − 8h
   return new Date(Date.UTC(y, m - 1, d, hour, minute) - BJ_OFFSET_MS);
 }
 
-/** 该出餐日（T 日）的**开团时刻** T-1 14:00 */
-export const publishAtOf = (mealDate: string): Date => bjDateTime(addDays(mealDate, -1), 14);
+/** 该出餐日（T 日）的**开团时刻** T-1 14:00（时刻取自生效时间轴） */
+export const publishAtOf = (mealDate: string): Date =>
+  bjDateTime(
+    addDays(mealDate, -1),
+    currentTimeline().publish.hour,
+    currentTimeline().publish.minute,
+  );
 
-/** 该出餐日（T 日）的**截单时刻** T-1 24:00（= T 日 00:00 · 硬闸） */
-export const cutoffAtOf = (mealDate: string): Date => bjDateTime(mealDate, 0);
+/**
+ * 该出餐日（T 日）的**截单时刻** T-1 24:00（= T 日 00:00 · 硬闸）
+ *
+ * ⚠️ 基准日必须是 **T-1**，不能是 T：截单口径的原生表达是「T-1 的 24:00」
+ *    （`hour` 允许 24，`bjDateTime` 会进位到次日 0 点）。默认值下两者等价
+ *    （`T-1 24:00` ≡ `T 00:00`），但**一旦时刻被配置成 `23:30` 这类值**，
+ *    「以 T 为基准 + 23:30」会算成 **T 日 23:30**（晚一整天），而「以 T-1 为基准」
+ *    才是 **T-1 23:30**。等同性只在 `hour === 24` 时成立，故基准必须取 T-1。
+ */
+export const cutoffAtOf = (mealDate: string): Date =>
+  bjDateTime(addDays(mealDate, -1), currentTimeline().cutoff.hour, currentTimeline().cutoff.minute);
 
 /** 该出餐日的送达时刻 T 日 11:30 */
-export const arrivalAtOf = (mealDate: string): Date => bjDateTime(mealDate, 11, 30);
+export const arrivalAtOf = (mealDate: string): Date =>
+  bjDateTime(mealDate, currentTimeline().arrival.hour, currentTimeline().arrival.minute);
 
 /** 该出餐日的自动确认时刻 T 日 14:00 */
-export const autoConfirmAtOf = (mealDate: string): Date => bjDateTime(mealDate, 14);
+export const autoConfirmAtOf = (mealDate: string): Date =>
+  bjDateTime(mealDate, currentTimeline().autoConfirm.hour, currentTimeline().autoConfirm.minute);
 
 /**
  * 当前是否处于「可下单窗口」

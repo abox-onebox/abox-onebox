@@ -6,6 +6,13 @@ import { SettlementCostKey, costRegistrationWarning } from '@abox/shared-utils';
 import { ErrorCode } from '../../../common/constants/error-code';
 import { BizException } from '../../../common/exceptions/biz.exception';
 import { BizConfigService } from '../../../common/services/biz-config.service';
+import {
+  BusinessTimeline,
+  TIMELINE_KEY_BY_CONFIG,
+  formatTimeOfDay,
+  parseTimeOfDay,
+  timelineConflict,
+} from '../../../common/utils/order-timeline';
 import { toBjIso } from '../../../common/utils/time';
 import { SysConfig } from '../../../database/entities/system.entity';
 import { ConfigItemDto, UpdateConfigsDto } from '../dto/config.dto';
@@ -211,6 +218,21 @@ export class ConfigService {
       plans.push({ spec, store: checked.store, display: checked.display });
     }
 
+    // ⭐⭐ **跨键自洽性检查**（`order-timeline.timelineConflict`）
+    //    五个时刻**各自合法**不等于**组合有意义**：开团晚于截单 → 下单窗口是**空区间**，
+    //    而逐项校验全过、系统照跑、没有任何报错。这类矛盾**只有同时看两个键**才看得出来，
+    //    故必须在此处拦下（放在写入前、与逐项校验同一批失败 —— 整批不写入）。
+    if (!problems.length && plans.some((p) => TIMELINE_KEY_BY_CONFIG[p.spec.key] !== undefined)) {
+      const tl = await this.bizConfig.timeline();
+      const next: BusinessTimeline = { ...tl };
+      for (const p of plans) {
+        const field = TIMELINE_KEY_BY_CONFIG[p.spec.key];
+        if (field) next[field] = parseTimeOfDay(p.store) ?? next[field];
+      }
+      const conflict = timelineConflict(next, await this.bizConfig.cutoffWindowMinutes());
+      if (conflict) problems.push(conflict);
+    }
+
     if (problems.length) {
       throw new BizException(
         ErrorCode.PARAM_INVALID,
@@ -390,12 +412,22 @@ export class ConfigService {
       return { ok: true, store: value, display: value };
     }
 
-    // ---- 时间 HH:mm
+    // ---- 时间 HH:mm（⭐ 复用 `order-timeline.parseTimeOfDay`，不在此另写正则）
+    // ⚠️ 判据必须与**消费方**同源：时间轴解析器接受 `24:00`（= 次日 0 点，截单口径的
+    //    原生表达）。若这里仍用「00:00–23:59」的老正则，就会出现「服务端配置页
+    //    无法录入 24:00，而系统默认值正是 24:00」—— 运营想改回默认值都改不了，
+    //    只能填 23:59 近似值，1 分钟偏差就此固化（缺陷 #49 的成因之一）。
     if (spec.type === 'time') {
-      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
-        return { ok: false, message: `须为 HH:mm 格式（当前「${value}」）` };
+      const parsed = parseTimeOfDay(value);
+      if (!parsed) {
+        return {
+          ok: false,
+          message: `须为 HH:mm 格式（00:00–23:59；截单口径可用 24:00 表示次日零点）（当前「${value}」）`,
+        };
       }
-      return { ok: true, store: value, display: value };
+      // 归一为 `HH:mm`（`9:00` → `09:00`），避免同一个时刻在库里出现两种写法
+      const canonical = formatTimeOfDay(parsed);
+      return { ok: true, store: canonical, display: canonical };
     }
 
     // ---- 数值类（money / percent / int）

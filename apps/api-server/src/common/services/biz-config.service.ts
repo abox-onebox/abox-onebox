@@ -7,6 +7,16 @@ import type { SettlementCostRegistration } from '@abox/shared-utils';
 import { summarizeCostRegistration } from '@abox/shared-utils';
 
 import { SysConfig } from '../../database/entities/system.entity';
+import {
+  BusinessTimeline,
+  TimelineDiff,
+  TIMELINE_CONFIG_KEYS,
+  TIMELINE_LABEL,
+  currentTimeline,
+  formatTimeOfDay,
+  setCurrentTimeline,
+  timelineFromRows,
+} from '../utils/order-timeline';
 
 /**
  * 业务参数读取器（唯一入口 · 读 `ab_config`）
@@ -28,6 +38,15 @@ export class BizConfigService {
   private rows = new Map<string, string>();
   private loadedAt = 0;
   private loading: Promise<void> | null = null;
+  /**
+   * 上一次载入**是否成功**。
+   *
+   * ⚠️ 用途只有一个，但很关键：**只有成功载入时才允许刷新业务时间轴**。
+   *    若 DB 抖动导致 `rows` 为空却照样刷新，`timelineFromRows({})` 会算出
+   *    「全部为默认值」→ **把运营配置的开团时刻静默改回出厂值** ——
+   *    一次 DB 抖动就改变了下单窗口，且没有任何报错。宁可沿用旧值。
+   */
+  private loadedOk = false;
 
   constructor(
     private readonly dataSource: DataSource,
@@ -46,8 +65,12 @@ export class BizConfigService {
         for (const r of list) next.set(r.configKey, r.configValue);
         this.rows = next;
         this.loadedAt = Date.now();
+        this.loadedOk = true;
+        // 载入成功 → 同步刷新业务时间轴（下单窗口 / 送达时刻 / 跑批 cron 的取值来源）
+        this.applyTimeline();
       } catch (e) {
         // 读表失败不阻断业务：沿用旧值 / 回落锁定缺省，仅告警
+        this.loadedOk = false;
         this.logger.warn(`ab_config 读取失败，沿用缺省口径：${(e as Error).message}`);
       } finally {
         this.loading = null;
@@ -55,6 +78,43 @@ export class BizConfigService {
     })();
 
     return this.loading;
+  }
+
+  /**
+   * 把当前配置行的时刻类键应用到**生效时间轴**（同步，供 `ensureLoaded` 调用）
+   *
+   * 只对 5 个时间键生效（见 `TIMELINE_CONFIG_KEYS`）—— 其余配置项与本机制无关。
+   */
+  private applyTimeline(): void {
+    if (!this.loadedOk) return; // 见 loadedOk 注释：读表失败时绝不回落默认值
+    const { timeline, warnings } = timelineFromRows(this.rows);
+    // 值非法**不抛错**（配置写坏不该让服务起不来），但必须留痕
+    for (const w of warnings) this.logger.warn(w);
+    if (setCurrentTimeline(timeline)) {
+      const changed = (Object.keys(TIMELINE_CONFIG_KEYS) as Array<keyof BusinessTimeline>)
+        .filter((k) => TIMELINE_CONFIG_KEYS[k])
+        .map((k) => `${TIMELINE_LABEL[k]}=${formatTimeOfDay(timeline[k])}`)
+        .join(' · ');
+      this.logger.log(`业务时间轴已按配置生效：${changed}`);
+    }
+  }
+
+  /**
+   * C1/C2 · 当前**生效**的业务时间轴（配置覆写后的值）
+   *
+   * 供后台配置页展示「实际生效时刻」与调度注册器生成 cron —— 两处必须同源，
+   * 否则又会出现「页面显示一个时刻、实际按另一个时刻跑」。
+   */
+  async timeline(): Promise<BusinessTimeline> {
+    await this.ensureLoaded();
+    return currentTimeline();
+  }
+
+  /** 时间轴与出厂默认值的差异（配置页用来标注「已覆写」） */
+  async timelineDiffs(): Promise<TimelineDiff[]> {
+    await this.ensureLoaded();
+    const { applied } = timelineFromRows(this.rows);
+    return applied;
   }
 
   /** 强制失效（后台改配置后调用） */

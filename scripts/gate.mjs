@@ -95,6 +95,34 @@ const GATES = {
     cwd: 'apps/api-server',
     cmd: 'ts-node -r tsconfig-paths/register src/database/schema-parity.ts',
   },
+  /**
+   * M5-3 安全自检（一）· 路由权限审计 —— 防「忘了写 @Roles」
+   *
+   * `AdminGuard` 的判据是 `roles && roles.length > 0`，于是**没写 `@Roles` 的运营端点
+   * 默认对所有后台角色开放（含 supplier / viewer）**。这类缺陷 e2e 抓不到（没人用
+   * supplier token 打过它）、编译也拦不住，与 #76 同族：**所有机械证据都是绿的，
+   * 而对应的能力从未被验过一次**。
+   *
+   * 用**运行时反射**读元数据而非解析源码 —— `@Roles` 有变量展开形态
+   * （`@Roles(...FUND_ACTION_ROLES)`），正则/AST 会漏（同 `schema:parity` 的教训）。
+   * 自带双重自证：① 每个 *.controller.ts 必须导出 controller 类（防静默漏扫）；
+   * ② 每次运行人为构造违规端点，规则必须报出。
+   */
+  'route:audit': {
+    cwd: 'apps/api-server',
+    cmd: 'ts-node -r tsconfig-paths/register src/common/security/route-audit.ts',
+  },
+  /**
+   * M5-3 安全自检（二）· 密钥泄露 + 日志脱敏
+   *
+   * 扫**工作区 + 完整 git 历史**（「提交过又删掉」的密钥仍在历史里可检出，
+   * 只扫工作区会给出一个**看起来绿的结论**），并核查日志是否整对象落敏感字段。
+   * 自带自证：真凭据样本必报、占位样本必不报、纯文案提及字段名必不报。
+   */
+  'security:scan': {
+    cwd: 'apps/api-server',
+    cmd: 'ts-node -r tsconfig-paths/register src/common/security/security-scan.ts',
+  },
   // outDir：构建前先改名挪走，避免构建工具自己 bulk-rm 被宿主守卫拦截（见文件头说明）
   'build:api': { cwd: 'apps/api-server', cmd: 'nest build', outDir: 'dist' },
   'build:admin': { cwd: 'apps/admin-web', cmd: 'vite build', outDir: 'dist' },
@@ -126,6 +154,8 @@ const ALIASES = {
     'format',
     'typecheck',
     'schema:parity',
+    'route:audit',
+    'security:scan',
     'jest',
     'build:api',
     'build:admin',

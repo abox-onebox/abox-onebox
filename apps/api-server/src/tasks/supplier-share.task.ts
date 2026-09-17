@@ -1,12 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
 
 import { money } from '../common/utils/money';
 import { SupplierShareService } from '../modules/finance/supplier-share.service';
-import { ScheduleService, TASK_SCHEDULES } from './schedule.service';
+import { ScheduleService } from './schedule.service';
 
 const NAME = 'supplier-share' as const;
-const SPEC = TASK_SCHEDULES[NAME];
 
 /**
  * T+1 02:00 · 生成**昨日**应付结算单（只生成不拨款 · C10 不变）
@@ -34,7 +32,15 @@ export class SupplierShareTask {
     private readonly shares: SupplierShareService,
   ) {}
 
-  @Cron(SPEC.cron, { timeZone: SPEC.timeZone })
+  /**
+   * 跑批入口 —— **由 `ScheduleRegistrar` 在运行时按生效配置动态注册**，本类不含 `@Cron`。
+   *
+   * ⚠️ 不用装饰器的原因（缺陷 #49）：`@Cron()` 是**修饰器参数**，在模块加载时求值一次
+   *    后即为静态元数据，后台改「开团/截单时刻」**不可能**影响它 —— 表现为「配了不生效」。
+   *    改为动态注册后，配置变更可热替换（无需重启）。
+   *    ⚠️ 这也意味着**删掉注册逻辑不会有任何报错，只会让任务永远不跑** ——
+   *    故注册器内有逐名核对与启动横幅（见 schedule.registrar.ts）。
+   */
   async handle(): Promise<void> {
     // 目标日期 = 「昨日」（应付的对象是**已发生**的交付），由声明表推导后透传
     const outcome = await this.sched.run(NAME, (date) => this.runOnce(date));
