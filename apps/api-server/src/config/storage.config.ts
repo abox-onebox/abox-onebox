@@ -24,6 +24,9 @@ export default registerAs('storage', (): StorageConfig => ({
   minio: {
     endpoint: process.env.MINIO_ENDPOINT ?? 'http://127.0.0.1:9000',
     accessKey: process.env.MINIO_ACCESS_KEY ?? 'abox',
+    // 仅当 STORAGE_DRIVER=minio 时才需要真值；默认驱动 `local` 下这行只是占位
+    // （生产用对象存储时会显式配置，见部署运维手册的密钥清单）。
+    // security-scan:allow（理由见上两行 · 标记必须紧邻，勿与代码行隔开）
     secretKey: process.env.MINIO_SECRET_KEY ?? 'abox123456',
     bucket: process.env.MINIO_BUCKET ?? 'abox-uploads',
   },

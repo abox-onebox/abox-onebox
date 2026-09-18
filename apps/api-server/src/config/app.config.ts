@@ -28,6 +28,13 @@ export interface AppConfig {
   port: number;
   baseUrl: string;
   apiPrefix: string;
+  /**
+   * CORS 允许来源（逗号分隔 · M5-7 加固）
+   *
+   * 空字符串 = **未配置**，由 `main.ts` 按环境决定：开发放行（本地各端口组合不必逐个登记）、
+   * 生产**一律不跨域**（同源部署不受影响）。生产要开跨域就显式列出域名。
+   */
+  corsOrigins: string;
   jwtSecret: string;
   jwtExpiresIn: string;
   /** 后台访问令牌有效期（比小程序的 7d 短得多 —— 后台是高权限面） */
@@ -82,6 +89,10 @@ export default registerAs('app', (): AppConfig => ({
   port: num(process.env.APP_PORT, 3000),
   baseUrl: str(process.env.APP_BASE_URL, 'http://localhost:3000'),
   apiPrefix: str(process.env.API_PREFIX, '/api/v1'),
+  corsOrigins: str(process.env.CORS_ORIGINS, ''),
+  // 生产环境缺失即**启动失败**（见 `main.ts` 的 `assertProdSecrets`）；
+  // 此处仅为**开发**默认值，它永远到不了生产，故不构成「带病上线」风险。
+  // security-scan:allow（理由见上两行 · 标记必须紧邻，勿与代码行隔开）
   jwtSecret: str(process.env.JWT_SECRET, 'change_me_before_go_live'),
   jwtExpiresIn: str(process.env.JWT_EXPIRES_IN, '7d'),
   adminJwtExpiresIn: str(process.env.ADMIN_JWT_EXPIRES_IN, '12h'),

@@ -129,6 +129,8 @@ export class FinanceAdminController {
   // ------------------------------------------------------------ D35 佣金入账（资金动作 · 收窄）
 
   @Post('commissions/settle')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'commission-settle', required: false })
   @Roles(...FUND_ACTION_ROLES)
   @OperationLog({ module: 'finance', action: '佣金入账补跑' })
   @ApiOperation({
@@ -283,6 +285,8 @@ export class FinanceAdminController {
   // ------------------------------------------------------------ D46 批准（资金动作 · 收窄）
 
   @Post('withdrawals/:id/approve')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'withdraw-approve', required: false })
   @Roles(...FUND_ACTION_ROLES)
   @OperationLog({ module: 'finance', action: '提现审批通过', targetParam: 'id' })
   @ApiOperation({
@@ -309,6 +313,8 @@ export class FinanceAdminController {
   // ------------------------------------------------------------ D46a 驳回（资金动作 · 收窄）
 
   @Post('withdrawals/:id/reject')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'withdraw-reject', required: false })
   @Roles(...FUND_ACTION_ROLES)
   @OperationLog({ module: 'finance', action: '提现审批驳回', targetParam: 'id' })
   @ApiOperation({
@@ -335,6 +341,8 @@ export class FinanceAdminController {
   // ------------------------------------------------------------ D46b 到账回执（资金动作 · 收窄）
 
   @Post('withdrawals/:id/paid')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'withdraw-paid', required: false })
   @Roles(...FUND_ACTION_ROLES)
   @OperationLog({ module: 'finance', action: '提现到账登记', targetParam: 'id' })
   @ApiOperation({
@@ -363,6 +371,8 @@ export class FinanceAdminController {
   // ------------------------------------------------------------ D46c 打款失败（资金动作 · 收窄）
 
   @Post('withdrawals/:id/fail')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'withdraw-fail', required: false })
   @Roles(...FUND_ACTION_ROLES)
   @OperationLog({ module: 'finance', action: '提现打款失败', targetParam: 'id' })
   @ApiOperation({

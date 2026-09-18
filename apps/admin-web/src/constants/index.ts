@@ -1,12 +1,14 @@
-/** 后台侧常量（与小程序端同源，权威值见 docs/） */
-export const UNIT_PRICE = 25.8;
+import { BIZ } from '@abox/shared-utils';
 
-export const COMMISSION_RATE = {
-  trainee: 0.08,
-  formal: 0.09,
-  gold: 0.1,
-  chief: 0.12,
-} as const;
+/**
+ * ⭐ 锁定口径的**唯一真源** = `@abox/shared-utils` 的 `BIZ`（M5-7 收敛 · 整体审查报告 §二）
+ *
+ * 此前售价与佣金率在「后台 constants」与「后端 + `shared-utils`」**各写一份**：
+ * 改一处漏一处，表现是「后台显示 ¥25.80、实际下单 ¥26.00」这类
+ * **只在生产被发现**的错。现在直接引用真源，并**保留原导出名**（消费页面无需改动）。
+ */
+export const UNIT_PRICE = BIZ.unitPrice;
+export const COMMISSION_RATE = BIZ.commissionRate;
 
 /** C9 · 单份成本项「默认 / 示例值」（元）
  * ⚠️ 口径修订 2026-09-15：**成本项不写死**，按实际执行；平台毛利为**结果值**。

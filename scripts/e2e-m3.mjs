@@ -11833,6 +11833,304 @@ async function main() {
   }
 
   // ==========================================================================
+  // §33b M5-7 资金闸门收口验证（缺陷 #80 的另一半 / #81 / #82）
+  //
+  // ## 为什么编号贴在 §33 后面，而不是另起 §35
+  // 本节与 §33 **同族**（都验「钱只动一次」）、**共用同一套夹具造法**；且**必须排在
+  // §34 之前** —— §34 会停掉主线实例、另起一台**开启限流**的服务，是整套脚本的最后
+  // 一节（见其节头）。故本节编号贴在 §33 之后，**刻意不重排 §34**：缺陷账本 #78
+  // 以「§34」指代限流那一节，重排会在账本、目录结构登记与本节之间造出新的对不上。
+  //
+  // ## 三件事（对应三条已收口缺陷）
+  //   (A) **幂等键在资金端点真生效**（#80 的另一半）—— 后台请求层现在会兜底注入
+  //       `Idempotency-Key`，服务端这些写端点也补了 `@Idempotent`。
+  //       缺任何一半，「双击 / 网络重试」就仍然只剩「服务端读一次状态再写」这一层。
+  //   (B) **余额退回真的走了乐观锁**（#81）—— `ab_balance.version` 必须**恰好 +1**。
+  //       这一条能机械证明「带 `version` 的条件 UPDATE **真的执行了**」：
+  //       若 `:v` 传成了 `undefined`（TypeORM 会拼出 `version = NULL`，永不命中），
+  //       正常退款路径会直接抛 `40018` —— 于是「(B) 成功」本身就是「参数没传丢」的证据。
+  //   (C) **无余额账户时 fail-closed**（#82）—— 返回 `40019`，且**事务整体回滚**：
+  //       订单回到 `refund_applying`、退款单回到 `applying`，不留「钱没退、出参却报已退、
+  //       流水无痕」的静默资损。
+  //
+  // ## ⚠️ 本节**仍不是并发测试**（与 §33 同一条免责，别把它读成「并发已验」）
+  // `better-sqlite3` 是**单连接同步**驱动，两个事务被**串行化** —— 本节**不能**证明
+  // 「真并发下只退一次 / 不丢更新」。真并发验证**只能**在真机 MySQL 上做：
+  //   · 退款并发双付 → 同一单两个并发 approve（缺陷 #80，探针 `_probe-refund-concurrency.mjs`）
+  //   · 余额丢更新   → 「退款退回」∥「T+1 02:00 佣金入账」（缺陷 #81）
+  // 本节的价值是**机械护栏**：谁把乐观锁的 `version` 条件拿掉、把无账户分支改回静默
+  // `return 0`、或把幂等注解摘掉，这里立刻红 —— 而这三件事**人工测试一次也碰不到**
+  // （它们只在并发 / 异常数据下才现形），这正是它们值得写进来的理由。
+  // ==========================================================================
+  {
+    log('\n§33b M5-7 资金闸门收口（幂等键 / 余额乐观锁 / 无账户 fail-closed）');
+
+    // ------------------------------------------------------------------
+    // (A) 幂等键：同 key 二次提交 → 10006 + 回放首次结果；换 key → 不拦
+    // ------------------------------------------------------------------
+    // 端点选 `POST /admin/finance/commissions/settle`：它是**幂等可重入**的跑批口
+    // （跑批共用同一执行口 + 逐行 `affected`，重复跑不重复加钱），故**不需要为验幂等而改夹具**。
+    // ⚠️ 这里刻意**不用**「第一次会改业务状态」的端点：那样第二次的 `10006` 就无法区分
+    //    「幂等键拦住」与「业务状态机拦住」—— 把闸门测成摆设，正是本节最该避免的错。
+    // `date` 给一个必然无待入账的日期 → 整批 `scanned=0`，**除 KV 占位键外零副作用**。
+    const idemKey = `e2e-idem-${Date.now()}`;
+    const idemBody = { date: '1970-01-01' };
+    const idemFirst = await call('POST', '/admin/finance/commissions/settle', {
+      token: adminToken,
+      idem: idemKey,
+      body: idemBody,
+    });
+    const idemReplay = await call('POST', '/admin/finance/commissions/settle', {
+      token: adminToken,
+      idem: idemKey,
+      body: idemBody,
+    });
+    const idemOther = await call('POST', '/admin/finance/commissions/settle', {
+      token: adminToken,
+      idem: `${idemKey}-b`,
+      body: idemBody,
+    });
+
+    assert(
+      idemFirst.body?.code === 0,
+      '§33b(A) 前置：首次请求**成功**（`code=0`）—— 不先证这一步，第二次的 10006 就无法区分' +
+        '「幂等键生效」与「端点本来就失败」（后者是另一种红，归因错了会去查完全无关的地方）',
+      `status=${idemFirst.status} code=${idemFirst.body?.code}`,
+    );
+    assert(
+      idemReplay.status === 200 && idemReplay.body?.code === 10006,
+      '⭐⭐ §33b(A) 同一 `Idempotency-Key` 二次提交 → **HTTP 200 + code 10006**（`DUPLICATE_SUBMIT`）。' +
+        '它同时证明两件事：① 拦截器**真的挂在这条路由上**；② KV 占位键被正确复用。' +
+        '⚠️ 「注解写在源码里」**不算证据** —— 缺陷 #78 的教训正是「机制写了、注册点错了 → 一次都不执行，' +
+        '编译过、启动无告警、日志无异常」，只有发请求才看得见',
+      `status=${idemReplay.status} code=${idemReplay.body?.code}`,
+    );
+    assert(
+      idemReplay.body?.data !== null &&
+        idemReplay.body?.data !== undefined &&
+        JSON.stringify(idemReplay.body.data) === JSON.stringify(idemFirst.body?.data ?? null),
+      '⭐⭐ §33b(A) 二次命中回放的是**首次的结果体**（`data` 非空且与首次逐字段相同）—— ' +
+        '这是「**幂等回放**」与「**简单拒绝**」的分水岭：端上网络重试时应当拿到与首次一致的' +
+        '**成功结果**（用户看到「已入账」），而不是一条「请勿重复提交」的报错',
+      `first=${JSON.stringify(idemFirst.body?.data)?.slice(0, 140)} ` +
+        `replay=${JSON.stringify(idemReplay.body?.data)?.slice(0, 140)}`,
+    );
+    assert(
+      idemOther.body?.code === 0,
+      '⭐ §33b(A) **换一个幂等键立刻放行**（`code=0`）—— 拦截键是 `idem:<scope>:<key>` 而不是' +
+        '「端点级开关」；若实现退化成「同端点一律拦」，正常用户的第二次操作会被永久挡住，' +
+        '而日志上看起来完全正常（无报错、无告警）',
+      `code=${idemOther.body?.code}`,
+    );
+
+    // ------------------------------------------------------------------
+    // (B)/(C) 夹具：一张「纯余额实付」的历史订单
+    // ------------------------------------------------------------------
+    // `pay_amount = 0` 让流程**完全不碰微信通道**（本环境是 mock 通道，混进来只会让
+    // 失败归因变模糊）；关注点全在 DB 账务上。⚠️ 与 §33 用同一套造法但取**另一头**
+    // 的订单（`ORDER BY id ASC`），两节互不依赖。
+    const ord33b = readDb(
+      `SELECT id, order_no, user_id, total_amount, discount_amount, pay_amount, balance_used, status
+       FROM ab_order WHERE status IN ('refunded', 'cancelled') ORDER BY id ASC LIMIT 1`,
+    );
+
+    if (!ord33b) {
+      fail(
+        '§33b(B)(C) 前置：库里没有可作为夹具的历史订单 —— 本节 (B)/(C) 全部跳过',
+        '先跑 `node scripts/gate.mjs seed`；本节依赖一张已终态的订单',
+      );
+    } else {
+      const uid33b = Number(ord33b.user_id);
+      // 金额口径与后端 `refundableYuan()` 同源：`round2(total − discount)`。
+      // 写成定长两位小数（而不是浮点），是因为它要**逐字**进 SQL 与 `ab_refund.amount`；
+      // 用浮点会拼出 `25.799999999999997` 这类值 → 先撞 `40011 金额不一致`，
+      // 而现象看起来像「退款审批坏了」，与真正的原因（脚本自己算错）相去甚远。
+      const amt33b = (
+        Math.round((Number(ord33b.total_amount) - Number(ord33b.discount_amount)) * 100) / 100
+      ).toFixed(2);
+
+      // ---- 快照（本节结束原样还原；不还原会污染后续小节与重跑）----
+      const snap33b = {
+        order: ord33b,
+        balance: readDb(
+          `SELECT id, balance, frozen, total_in, total_out, version FROM ab_balance WHERE user_id = ?`,
+          [uid33b],
+        ),
+        maxLog: readDb('SELECT MAX(id) AS mx FROM ab_balance_log')?.mx ?? 0,
+        maxRefund: readDb('SELECT MAX(id) AS mx FROM ab_refund')?.mx ?? 0,
+      };
+      const madeAccount33b = !snap33b.balance;
+      if (madeAccount33b) {
+        writeDb(
+          `INSERT INTO ab_balance (user_id, balance, frozen, total_in, total_out, version, created_at, updated_at)
+           VALUES (?, '0.00', '0.00', '0.00', '0.00', 1, datetime('now'), datetime('now'))`,
+          [uid33b],
+        );
+      }
+
+      /** 把订单搬到「已申请退款 · 纯余额实付」的位置，并把余额清零（夹具基线） */
+      const arm33b = () => {
+        writeDb(
+          `UPDATE ab_order SET status = 'refund_applying', pay_amount = '0.00',
+             balance_used = ?, total_amount = ?, discount_amount = '0.00' WHERE id = ?`,
+          [String(amt33b), String(amt33b), ord33b.id],
+        );
+        writeDb("UPDATE ab_balance SET balance = '0.00' WHERE user_id = ?", [uid33b]);
+      };
+      const st33b = String(Date.now()).slice(-6);
+      /** 造一条 `applying` 退款单（金额 = 服务端重算的可退额，否则会先撞 40011） */
+      const mkRefund33b = (tag) => {
+        writeDb(
+          `INSERT INTO ab_refund (refund_no, order_id, order_no, user_id, amount, reason_type, reason,
+             status, order_status_before, reversed, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'missing', ?, 'applying', 'paid', 0, 0, datetime('now'), datetime('now'))`,
+          [
+            `E7${tag}${st33b}`,
+            ord33b.id,
+            ord33b.order_no,
+            uid33b,
+            String(amt33b),
+            `e2e §33b ${tag}`,
+          ],
+        );
+        return readDb('SELECT id FROM ab_refund WHERE refund_no = ?', [`E7${tag}${st33b}`])?.id;
+      };
+
+      // ---------------- (B) 有账户：退款成功 + 余额 ++ + version 恰好 +1 ----------------
+      arm33b();
+      const refundB = mkRefund33b('B');
+      const ver33bBefore = Number(
+        readDb('SELECT version FROM ab_balance WHERE user_id = ?', [uid33b])?.version ?? -1,
+      );
+      const resB33b = await call('POST', `/admin/finance/refunds/${refundB}/approve`, {
+        token: adminToken,
+        body: { remark: 'e2e §33b 乐观锁正向' },
+      });
+      const bal33b = readDb('SELECT balance, version FROM ab_balance WHERE user_id = ?', [uid33b]);
+      const log33b = readDb(
+        `SELECT COUNT(*) AS c, COALESCE(SUM(amount), 0) AS s FROM ab_balance_log
+         WHERE user_id = ? AND type = 'refund' AND id > ?`,
+        [uid33b, snap33b.maxLog],
+      );
+
+      assert(
+        resB33b.body?.code === 0 &&
+          Number(resB33b.body?.data?.balanceRefundedFen) === Math.round(amt33b * 100),
+        '⭐ §33b(B) 有余额账户时退款成功，且出参 `balanceRefundedFen` **等于真实退回额**（缺陷 #82 的' +
+          '另一半：旧写法把 `order.balanceUsed` 无条件当「已退回」报出去，现在取的是账务的返回值）',
+        `code=${resB33b.body?.code} balanceRefundedFen=${resB33b.body?.data?.balanceRefundedFen} 期望=${Math.round(amt33b * 100)}`,
+      );
+      assert(
+        Math.abs(Number(bal33b?.balance) - amt33b) < 0.001 && Number(log33b?.c) === 1,
+        '§33b(B) 余额回到 ¥' + `${amt33b}` + '、退款流水恰好 1 条（同 §33 的金额层不变量，' +
+          '在本节同时充当「乐观锁没有把**正常路径**挡掉」的反证）',
+        `balance=${bal33b?.balance} logs=${log33b?.c} sum=${log33b?.s}`,
+      );
+      assert(
+        Number(bal33b?.version) === ver33bBefore + 1,
+        '⭐⭐ §33b(B) `ab_balance.version` **恰好 +1** —— 这是「带 `version` 的条件 UPDATE 真的执行了」' +
+          '的机械证据（缺陷 #81 收口）。若 `:v` 传丢成 `undefined`，SQL 会变成 `version = NULL`' +
+          '**永不命中** → 正常退款也会抛 `40018`；反之若把 `WHERE` 里的 version 条件整段删掉，' +
+          '本条仍会过而**并发缺陷回来了** —— 故它必须与注释里的真机验证条目**成对存在**',
+        `version=${bal33b?.version} 期望=${ver33bBefore + 1}`,
+      );
+
+      // ---------------- (C) 无账户：fail-closed 40019 + 全量回滚 ----------------
+      arm33b();
+      const refundC = mkRefund33b('C');
+      // 抹掉余额账户行（模拟数据异常：用过余额抵扣却查不到账户）
+      writeDb('DELETE FROM ab_balance WHERE user_id = ?', [uid33b]);
+      const resC33b = await call('POST', `/admin/finance/refunds/${refundC}/approve`, {
+        token: adminToken,
+        body: { remark: 'e2e §33b 无账户 fail-closed' },
+      });
+      const orderC33b = readDb('SELECT status FROM ab_order WHERE id = ?', [ord33b.id]);
+      const refundC33b = readDb('SELECT status FROM ab_refund WHERE id = ?', [refundC]);
+      const logC33b = readDb(
+        `SELECT COUNT(*) AS c FROM ab_balance_log WHERE user_id = ? AND id > ?`,
+        [uid33b, snap33b.maxLog],
+      );
+
+      assert(
+        resC33b.body?.code === 40019,
+        '⭐⭐ §33b(C) 用户**没有余额账户**时审批退款 → `40019 BALANCE_ACCOUNT_MISSING`（fail-closed）。' +
+          '旧写法是 `logger.warn + return 0`（静默跳过）：钱没退、没有流水、**出参还说「余额已退回」**，' +
+          '三处同时错且**事后对账无痕**（没有流水行可比对）。⚠️ 这条是「宁可让人看到一条明确的错误，' +
+          '也不能让一笔退款看起来成功了」的取舍落地 —— 运营据此走 D11 兜底通道人工处理',
+        `code=${resC33b.body?.code} message=${resC33b.body?.message}`,
+      );
+      assert(
+        orderC33b?.status === 'refund_applying' && refundC33b?.status === 'applying',
+        '⭐⭐ §33b(C) 抛错后**事务整体回滚**：订单仍停在 `refund_applying`、退款单仍停在 `applying`。' +
+          '这一步比 `40019` 本身更重要 —— 若只抛错却把订单留成 `refunded`，就造出「订单说已退款、' +
+          '钱一分没退、且再无入口可退」的**僵尸终态**（比静默跳过更难收拾：连重试都做不了）',
+        `order=${orderC33b?.status} refund=${refundC33b?.status}`,
+      );
+      assert(
+        Number(logC33b?.c) === 1,
+        '§33b(C) 无账户这一次**一条流水都没写**（计数仍是 (B) 留下的 1 条）—— ' +
+          '「钱没动」必须同时体现在**流水缺席**上；只看余额列会因为「本来就没账户行」而恒真',
+        `logs=${logC33b?.c}`,
+      );
+
+      // ---- 还原 ----
+      writeDb('DELETE FROM ab_refund WHERE id > ?', [snap33b.maxRefund]);
+      writeDb('DELETE FROM ab_balance_log WHERE id > ?', [snap33b.maxLog]);
+      writeDb(
+        `UPDATE ab_order SET status = ?, pay_amount = ?, balance_used = ?, total_amount = ?, discount_amount = ?
+         WHERE id = ?`,
+        [
+          ord33b.status,
+          ord33b.pay_amount,
+          ord33b.balance_used,
+          ord33b.total_amount,
+          ord33b.discount_amount,
+          ord33b.id,
+        ],
+      );
+      if (madeAccount33b) {
+        writeDb('DELETE FROM ab_balance WHERE user_id = ?', [uid33b]);
+      } else {
+        // ⚠️ 这里**不能**写成 `UPDATE ab_balance SET … WHERE user_id = ?`：
+        //    (C) 那一步把账户行**整行删掉**了（模拟数据异常），UPDATE 会命中 0 行、
+        //    静默什么都不做；若本节与 §33 恰好选中**同一张订单的用户**（库里只有一张
+        //    可作夹具的历史订单时必然如此），还原断言就会在重跑时随机红 ——
+        //    「同一份夹具在两个小节之间互相留痕」是这类假红唯一的来源。
+        //    故一律「先删回干净、再按快照整行写回（含 id 与 version）」，与行是否还在无关。
+        writeDb('DELETE FROM ab_balance WHERE user_id = ?', [uid33b]);
+        writeDb(
+          `INSERT INTO ab_balance (id, user_id, balance, frozen, total_in, total_out, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+          [
+            snap33b.balance.id,
+            uid33b,
+            snap33b.balance.balance,
+            snap33b.balance.frozen,
+            snap33b.balance.total_in,
+            snap33b.balance.total_out,
+            snap33b.balance.version,
+          ],
+        );
+      }
+      const back33b = readDb('SELECT balance, version FROM ab_balance WHERE user_id = ?', [uid33b]);
+      assert(
+        readDb('SELECT status FROM ab_order WHERE id = ?', [ord33b.id])?.status === ord33b.status &&
+          (madeAccount33b
+            ? back33b === null
+            : back33b !== null &&
+              String(back33b.balance) === String(snap33b.balance.balance) &&
+              Number(back33b.version) === Number(snap33b.balance.version)) &&
+          readDb('SELECT COUNT(*) AS c FROM ab_refund WHERE id > ?', [snap33b.maxRefund])?.c === 0,
+        '§33b 夹具还原：订单状态 / 余额（含 `version`）/ 退款单 / 流水全部回到本节开始前 —— ' +
+          '⚠️ **必须连 `version` 一起还原**：它是 (B) 用来证明乐观锁的观测量，只还原 balance 会让' +
+          '「差值恰好 +1」在重跑时随机成立，把一条硬断言变成**抛硬币**（这类「观测残留」比数据残留更难发现）',
+        `order=${readDb('SELECT status FROM ab_order WHERE id = ?', [ord33b.id])?.status} ` +
+          `balance=${back33b?.balance} version=${back33b?.version} 原version=${snap33b.balance?.version}`,
+      );
+    }
+  }
+
+  // ==========================================================================
   // §34 M5-6 限流（收口报告 §二 P2-7：`10005` 从「有码无实现」到真生效）
   //
   // ⚠️ 本节**必须放在最后**，且**必须另起一台开启限流的实例**。两个理由：

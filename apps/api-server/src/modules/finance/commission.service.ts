@@ -4,6 +4,8 @@ import { Between, DataSource, EntityManager, FindOptionsWhere, In, Repository } 
 
 import { LEADER_LEVEL_META, LeaderLevel, WITHDRAW_FROZEN_STATUS } from '@abox/shared-types';
 
+import { ErrorCode } from '../../common/constants/error-code';
+import { BizException } from '../../common/exceptions/biz.exception';
 import { BizConfigService } from '../../common/services/biz-config.service';
 import { LeaderMoneyService } from '../../common/services/leader-money.service';
 import { QueueService } from '../../common/queue/queue.service';
@@ -643,7 +645,19 @@ export class CommissionService {
     }
 
     if (account) {
-      await m
+      // ⭐ 乐观锁 · 缺陷 #81 收口 —— **全仓唯一把钱写进余额的入账口**，
+      // 也是三处里最该加的一处：它与 T+1 02:00 的佣金入账同源，
+      // 而「当天正好有一笔退款退回余额」会撞同一个账户。
+      // 旧写法只写 `WHERE id = :id` → 后提交者覆盖先提交者（丢更新），
+      // 且两条流水的 `balanceAfter` 各自自洽 → 事后对账**两条都像对的**。
+      // ⚠️ `affected = 0` 时**故意抛错让整批回滚**（而不是内部重试）：
+      //    本方法的调用方是「**一个事务包住所有团长**」（`settlePending`），
+      //    而在同一事务内重读会读到**同一快照**（MySQL REPEATABLE READ）
+      //    → 重试必然又失败；要真重试得 `SELECT ... FOR UPDATE`，代价远高于收益。
+      //    而结算跑批**本身可重入**（`settlePending` 只捞 `pending` 行），
+      //    下一次补跑即可。更重要的是：**持续撞乐观锁本身就是
+      //    「有异常写点在抢同一个账户」的信号**，静默重试会把它埋掉。
+      const upd = await m
         .createQueryBuilder()
         .update(Balance)
         .set({
@@ -651,8 +665,14 @@ export class CommissionService {
           totalIn: totalIn.toFixed(2),
           version: () => 'version + 1',
         })
-        .where('id = :id', { id: account.id })
+        .where('id = :id AND version = :v', { id: account.id, v: account.version })
         .execute();
+      if (!upd.affected) {
+        throw new BizException(
+          ErrorCode.BALANCE_CONCURRENT_MODIFIED,
+          `团长 #${leader.id} 余额在入账瞬间被其它操作改动，本批结算已回滚（结算可重入，直接重跑即可补齐）`,
+        );
+      }
     } else {
       await m.save(
         m.create(Balance, {

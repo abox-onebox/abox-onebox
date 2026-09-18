@@ -1,9 +1,20 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { CurrentAdmin, Roles } from '../../common/decorators/auth.decorator';
+import { Idempotent } from '../../common/decorators/idempotent.decorator';
 import { OperationLog } from '../../common/decorators/operation-log.decorator';
 import { AdminGuard } from '../../common/guards/admin.guard';
+import { IdempotentInterceptor } from '../../common/interceptors/idempotent.interceptor';
 import {
   AdminRefundsQueryDto,
   ApproveRefundDto,
@@ -66,6 +77,13 @@ export class RefundAdminController {
   // ------------------------------------------------------------ D41 通过
 
   @Post(':id/approve')
+  @UseInterceptors(IdempotentInterceptor)
+  // ⭐ `required: false`（2026-09-18 · 缺陷 #80 收口）：本端点**已有**数据库级闸门
+  //    （`approveByAdmin` 对退款单行做原子占位 `WHERE id=? AND status='applying'`），
+  //    幂等键在这里是**第二层**（挡网络重试 / 双击的重复提交，让端上拿到首次结果而不是
+  //    一条「状态已变」的错）。故**不强制**要求请求头 —— 否则 curl / e2e / 其它后台
+  //    集成方一律撞 10001，等于给闸门加了一道与人无关的门槛。
+  @Idempotent({ scope: 'refund-approve', required: false })
   @Roles(...FUND_ACTION_ROLES)
   @OperationLog({ module: 'finance', action: '退款审批通过', targetParam: 'id' })
   @ApiOperation({
@@ -86,6 +104,8 @@ export class RefundAdminController {
   // ------------------------------------------------------------ D42 驳回
 
   @Post(':id/reject')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'refund-reject', required: false })
   @Roles(...FUND_ACTION_ROLES)
   @OperationLog({ module: 'finance', action: '退款审批驳回', targetParam: 'id' })
   @ApiOperation({

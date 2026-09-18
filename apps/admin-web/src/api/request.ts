@@ -41,9 +41,73 @@ const instance: AxiosInstance = axios.create({
   timeout: 20000,
 });
 
+/**
+ * 幂等键请求头名（与后端 `HEADER.IDEMPOTENCY_KEY` **同字面量** · 《接口规范》§1.7）
+ */
+const IDEMPOTENCY_HEADER = 'Idempotency-Key';
+
+/**
+ * 幂等键的**时间窗**（毫秒）
+ *
+ * 窗口内「同方法 + 同地址 + 同请求体」视为**同一次用户操作** —— 于是「双击提交」
+ * 与「超时后手动再点一次」都会命中同一个键，被后端幂等拦截器拦成第二次（`10006` + 首次结果）。
+ *
+ * ⚠️ 窗口**不能取消**（不留窗口 = 每次请求都是新键 = 兜底失效），也不能太长：
+ *    60 秒是「一次提交动作」的自然时长上限。真要做**跨窗口**的严格幂等，
+ *    得由调用点显式传一个**业务键**（如 `refund-approve-${id}`）——
+ *    `api/finance.ts` 的余额调整就是这么做的，那也是**首选**做法，本函数只是兜底。
+ */
+const IDEMPOTENCY_WINDOW_MS = 60_000;
+
+/** 需要幂等键的方法（读方法重复执行无害，不必带） */
+const WRITE_METHODS = new Set(['post', 'put', 'patch', 'delete']);
+
+/** FNV-1a 32 位 —— 只用于**去重**、不用于安全，故无需加密强度 */
+function fingerprint(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
+ * 兜底生成幂等键（M5-7 · 缺陷 #80 另一半）—— 返回 `null` 表示「这个请求不需要」
+ *
+ * ⚠️ 只在请求头里**没有**幂等键时才生效：显式传键的调用点（`api/finance.ts` 的余额调整）
+ *    语义完全不变 —— 业务键比指纹键精确，不该被这里覆盖。
+ */
+function idempotencyKeyOf(config: {
+  method?: string;
+  url?: string;
+  params?: unknown;
+  data?: unknown;
+}): string | null {
+  const method = (config.method ?? 'get').toLowerCase();
+  if (!WRITE_METHODS.has(method)) return null;
+  // FormData 无法稳定指纹（`JSON.stringify` 只会得到 `{}`），且上传类请求天然可重放
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) return null;
+
+  const timeWindow = Math.floor(Date.now() / IDEMPOTENCY_WINDOW_MS);
+  const raw = [
+    method,
+    config.url ?? '',
+    JSON.stringify(config.params ?? null),
+    typeof config.data === 'string' ? config.data : JSON.stringify(config.data ?? null),
+    String(timeWindow),
+  ].join('|');
+  return `${timeWindow}-${fingerprint(raw)}`;
+}
+
 instance.interceptors.request.use((config) => {
   const token = getToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
+
+  if (!config.headers[IDEMPOTENCY_HEADER]) {
+    const auto = idempotencyKeyOf(config);
+    if (auto) config.headers.set(IDEMPOTENCY_HEADER, auto);
+  }
   return config;
 });
 

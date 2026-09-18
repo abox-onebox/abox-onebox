@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 
@@ -85,6 +86,7 @@ export class ScheduleRegistrar implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly registry: SchedulerRegistry,
     private readonly bizConfig: BizConfigService,
+    private readonly cfg: ConfigService,
     mealPublish: MealPublishTask,
     cutoff: CutoffTask,
     deliveryGenerate: DeliveryGenerateTask,
@@ -158,8 +160,22 @@ export class ScheduleRegistrar implements OnModuleInit, OnModuleDestroy {
     const timeline = await this.bizConfig.timeline();
     const names = Object.keys(TASK_SCHEDULES) as TaskName[];
 
+    // 先**无条件**摘掉旧注册 —— 关闭开关时也必须走这一步：否则「关掉」只是不再新增，
+    // 已经在跑的那些会一直留到进程重启，看起来像生效了、其实没停。
     for (const name of names) {
       if (this.registry.doesExist('cron', name)) this.registry.deleteCronJob(name);
+    }
+
+    // ⭐ M5-7：接线 `TASKS_ENABLED`（此前是**死配置** —— `app.config.ts` 定义了它、
+    //    全仓却没有任何读取点，整体审查报告 §二 已登记）。
+    //    开关的价值在本地：调试时不想让跑批在后台改数据（e2e / 内部测试都不需要它，
+    //    跑批一律走补跑接口）。生产默认 true，且**生产环境请确认这不是误配**。
+    if (this.cfg.get<boolean>('app.tasksEnabled') === false) {
+      this.logger.warn(
+        `TASKS_ENABLED=false —— 本进程**不注册任何跑批任务**（共 ${names.length} 个）：` +
+          '到点不会自动跑，需要时请走补跑接口。若这不是你想要的，检查环境变量。',
+      );
+      return { registered: 0, lines: ['TASKS_ENABLED=false · 全部跑批任务未注册'] };
     }
 
     const lines: string[] = [];

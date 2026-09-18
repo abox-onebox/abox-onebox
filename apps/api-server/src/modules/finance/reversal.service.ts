@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 
+import { ErrorCode } from '../../common/constants/error-code';
+import { BizException } from '../../common/exceptions/biz.exception';
 import { money, round2, toFen } from '../../common/utils/money';
 import { Balance, BalanceLog, Commission } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
@@ -104,17 +106,37 @@ export class ReversalService {
 
     const account = await m.findOne(Balance, { where: { userId: Number(order.userId) } });
     if (!account) {
-      this.logger.warn(`订单 ${order.orderNo} 有余额抵扣 ¥${order.balanceUsed} 但无余额账户，跳过`);
-      return 0;
+      // ⭐ fail-closed（2026-09-18 · 缺陷 #82 收口）
+      // 旧写法是 `logger.warn` + `return 0`（静默跳过），而调用链把 `order.balanceUsed`
+      // 当作「余额已退回」报给运营与端上 → 钱没退、无流水、出参还说已退，
+      // **三处同时错且对账无痕**（没有流水行可以比对）。
+      // 现在停住：宁可让运营看到一条明确的错误（走 D11 兜底通道人工处理），
+      // 也不能让一笔退款「看起来成功了」。
+      throw new BizException(
+        ErrorCode.BALANCE_ACCOUNT_MISSING,
+        `订单 ${order.orderNo} 使用了 ¥${order.balanceUsed} 余额抵扣，` +
+          `但用户 #${order.userId} 没有余额账户 —— 退款已中止（数据异常，请技术核对余额数据）`,
+      );
     }
 
     const balance = round2(Number(account.balance) + amountFen / 100);
-    await m
+    // ⭐ 乐观锁（与 `withdraw.service.ts:96` / `balance-admin.service.ts:321` 同款 · 缺陷 #81 收口）
+    // 旧写法只写 `WHERE id = :id`：`account.balance` 是**读出来在 JS 里加**的，
+    // 读与写之间若有另一路写点（T+1 02:00 佣金入账跑批 / 另一笔退款退回）提交，
+    // 这里会把**过期值**写回去 —— 丢更新；而且 `ab_balance_log.balanceAfter`
+    // 记的是**自己算的那个错值**，流水与余额**一起错、彼此自洽**，事后对账抓不住。
+    const upd = await m
       .createQueryBuilder()
       .update(Balance)
       .set({ balance: money(balance), version: () => 'version + 1' })
-      .where('id = :id', { id: account.id })
+      .where('id = :id AND version = :v', { id: account.id, v: account.version })
       .execute();
+    if (!upd.affected) {
+      throw new BizException(
+        ErrorCode.BALANCE_CONCURRENT_MODIFIED,
+        '退款退回余额时发现余额已被其它操作改动，本次退款未执行，请重试',
+      );
+    }
 
     await m.save(
       m.create(BalanceLog, {
@@ -287,17 +309,29 @@ export class ReversalService {
     const userId = Number(leader.userId);
     const account = await m.findOne(Balance, { where: { userId } });
     if (!account) {
+      // ⚠️ 这里**刻意保留**「仅记账不扣款」，与 ① 的 fail-closed **不同**，别当漏改：
+      // 团长从未领过佣金时本来就没有余额账户行（账户由 `creditCommissions` 首次入账时创建），
+      // 「无账户」 = 「余额恒为 0」，不扣是对的。
+      // 而 ① 的场景里用户**确实用过余额抵扣**却查不到账户，那才是数据异常。
+      // 两者的分界是：**这笔钱当初有没有进过这个账本**。
       notes.push('团长无余额账户，冲销仅记账');
       return { reversedFen: toFen(Math.abs(amountYuan)), quantity };
     }
 
     const balance = round2(Number(account.balance) + amountYuan);
-    await m
+    // ⭐ 乐观锁 · 缺陷 #81 收口（同 ②：读-改-写窗口内可能被跑批入账抢先）
+    const upd = await m
       .createQueryBuilder()
       .update(Balance)
       .set({ balance: money(balance), version: () => 'version + 1' })
-      .where('id = :id', { id: account.id })
+      .where('id = :id AND version = :v', { id: account.id, v: account.version })
       .execute();
+    if (!upd.affected) {
+      throw new BizException(
+        ErrorCode.BALANCE_CONCURRENT_MODIFIED,
+        '退款佣金冲销时发现团长余额已被其它操作改动，本次退款未执行，请重试',
+      );
+    }
 
     await m.save(
       m.create(BalanceLog, {

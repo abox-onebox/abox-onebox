@@ -107,6 +107,8 @@
     .foot { padding: 10px 0; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
+  /* M5-7：给「已知未完成」的步骤加小徽标 —— 测试人是照着页面一路点，不会回头读提示块，所以标注必须落在**步骤那一行**上 */
+  .dep { display: inline-block; font-family: var(--mono); font-size: 10.5px; line-height: 1; padding: 3px 5px; margin-left: 6px; border-radius: 3px; background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text); vertical-align: 1px; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -236,7 +238,16 @@
       </ul>
     </div>
 
-    <h2><span class="n">三</span>商家工作台（照顺序做完）</h2>
+        <!-- 内部引用：《缺陷与陷阱》#79 · 供应商侧出餐确认只写生产计划，不推进订单状态 -->
+    <div class="warn">
+      <div class="t">⚠️ 一条不会影响你的说明（但会让你少报一个错）</div>
+      <ul>
+        <li><b>「确认出餐」不会改变订单的状态。</b>它写的是<b>你那边的出餐计划与应付单</b>（这正是本轮要验的）；订单侧「已出餐 / 配送中 / 已送达」那一段<b>本轮还没接上</b>，属已知未完成项。</li>
+        <li>所以：如果你去后台订单页看，订单仍停在「已截单」——<b>这不是缺陷</b>，也不影响本节 S1–S18 的任何一条判据。</li>
+      </ul>
+    </div>
+
+<h2><span class="n">三</span>商家工作台（照顺序做完）</h2>
     <table>
       <tr>
         <th style="width:46px">步骤</th>

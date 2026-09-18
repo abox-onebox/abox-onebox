@@ -105,6 +105,8 @@
     .foot { padding: 10px 0; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
+  /* M5-7：给「已知未完成」的步骤加小徽标 —— 测试人是照着页面一路点，不会回头读提示块，所以标注必须落在**步骤那一行**上 */
+  .dep { display: inline-block; font-family: var(--mono); font-size: 10.5px; line-height: 1; padding: 3px 5px; margin-left: 6px; border-radius: 3px; background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text); vertical-align: 1px; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -193,7 +195,18 @@
       </ul>
     </div>
 
-    <h2><span class="n">三</span>用户端 / 团长端（手机，按顺序做完）</h2>
+        <!-- 内部引用：《缺陷与陷阱》#79（履约链 T7–T9 未实装）· 门禁 state:audit 已把它登记为「可见的豁免」 -->
+    <div class="warn">
+      <div class="t">⚠️ 先看这里：有一组功能「本轮还没接上」，别当成 bug 记</div>
+      <ul>
+        <li><b>「出餐 → 送达」这一段目前还没接上。</b>订单付完款后会停在<b>已支付 / 已截单</b>，<b>不会</b>自己变成「已出餐 / 配送中 / 已送达」。这是<b>已知的未完成项</b>——不是环境问题，也不是你操作错了。</li>
+        <li>连带受影响的是带 <span class="dep">⚠ 已知未完成</span> 小标签的那几步：<b>U10 / U12 / U13 / A13 / A15</b>。原因是「<b>送达 → 确认收货 → 产生佣金 → 进余额</b>」这条链的<b>起点没接上</b>：佣金进不来，余额自然也不会涨。</li>
+        <li><b>这几步照常点</b>（点得开、能看到页面就是收获），但结果对不上时请填 <b>P2（不好用）</b>，备注写「疑似已知未完成项」，<b>不要填 P0</b> —— 否则会和我们已知的待办重复，把真正的新问题淹掉。</li>
+        <li>除此之外的步骤（下单 / 支付 / 取消 / 退款 / 后台各页 / 配送单 / 余额对账 / 时刻表）<b>都不受影响</b>，请严格按「应该看到」判。</li>
+      </ul>
+    </div>
+
+<h2><span class="n">三</span>用户端 / 团长端（手机，按顺序做完）</h2>
     <table>
       <tr>
         <th style="width:46px">步骤</th>
@@ -257,7 +270,7 @@
       </tr>
       <tr>
         <td class="no">U10</td>
-        <td>切到团长 tab</td>
+        <td>切到团长 tab <span class="dep">⚠ 已知未完成</span></td>
         <td class="exp">有邀请入口、我的佣金、余额明细三个入口，都能打开</td>
         <td class="blank"></td>
       </tr>
@@ -269,13 +282,13 @@
       </tr>
       <tr>
         <td class="no">U12</td>
-        <td>我的佣金</td>
+        <td>我的佣金 <span class="dep">⚠ 已知未完成</span></td>
         <td class="exp">有佣金记录；U8 取消的那单<b>不应</b>变成可提现的佣金</td>
         <td class="blank"></td>
       </tr>
       <tr class="hi">
         <td class="no">U13</td>
-        <td>申请提现</td>
+        <td>申请提现 <span class="dep">⚠ 已知未完成</span></td>
         <td class="exp">提交成功，状态为<b>待审批</b>（下一步到后台第四节的 A15 去审它）</td>
         <td class="blank"></td>
       </tr>
@@ -375,7 +388,7 @@
       </tr>
       <tr>
         <td class="no">A13</td>
-        <td>财务 → 佣金</td>
+        <td>财务 → 佣金 <span class="dep">⚠ 已知未完成</span></td>
         <td class="exp">能看到刚那单对应的佣金记录，状态为<b>待入账</b>（还没进余额）</td>
         <td class="blank"></td>
       </tr>
@@ -387,7 +400,7 @@
       </tr>
       <tr class="hi">
         <td class="no">A15</td>
-        <td>财务 → 提现审批：审 U13 那笔</td>
+        <td>财务 → 提现审批：审 U13 那笔 <span class="dep">⚠ 已知未完成</span></td>
         <td class="exp">能看到待审记录；通过/驳回/已打款/失败四个动作都在，点完状态随之变化</td>
         <td class="blank"></td>
       </tr>

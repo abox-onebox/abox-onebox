@@ -188,6 +188,24 @@ export enum ErrorCode {
    *    在一堆日志里失去线索（与 40015 复用 `40002` 的取舍同理）。
    */
   WITHDRAW_STATUS_ILLEGAL = 40017,
+  /**
+   * 扩展（M5-7）：余额行被并发修改，乐观锁未命中（`affected = 0`）
+   *
+   * ⚠️ 刻意**不复用** `40002 BALANCE_NOT_ENOUGH`：本码的运维含义**不是**「钱不够花」，
+   *    而是「**有另一路写点正在动这条余额**」（跑批入账 × 退款退回 / 双提现撞车）。
+   *    收到本码说明系统按设计 **fail-closed 停住了，不是故障** —— 重试即可；
+   *    真正要查的是「哪两路在抢同一个账户」，排查入口是并发路径而不是余额数字。
+   */
+  BALANCE_CONCURRENT_MODIFIED = 40018,
+  /**
+   * 扩展（M5-7）：订单用了余额抵扣，但该用户**没有余额账户**（数据异常）
+   *
+   * 语义：钱在订单上记着扣过，`ab_balance` 里却根本没有这个账户 ——
+   * 说明存在绕过余额写点的路径。此时退款**必须停住**：
+   * 继续退会让「出参说已退、账本无痕迹、用户没收到」三件事同时错（缺陷 #82）。
+   * 与 `40015` 同属「**账实不符信号**」，要查的是数据结构而不是催人充值。
+   */
+  BALANCE_ACCOUNT_MISSING = 40019,
 
   /** ---- 5xxxx 财务 / 结算 / 供应商 ---- */
   SUPPLIER_NOT_QUALIFIED = 50001,
@@ -329,6 +347,8 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.BALANCE_FROZEN_NOT_ENOUGH]: '冻结余额不足',
   [ErrorCode.WITHDRAW_NOT_FOUND]: '提现单不存在',
   [ErrorCode.WITHDRAW_STATUS_ILLEGAL]: '提现单当前状态不支持该操作',
+  [ErrorCode.BALANCE_CONCURRENT_MODIFIED]: '余额已被其它操作改动，请重试',
+  [ErrorCode.BALANCE_ACCOUNT_MISSING]: '该用户余额账户缺失，操作已中止（请联系技术核对余额数据）',
   [ErrorCode.SUPPLIER_NOT_QUALIFIED]: '供应商资质未通过审核',
   [ErrorCode.DISTRIBUTION_CENTER_LOCKED]: '集散中心配置不可删除（存在历史结算）',
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',

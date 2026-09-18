@@ -34,9 +34,29 @@ const UNIT_PRICE = '25.80'; // C1 锁定：套餐统一售价
  */
 const DEMO_SUPPLIER_COST_TOTAL = '14.00';
 
-function assertNotProduction(): void {
+/**
+ * 双重守卫（M5-7 加固 · 整体审查报告 §二）
+ *
+ * 第一道是「环境名」，第二道是「**显式确认**」。
+ *
+ * 为什么单靠环境名不够：真正出事的形态**不是**「明知是生产还执行」，
+ * 而是「**`NODE_ENV` 忘了设成 production、但连接串指向了生产库**」——
+ * 那时第一道守卫整个失效，而本脚本会**清空全部表**（当前 27 张）。
+ * 要求一次有意识的确认为：门禁 `gate.mjs seed` 与 `local-test.mjs --seed`
+ * 都自带 `ABOX_SEED_CONFIRM=1`，只有**人手敲命令**时才需要显式加 ——
+ * 这恰好把「脚本里带的」与「人现场敲的」分成两类，而后者正是要拦的那类。
+ */
+function assertSafeToWipe(): void {
   if (process.env.NODE_ENV === 'production') {
     console.error('✖ 种子数据禁止在生产环境导入（NODE_ENV=production）');
+    process.exit(1);
+  }
+  if (!/^(1|true|yes)$/i.test(process.env.ABOX_SEED_CONFIRM ?? '')) {
+    console.error(
+      '✖ 未确认：本脚本会**清空全部表**（不可逆）。\n' +
+        '  确认要执行请显式加上环境变量：ABOX_SEED_CONFIRM=1\n' +
+        '  （走门禁 `node scripts/gate.mjs seed` 时已自带，无需手动加。）',
+    );
     process.exit(1);
   }
 }
@@ -59,7 +79,7 @@ async function wipeAll(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  assertNotProduction();
+  assertSafeToWipe();
 
   await dataSource.initialize();
   console.log('→ 已连接数据库，开始导入种子数据…');

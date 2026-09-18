@@ -95,6 +95,19 @@ const ACTIVE_REFUND_STATUS: RefundStatus[] = [
   RefundStatus.REFUNDING,
 ];
 
+/**
+ * 允许被退款流程「**原子占位**」的订单状态集合（M5-7 · 缺陷 #77/#80 收口）
+ *
+ * 两条入口的起点不同，故取**并集**：
+ *   · `approveByAdmin`（D41）—— 起点必是 `refund_applying`（申请段已把订单推进过）；
+ *   · `forceRefund`（D11）—— 跳过申请与审批，起点是 `REFUNDABLE_STATUS` 里任一。
+ *
+ * ⚠️ **刻意窄于「除 refunded 之外的一切」**：占位条件越具体，
+ *    误伤（把一笔本不该退的单锁住）越不可能。它同时也是「订单状态机」里
+ *    已声明的迁移边集合，与状态机对账时能直接对上。
+ */
+const CLAIMABLE_ORDER_STATUS: string[] = [...REFUNDABLE_STATUS, OrderStatus.REFUND_APPLYING];
+
 /** D11 强制退款入参（由 `order-admin.dto` 校验后透传，避免 finance 反向依赖 order 模块） */
 export interface ForceRefundInput {
   reason: string;
@@ -437,13 +450,41 @@ export class RefundService {
 
       // 审批信息先落库（仍在同一事务内）—— 即便后续退款失败回滚，也不会出现
       // 「审批人缺失」的半截记录；反过来若回滚，则审批本身也不算生效。
+      // ⭐ 原子占位：审批信息落库与「占住这张单」合成**一条带条件的 UPDATE**。
+      //    旧写法是「前面 `findOne` 判过状态，然后 `m.save(refund)`」—— `save` 是**无条件全列覆盖**，
+      //    在 MySQL 下并发第二次审批的 `findOne` 可能读到**事务快照里的旧值**（REPEATABLE READ）
+      //    → 两道检查全过、无条件覆盖 → 双退（缺陷 #80）。
+      //    现在「判状态」与「写状态」合并成一条原子动作，`affected = 0` 就是可靠的归属判据。
       const now = new Date();
+      const auditRemark = (remark?.trim() || '审批通过').slice(0, 256);
+      const claim = await m
+        .createQueryBuilder()
+        .update(Refund)
+        .set({
+          status: RefundStatus.APPROVED,
+          auditorId: adminId,
+          auditAt: now,
+          auditRemark,
+          version: () => 'version + 1',
+        })
+        .where('id = :id AND status = :expect', {
+          id: Number(refundId),
+          expect: RefundStatus.APPLYING,
+        })
+        .execute();
+      if (!claim.affected) {
+        throw new BizException(
+          ErrorCode.REFUND_STATUS_ILLEGAL,
+          '该申请已被处理（可能由另一位操作员同时审批），请刷新后查看最新状态',
+        );
+      }
+      // 内存对象同步到落库值（后续 `settleRefundDb` 会再推进一步并 `save`）
       refund.status = RefundStatus.APPROVED;
       refund.auditorId = adminId;
       refund.auditAt = now;
-      refund.auditRemark = (remark?.trim() || '审批通过').slice(0, 256);
+      refund.auditRemark = auditRemark;
       refund.version = (refund.version ?? 0) + 1;
-      const approved = await m.save(refund);
+      const approved = refund;
 
       const settled = await this.settleRefundDb(m, order, approved);
       return {
@@ -606,6 +647,28 @@ export class RefundService {
    *
    * ⚠️ 金额拆两路：**微信实付**走通道原路退，**余额抵扣**直接退回余额
    *    （它当初就没走微信，喂给通道会被微信拒；喂进去了则是重复出款）。
+   *
+   * ## ⭐⭐ 并发闸门：第一件事就是「**原子占住订单**」（M5-7 · 缺陷 #77/#80 收口）
+   *
+   * 旧写法是「先把账务冲销、最后再无条件把订单改成 `refunded`」，
+   * 而两层闸门（退款单状态 / 订单状态）**都是「读一次再写」**：
+   *
+   *   · `approveByAdmin` 里是 `findOne` + 判 `status`，然后 `m.save(refund)`（无条件覆盖）；
+   *   · `forceRefund` 是事务外 `findOne` 查「有没有进行中的退款单」，而后**新建一张全新的单**。
+   *
+   * 于是：同一订单在真并发下会走到两次冲销（余额退两次）。而且因为
+   * `genRefundNo()` 每次生成**新单号**、而它就是微信侧的幂等键 `out_refund_no` ——
+   * **两个不同的幂等键对微信来说就是两笔单**，微信不会去重，**真双付**。
+   *
+   * 修法就是下面第一步那条 `UPDATE ... WHERE id = ? AND status IN (...)`：
+   *
+   *   · 它走的是**当前读 + 行锁**，不会像 `findOne` 那样读到事务快照
+   *     （MySQL REPEATABLE READ 下并发第二次可能读到「还是旧状态」）；
+   *   · `affected = 0` 就是可靠的「**这张单已经不归我了**」判据，异常时直接回滚整个事务；
+   *   · **一处占位同时守住三段**：余额退回 / 佣金冲销 / 通道调用的入口（三者同在本方法后续步骤内）。
+   *
+   * ⚠️ 第一步把「占位成功」与「最终状态 `refunded`」合并成一次写：本方法无论后续成功与否
+   *    都在**同一事务**内，失败会连占位一起回滚 —— 不会留下「占住了但没退」的僵尸。
    */
   private async settleRefundDb(
     m: EntityManager,
@@ -614,11 +677,37 @@ export class RefundService {
   ): Promise<{ refund: Refund; wxFen: number; balanceFen: number; reversal: ReversalResult }> {
     const now = new Date();
     const wxFen = toFen(Number(order.payAmount));
-    const balanceFen = toFen(Number(order.balanceUsed));
 
-    // 账务冲销（余额退回 / 佣金反冲；自营口径：不冲减供应商应付）
+    // ⭐⭐ 第一步：**原子占住订单** —— 并发闸门，也是全链最外层的幂等闸。
+    // 完整推理论证见本方法 JSDoc 的「并发闸门」一节；一句话：
+    // `UPDATE ... WHERE status IN (...)` 是当前读 + 行锁，`affected` 可信；
+    // 而 `findOne` 是快照读，在 MySQL REPEATABLE READ 下可能读到「该单还可退」的旧值。
+    // ⚠️ 占位与收口合并为一次写：成功就直接是终态 `refunded`
+    //    （不引入新的中间态，状态机无需改）；后续任一步报错都会把它一起回滚。
+    const claim = await m
+      .createQueryBuilder()
+      .update(Order)
+      .set({
+        status: OrderStatus.REFUNDED,
+        cancelledAt: now,
+        version: () => 'version + 1',
+      })
+      .where('id = :id AND status IN (:...ok)', {
+        id: Number(order.id),
+        ok: CLAIMABLE_ORDER_STATUS,
+      })
+      .execute();
+    if (!claim.affected) {
+      throw new BizException(
+        ErrorCode.REFUND_DUPLICATED,
+        '该订单的退款已被处理（可能由另一位操作员同时提交），请刷新后查看',
+      );
+    }
+
+    // ⭐ 第二步：账务冲销（余额退回 / 佣金反冲；自营口径：不冲减供应商应付）
     const reversal = await this.reversal.applyRefundEffects(m, order, refund);
 
+    // ⭐ 第三步：退款单收口
     refund.status = wxFen > 0 ? RefundStatus.REFUNDING : RefundStatus.REFUNDED;
     refund.refundedAt = wxFen > 0 ? null : now;
     refund.auditorId = refund.auditorId ?? null;
@@ -628,20 +717,14 @@ export class RefundService {
     refund.version = (refund.version ?? 0) + 1;
     const saved = await m.save(refund);
 
-    // 订单收口到 refunded。`cancelled_at` 按《状态机》既有约定近似承载退款时刻
-    // （时间线异常区节点取它作为「发生时间」，无独立 refunded_at 列）。
-    await m
-      .createQueryBuilder()
-      .update(Order)
-      .set({
-        status: OrderStatus.REFUNDED,
-        cancelledAt: now,
-        version: (order.version ?? 0) + 1,
-      })
-      .where('id = :id', { id: order.id })
-      .execute();
+    // ⚠️ `cancelled_at` 按《状态机》既有约定近似承载退款时刻
+    //    （时间线异常区节点取它作为「发生时间」，无独立 refunded_at 列）——
+    //    它已在上面第一步的占位里一并写好，此处不再重复写。
 
-    return { refund: saved, wxFen, balanceFen, reversal };
+    // ⭐ 余额退回额取**账务的真实返回值**（`reversal.balanceRefundedFen`），
+    //    不再从订单 `balanceUsed` 反算。旧写法是无条件赋值，
+    //    于是「钱没退但出参说已退」—— 缺陷 #82。
+    return { refund: saved, wxFen, balanceFen: reversal.balanceRefundedFen, reversal };
   }
 
   // ==========================================================================

@@ -1,9 +1,21 @@
-import { Body, Controller, Get, Ip, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Ip,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { CurrentAdmin, Roles } from '../../common/decorators/auth.decorator';
+import { Idempotent } from '../../common/decorators/idempotent.decorator';
 import { OperationLog } from '../../common/decorators/operation-log.decorator';
 import { AdminGuard } from '../../common/guards/admin.guard';
+import { IdempotentInterceptor } from '../../common/interceptors/idempotent.interceptor';
 import {
   AdminOrdersQueryDto,
   ForceRefundDto,
@@ -79,6 +91,8 @@ export class OrderAdminController {
   // ------------------------------------------------------------ D10 手动改单
 
   @Post('manual-adjust')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'order-manual-adjust', required: false })
   @OperationLog({ module: 'order', action: '手动改单' })
   @ApiOperation({
     summary: 'D10 手动改单（改份数 / 改取餐楼）',
@@ -107,6 +121,8 @@ export class OrderAdminController {
   // ------------------------------------------------------------ D11 强制退款
 
   @Post(':orderNo/force-refund')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'order-force-refund', required: false })
   @OperationLog({ module: 'order', action: '后台强制退款', targetParam: 'orderNo' })
   @ApiOperation({
     summary: 'D11 后台强制退款（C6 第三段 · 客诉兜底）',

@@ -147,6 +147,34 @@ const GATES = {
     cwd: 'apps/api-server',
     cmd: 'ts-node -r tsconfig-paths/register src/common/security/security-scan.ts',
   },
+  /**
+   * M5-7：**订单状态机「声明 ↔ 生产写入点」机械对账**（缺陷 #79 的防复发门禁）
+   *
+   * #79 是一条 **P0**，而当时 **19 道门禁全绿、e2e 969 条全绿** —— 一条都没红。
+   * 原因不是门禁写错了，而是**没有任何门禁问过这个问题**：
+   * `ORDER_TRANSITIONS` 声明了 `cut_off → cooked → delivering → delivered`，
+   * 而这三个状态在 `ab_order` 上**全仓零写入点**（订单永久停在 `cut_off`，
+   * 团长确认取餐永远返回零值且**不报错**，**佣金永远不产生**）。
+   * 而 e2e 夹具**直接 `UPDATE ab_order SET status='delivered'`** 造数据 →
+   * 测试永远从链路**中间**开始，上游缺没缺，它**看不见**。
+   *
+   * 与 `schema:parity` / `index:parity` 完全同族：**同一件事有两份表述**
+   * （状态机声明 / 生产代码），而**不被自动化执行的那一份必然是错的**。
+   *
+   * 判据（**状态级**，不是边级 —— 边界写在脚本头注释里）：
+   *   ① 声明为迁移目标的每个状态，必须至少有一个写入点（未实装的走**显式豁免表**）
+   *   ② 生产代码写过的每个状态，必须在状态机里登记过
+   *   ③ 豁免**会自收紧**：一旦被实现，门禁要求删除豁免（防止「未实装清单」腐烂）
+   * 自带三重自证（人为删目标 / 塞幽灵状态 / 加过期豁免，三种都必须报出），
+   * 并附**反证测试**（删掉 `delivering` 豁免 → 必红并点名；塞 `'ghost_state'` → 必红）。
+   *
+   * ⚠️ 它**不验证迁移边是否合法**（证明不了 `cut_off → cooked` 这条边成立），
+   *    只证明 `cooked` 这个**状态**有人写；无法静态判定的写入点**显式列为待人工确认**，绝不静默跳过。
+   */
+  'state:audit': {
+    cwd: 'apps/api-server',
+    cmd: 'ts-node -r tsconfig-paths/register src/modules/order/order-state-audit.ts',
+  },
   // outDir：构建前先改名挪走，避免构建工具自己 bulk-rm 被宿主守卫拦截（见文件头说明）
   'build:api': { cwd: 'apps/api-server', cmd: 'nest build', outDir: 'dist' },
   'build:admin': { cwd: 'apps/admin-web', cmd: 'vite build', outDir: 'dist' },
@@ -154,7 +182,9 @@ const GATES = {
   seed: {
     cwd: 'apps/api-server',
     cmd: 'ts-node -r tsconfig-paths/register src/database/seeds/seed.ts',
-    env: RUNTIME_ENV,
+    // ABOX_SEED_CONFIRM：seed 会**清空全部表**，脚本要求显式确认（M5-7 加固）。
+    // 放在 RUNTIME_ENV **之前**，允许调用方覆盖（与 lib/e2e-server 的三级优先级同款）。
+    env: { ABOX_SEED_CONFIRM: '1', ...RUNTIME_ENV },
   },
   // M1 端到端验收：真实起服务 + 真实 HTTP，覆盖验收标准 1–5（含幂等回放与 40004 分支）
   // env.E2E_PORT：两个 e2e 各用独立端口，串跑时互不干扰（详见 scripts/lib/e2e-server.mjs）
@@ -179,6 +209,7 @@ const ALIASES = {
     'typecheck',
     'schema:parity',
     'index:parity',
+    'state:audit',
     'route:audit',
     'security:scan',
     'jest',
