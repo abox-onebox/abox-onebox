@@ -186,6 +186,26 @@ const GATES = {
     // 放在 RUNTIME_ENV **之前**，允许调用方覆盖（与 lib/e2e-server 的三级优先级同款）。
     env: { ABOX_SEED_CONFIRM: '1', ...RUNTIME_ENV },
   },
+  /**
+   * M5-9：**演示 / 边界数据集**（在基础种子之上叠加的一层，供人工测试使用）
+   *
+   * `seed` 只落主数据、**一张订单都没有** → 看板全 0、财务四页全空、配送单无单可推，
+   * 人工测试的 A2/A12/A13/A14/A17/A18/A7b 都无从判起。本层把订单 11 态、
+   * 退款四态、提现五态、佣金两段式、发票三态、完整履约链演练日一次补齐。
+   *
+   * ⚠️ **刻意不并进 `seed`**：`gate.mjs seed` 是 e2e 的前置，而 e2e:m3 有多处
+   * **绝对值**断言（§14 D1 排期格数 / §20 三味屋当日加工场所数 / §27 发票分母 /
+   * §23·§35 的干净候选池）依赖「库里只有基础种子」。并进去会让这些断言全红 ——
+   * 那是与被测产物无关的**假红**。故两层分离：门禁用 `seed`，人工测试用 `seed` + `seed:demo`。
+   *
+   * 自带自检（11 态覆盖 / sold_count 口径 / 金额闭合 / 佣金复核 / 资金恒等式 /
+   * 「明日不被占用」/「同用户同日不重复」），自检不过即 `exit 1`。
+   */
+  'seed:demo': {
+    cwd: 'apps/api-server',
+    cmd: 'ts-node -r tsconfig-paths/register src/database/seeds/seed-demo.ts',
+    env: { ABOX_SEED_CONFIRM: '1', ...RUNTIME_ENV },
+  },
   // M1 端到端验收：真实起服务 + 真实 HTTP，覆盖验收标准 1–5（含幂等回放与 40004 分支）
   // env.E2E_PORT：两个 e2e 各用独立端口，串跑时互不干扰（详见 scripts/lib/e2e-server.mjs）
   'e2e:m1': { cwd: '.', cmd: 'node scripts/e2e-m1.mjs', group: 'e2e', env: { E2E_PORT: '3101', ...RUNTIME_ENV } },

@@ -46,4 +46,15 @@ $radius-pill: 999rpx;
 $shadow-card: 0 2rpx 8rpx rgba(110, 84, 53, 0.06);
 
 // ---- 字体 ----
-$font-family-base: KaiTi, STKaiti, 楷体, 'Noto Serif SC', serif;
+// 手机上没有 KaiTi/楷体（那是 Windows 字体）→ 整条字体栈落空、回退系统黑体，页面观感「失真」。
+// 对策：自带子集字体（GB2312 一级汉字 + 常用符号，woff2 约 580KB），由 scripts/make-font-subset.py 生成。
+/* #ifdef H5 */
+@font-face {
+  font-family: 'ABoxKai';
+  src: url('/static/fonts/ab-kaiti.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+/* #endif */
+$font-family-base: 'ABoxKai', KaiTi, STKaiti, 楷体, 'Noto Serif SC', serif;

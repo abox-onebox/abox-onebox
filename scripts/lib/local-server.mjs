@@ -8,7 +8,11 @@
  *   · 静态托管：HTML / JS / CSS / 图片 / 字体 / sourcemap
  *   · SPA 回退：命中不到文件且路径无扩展名 → 回 `index.html`
  *     （运营后台用 history 路由，直接在手机上手输 `/orders` 也能进）
- *   · 反向代理：`/api`、`/static` 透传到本地 API（含请求体、响应流、changeOrigin）
+ *   · 反向代理：`/api` 透传到本地 API（含请求体、响应流、changeOrigin）
+ *   · 前缀冲突：`/static` **两边都要用** —— uni-app 的前端静态目录（字体等）
+ *     和 API 本地上传目录（`/static/dishes/...`）同名。
+ *     对策：`/static` 走「**文件优先、代理兜底**」—— dist 里存在的文件直接给，
+ *     不存在的（上传图片）才透传到 API。
  *   · 穿越防护：解析后的绝对路径必须仍落在 root 内，否则 403
  *
  * ⚠️ **仅用于内网内部测试**，不要当生产服务器用：无 HTTPS、无缓存策略、无访问控制。
@@ -45,7 +49,9 @@ const MIME = {
  * @param port            监听端口
  * @param host            监听地址，默认 `0.0.0.0`（**必须是这个，否则手机连不上**）
  * @param proxyTarget     API 地址，如 `http://127.0.0.1:3000`
- * @param proxyPrefixes   需要走代理的路径前缀
+ * @param proxyPrefixes   **无条件**走代理的路径前缀（API 接口）
+ * @param fileFirstProxyPrefixes 「本地文件优先、未命中再代理」的路径前缀
+ *                                （`/static`：前端静态资产与 API 上传目录同名，文件优先）
  * @param spa             未命中的无扩展名路径是否回退 index.html
  * @param label           日志前缀
  */
@@ -54,15 +60,22 @@ export function startStaticApp({
   port,
   host = '0.0.0.0',
   proxyTarget = null,
-  proxyPrefixes = ['/api', '/static'],
+  proxyPrefixes = ['/api'],
+  fileFirstProxyPrefixes = ['/static'],
   spa = true,
   label = 'app',
 }) {
   const rootAbs = resolve(root);
 
+  const matches = (list, pathname) => list.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+
   const server = createServer((req, res) => {
     const pathname = safePathname(req.url);
-    if (proxyTarget && proxyPrefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
+    if (proxyTarget && matches(proxyPrefixes, pathname)) {
+      return proxy(req, res, proxyTarget, label);
+    }
+    if (proxyTarget && matches(fileFirstProxyPrefixes, pathname) && !resolveFile(rootAbs, pathname, false)) {
+      // dist 里没有这个文件 → 是 API 的上传静态资源（如 /static/dishes/xx.jpg），透传
       return proxy(req, res, proxyTarget, label);
     }
     return serveFile(req, res, rootAbs, pathname, spa, label);
