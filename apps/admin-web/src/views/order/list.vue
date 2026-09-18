@@ -222,9 +222,7 @@
       </el-table-column>
 
       <template #empty>
-        <el-empty
-          :description="activeTab === 'abnormal' ? '没有异常订单 🎉' : '没有符合条件的订单'"
-        />
+        <el-empty :description="activeTab === 'abnormal' ? '没有异常订单' : '没有符合条件的订单'" />
       </template>
     </el-table>
 
