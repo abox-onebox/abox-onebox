@@ -268,6 +268,19 @@ export const routes: RouteRecordRaw[] = [
         name: 'SystemMessageTemplate',
         component: () => import('@/views/system/message-template.vue'),
       },
+      // M5-12：跑批时刻表（D64 查看 / D65 手动补跑）
+      //
+      // ⚠️ `GET /admin/schedule` 自 M4-1 就有，**一直没有页面** —— 运营要看时刻表
+      //    只能手输 URL。两个具体后果：① 「某个任务没注册上」＝ 该任务**永远不会跑**，
+      //    而失败形态**没有任何报错**，不可见的洞没有任何出口；
+      //    ② 补跑口存在但没人知道它存在（跑批没跑成只能等第二天）。
+      //    服务端控制器刻意不在 `modules/admin/`（放进去会让 AdminModule 反向依赖
+      //    全部业务模块），故本页虽在 `system/` 下，**调的是 `/admin/schedule`**。
+      {
+        path: 'system/schedule',
+        name: 'SystemSchedule',
+        component: () => import('@/views/system/schedule.vue'),
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/dashboard' },

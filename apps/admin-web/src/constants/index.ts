@@ -118,6 +118,14 @@ export const ADMIN_NAV = [
       { path: '/system/admin-user', title: '账号管理', page: '—', module: 'M37' },
       { path: '/system/role', title: '角色权限', page: '—', module: 'M37' },
       { path: '/system/operation-log', title: '操作日志', page: '—', module: 'M37' },
+      // ⚠️ M5-12 补登：`/system/message-template` 自 M3-12 就已在服务端
+      //    `ADMIN_MENU_KEYS` 里授权、路由也早就存在，**却从来没进过本表** ——
+      //    于是通知模板页「能进、但侧边栏点不到」，只能手输 URL（M3-14 修过
+      //    `/finance/*` 五页的同一个毛病，这次是系统组）。判据同来源：
+      //    **授权了就必须有入口**，否则等价于那些页面不存在。
+      { path: '/system/message-template', title: '通知模板', page: '—', module: 'D59/D60' },
+      // M5-12：跑批时刻表（D64/D65）—— 8 个定时任务的时刻 / 目标日期 / 实装状态 + 手动补跑
+      { path: '/system/schedule', title: '跑批时刻表', page: '—', module: 'D64/D65' },
     ],
   },
 ] as const;

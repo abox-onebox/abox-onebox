@@ -70,6 +70,14 @@ export const ADMIN_MENU_KEYS = [
   '/system/role',
   '/system/operation-log',
   '/system/message-template',
+  // M5-12：跑批时刻表（D64 查看 / D65 手动补跑）。
+  //   ⚠️ 菜单 key 与**服务端角色白名单**同源：`AdminController` 是
+  //   `@Roles('super_admin','admin')`，而 `operator` 的菜单在本文件里由
+  //   `ADMIN_MENU_KEYS.filter(k => !k.startsWith('/system/'))` 派生 ——
+  //   故本 key 落在 `/system/` 命名空间下即**同时**把 `operator` 挡在菜单外。
+  //   但这只是**视觉**：真正的闸门是控制器的 `@Roles`（补跑会改写历史数据，
+  //   刻意不给 operator / finance / viewer）。
+  '/system/schedule',
 ] as const;
 
 /**

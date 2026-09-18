@@ -12595,6 +12595,244 @@ async function main() {
   }
 
   // ==========================================================================
+  // §36 M5-12 三处时刻**黑盒机械对账**（`GET /admin/schedule` ↔ `GET /admin/system/configs`）
+  //
+  // ## 补的是哪一件挂账
+  // 「三处时刻」（开团 `T-1 14:00` / 截单 `24:00` / 配送单生成 `00:30`）此前只有
+  // **结构性派生**兜住 —— cron 与下单窗口锚点都是 `DEFAULT_TIMELINE` 的派生值，
+  // 配置是它的覆写，**结构上不可能漂移**。但**没有任何断言问过**：
+  // 「两个接口各自说出来的那套时刻，能不能互相推出来」。
+  // §22 已经做过**点检**（改截单 → 看 schedule 跟着变、`24:00` 往返、跨键矛盾）；
+  // 本节补的是**全量 + 双向**。
+  //
+  // ## 双向判据（本节的核心，两者缺一不可）
+  //   正向：`configs` 里写进去的值 → `schedule` 里**对应任务**的 `effectiveAt` 必须等于它
+  //         （少了这条 = 配置没接上，即 #49 的原形）
+  //   反向：`schedule` 里**偏离出厂值**的任务，必须**恰好**能由「被覆写的配置键」解释
+  //         （少了这条 = 有第二个写入点偷偷改了时刻 —— 那才是漂移的真形态：
+  //          同一时刻两处各写一遍，两边都不报错）
+  //
+  // ## 为什么必须黑盒
+  // 只读源码做静态比对（`DEFAULT_TIMELINE` vs `TASK_SCHEDULES`）证明不了**运行时真的接上了**：
+  // 「配置没被读」「缓存没失效」「热重载没跑」这三种失败**静态全是绿的**。
+  // 故本节只发 HTTP，两个接口的出参就是全部证据。
+  //
+  // ⚠️ 本节**必须排在 §34 之前**：§34 会停掉主线实例、另起一台开启限流的服务，
+  //    是整套脚本的最后一节（见其节头）。
+  // ⚠️ 本节末**必须复原并断言复原**：后面的节与下一次重跑都跑在「出厂时刻」下。
+  // ==========================================================================
+  {
+    log('\n§36 M5-12 三处时刻黑盒机械对账（schedule ↔ configs 双向互推）');
+
+    /**
+     * ⭐ **出厂口径**（业务规范值）—— 刻意在测试里**写死一份**，不去 import 服务端常量。
+     *
+     * 测试的「期望值」本身就是规范；从实现里读期望值 = 用实现证明实现
+     * （`DEFAULT_TIMELINE` 改了、测试跟着改，那条断言就永远绿）。
+     * 权威来源：《订单状态机与全链路流转 v1.0》§1.2 关键锚点。
+     */
+    const FACTORY = {
+      'meal-publish': '14:00',
+      cutoff: '24:00',
+      'delivery-generate': '00:30',
+      'auto-confirm': '14:00',
+      'commission-settle': '02:00',
+      'supplier-share': '02:10',
+      reconciliation: '04:00',
+      'leader-expire': '03:00',
+    };
+
+    /**
+     * ⭐ **配置键 → 任务名** 的期望映射（本节的核心声明）
+     *
+     * `set_meal.delivery_arrival_time` 一栏刻意是 `null`：**送达时刻不驱动任何跑批** ——
+     * 它是业务时刻（`arrivalAtOf()` 用它判「算不算已送达」、写配送单 `expected_at`），
+     * 不是调度时刻。写成显式 `null` 而不是把它漏掉，是为了让
+     * 「配置改了 5 项、时刻表只动了 4 项」这件事**有一个解释**，
+     * 而不是看起来像漏了一个（那个疑问每次都会有人提，答案应该写在断言里）。
+     */
+    const TIMELINE_TASKS = [
+      { configKey: 'set_meal.publish_time', task: 'meal-publish' },
+      { configKey: 'set_meal.cutoff_time', task: 'cutoff' },
+      { configKey: 'set_meal.delivery_arrival_time', task: null },
+      { configKey: 'commission.auto_confirm_time', task: 'auto-confirm' },
+      { configKey: 'commission.settle_hour', task: 'commission-settle' },
+    ];
+
+    /** 「不可配」的任务时刻（纯内部跑批节奏）—— 用于反证：**可配 ≠ 全部可配** */
+    const FIXED_TASKS = [
+      'delivery-generate',
+      'supplier-share',
+      'reconciliation',
+      'leader-expire',
+    ];
+
+    /**
+     * 送达的**出厂值**（`11:30`）—— 它是**业务时刻**，不在 `FACTORY`（那张表按**任务**索引），
+     * 故单独一个常量，供「写回出厂配置」的两处（A 归一 / E 复原）共用，
+     * 避免把 `'11:30'` 这个字面量在两处各写一遍（写两遍必然有一天只改一处）。
+     */
+    const FACTORY_ARRIVAL = '11:30';
+    /** 配置键 → 写回时的**出厂值**（唯一映射处：`null` 任务走 `FACTORY_ARRIVAL`） */
+    const factoryValueOf = (t) => (t.task === null ? FACTORY_ARRIVAL : FACTORY[t.task]);
+
+    /**
+     * 由 `HH:mm` 派生 cron —— 与实现**无关的独立算法**（`24:00` 折算为 `0` 点）。
+     *
+     * ⚠️ 这不算「复刻服务端规则」：断言必须自己算出期望值，否则就是拿服务端输出
+     *    去证明服务端输出。规则本身来自 cron 语义（cron 没有「24 点」）。
+     */
+    const cronOf = (hhmm) => {
+      const [h, m] = hhmm.split(':').map(Number);
+      return `0 ${m} ${h === 24 ? 0 : h} * * *`;
+    };
+
+    const readSchedule = async () => {
+      const r = await call('GET', '/admin/schedule', { token: adminToken });
+      const list = r.body?.data?.list ?? [];
+      return { r, list, byTask: Object.fromEntries(list.map((t) => [t.task, t])) };
+    };
+    const readTimelineCfg = async () => {
+      const r = await call('GET', '/admin/system/configs', { token: adminToken });
+      const items = (r.body?.data?.groups ?? []).flatMap((g) => g.items ?? []);
+      return { r, byKey: Object.fromEntries(items.map((i) => [i.key, i])) };
+    };
+    const putCfg = (items) =>
+      call('PUT', '/admin/system/configs', { token: adminToken, body: { items } });
+
+    // ---------------------------------------------------------- A. 归一：先把自己置于已知起点
+    // ⚠️ 本节要可**反复跑**：上一次重跑留下的覆写会让下面每条都对不上，故先写回出厂值。
+    const norm = await putCfg(
+      TIMELINE_TASKS.map((t) => ({ key: t.configKey, value: factoryValueOf(t) })),
+    );
+    const s0 = await readSchedule();
+    assert(
+      norm.body?.code === 0 &&
+        s0.list.length === 8 &&
+        s0.list.every(
+          (t) =>
+            t.registeredCron !== null &&
+            t.registeredCron === t.cron &&
+            t.effectiveAt === FACTORY[t.task],
+        ),
+      '§36(A) 起点归一：5 个可配时刻写回出厂值后，**8 个任务全部处于出厂口径且全部已注册**（`registeredCron === cron` 即「无配置覆写」· `effectiveAt` 逐任务等于出厂值）—— 归一本身也是断言的一部分，否则本节不可反复跑',
+      `code=${norm.body?.code} rows=${s0.list.length} 未注册=${s0.list.filter((t) => !t.registeredCron).length} 偏离=${s0.list.filter((t) => t.effectiveAt !== FACTORY[t.task]).map((t) => `${t.task}:${t.effectiveAt}`).join(',') || '无'}`,
+    );
+
+    // ---------------------------------------------------------- B. 全量覆写（5 项，含 1 项不驱动 cron）
+    const APPLIED = {
+      'set_meal.publish_time': '13:45',
+      'set_meal.cutoff_time': '23:30',
+      'set_meal.delivery_arrival_time': '12:15',
+      'commission.auto_confirm_time': '15:30',
+      'commission.settle_hour': '03:20',
+    };
+    const w = await putCfg(Object.entries(APPLIED).map(([key, value]) => ({ key, value })));
+    const c1 = await readTimelineCfg();
+    const s1 = await readSchedule();
+
+    // 正向第一跳：写进去 = 读出来（配置侧自身可往返）
+    const cfgMismatch = Object.entries(APPLIED).filter(([k, v]) => c1.byKey[k]?.value !== v);
+    assert(
+      w.body?.code === 0 && cfgMismatch.length === 0,
+      '⭐ §36(B·正向①) 5 项时刻一次批量写入 → D57 **逐键原样读回**（一个接口写、另一个接口读，中间隔着缓存刷新与时间轴重建）',
+      `code=${w.body?.code} 回读不符=${cfgMismatch.map(([k]) => k).join(',') || '无'}`,
+    );
+
+    // 正向第二跳：配置值 → 时刻表的「生效时刻」与「实际注册 cron」**同时**跟着走
+    const fwdBad = TIMELINE_TASKS.filter((t) => t.task)
+      .map((t) => {
+        const row = s1.byTask[t.task];
+        return {
+          task: t.task,
+          effectiveAt: row?.effectiveAt,
+          cron: row?.registeredCron,
+          ok: row?.effectiveAt === APPLIED[t.configKey] && row?.registeredCron === cronOf(APPLIED[t.configKey]),
+        };
+      })
+      .filter((x) => !x.ok);
+    assert(
+      fwdBad.length === 0,
+      '⭐⭐ §36(B·正向②) 配置值 → 时刻表**两跳同时成立**：`effectiveAt` 等于写入值，且 `registeredCron` 等于**由写入值派生的 cron**（`23:30`→`0 30 23 * * *`、`03:20`→`0 20 3 * * *`）。这一条把「配置真的驱动了跑批」与「只驱动了页面显示」区分开 —— 后者是 #49 的形态：配置页写着新时刻、跑批还在老时刻跑，两边都不报错',
+      `不符=${fwdBad.map((x) => `${x.task}(eff=${x.effectiveAt} cron=${x.cron})`).join(' ') || '无'}`,
+    );
+
+    // 正向第三跳：不驱动 cron 的那一项，**在时刻表上不留任何一行**（显式 null 的兑现）
+    const arrivalBleed = s1.list.filter(
+      (t) => t.effectiveAt === APPLIED['set_meal.delivery_arrival_time'],
+    );
+    assert(
+      arrivalBleed.length === 0,
+      '⭐ §36(B·正向③) 送达时刻（改到 `12:15`）在时刻表上**不留任何一行** —— 映射表里它是 `null` 是**刻意的**：送达是业务时刻（判定「算不算已送达」、写配送单 `expected_at`），不是调度时刻。把它显式标成 `null` 而不是漏掉，是为了让「配了 5 项、只动了 4 项」有一个写在断言里的解释',
+      `命中行=${arrivalBleed.map((t) => `${t.task}:${t.effectiveAt}`).join(',') || '无'}`,
+    );
+
+    // 反向：偏离出厂值的任务集合，必须**恰好**等于「被覆写的配置键所对应的任务」
+    const drifted = s1.list.filter((t) => t.effectiveAt !== FACTORY[t.task]).map((t) => t.task).sort();
+    const expectDrifted = TIMELINE_TASKS.filter((t) => t.task).map((t) => t.task).sort();
+    assert(
+      JSON.stringify(drifted) === JSON.stringify(expectDrifted),
+      '⭐⭐ §36(B·反向) 时刻表里**偏离出厂值**的任务集合，与「被覆写的配置键所对应的任务」**恰好相等** —— 没有任何时刻**凭空变过**。少了某个 = 配置没接上；多出某个 = 存在**第二个写入点**（同一时刻两处各写一遍，两边都不报错 —— 这才是漂移的真形态，也是本节唯一能抓住它的地方）',
+      `偏离=${drifted.join(',') || '无'} 期望=${expectDrifted.join(',')}`,
+    );
+
+    // 出厂口径列**不被覆写污染**（三个字段各司其职，端上才能一眼看出「生没生效」）
+    assert(
+      s1.list.every((t) => t.cron === cronOf(FACTORY[t.task])),
+      '⭐ §36(B·出厂列不被污染) 8 行的 `cron` 字段**始终是出厂口径**（改配置只动 `effectiveAt` 与 `registeredCron`）—— 若 `cron` 也跟着变，「出没出厂 / 生没生效」就无从对照，端上那个「配置覆写」标记会自动失效',
+      `不符=${s1.list.filter((t) => t.cron !== cronOf(FACTORY[t.task])).map((t) => `${t.task}:${t.cron}`).join(' ') || '无'}`,
+    );
+
+    // 反向第二跳：配置覆写后，`dateKind` 也必须跟着派生（截单不跨午夜 → 触发落在 T-1 日）
+    assert(
+      s1.byTask.cutoff?.dateKind === 'tomorrow' && s0.byTask.cutoff?.dateKind === 'today',
+      '⭐⭐ §36(B·派生日期) 截单时刻从 `24:00` 改成 `23:30` 时，**目标日期语义由 `today` 变为 `tomorrow`**；归一后回到 `today`。同一份出参在两次读取里给出两种语义 —— 证明它是**由时间轴派生**而不是写死的常量（写死 `today` 会让「把截单改到 23:30」变成**静默锁错日期**：锁的是 T-1 的订单，而 T-1 的团早已截完，表现为「跑批成功、当天订单一张都没锁」）',
+      `覆盖后=${s1.byTask.cutoff?.dateKind} 归一后=${s0.byTask.cutoff?.dateKind}`,
+    );
+
+    // ---------------------------------------------------------- C. 反证：「不可配」真的不可配
+    const fixedBad = FIXED_TASKS.map((task) => ({
+      task,
+      effectiveAt: s1.byTask[task]?.effectiveAt,
+      cron: s1.byTask[task]?.registeredCron,
+    })).filter(
+      (x) => x.effectiveAt !== FACTORY[x.task] || x.cron !== cronOf(FACTORY[x.task]),
+    );
+    assert(
+      fixedBad.length === 0,
+      '⭐⭐ §36(C·反证) 在**全部可配时刻都被改掉**的状态下，4 个「不可配」任务的 `effectiveAt` 与 `registeredCron` **仍等于出厂值**（配送单生成 / 供应商应付 / 对账 / 见习失效 —— 纯内部节奏）。这条是「可配 ≠ 全部可配」的反证：若哪天有人把 `TIMELINE_CONFIG_KEYS` 扩到 9 个时刻全映射，它会红 —— 而那种扩张会让「内部跑批节奏」变成运营可改的口径，属于要**显式裁决**的事，不该悄悄发生',
+      `不符=${fixedBad.map((x) => `${x.task}(eff=${x.effectiveAt} cron=${x.cron})`).join(' ') || '无'}`,
+    );
+
+    // ---------------------------------------------------------- D. 非法值：拒绝且**不半生效**
+    const bad = await putCfg([{ key: 'set_meal.cutoff_time', value: '25:00' }]);
+    const c2 = await readTimelineCfg();
+    const s2 = await readSchedule();
+    assert(
+      bad.body?.code === 10001 &&
+        c2.byKey['set_meal.cutoff_time']?.value === APPLIED['set_meal.cutoff_time'] &&
+        s2.byTask.cutoff?.effectiveAt === APPLIED['set_meal.cutoff_time'] &&
+        s2.byTask.cutoff?.registeredCron === cronOf(APPLIED['set_meal.cutoff_time']),
+      '⭐⭐ §36(D·非法值 fail-closed) 写入 `25:00` → `10001` 且**两处都还是旧值**（D57 读回旧值 · 时刻表的 `effectiveAt` 与 `registeredCron` 也都没动）—— 「拒绝了、但已经改了一半」比直接接受更难查：运营会看到一条报错、然后发现时刻**其实变了**',
+      `code=${bad.body?.code} cfg=${c2.byKey['set_meal.cutoff_time']?.value} eff=${s2.byTask.cutoff?.effectiveAt} cron=${s2.byTask.cutoff?.registeredCron}`,
+    );
+
+    // ---------------------------------------------------------- E. 复原（并断言复原）
+    const back = await putCfg(
+      TIMELINE_TASKS.map((t) => ({ key: t.configKey, value: factoryValueOf(t) })),
+    );
+    const s3 = await readSchedule();
+    const leftDrift = s3.list.filter(
+      (t) => t.registeredCron !== t.cron || t.effectiveAt !== FACTORY[t.task],
+    );
+    assert(
+      back.body?.code === 0 && leftDrift.length === 0,
+      '⭐ §36(E) 复原并**断言复原**：8 个任务全部回到出厂口径（`registeredCron === cron` 且 `effectiveAt` 等于出厂值）—— 复原本身必须有断言。若只写「改回去」而不验，本节之后的所有节与下一次重跑都会跑在**被污染的时刻**下，而症状是「其它节偶发红」，查起来与本节的因果关系极难建立',
+      `code=${back.body?.code} 残留偏离=${leftDrift.map((t) => `${t.task}:${t.effectiveAt}`).join(',') || '无'}`,
+    );
+  }
+
+  // ==========================================================================
   // §34 M5-6 限流（收口报告 §二 P2-7：`10005` 从「有码无实现」到真生效）
   //
   // ⚠️ 本节**必须放在最后**，且**必须另起一台开启限流的实例**。两个理由：
