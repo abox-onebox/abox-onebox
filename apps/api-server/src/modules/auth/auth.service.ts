@@ -12,6 +12,7 @@ import { ErrorCode } from '../../common/constants/error-code';
 import { JwtPayload } from '../../common/decorators/auth.decorator';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { money, toYuan } from '../../common/utils/money';
+import { LeaderLookupService } from '../../common/services/leader-lookup.service';
 import {
   LeaderAccountSnapshot,
   LeaderMoneyService,
@@ -23,6 +24,7 @@ import { TeamLeader } from '../../database/entities/leader.entity';
 import { AdminUser } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
 import { WX_MINI_PROVIDER, WxMiniProvider } from '../../providers/wx-mini/wx-mini.provider';
+import { LeaderInviteService } from '../team-leader/invite.service';
 import { AdminLoginDto, RefreshTokenDto } from './dto/admin-login.dto';
 import { LoginDto } from './dto/login.dto';
 
@@ -53,9 +55,13 @@ export class AuthService {
     private readonly config: ConfigService,
     /** M4-4：`leader.balance` 的真源（`ab_balance`）—— 见文件末尾 `leaderBalanceView` */
     private readonly leaderMoney: LeaderMoneyService,
+    /** M5-11：邀请码解析的**唯一实现**（见 `LeaderLookupService` 头注 · 缺陷 #92） */
+    private readonly leaderLookup: LeaderLookupService,
+    /** M5-11：邀请关系落表（`bindOnInvite` · 「何时落表 ①」的那条路径） */
+    private readonly inviteService: LeaderInviteService,
   ) {}
 
-  /** 微信登录：code → openid → 查/建用户 → 签发 JWT */
+  /** 微信登录：code → openid → 查/建用户 → （可选）绑定邀请团长 → 签发 JWT */
   async login(dto: LoginDto) {
     const session = await this.wxMini.code2Session(dto.code);
 
@@ -76,6 +82,11 @@ export class AuthService {
       this.logger.log(`新用户注册 id=${user.id}（${this.wxMini.isMock ? 'mock' : 'real'} 通道）`);
     } else if (user.status === 2) {
       throw new BizException(ErrorCode.USER_DISABLED);
+    }
+
+    // ⑨ 邀请码绑定（M5-11 · 收口缺陷 #92）—— 「扫码进来的这个人归谁」的唯一写点
+    if (dto.inviteCode) {
+      await this.bindInvite(user, dto.inviteCode);
     }
 
     const leader = await this.leaderRepo.findOne({ where: { userId: user.id } });
@@ -113,6 +124,47 @@ export class AuthService {
           }
         : null,
     };
+  }
+
+  /**
+   * 登录时的**邀请码绑定**（M5-11 · 收口缺陷 #92）
+   *
+   * ## 为什么必须在这一步做
+   * 规范 §1.5 一直写着「登录链路带邀请码 → 绑定推荐团长」，但此前：
+   *   · `LoginDto.inviteCode` 字段**存在却没人读**（死字段）；
+   *   · `ab_leader_invite` 全仓只有 `bindOnApply`（**申请团长**路径）一条写点；
+   *   · `ab_user.building_id` / `team_leader_id` 也只有「申请成为团长」与
+   *     「后台任命」两条写点 —— **扫码进来的人没有任何路径被绑定**。
+   * 于是 U3 落地页的「授权加入」只能如实只记本地（这就是 #92「入口有、写点无」）。
+   *
+   * ## 语义（逐条对应《接口规范》§1.5 的表）
+   * 1. **码无效 / 团长停职 → 抛 `30007`，整个登录失败**。刻意**不静默忽略**：
+   *    「用户以为加入了、服务端什么也没发生」正是 #92 要消灭的形态。
+   *    端上据此提示「邀请码已失效」并回落到**不带邀请码的普通登录**，
+   *    故不会把人锁在门外（见 `utils/auth.ts#bindLeaderByInvite` 的兜底）。
+   * 2. **已有归属时换绑只改 `ab_user`**：楼栋**不动**（他还在原来那栋楼吃饭；
+   *    把他从 A 楼搬到 B 楼是「办公楼变更」，属 L15 需后台审核的事项，不由扫码决定）。
+   * 3. **邀请关系不改写**（`bindOnInvite` 内部保证）—— 邀请人是历史事实。
+   */
+  private async bindInvite(user: User, inviteCode: string): Promise<void> {
+    const leader = await this.leaderLookup.requireActiveByCode(inviteCode);
+
+    const patch: { teamLeaderId?: number; buildingId?: number } = {};
+    if (Number(user.teamLeaderId ?? 0) !== Number(leader.id)) patch.teamLeaderId = leader.id;
+    // ⚠️ 楼栋**只在还没有归属时**补 —— 换团长不换楼（见本方法头注 ②）。
+    if (!user.buildingId && leader.buildingId) patch.buildingId = leader.buildingId;
+
+    if (Object.keys(patch).length > 0) {
+      await this.userRepo.update(Number(user.id), patch);
+      // 内存中的实体同步更新 → 本次登录的响应体即可回显新归属（不必再查一次库）
+      Object.assign(user, patch);
+      this.logger.log(
+        `用户#${user.id} 经邀请码 ${inviteCode} 绑定团长#${leader.id}` +
+          `（楼栋 ${patch.buildingId ?? '保持不变'}）`,
+      );
+    }
+
+    await this.inviteService.bindOnInvite(Number(user.id), Number(leader.id), 'link', inviteCode);
   }
 
   /**

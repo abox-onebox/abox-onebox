@@ -9,6 +9,7 @@ import { LeaderStatus } from '@abox/shared-types';
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { BizConfigService } from '../../common/services/biz-config.service';
+import { LeaderLookupService } from '../../common/services/leader-lookup.service';
 import { paginate, PageResult } from '../../common/utils/response';
 import {
   cutoffAtOf,
@@ -50,6 +51,8 @@ export class MealService {
     @InjectRepository(Order) private readonly orderRepo: Repository<Order>,
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     private readonly bizConfig: BizConfigService,
+    /** M5-11：邀请码解析的**唯一实现**（见 `LeaderLookupService` 头注 · 缺陷 #92） */
+    private readonly leaderLookup: LeaderLookupService,
   ) {}
 
   /**
@@ -189,17 +192,14 @@ export class MealService {
 
   /**
    * 解析邀请码 → 团长
-   * 兼容 `LDR0007`（4 位序号）与纯数字 id 两种写法，便于本地联调。
+   *
+   * ⚠️ M5-11（缺陷 #92 收口）：**实现已收敛到 `LeaderLookupService`** ——
+   *    此前本方法、`OrderService.resolveLeader` 各抄了一份同样的正则，
+   *    「同一件事的第二份表述」。本方法保留成薄壳只是为了不改调用方签名与
+   *    「无效返回 null、由落地页降级展示」的既有语义。
    */
   async findLeaderByCode(code: string): Promise<TeamLeader | null> {
-    const m = /^LDR(\d{4,})$/i.exec(code.trim());
-    if (m) return this.leaderRepo.findOne({ where: { id: Number(m[1]) } });
-
-    const asId = Number(code);
-    if (Number.isInteger(asId) && asId > 0) {
-      return this.leaderRepo.findOne({ where: { id: asId } });
-    }
-    return null;
+    return this.leaderLookup.byCode(code);
   }
 
   /** 用户所属楼群（缺失即报错，避免「未绑定办公楼」被静默当成可下单） */

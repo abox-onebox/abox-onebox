@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import 'dotenv/config';
 
 import dataSource from '../data-source';
+import { isOrderNo } from '../../common/utils/order-no';
 import { addDays, todayBj } from '../../common/utils/time';
 
 /**
@@ -35,7 +36,13 @@ import { addDays, todayBj } from '../../common/utils/time';
  * | 用户 | 专用 `openid LIKE 'demo_abox_%'` | §23 需要「≥4 个从未下过单的用户」当夹具，不能把种子用户占满 |
  * | 团长 | 专用 3 名（1 在职正式 / 1 在职金牌 / 1 **停职**） | §31 用 Δ 断言，但仍不与既有团长共用账户更稳 |
  * | 楼栋 | 只让**楼 8 / 楼 9** 有在职团长 | §17 需要「≥2 栋无在职团长」的楼；楼 11/12 保持空缺 |
- * | 单号 | `ABDEMO*` / `WDDEMO*` / `RFDEMO*` / `DMDEMO*` | 清理与识别都靠前缀，不靠 id 区间 |
+ * | 单号 | `AB0000*` / `WDDEMO*` / `RFDEMO*` / `DMDEMO*` | 清理与识别都靠前缀，不靠 id 区间 |
+ *
+ * ⚠️ **订单号必须是合法业务单号**（2026-09-18 修 #93）：`AB0000…` 不是「前缀随便取」，
+ *    而是**刻意取 16 位数字且年份位为 0000** —— 真实单号是 `AB + yyyyMMdd + 8 位随机`，
+ *    校验正则 `^AB\d{16}$`（`isOrderNo()` / 三个 DTO）。此前用 `ABDEMO…`（含字母、长度 14）
+ *    导致**端上点开任何演示订单都直接 `10001 orderNo 格式不合法`** —— 演示数据自己过不了
+ *    自家的读取侧校验，人工测试点历史订单全报错。**种子数据必须过一遍自家 DTO 校验**。
  *
  * ## 两条「绝不」的纪律
  * 1. **不碰 `ab_balance` / `ab_commission` 里的既有账号** —— e2e:m2 §4.4 对李明
@@ -81,8 +88,17 @@ import { addDays, todayBj } from '../../common/utils/time';
 
 /** `ab_user.openid` 前缀（演示用户） */
 const OPENID_PREFIX = 'demo_abox_';
-/** `ab_order.order_no` / `ab_commission.order_no` / `ab_payment_log.order_no` 前缀 */
-const ORDER_PREFIX = 'ABDEMO';
+/**
+ * `ab_order.order_no` / `ab_commission.order_no` / `ab_payment_log.order_no` / `ab_refund.order_no` 前缀
+ *
+ * = `AB` + **年份位 0000**，后接 `MMDD`（4 位）+ 8 位序号 ⇒ 恰好 16 位数字，
+ * 与真实单号**同一正则** `^AB\d{16}$`（`isOrderNo()`）。
+ *
+ * ⚠️ 为什么占位年取 `0000`：真实单号的年份位来自 `todayBj()`（4 位真实年份），
+ *    「0000 年」**永不可能被生成** ⇒ 这个前缀既是**清理键**（`LIKE 'AB0000%'`）、
+ *    又**不可能与真实单号撞号**（此前 `ABDEMO` 的长度/字符都不满足自家校验，见文件头 #93）。
+ */
+const ORDER_PREFIX = 'AB0000';
 /** `ab_withdraw.withdraw_no` */
 const WITHDRAW_PREFIX = 'WDDEMO';
 /** `ab_refund.refund_no` */
@@ -878,7 +894,7 @@ function assertSafeToRun(): void {
   }
   if (!/^(1|true|yes)$/i.test(process.env.ABOX_SEED_CONFIRM ?? '')) {
     console.error(
-      '✖ 未确认：本脚本会**删除并重建**全部演示数据（带 ABDEMO/WDDEMO/RFDEMO/DMDEMO 前缀的行）。\n' +
+      '✖ 未确认：本脚本会**删除并重建**全部演示数据（带 AB0000/WDDEMO/RFDEMO/DMDEMO 前缀的行）。\n' +
         '  确认请显式加环境变量：ABOX_SEED_CONFIRM=1\n' +
         '  （走门禁 `node scripts/gate.mjs seed:demo` 时已自带。）',
     );
@@ -1280,7 +1296,10 @@ async function main(): Promise<void> {
     const unitPrice = setMealPriceOf.get(o.setMealId) ?? 25.8;
     const totalFen = Math.round(unitPrice * 100) * o.quantity;
     const dateNoDash = date.replace(/-/g, '');
-    const orderNo = `${ORDER_PREFIX}${dateNoDash}${String(o.seq).padStart(2, '0')}`;
+    // `AB0000` + `MMDD`(出餐日，年位由 ORDER_PREFIX 的 0000 占掉) + 8 位序号 ⇒ 16 位数字
+    // ⚠️ 序号从 2 位扩到 8 位是**为了凑满 `^AB\d{16}$`**；顺带把「日期 + 序号」全部塞进
+    //    数字位里，故 `isOrderNo()` 通过的同时，单号仍可读地携带出餐日。
+    const orderNo = `${ORDER_PREFIX}${dateNoDash.slice(4)}${String(o.seq).padStart(8, '0')}`;
     orderNoOf.set(o.seq, orderNo);
     orderRowOf.set(o.seq, o);
 
@@ -2020,6 +2039,22 @@ async function selfCheck(ctx: {
       `⑫ 佣金两段式账期正确（settled 一律 ≤ 昨天 · 今日完成的单落在 pending，当前 pending ${todayPending} 条）`,
     );
   }
+
+  // ⑬ 单号必须过**读取侧**校验（#93 · 2026-09-18）
+  //    判据：**种子数据必须过一遍自家 DTO 校验** —— `isOrderNo()` 与 `OrderNoParamDto` /
+  //    `PayOrderNoParamDto` / `MockPaidDto` 的 `^AB\d{16}$` 同源。此前用 `ABDEMO…`
+  //    （含字母、长度 14）→ 端上点开任何演示订单直接 `10001 orderNo 格式不合法`，
+  //    而本自检**全绿**：它只回答「这批数据自己自洽吗」，不回答「它进得了门吗」。
+  //    ⚠️ 这一条**刻意用生产校验函数**而不是在种子脚本里再写一遍正则 —— 写第二份必然漂移。
+  const nos = (await dataSource.query(
+    `SELECT order_no FROM ab_order WHERE order_no LIKE '${ORDER_PREFIX}%'`,
+  )) as Array<{ order_no: string }>;
+  const badNos = nos.map((r) => String(r.order_no)).filter((n) => !isOrderNo(n));
+  ok(
+    badNos.length === 0,
+    `⑬ 演示单号全部满足读取侧校验 \`^AB\\d{16}$\`（${nos.length} 张）`,
+    `⑬ ${badNos.length} 张演示单号不合法（端上点开必报 10001）：${badNos.slice(0, 3).join(' / ')}`,
+  );
 
   return { passed, failed, warnings };
 }

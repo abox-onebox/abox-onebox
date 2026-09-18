@@ -11,6 +11,17 @@ export interface LoginPayload {
   code: string;
   nickname?: string;
   avatarUrl?: string;
+  /**
+   * ⭐ 团长邀请码（`LDR0001`）—— 带了就**在同一趟登录里完成绑定**（《接口规范》§1.5）。
+   *
+   * 字段名与 A1 一览表一致（服务端 DTO 同名字段此前是**死字段**，2026-09-18 才实装）
+   * —— 它和 U3 路径参数、`CreateOrderDto.leaderCode` 是**同一个值**，
+   * 历史命名分叉保留不改，但登录入参统一用 `inviteCode`。
+   *
+   * ⚠️ 码无效 / 团长已停职 → **整个登录 30007**（刻意不静默忽略：
+   *    「用户以为加入了、服务端什么也没发生」正是缺陷 #92）。调用方须兜底回落普通登录。
+   */
+  inviteCode?: string;
 }
 
 export interface LoginUser {

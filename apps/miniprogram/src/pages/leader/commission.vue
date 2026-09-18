@@ -234,26 +234,22 @@ const rules = ref<LevelRulesResult | null>(null);
 
 const rangeLabel = computed(() => (range.value === 'day' ? '今日' : '本月'));
 
-/** 阶梯顺序**取自 L16 `levels[]` 的出参顺序**（服务端按 LEADER_LEVEL_LADDER 生成）
- *  —— 端上不自建第二份「谁比谁高」的定义（服务端注释已把该顺序锁定为单一真相）。 */
-const ladder = computed<LeaderLevel[]>(() => rules.value?.levels.map((l) => l.key) ?? []);
-
 /**
- * ⭐ 当前**生效**等级 = L11 `level` / `levelLabel`（后台审核后真正生效的那个）
+ * ⭐ 当前**生效**等级 = L11 `level` / `levelLabel`（后台按晋级审计写入、真正生效的那个）
  *
- * ⚠️ **不要用 L16 `mine.level` 当「我的等级」** —— 两者同名不同义：
- *     · L11/L14 `level`   = 实际生效等级（由平台审核写入 `ab_team_leader.level`）
- *     · L16  `mine.level` = **按本月业绩反推的「应处等级」**（`resolveLevel()` 的输出，
- *       是晋级审计的输入）。它不看当前等级，故一个「首席但本月只做了 7 单」的团长
- *       会同时拿到 `level:'chief'`（L11）与 `mine.level:'trainee'`（L16）。
+ * ⚠️ 契约已把「等级」拆成两个名字（缺陷 #94 · 2026-09-18 服务端改名）：
+ *     · `effectiveLevel`（L11/L14 `level`、L16 `mine.effectiveLevel`）= **实际生效等级** ← 展示用这个
+ *     · `derivedLevel`  （L16 `mine.derivedLevel`）= **按本月业绩反推的「应处等级」**，
+ *       是晋级审计的**输入**，不是「我的等级」。一个「首席但本月只做 7 单」的团长
+ *       会同时命中 `chief` 与 `trainee` —— 两个值都对，只是语义不同。
  *
- *    若大卡与体系表用 `mine.level`，就会出现「同屏两个等级」（本批实测踩到）。
- *    故：**等级展示一律用 L11/L14**，L16 只取它的**事实性输入**
- *    （`mine.monthOrders` / `mine.invitedFormalCount`）来算晋级进度。
+ *     ⚠️ 旧出参两个端点**都叫 `level`**（同名不同义），端上照抄就会**同屏两个等级**
+ *        （本批实测踩到）。改名后 `mine` 里**不再有** `level` 字段，名字自解释。
+ *     故：**等级展示一律用 L11/L14**；「下一级 / 进度」直接取 L16 服务端算好的值。
  */
 const effectiveLevel = computed<LeaderLevel | null>(() => {
   const lv = balance.value?.level as LeaderLevel | undefined;
-  return lv && ladder.value.includes(lv) ? lv : null;
+  return lv ?? null;
 });
 const levelLabel = computed(() => balance.value?.levelLabel ?? '—');
 
@@ -264,13 +260,14 @@ const ratePercent = computed(() => {
   return r ? (r * 100).toFixed(0) : '--';
 });
 
-/** 下一级（按**生效等级**在阶梯上的位置推导，非 L16 的 `mine.nextLevel`） */
-const nextLevelKey = computed<LeaderLevel | null>(() => {
-  const cur = effectiveLevel.value;
-  if (!cur) return null;
-  const i = ladder.value.indexOf(cur);
-  return i >= 0 ? (ladder.value[i + 1] ?? null) : null;
-});
+/**
+ * 下一级 —— **直接取服务端 `mine.nextLevel`**（相对**生效等级**推导）
+ *
+ * ⚠️ 端上**不再自己算**：阶梯顺序（谁比谁高）与门槛（`LEADER_LEVEL_META`）的单一真相
+ *    都在服务端，端上复刻一份必然漂移（缺陷 #94 的修法就是这个）。
+ *    `null` = 已达最高等级。
+ */
+const nextLevelKey = computed<LeaderLevel | null>(() => rules.value?.mine.nextLevel ?? null);
 const isTopLevel = computed(() => !!effectiveLevel.value && !nextLevelKey.value);
 const nextLevelName = computed(() => {
   const k = nextLevelKey.value;
@@ -279,25 +276,17 @@ const nextLevelName = computed(() => {
 });
 
 /**
- * 晋级进度（0–100）= 距**生效等级的下一级**的双条件完成度，取较慢的一方（木桶原理，与 C2 的 AND 语义一致）
- *
- * 门槛值取自 `LEADER_LEVEL_META`（与 `resolveLevel()` 同一份来源），故端上算出的
- * 进度与服务端晋级审计同源；**已达最高等级时恒 100%**（原型 P20「已达首席（最高等级）」）。
+ * 晋级进度（0–100）= 服务端 `mine.progress`（相对**生效等级**的双条件完成度，
+ * 取较慢的一方即木桶原理，与 C2 的 AND 语义一致；已达最高等级 → 1）。
  */
 const progressPercent = computed(() => {
-  const k = nextLevelKey.value;
-  if (!k) return 100;
-  const m = rules.value?.mine;
-  if (!m) return 0;
-  const meta = LEADER_LEVEL_META[k];
-  const byOrders = meta.monthlyOrders > 0 ? m.monthOrders / meta.monthlyOrders : 1;
-  const byRefs = meta.referrals > 0 ? m.invitedFormalCount / meta.referrals : 1;
-  return Math.round(Math.min(1, Math.min(byOrders, byRefs)) * 100);
+  if (!effectiveLevel.value) return 0;
+  return Math.round((rules.value?.mine.progress ?? 0) * 100);
 });
 
 /** 业绩测算等级与生效等级不一致时的**如实说明**（不隐藏差异，也不把它当「我的等级」） */
 const levelNote = computed(() => {
-  const derived = rules.value?.mine.level;
+  const derived = rules.value?.mine.derivedLevel;
   const cur = effectiveLevel.value;
   if (!derived || !cur || derived === cur) return '';
   return `等级由平台按业绩审核调整；本月业绩测算对应 ${

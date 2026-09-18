@@ -75,6 +75,36 @@ export function ensureLogin(force = false): Promise<void> {
   return pending;
 }
 
+/**
+ * U3 落地页「微信授权加入」：**登录 + 绑定推荐团长同一趟完成**
+ *
+ * ⭐ 这是「扫码进来的人归谁」在端上的唯一入口（缺陷 #92 收口 · 2026-09-18）：
+ *   规范 §1.5 的「登录链路带邀请码 → 绑定推荐团长」正是这个调用。
+ *
+ * ⚠️ **失效码不能把人锁在门外**：服务端对无效 / 停职团长返回 `30007`（整趟登录失败），
+ *   故这里**必须兜底**——捕获后回落成「不带邀请码的普通登录」，登录照常成功，
+ *   只有绑定这件事没发生（由调用方提示用户）。
+ *
+ * @returns `bound` = 绑定是否真的生效（false 表示码已失效，只登录成功）
+ */
+export async function bindLeaderByInvite(
+  inviteCode: string,
+): Promise<{ bound: boolean; message: string }> {
+  const code = await fetchWxCode();
+  try {
+    const res = await login({ code, inviteCode });
+    applyLoginResult(res);
+    console.warn(`[auth] 邀请码绑定成功 userId=${res.user.id} leaderId=${res.user.teamLeaderId}`);
+    return { bound: true, message: '' };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : '邀请码绑定失败';
+    console.warn(`[auth] 邀请码绑定失败（回落普通登录）：${msg}`);
+    // 兜底：不带邀请码再登一次 —— 让用户能正常用，而不是卡在落地页
+    await ensureLogin(true);
+    return { bound: false, message: msg };
+  }
+}
+
 /** 退出登录（清空双身份） */
 export function logout(): void {
   useUserStore().clear();

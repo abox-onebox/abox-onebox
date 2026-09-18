@@ -286,7 +286,6 @@
  */
 import { computed, reactive, ref } from 'vue';
 import { onShow } from '@dcloudio/uni-app';
-import { LEADER_LEVEL_META } from '@abox/shared-types';
 import type { LeaderLevel } from '@abox/shared-types';
 
 import {
@@ -326,28 +325,25 @@ const form = reactive({
 });
 
 /**
- * ⭐ 晋升进度按**生效等级**（`profile.level`，由平台审核写入 `ab_team_leader.level`）
- *    在阶梯上的位置推导 —— **不用** L16 的 `mine.level` / `mine.nextLevel`。
+ * ⭐ 头部等级 + 晋升进度
  *
- *    两者同名不同义：`mine.*` 是「按本月业绩反推的应处等级」（`resolveLevel()` 的输出、
- *    晋级审计的输入），它不看当前等级。若直接拿来当「我的等级/下一级」，就会出现
- *    「头部首席团长 + 进度条见习 → 正式 23%」的同屏矛盾（本批实测踩到）。
+ * 头部那个等级取 `profile.level`（L14）—— 由平台按晋级审计写入 `ab_team_leader.level`，
+ * 是**实际生效等级**；「下一级 / 进度」直接取 L16 `mine.nextLevel` / `mine.progress`
+ * （服务端已按**生效等级**在阶梯上推导完毕）。
  *
- *    阶梯顺序取自 L16 `levels[]` 的**出参顺序**（服务端按 LEADER_LEVEL_LADDER 生成），
- *    端上不自建第二份「谁比谁高」的定义；门槛值取自 `LEADER_LEVEL_META`（与
- *    `resolveLevel()` 同一份来源），故端上算出的进度与服务端晋级审计同源。
+ * ⚠️ 契约已把「等级」拆成两个名字（缺陷 #94 · 2026-09-18 服务端改名）：
+ *     · `effectiveLevel`（L11/L14 `level`、L16 `mine.effectiveLevel`）= 实际生效等级；
+ *     · `derivedLevel`（L16）= **按本月业绩反推的「应处等级」**，是晋级审计的**输入**，
+ *       **不是**「我的等级」（首席但本月只做 7 单 → 同时命中 `chief` 与 `trainee`）。
+ *     旧出参两个端点**都叫 `level`**（同名不同义）→ 端上照抄就是「头部首席团长 +
+ *     进度条见习 → 正式 23%」的同屏矛盾（本批实测踩到）。改名后误用才拦得住。
+ * ⚠️ 端上**不再自建第二份推导** —— 阶梯顺序与门槛的单一真相都在服务端。
  */
-const ladder = computed<LeaderLevel[]>(() => rules.value?.levels.map((l) => l.key) ?? []);
 const effectiveLevel = computed<LeaderLevel | null>(() => {
   const lv = profile.value?.level as LeaderLevel | undefined;
-  return lv && ladder.value.includes(lv) ? lv : null;
+  return lv ?? null;
 });
-const nextLevelKey = computed<LeaderLevel | null>(() => {
-  const cur = effectiveLevel.value;
-  if (!cur) return null;
-  const i = ladder.value.indexOf(cur);
-  return i >= 0 ? (ladder.value[i + 1] ?? null) : null;
-});
+const nextLevelKey = computed<LeaderLevel | null>(() => rules.value?.mine.nextLevel ?? null);
 const nextLevelLabel = computed(() => {
   const k = nextLevelKey.value;
   return k ? (rules.value?.levels.find((l) => l.key === k)?.name ?? k) : '';
@@ -355,19 +351,13 @@ const nextLevelLabel = computed(() => {
 
 /** 已达最高等级 → 恒 100%（原型 P20「已达首席（最高等级）」+ 满格进度条） */
 const progressPercent = computed(() => {
-  const k = nextLevelKey.value;
-  if (!k) return effectiveLevel.value ? 100 : 0;
-  const m = rules.value?.mine;
-  if (!m) return 0;
-  const meta = LEADER_LEVEL_META[k];
-  const byOrders = meta.monthlyOrders > 0 ? m.monthOrders / meta.monthlyOrders : 1;
-  const byRefs = meta.referrals > 0 ? m.invitedFormalCount / meta.referrals : 1;
-  return Math.round(Math.min(1, Math.min(byOrders, byRefs)) * 100);
+  if (!effectiveLevel.value) return 0;
+  return Math.round((rules.value?.mine.progress ?? 0) * 100);
 });
 
 /** 业绩测算等级与生效等级不一致时的如实说明（不隐藏差异，也不把它当「我的等级」） */
 const levelNote = computed(() => {
-  const derived = rules.value?.mine.level;
+  const derived = rules.value?.mine.derivedLevel;
   const cur = effectiveLevel.value;
   if (!derived || !cur || derived === cur) return '';
   return `等级由平台按业绩审核调整；本月业绩测算对应 ${

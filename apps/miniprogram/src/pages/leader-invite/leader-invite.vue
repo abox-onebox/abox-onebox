@@ -50,7 +50,15 @@
         <text class="promise__line">✅ 每天 14:00 - 24:00 可预订明日套餐</text>
       </view>
 
-      <button class="btn-primary" hover-class="btn-primary--hover" @tap="join">微信授权加入</button>
+      <button
+        class="btn-primary"
+        hover-class="btn-primary--hover"
+        :loading="joining"
+        :disabled="joining"
+        @tap="join"
+      >
+        微信授权加入
+      </button>
       <button class="btn-secondary" hover-class="btn-secondary--hover" @tap="skip">暂不加入</button>
 
       <!-- ⚠️ 邀请码无效时的如实告知（不假装已加入） -->
@@ -71,17 +79,20 @@
  * 入参 `leaderCode` 形如 `LDR0001`（`LDR` + 4 位零填充团长 id，确定性生成），
  * 也兼容纯数字 id（本地联调）。
  *
- * ## ⚠️ 本页的「微信授权加入」目前**只做本地记录**，不写服务端 —— 如实说明
+ * ## ✅ 「微信授权加入」已接服务端（2026-09-18 收口缺陷 #92）
  *
- * 规范 §1.5 写的是「登录链路带 `leaderCode` → 绑定推荐团长」，而实装：
- *   · `LoginDto` **没有** `leaderCode` 字段；
- *   · `ab_user.building_id` / `team_leader_id` **全仓没有生产写点**（只有种子赋过值）。
- * 故「加入」这个动作**服务端侧尚未实装**（缺陷 #92）。
+ * 规范 §1.5 的「登录链路带邀请码 → 绑定推荐团长」现已实装：
+ *   · `AuthService.login` 读 `LoginDto.inviteCode` → 写 `ab_user.team_leader_id` /
+ *     `building_id`，并落 `ab_leader_invite`（`InviteService.bindOnInvite`）；
+ *   · 端上由 `utils/auth.ts#bindLeaderByInvite` 调用（**登录 + 绑定同一趟**）。
  *
- * 本页据此**不伪造成功**：
- *   · 点击后只把邀请码记到本地（供后续下单透传），并明确提示用户下一步；
- *   · 不显示「已加入」这类服务端并未发生的结果。
- * 等 #92 实装后，这里改成调一次登录/绑定接口即可，版式不用动。
+ * ⚠️ 修正一条**此前写错的事实**（原注释称「`ab_user` 两列全仓没有生产写点」）：
+ *    它们**有**写点，但只在另外两条路径 ——「申请成为团长」（L17）与「后台任命」；
+ *    **扫码绑定这条确实没有**。这正是「入口有、写点无」，#92 补的就是这条。
+ *
+ * ⚠️ 失效码的兜底：服务端对无效 / 停职团长返回 `30007`（**整趟登录失败**，
+ *    刻意不静默忽略 —— 否则又是「用户以为加入了、服务端什么也没发生」）。
+ *    故 `bindLeaderByInvite` 捕获后**回落成普通登录**，只把「没绑上」如实告诉用户。
  */
 import { ref } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
@@ -90,6 +101,7 @@ import type { LeaderInviteLanding } from '@abox/shared-types';
 import { fetchInviteLanding } from '@/api/meal';
 import { ApiError } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
+import { bindLeaderByInvite } from '@/utils/auth';
 import { pageQuery, switchTab } from '@/utils/router';
 
 const { run, loading } = useRequest();
@@ -114,18 +126,38 @@ async function load(): Promise<void> {
   }
 }
 
-function join(): void {
-  /**
-   * ⚠️ 服务端绑定未实装（#92）→ **不假装已加入**。
-   *    当下能做的只有：把邀请码带回首页，供下单时透传（`CreateOrderDto.leaderCode`
-   *    已在契约里，服务端 `resolveLeader()` 会按它匹配团长）。
-   */
-  uni.showToast({
-    title: '请先完成微信授权登录，随后下单时自动跟随该团长',
-    icon: 'none',
-    duration: 2600,
-  });
-  setTimeout(() => switchTab('/pages/index/index'), 1200);
+/**
+ * 「微信授权加入」→ 登录 + 绑定推荐团长（同一趟）
+ *
+ * ⭐ 2026-09-18 起**真的写服务端**了（#92 收口）。本函数仍然**不伪造成功**：
+ *   · 绑上了 → 「已加入，下单自动跟随该团长」；
+ *   · 绑定失败（码失效 / 团长停职）→ 如实说「邀请码已失效」，但**登录仍然成功**
+ *     （`bindLeaderByInvite` 内部回落普通登录），用户可以正常浏览下单。
+ *
+ * ⚠️ 实装后**不再需要「本地记一笔」**（旧注释里的那套兜底从未落地、现在也不需要了）：
+ *   归属的真源是 `ab_user.team_leader_id`，下单链路 `resolveLeader()` 缺省就用它。
+ *   再造一个本地缓存 + 透传 `CreateOrderDto.leaderCode` 只会让「归属」有两处真源。
+ */
+const joining = ref(false);
+
+async function join(): Promise<void> {
+  if (joining.value) return;
+  joining.value = true;
+  try {
+    const { bound, message } = await bindLeaderByInvite(leaderCode.value);
+    uni.showToast({
+      title: bound ? '已加入，下单将自动跟随该团长' : `邀请码未生效（${message}）`,
+      icon: bound ? 'success' : 'none',
+      duration: 2200,
+    });
+  } catch (e) {
+    // 连兜底的普通登录都失败 → 网络层问题，如实提示
+    if (e instanceof ApiError) uni.showToast({ title: e.message, icon: 'none' });
+    else toastApiError(e);
+  } finally {
+    joining.value = false;
+    setTimeout(() => switchTab('/pages/index/index'), 1400);
+  }
 }
 
 function skip(): void {

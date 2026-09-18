@@ -213,21 +213,47 @@ export class TeamLeaderService {
     return this.toProfile(saved);
   }
 
-  /** L16 · 4 级佣金规则 + C2 双条件门槛 + 我的晋级进度 */
+  /**
+   * L16 · 4 级佣金规则 + C2 双条件门槛 + 我的晋级进度
+   *
+   * ⭐ 2026-09-18 修缺陷 #94 —— `mine` 里的等级字段**拆成两个名字**，并让进度相对生效等级：
+   *   · `effectiveLevel` = **实际生效等级**（与 L11/L14 的 `level` 是**同一列** `ab_team_leader.level`）
+   *   · `derivedLevel`   = **按本月业绩反推的「应处等级」**（`resolveLevel()` 的输出、
+   *                        晋级审计的输入）——**它不是「我的等级」**
+   *   · `nextLevel` / `progress` = 相对 **`effectiveLevel`** 的下一级与进度
+   *
+   * ⚠️ 为什么必须拆：旧出参只有一个 `level`（装的是 `derivedLevel`），而 L11/L14 的 `level`
+   *    装的是生效等级 —— **同名不同义**。一个「首席但本月只做了 7 单」的团长会同时拿到
+   *    `chief` 与 `trainee`，端上一照抄就是「同屏两个等级」。类型系统与编译器都拦不住这种错，
+   *    只有把名字改到自解释才能。
+   *
+   * ⚠️ `effectiveLevel` 在此**复述**一次（L11/L14 也有）是刻意的：进度块的三个字段
+   *    （生效等级 / 业绩测算 / 下一级+进度）必须能**自解释**，否则读侧要靠跨端点 join
+   *    才能看懂「为什么进度是 100%」。它是**同一变量的引用**（同一行 `leader.level`），
+   *    不是第二份定义。
+   */
   async getLevelRules(userId: number) {
     const leader = await this.requireActiveLeader(userId);
 
     // 「介绍转正数」双源取大：表内累计（后台可修正）与邀请关系实时统计
     const counted = await this.inviteService.countFormal(leader.id);
     const invitedFormalCount = Math.max(counted, leader.invitedFormalCount);
-    const { level, nextLevel, progress } = this.levelService.progress(
+    const { derivedLevel, nextLevel, progress } = this.levelService.progress(
+      leader.level as LeaderLevel,
       leader.monthOrders,
       invitedFormalCount,
     );
 
     return {
       levels: this.levelService.rules(),
-      mine: { level, monthOrders: leader.monthOrders, invitedFormalCount, nextLevel, progress },
+      mine: {
+        effectiveLevel: leader.level,
+        derivedLevel,
+        monthOrders: leader.monthOrders,
+        invitedFormalCount,
+        nextLevel,
+        progress,
+      },
       expireRule: this.levelService.expireRule(),
     };
   }

@@ -20,9 +20,10 @@ type PageInput = { page?: unknown; pageSize?: unknown };
  *     `ab_team_leader` 判等级。
  *
  * 何时落表：
- *   ① 用户经邀请链接/小程序码/海报进入 → U3 落地页绑定时建记录（`channel` = link/qrcode/poster）
+ *   ① 用户经邀请链接/小程序码/海报进入 → U3 落地页「授权加入」时建记录
+ *      （`channel` = link/qrcode/poster）—— **`bindOnInvite`**（2026-09-18 补 · 缺陷 #92）
  *   ② 用户直接申请团长（自荐）→ 本服务的 `bindOnApply` 建 `channel='self'` 记录
- *   ⚠️ 二者互斥：若已存在绑定记录，`bindOnApply` **只回填** `invitee_leader_id`，不覆盖邀请人。
+ *   ⚠️ 二者互斥：若已存在绑定记录，另一条路径**只回填** `invitee_leader_id`，不覆盖邀请人。
  */
 @Injectable()
 export class LeaderInviteService {
@@ -30,6 +31,51 @@ export class LeaderInviteService {
     @InjectRepository(LeaderInvite) private readonly inviteRepo: Repository<LeaderInvite>,
     @InjectRepository(User) private readonly userRepo: Repository<User>,
   ) {}
+
+  /**
+   * ① 用户经**邀请链接 / 小程序码 / 海报**进入 → 「授权加入」绑定时落推荐关系
+   * （U3 落地页 · `channel` = `link` / `qrcode` / `poster`）
+   *
+   * ⭐ 2026-09-18 补 · 收口**缺陷 #92**：本文件头注的「何时落表 ①」长期**只有描述没有实现**
+   *    （`ab_leader_invite` 全仓只有 `bindOnApply` 一条写点），而 `ab_user.building_id` /
+   *    `team_leader_id` **全仓没有生产写点** —— 于是扫码进来的人**服务端侧根本没被绑定**，
+   *    落地页只能「本地记一笔」。本方法 + `AuthService.login` 的 `leaderCode` 分支共同补上。
+   *
+   * ## 语义（三条，都必须守住）
+   * 1. **已有记录 → 不改写邀请人**：`inviter_leader_id` 是**历史事实** ——
+   *    它决定「谁的介绍转正数 +1」（C2 晋级第二条件）。用户后来扫了别人的码
+   *    （`ab_user.team_leader_id` 改跟随）**不能**把这条历史改掉，否则等于
+   *    篡改前一个邀请人的晋级依据。故本方法对已存在的行**幂等返回**。
+   * 2. **自荐记录（`channel='self'`）不被覆盖**：那是「无邀请人」的既成事实，
+   *    扫一个码不能把它变成「有人邀请」（同 `bindOnApply` 的反向保护）。
+   * 3. **被邀请人此刻还不是团长** → `invitee_leader_id` 留空、`is_formal = 0`；
+   *    将来他申请成为团长时由 `bindOnApply` 回填 `invitee_leader_id`，
+   *    转正（正式及以上）时由 `markFormal` 把 `is_formal` 翻成 1。
+   *    ⇒ L21「我的推荐」因此会同时列出**已转正团长**与**尚未申请的普通用户**，
+   *      这正是 `listMyInvites` 出参里 `isLeader` / `traineeCount` 两个字段的用途。
+   */
+  async bindOnInvite(
+    userId: number,
+    inviterLeaderId: number,
+    channel: string,
+    inviteCode?: string,
+    manager?: EntityManager,
+  ): Promise<LeaderInvite> {
+    const repo = manager ? manager.getRepository(LeaderInvite) : this.inviteRepo;
+    const existed = await repo.findOne({ where: { inviteeUserId: userId } });
+    if (existed) return existed;
+
+    return repo.save({
+      inviterLeaderId,
+      inviteeUserId: userId,
+      inviteeLeaderId: null,
+      inviteCode: inviteCode ?? null,
+      channel,
+      bindAt: new Date(),
+      inviteeLevel: null,
+      isFormal: 0,
+    });
+  }
 
   /**
    * 申请团长时落/补推荐关系

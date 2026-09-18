@@ -17,6 +17,7 @@ import { LeaderStatus } from '@abox/shared-types';
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { BizConfigService } from '../../common/services/biz-config.service';
+import { LeaderLookupService } from '../../common/services/leader-lookup.service';
 import { maskPhone } from '../../common/utils/crypto';
 // ⚠️ M4-3：`genRefundNo` 已随「退款单建单下沉到 `RefundService.buildRefundRow`」一并移除
 //    —— 本模块不再自己造退款单号（第二份实现必然漂移）
@@ -128,6 +129,8 @@ export class OrderService {
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
     private readonly dataSource: DataSource,
     private readonly bizConfig: BizConfigService,
+    /** M5-11：邀请码解析的**唯一实现**（见 `LeaderLookupService` 头注 · 缺陷 #92） */
+    private readonly leaderLookup: LeaderLookupService,
     @Inject(WX_PAY_PROVIDER) private readonly wxPay: WxPayProvider,
     /** M4-2 · 4.4 自动确认兜底要计佣（与 L9 共用同一计佣口径） */
     private readonly commission: CommissionService,
@@ -1230,16 +1233,17 @@ export class OrderService {
     return order;
   }
 
+  /**
+   * 团长归属：邀请码优先，回落用户默认绑定
+   *
+   * ⚠️ M5-11（缺陷 #92 收口）：**邀请码解析已收敛到 `LeaderLookupService`** ——
+   *    此前本方法内联抄了一份与 `MealService.findLeaderByCode` 同样的正则，
+   *    「同一件事的第二份表述」。本方法现在只剩「无效 / 停职即抛 30007」这条**策略**，
+   *    解析与查表交给那唯一一份实现。
+   */
   private async resolveLeader(leaderCode: string | undefined, user: User): Promise<TeamLeader> {
     if (leaderCode) {
-      const m = /^LDR(\d{4,})$/i.exec(leaderCode.trim());
-      const id = m ? Number(m[1]) : Number(leaderCode);
-      const byCode =
-        Number.isInteger(id) && id > 0 ? await this.leaderRepo.findOne({ where: { id } }) : null;
-      if (!byCode || byCode.status !== LeaderStatus.ACTIVE) {
-        throw new BizException(ErrorCode.LEADER_NOT_FOUND, `团长邀请码 ${leaderCode} 无效`);
-      }
-      return byCode;
+      return this.leaderLookup.requireActiveByCode(leaderCode);
     }
 
     const own = user.teamLeaderId

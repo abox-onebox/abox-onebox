@@ -416,10 +416,22 @@ async function main() {
     'L16 等级 key 与 DB / 契约一致（formal 9%），非 regular',
     `keys=${r?.levels?.map((x) => x.key).join(',')}`,
   );
+  // ⭐ 缺陷 #94（2026-09-18）：`mine` 的等级字段改名 + 进度改按「生效等级」推导。
+  //    新申请人是见习（level=trainee）且本月 0 单 → derived 与 effective 都是 trainee。
   assert(
-    r?.mine?.level === 'trainee' && r?.mine?.nextLevel === 'formal',
-    'L16 mine 判见习、下一级正式',
-    `level=${r?.mine?.level} next=${r?.mine?.nextLevel} progress=${r?.mine?.progress}`,
+    r?.mine?.derivedLevel === 'trainee' && r?.mine?.nextLevel === 'formal',
+    'L16 mine 业绩测算为见习、下一级正式',
+    `derived=${r?.mine?.derivedLevel} next=${r?.mine?.nextLevel} progress=${r?.mine?.progress}`,
+  );
+  assert(
+    r?.mine?.effectiveLevel === 'trainee',
+    'L16 mine 出 effectiveLevel（实际生效等级）',
+    `effective=${r?.mine?.effectiveLevel}`,
+  );
+  assert(
+    r?.mine?.level === undefined,
+    'L16 mine **不再有** `level` 字段（旧名与 L11/L14 同名不同义，是 #94 的根因）',
+    `level=${JSON.stringify(r?.mine?.level)}`,
   );
   assert(!!r?.expireRule, 'L16 含见习 30 天失效规则文案', r?.expireRule);
 

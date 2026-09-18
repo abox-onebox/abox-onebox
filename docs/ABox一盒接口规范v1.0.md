@@ -103,11 +103,35 @@
 
 ```
 前端 wx.login() → code
-  → POST /auth/wx-login { code, leaderCode? }
+  → POST /auth/login { code, nickname?, avatarUrl?, inviteCode? }
   → 服务端 code2session → openid/unionid → 建/取 ab_user
-  → 若带 leaderCode，绑定推荐团长（写 ab_leader_invite.pending）
+  → 若带 inviteCode，绑定推荐团长（写 ab_user.team_leader_id / building_id + ab_leader_invite）
   → 签发 JWT（7 天）+ refreshToken（30 天）
 ```
+
+> ⚠️ **路径与字段名校正（2026-09-18 · M5-11 · 缺陷 #92 收口）**：本节 v1.0 原写作
+> `POST /auth/wx-login { code, leaderCode? }` —— **该路径与 `leaderCode` 字段名均不存在**，
+> 实装只有 `POST /auth/login`（见 A1 行）。这正是「同一件事两份表述」的老毛病
+> （同族 #67 / #79 / #84）：**文档里的那份从未被任何代码执行过，所以永远是对的**。
+> 同一处遗留的第二个问题是 `inviteCode` 字段：它自 M2 起就写在这里、也一直存在于 DTO，
+> 但**服务端从没读过它**（死字段）—— 见下方绑定语义表，本批才补上实现。
+
+**登录时邀请码绑定语义（`POST /auth/login { inviteCode? }`）**
+
+| 情形 | 行为 |
+| --- | --- |
+| 未带 `inviteCode` | 不绑定，正常登录 |
+| 码无效 / 团长已停职 | **整趟登录失败** `30007`；端上捕获后**回落不带码的普通登录**（不把人锁在门外） |
+| 用户当前**无归属** | 落 `ab_user.team_leader_id` + `building_id`（取该团长的楼栋） |
+| 已有归属且**同一团长** | 幂等，不写库 |
+| 已有归属，**换团长** | 只改 `team_leader_id`，**楼栋不动**（变更办公楼属 L15 后台审核事项） |
+| 用户本人即该团长（自荐） | 同普通用户路径，不做特殊处理 |
+
+> 邀请关系落 `ab_leader_invite`，由 `bindOnInvite` 负责：**幂等**（已有记录直接返回）、
+> **不覆盖邀请人**（邀请人是既成历史，改写等于篡改前一个邀请人的晋级依据）、
+> `channel='self'` 的自荐记录**不被覆盖**。
+> ⚠️ **停职也报「邀请码无效」而非单独错误码**：对扫码的人而言「这个码不能用」是同一件事，
+> 区分原因只会泄漏「某团长被停职了」。
 
 **JWT Payload**
 
@@ -461,10 +485,32 @@
     { "key":"gold",   "name":"金牌团长","rate":0.10,"condition":"月单 > 60 且 介绍 2 名转正团长" },
     { "key":"chief",  "name":"首席团长","rate":0.12,"condition":"月单 > 100 且 介绍 3 名转正团长" }
   ],
-  "mine": { "level":"chief", "monthOrders":186, "invitedFormalCount":5, "nextLevel":null, "progress":1.0 },
+  "mine": {
+    "effectiveLevel": "chief",
+    "derivedLevel":   "trainee",
+    "monthOrders": 186,
+    "invitedFormalCount": 5,
+    "nextLevel": null,
+    "progress": 1.0
+  },
   "expireRule": "见习团长 30 天未促成订单自动取消资格"
 }
 ```
+
+> ⭐ **`mine` 三个等级字段的语义（2026-09-18 · M5-11 · 缺陷 #94 收口 —— 原名 `level` 已删除）**
+>
+> | 字段 | 含义 | 数据来源 |
+> | --- | --- | --- |
+> | `effectiveLevel` | **实际生效等级**（平台当前按此计佣） | `ab_team_leader.level`，与 L11 / L14 的 `level` **同值** |
+> | `derivedLevel` | **按本月业绩反推的「应处等级」** | `resolveLevel(monthOrders, invitedFormalCount)` —— 它是**晋级审计的输入**，**根本不看当前等级** |
+> | `nextLevel` / `progress` | 相对 **`effectiveLevel`** 的下一级与推进度 | 服务端按阶梯推导；已在最高级时 `nextLevel = null`、`progress = 1.0` |
+>
+> ⚠️ **为什么必须拆名**：二者在演示数据达标时恰好相等，**看不出矛盾**；一旦不达标
+> （例如「首席团长但本月只做 7 单」）就会**同时命中** `chief` 与 `trainee` ——
+> 两个值都「对」，只是语义不同。**同名不同义比「两个名字同一义」更危险：编译器与类型系统都拦不住。**
+> 故：**端上展示「我的等级 / 分佣比例」一律取 `effectiveLevel`**（或 L11/L14），
+> `derivedLevel` 仅供「晋升预测 / 审计」读取；**不得**把它当「我的等级」用。
+> 旧字段 `level` **刻意不留别名**（留别名等于让漂移回来），读它只会拿到 `undefined`。
 
 > **条件语义**：「月单」指自然月已完成订单**份数**；「介绍 N 名转正团长」指经本人邀请码注册且**已升级为正式及以上**的团长数。二者**须同时满足**（AND）。
 

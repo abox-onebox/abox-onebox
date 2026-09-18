@@ -198,10 +198,25 @@ export interface LevelRuleItem {
   condition: string;
 }
 
+/**
+ * L16 `mine` —— ⚠️ **等级字段有三个，语义各不相同**（2026-09-18 修缺陷 #94）
+ *
+ * | 字段 | 含义 |
+ * | --- | --- |
+ * | `effectiveLevel` | **实际生效等级**（与 L11/L14 的 `level` 同源）→ 这才是「我的等级」 |
+ * | `derivedLevel`   | **按本月业绩反推的「应处等级」**（晋级审计的输入）→ **不是**我的等级 |
+ * | `nextLevel` / `progress` | 相对 **`effectiveLevel`** 的下一级与进度（`null` + `1` = 已达最高） |
+ *
+ * ⚠️ 旧出参只有一个 `level`（装的是 `derivedLevel`），与 L11/L14 的 `level` **同名不同义**：
+ *    「首席但本月只做 7 单」会同时得到 `chief` 与 `trainee` → 端上**同屏两个等级**。
+ *    故本类型里**不再有** `level` 这个字段 —— 名字自解释，误用才拦得住。
+ * ⚠️ 进度**不要自己算**：服务端已按 `effectiveLevel` 在阶梯上推导完毕。
+ */
 export interface LevelRulesResult {
   levels: LevelRuleItem[];
   mine: {
-    level: LeaderLevel;
+    effectiveLevel: LeaderLevel;
+    derivedLevel: LeaderLevel;
     monthOrders: number;
     invitedFormalCount: number;
     nextLevel: LeaderLevel | null;
