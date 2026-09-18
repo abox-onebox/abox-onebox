@@ -1,17 +1,19 @@
 <template>
   <view class="page">
-    <!-- 余额 -->
-    <view v-if="balance" class="hero">
-      <text class="hero__label">可提现余额</text>
-      <text class="hero__value">{{ fenToYuanText(balance.balanceFen) }}</text>
-      <text class="hero__sub">
-        冻结中 {{ fenToYuanText(balance.frozenFen) }} · 最低提现
-        {{ fenToYuanText(balance.minWithdrawFen) }}
+    <!-- ⭐ 版式基准 = prototype/index.html renderP18（v4.10.0）：
+         居中可提现大额 → 收款方式 → 提现金额输入 → 提现记录 → 确认/取消 -->
+
+    <!-- ① 可提现余额 -->
+    <view class="top">
+      <text class="top__amount">{{ fenToYuanText(balance?.balanceFen ?? 0) }}</text>
+      <text class="top__label">可提现余额</text>
+      <text v-if="(balance?.frozenFen ?? 0) > 0" class="top__frozen">
+        冻结中 {{ fenToYuanText(balance?.frozenFen ?? 0) }}（提现处理占用）
       </text>
     </view>
 
-    <!-- 收款方式 -->
-    <view class="card" @tap="goProfile">
+    <!-- ② 收款方式（原型未画，实装保留：未绑卡提交必 40007） -->
+    <view class="card" hover-class="card--hover" @tap="goProfile">
       <view class="card__hd">
         <text class="card__title">收款方式</text>
         <text class="card__link">{{ bound ? '修改 ›' : '去绑定 ›' }}</text>
@@ -26,15 +28,12 @@
           <text class="kv__v">{{ profile.payoutName }}</text>
         </view>
       </template>
-      <text v-else class="card__foot">尚未绑定收款方式，绑定后才能提现</text>
+      <text v-else class="card__warn">尚未绑定收款方式，绑定后才能提现</text>
     </view>
 
-    <!-- 提现金额 -->
+    <!-- ③ 提现金额 -->
     <view class="card">
-      <view class="card__hd">
-        <text class="card__title">提现金额</text>
-        <text class="card__link" @tap="fillAll">全部提现</text>
-      </view>
+      <text class="card__title">提现金额</text>
 
       <view class="amount">
         <text class="amount__symbol">¥</text>
@@ -47,48 +46,60 @@
         />
       </view>
 
-      <text class="amount__hint"> 佣金经灵活用工平台代发并代扣个税，实际到账以平台结算为准 </text>
+      <view class="amount__ft">
+        <text class="amount__all" @tap="fillAll">全部提现</text>
+        <text class="amount__hint">平台代发 · 预计 1–2 个工作日到账（个税已代扣）</text>
+      </view>
+      <text class="amount__min">最低提现 {{ fenToYuanText(balance?.minWithdrawFen ?? 0) }}</text>
     </view>
 
-    <view class="submit">
-      <button
-        class="submit__btn"
-        :disabled="submitting || !canSubmit"
-        hover-class="submit__btn--hover"
-        @tap="submit"
-      >
-        {{ submitting ? '提交中…' : '申请提现' }}
-      </button>
-      <text class="submit__hint"> 提交后进入「待审批」并冻结对应金额，运营审批打款后到账 </text>
-    </view>
-
-    <!-- 提现记录 -->
-    <view class="records">
-      <text class="records__title">提现记录</text>
+    <!-- ④ 提现记录 -->
+    <view class="card">
+      <text class="card__title">📋 提现记录</text>
 
       <ab-loading v-if="loadingRecords && !records.length" text="加载中" inline />
 
       <ab-empty-state v-else-if="!records.length" text="暂无提现记录" />
 
-      <view v-for="r in records" :key="r.id" class="rec">
-        <view class="rec__hd">
-          <text class="rec__no">{{ r.withdrawNo }}</text>
-          <text class="rec__badge">{{ r.statusText }}</text>
+      <template v-else>
+        <view v-for="r in records" :key="r.id" class="rec">
+          <view class="rec__left">
+            <text class="rec__no">{{ formatDate(r.createdAt) }} · 平台代发</text>
+            <text class="rec__status">{{ r.statusText }}</text>
+            <text v-if="r.failReason" class="rec__fail">{{ r.failReason }}</text>
+          </view>
+          <text class="rec__amount">−{{ fenToYuanText(r.amountFen) }}</text>
         </view>
-        <view class="rec__bd">
-          <text class="rec__amount">{{ fenToYuanText(r.amountFen) }}</text>
-          <text class="rec__time">{{ formatDateTime(r.createdAt) }}</text>
+
+        <view class="rec__total">
+          <text class="rec__total-k">合计已提现</text>
+          <text class="rec__total-v">{{ fenToYuanText(balance?.withdrawnFen ?? 0) }}</text>
         </view>
-        <text v-if="r.receiveAccount" class="rec__acct">{{ r.receiveAccount }}</text>
-        <text v-if="r.failReason" class="rec__fail">{{ r.failReason }}</text>
-      </view>
+      </template>
     </view>
+
+    <!-- ⑤ 操作 -->
+    <button
+      class="btn btn--primary"
+      :disabled="submitting || !canSubmit"
+      hover-class="btn--hover"
+      @tap="submit"
+    >
+      {{ submitting ? '提交中…' : '确认提现' }}
+    </button>
+    <button class="btn btn--ghost" hover-class="btn--hover" @tap="goBack">取消</button>
+
+    <text class="foot">
+      提交后进入「待审批」并冻结对应金额，运营审批打款后到账；佣金经灵活用工平台代发并代扣个税。
+    </text>
   </view>
 </template>
 
 <script setup lang="ts">
 /**
  * P18 · 提现申请
+ *
+ * ⭐ 版式基准 = prototype/index.html renderP18（v4.10.0）
  *
  * 数据来源：L11 余额 + L14 资料（收款方式）+ L12 提现申请 + L13 提现记录。
  *
@@ -97,6 +108,8 @@
  * ⚠️ 幂等键：**一次「提交意图」一个 key**，失败重试沿用、成功后作废。
  * ⚠️ 三条拦截：`40003` 低于最低额（`payload.minFen`）/ `40007` 未绑定收款方式
  *    / `50004` 可提现余额不足 —— 端上据此给不同引导。
+ * ⚠️ 「合计已提现」取 L11 `withdrawnFen`（团长维度快照），不用列表累加
+ *    ——列表是分页的（一页 20 条），累加会得到偏小的数。
  */
 import { computed, ref } from 'vue';
 import { onShow } from '@dcloudio/uni-app';
@@ -108,7 +121,7 @@ import type { LeaderBalanceData, LeaderWithdrawalItem } from '@/api/leader-finan
 import { ApiError } from '@/api/request';
 import { apiErrorMessage, toastApiError, useRequest } from '@/composables/use-request';
 import { displayOr, fenToYuanText, formatDateTime, uuid } from '@/utils/format';
-import { navigateTo } from '@/utils/router';
+import { navigateTo, navigateBack } from '@/utils/router';
 
 const { run } = useRequest();
 
@@ -134,6 +147,12 @@ const amountYuan = computed(() => {
 });
 
 const canSubmit = computed(() => bound.value && amountYuan.value > 0);
+
+/** 记录行只显示日期（原型「09-12 · 平台代发」） */
+function formatDate(iso: string | null): string {
+  const full = formatDateTime(iso);
+  return full.length >= 10 ? full.slice(5, 10) : full;
+}
 
 async function loadAll(): Promise<void> {
   try {
@@ -203,33 +222,36 @@ async function submit(): Promise<void> {
   }
 }
 
-/** 三条资金类拦截 → 给不同引导（其余按通用文案提示） */
+/** 三条拦截分别给引导（低于最低额 / 未绑卡 / 余额不足） */
 function handleWithdrawError(e: unknown): void {
-  if (e instanceof ApiError && e.code === 40007) {
-    uni.showModal({
-      title: '未绑定收款方式',
-      content: '请先绑定银行卡或支付宝账号，再发起提现。',
-      confirmText: '去绑定',
-      success: (r) => {
-        if (r.confirm) navigateTo('/pages/leader/profile');
-      },
-    });
-    return;
-  }
-  if (e instanceof ApiError && e.code === 40003) {
-    const minFen = Number((e.payload as { minFen?: number } | null)?.minFen ?? 0);
-    uni.showToast({ title: `最低提现 ¥${(minFen / 100).toFixed(2)}`, icon: 'none' });
-    return;
-  }
-  if (e instanceof ApiError && e.code === 50004) {
-    uni.showToast({ title: '可提现余额不足', icon: 'none' });
-    return;
+  if (e instanceof ApiError) {
+    if (e.code === 40007) {
+      uni.showToast({ title: '请先绑定收款方式', icon: 'none' });
+      setTimeout(() => goProfile(), 800);
+      return;
+    }
+    if (e.code === 40003) {
+      const minFen = Number((e.payload as { minFen?: number } | null)?.minFen ?? 0);
+      uni.showToast({
+        title: minFen ? `最低提现 ¥${(minFen / 100).toFixed(2)}` : apiErrorMessage(e),
+        icon: 'none',
+      });
+      return;
+    }
+    if (e.code === 50004) {
+      uni.showToast({ title: '可提现余额不足', icon: 'none' });
+      return;
+    }
   }
   uni.showToast({ title: apiErrorMessage(e, '提现失败'), icon: 'none', duration: 2400 });
 }
 
 function goProfile(): void {
   navigateTo('/pages/leader/profile');
+}
+
+function goBack(): void {
+  navigateBack();
 }
 
 onShow(() => {
@@ -240,42 +262,53 @@ onShow(() => {
 <style lang="scss" scoped>
 .page {
   min-height: 100vh;
-  padding: $space-4 $space-4 120rpx;
+  padding: $space-4;
   box-sizing: border-box;
 }
 
-.hero {
-  padding: $space-4 $space-1 $space-5;
+// ---- ① 可提现大额 ----
+.top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: $space-5 0 $space-4;
 
-  &__label {
-    display: block;
-    font-size: $fs-caption;
-    color: $c-text-weak;
-  }
-
-  &__value {
-    display: block;
-    margin-top: $space-2;
-    font-size: $fs-display;
-    font-weight: 600;
-    color: $c-gold;
+  &__amount {
+    font-size: 88rpx;
+    font-weight: bold;
+    color: #b8892f;
+    letter-spacing: 2rpx;
     font-variant-numeric: tabular-nums;
   }
 
-  &__sub {
-    display: block;
-    margin-top: $space-2;
+  &__label {
+    margin-top: $space-1;
     font-size: $fs-caption;
     color: $c-text-weak;
   }
+
+  &__frozen {
+    margin-top: $space-2;
+    padding: 6rpx $space-3;
+    font-size: $fs-caption;
+    color: $c-text;
+    background: #fbf7ee;
+    border-radius: $radius-pill;
+  }
 }
 
+// ---- 通用卡片 ----
 .card {
-  margin-bottom: $space-4;
+  margin-bottom: $space-3;
   padding: $space-4;
   background: $c-surface;
   border: 1px solid $c-border;
-  border-radius: $radius-md;
+  border-radius: $radius-lg;
+  box-shadow: $shadow-card;
+
+  &--hover {
+    opacity: 0.88;
+  }
 
   &__hd {
     display: flex;
@@ -285,9 +318,15 @@ onShow(() => {
   }
 
   &__title {
-    font-size: $fs-body;
-    font-weight: 600;
+    display: block;
+    margin-bottom: $space-2;
+    font-size: $fs-h2;
+    font-weight: bold;
     color: $c-text;
+  }
+
+  &__hd &__title {
+    margin-bottom: 0;
   }
 
   &__link {
@@ -295,10 +334,11 @@ onShow(() => {
     color: $c-gold;
   }
 
-  &__foot {
+  &__warn {
     display: block;
     font-size: $fs-caption;
-    color: $c-text-weak;
+    line-height: 1.7;
+    color: $c-warning;
   }
 }
 
@@ -319,135 +359,166 @@ onShow(() => {
   }
 }
 
+// ---- ③ 金额输入 ----
 .amount {
   display: flex;
-  align-items: baseline;
-  padding: $space-3 0 $space-2;
+  align-items: center;
+  padding-bottom: $space-2;
   border-bottom: 1px solid $c-border;
 
   &__symbol {
-    font-size: $fs-h1;
+    flex: none;
+    font-size: 44rpx;
+    font-weight: bold;
     color: $c-text;
   }
 
   &__input {
     flex: 1;
+    height: 76rpx;
     margin-left: $space-2;
-    font-size: $fs-display;
-    font-weight: 600;
+    font-size: 44rpx;
+    font-weight: bold;
     color: $c-text;
   }
 
   &__ph {
-    color: $c-text-weak;
-    font-weight: 400;
+    color: $c-border;
   }
 
-  &__hint {
-    display: block;
-    margin-top: $space-3;
-    font-size: $fs-caption;
-    line-height: 1.7;
-    color: $c-text-weak;
-  }
-}
-
-.submit {
-  margin-bottom: $space-5;
-
-  &__btn {
-    height: 88rpx;
-    font-size: $fs-body;
-    line-height: 88rpx;
-    color: $c-surface;
-    background: $c-text;
-    border-radius: $radius-pill;
-
-    &::after {
-      border: none;
-    }
-
-    &--hover {
-      opacity: 0.85;
-    }
-
-    &[disabled] {
-      opacity: 0.4;
-    }
-  }
-
-  &__hint {
-    display: block;
-    margin-top: $space-3;
-    font-size: $fs-caption;
-    line-height: 1.7;
-    color: $c-text-weak;
-    text-align: center;
-  }
-}
-
-.records {
-  &__title {
-    display: block;
-    padding-bottom: $space-3;
-    font-size: $fs-body;
-    font-weight: 600;
-    color: $c-text;
-  }
-}
-
-.rec {
-  margin-bottom: $space-3;
-  padding: $space-4;
-  background: $c-surface;
-  border: 1px solid $c-border;
-  border-radius: $radius-md;
-
-  &__hd {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  &__no {
-    font-size: $fs-caption;
-    color: $c-text;
-  }
-
-  &__badge {
-    font-size: $fs-caption;
-    color: $c-gold;
-  }
-
-  &__bd {
+  &__ft {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    padding: $space-2 0;
+    margin-top: $space-2;
   }
 
-  &__amount {
-    font-size: $fs-h2;
-    font-weight: 600;
+  &__all {
+    font-size: $fs-caption;
+    color: #b8892f;
+    text-decoration: underline;
+  }
+
+  &__hint {
+    flex: 1;
+    margin-left: $space-3;
+    font-size: 22rpx;
+    line-height: 1.6;
+    color: $c-text-weak;
+    text-align: right;
+  }
+
+  &__min {
+    display: block;
+    margin-top: $space-2;
+    font-size: 22rpx;
+    color: $c-text-weak;
+  }
+}
+
+// ---- ④ 提现记录 ----
+.rec {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: $space-3 0;
+  border-bottom: 1px dashed #d4c4a8;
+
+  &__left {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__no {
+    display: block;
+    font-size: $fs-body;
     color: $c-text;
   }
 
-  &__time {
-    font-size: $fs-caption;
-    color: $c-text-weak;
-  }
-
-  &__acct {
+  &__status {
     display: block;
-    font-size: $fs-caption;
+    margin-top: 4rpx;
+    font-size: 22rpx;
     color: $c-text-weak;
   }
 
   &__fail {
     display: block;
-    margin-top: $space-2;
-    font-size: $fs-caption;
+    margin-top: 4rpx;
+    font-size: 22rpx;
     color: $c-warning;
   }
+
+  &__amount {
+    flex: none;
+    margin-left: $space-3;
+    font-size: $fs-body;
+    color: $c-text-weak;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__total {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-top: $space-3;
+    padding-top: $space-3;
+    border-top: 1px dashed $c-border;
+
+    &-k {
+      font-size: $fs-caption;
+      color: $c-text-weak;
+    }
+
+    &-v {
+      font-size: $fs-body;
+      font-weight: bold;
+      color: $c-text;
+    }
+  }
+}
+
+// ---- ⑤ 按钮 ----
+.btn {
+  display: block;
+  height: 88rpx;
+  margin-top: $space-3;
+  line-height: 88rpx;
+  font-size: $fs-body;
+  border-radius: $radius-pill;
+
+  &::after {
+    border: none;
+  }
+
+  &--hover {
+    opacity: 0.88;
+  }
+
+  &--primary {
+    color: #ffffff;
+    font-weight: bold;
+    background: linear-gradient(135deg, $c-gold, #b8892f);
+    border: none;
+  }
+
+  &--ghost {
+    color: $c-text;
+    background: $c-surface;
+    border: 1px solid $c-border;
+  }
+
+  &[disabled] {
+    opacity: 0.45;
+  }
+}
+
+.foot {
+  display: block;
+  margin-top: $space-3;
+  padding: 0 $space-1;
+  font-size: 22rpx;
+  line-height: 1.7;
+  color: $c-text-weak;
 }
 </style>

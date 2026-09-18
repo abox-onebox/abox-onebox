@@ -56,7 +56,7 @@
     },
     {
       "path": "pages/leader/building",
-      "style": { "navigationBarTitleText": "本楼概况" }
+      "style": { "navigationBarTitleText": "我服务的办公楼" }
     },
     {
       "path": "pages/leader/orders",
@@ -64,7 +64,7 @@
     },
     {
       "path": "pages/leader/refund",
-      "style": { "navigationBarTitleText": "异常订单处理" }
+      "style": { "navigationBarTitleText": "异常订单总览" }
     },
     {
       "path": "pages/leader/pickup",
