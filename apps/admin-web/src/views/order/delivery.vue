@@ -3,18 +3,25 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import {
+  advanceDeliveryStatus,
   fetchDeliveries,
   patchDelivery,
+  type DeliveryAdvanceResult,
   type DeliveryListResult,
   type DeliveryPatchBody,
   type DeliveryRow,
 } from '@/api/delivery';
 
 /**
- * 配送单管理（运营后台 · M5-1 · D61 查看 / D62 人工修正）
+ * 配送单管理（运营后台 · M5-1 · D61 查看 / D62 人工修正 · M5-8 · D63 状态推进）
  *
  * 收口挂账 #61：跑批对已存在的配送单**跳过不覆盖**（保护人工录入的司机 / 车牌），
  * 代价是份数也被一起冻住 —— 在此之前**没有任何页面能改**，口子只在 DBA 手里。
+ *
+ * ⭐ M5-8 补 D63：在此之前**配送状态也推进不了**（只有接口、没有入口），
+ *    而「发车 / 送达」正是订单 `cooked → delivering → delivered` 的**唯一驱动** ——
+ *    订单于是永远停在 `cut_off`、佣金永不产生、且**不报任何错**（《缺陷与陷阱》#79）。
+ *    本页的「推进」按钮就是那条链在**运营手上**的入口。
  *
  * ⚠️ 份数与订单不符 **不等于「被人改过」**：也可能是截单后订单侧退款 / 取消，
  *    而配送单份数在截单时已定格、不会跟着降。本页不区分这两者（系统也无法），
@@ -29,6 +36,21 @@ const data = ref<DeliveryListResult | null>(null);
 
 const rows = computed<DeliveryRow[]>(() => data.value?.list ?? []);
 const statusOptions = computed(() => data.value?.statusOptions ?? []);
+
+/**
+ * 履约流顺序与中文名 —— **全部取自服务端下发的 `statusOptions`**
+ *
+ * ⚠️ 端上刻意**不写第二份** `['pending','called','en_route','arrived']`：
+ *    顺序与文案各写一份就会各错各的（同族 #15 / #63 / #67 / #76），
+ *    而 `statusOptions` 正是服务端按 `DELIVERY_STATUS_ORDER` 生成的那一份。
+ */
+const labelOf = (v: string) => statusOptions.value.find((o) => o.value === v)?.label ?? v;
+
+function nextOf(cur: string): string | null {
+  const order = statusOptions.value.map((o) => o.value);
+  const i = order.indexOf(cur);
+  return i >= 0 && i < order.length - 1 ? order[i + 1] : null;
+}
 
 async function load() {
   loading.value = true;
@@ -131,6 +153,74 @@ async function submit() {
   } finally {
     saving.value = false;
   }
+}
+
+// -------------------------------------------------------- 推进履约（D63）
+const advVisible = ref(false);
+const advancing = ref(false);
+const advRow = ref<DeliveryRow | null>(null);
+const advTo = ref('');
+const advNote = ref('');
+
+/**
+ * 该行有没有订单「没跟上」
+ *
+ * ⭐ `cut_off` 的订单意味着**上游出餐还没确认**（T7 没发生）—— 此时即使把配送单推到
+ *    「已送达」，订单也不会动（T9 的条件更新是 `delivering → delivered`）。
+ *    把它在行内标出来，运营就不会把「推了没反应」当成系统坏了。
+ */
+const laggingOf = (row: DeliveryRow) =>
+  (row.orderStatusBreakdown ?? []).find((b) => b.status === 'cut_off');
+
+function openAdvance(row: DeliveryRow) {
+  const to = nextOf(row.status);
+  if (!to) return;
+  advRow.value = row;
+  advTo.value = to;
+  advNote.value = '';
+  advVisible.value = true;
+}
+
+async function submitAdvance() {
+  const row = advRow.value;
+  if (!row || !advTo.value) return;
+  advancing.value = true;
+  try {
+    const r = await advanceDeliveryStatus(row.id, {
+      to: advTo.value,
+      version: row.version,
+      ...(advNote.value.trim() ? { note: advNote.value.trim() } : {}),
+    });
+    advVisible.value = false;
+    await load();
+    ElMessage.success(describeAdvance(r));
+    // ⚠️「推进了但订单没跟上」必须**单独警示**：只在成功提示里带一句会被忽略，
+    //    而它正是 #79 的形状（链子断了却不报错）。
+    if (r.orderTransition && r.orderTransition.advanced === 0) {
+      ElMessage.warning(r.orderTransition.note || '配送单已推进，但订单状态没有跟着动');
+    }
+  } catch (e) {
+    const err = e as { code?: number; message?: string };
+    if (err.code === 30016) {
+      ElMessage.warning(err.message || '这张配送单已被他人修改，已刷新为最新值');
+      advVisible.value = false;
+      await load();
+    } else {
+      ElMessage.error(err.message || '推进失败');
+    }
+  } finally {
+    advancing.value = false;
+  }
+}
+
+/** 成功提示：把「配送单 → X」与「订单联动了几单」写进**同一句话** */
+function describeAdvance(r: DeliveryAdvanceResult): string {
+  const head = `配送单 ${r.fromText} → ${r.toText}`;
+  const t = r.orderTransition;
+  if (!t) return `${head}（本步不联动订单）`;
+  return t.advanced > 0
+    ? `${head}；联动订单 ${t.advanced} 单（${t.fromText} → ${t.toText}）`
+    : `${head}；订单未联动（${t.note ?? '无符合条件的订单'}）`;
 }
 
 onMounted(load);
@@ -257,9 +347,43 @@ onMounted(load);
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column label="订单进度" min-width="170">
+          <template #default="{ row }">
+            <template v-if="(row as DeliveryRow).orderStatusBreakdown?.length">
+              <span
+                v-for="b in (row as DeliveryRow).orderStatusBreakdown"
+                :key="b.status"
+                class="bd"
+                :class="{ 'bd--warn': b.status === 'cut_off' }"
+              >
+                {{ b.statusText }} {{ b.orderCount }}
+              </span>
+            </template>
+            <span v-else class="muted">无订单</span>
+            <div v-if="laggingOf(row as DeliveryRow)" class="bd__warn">
+              有订单还停在「已截单」—— 出餐未确认，推进履约不会带着它走
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row as DeliveryRow)">修正</el-button>
+            <el-tooltip
+              :disabled="!!nextOf((row as DeliveryRow).status)"
+              content="已是终态（已送达），履约流到此为止"
+              placement="top"
+            >
+              <span>
+                <el-button
+                  link
+                  type="success"
+                  :disabled="!nextOf((row as DeliveryRow).status)"
+                  @click="openAdvance(row as DeliveryRow)"
+                >
+                  推进到{{ labelOf(nextOf((row as DeliveryRow).status) ?? '') || '—' }}
+                </el-button>
+              </span>
+            </el-tooltip>
           </template>
         </el-table-column>
       </el-table>
@@ -331,6 +455,60 @@ onMounted(load);
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 推进履约弹窗（D63）：确认目标态 + 可选补充说明。
+         ⚠️ 只给「紧邻下一态」——跳级会跳过 T8（订单联动），服务端也会以 30018 拒绝。 -->
+    <el-dialog v-model="advVisible" title="推进配送状态" width="520px">
+      <div v-if="advRow" class="dlg">
+        <p class="sub">
+          {{ advRow.buildingGroupName ?? `楼群 #${advRow.buildingGroupId}` }} · 出餐日
+          {{ advRow.mealDate }} · 当前版本 v{{ advRow.version }}
+        </p>
+
+        <div class="adv">
+          <span class="adv__from">{{ advRow.statusText }}</span>
+          <span class="adv__arrow">→</span>
+          <span class="adv__to">{{ labelOf(advTo) }}</span>
+        </div>
+
+        <p class="sub adv__hint">
+          推进后：<b>配送单</b>状态随之变化，并<template v-if="advTo === 'en_route'">
+            联动该楼群订单 <b>已出餐 → 配送中</b>（状态机 T8）</template
+          ><template v-else-if="advTo === 'arrived'">
+            联动该楼群订单 <b>配送中 → 已送达</b>（状态机 T9），订单「送达」之后
+            佣金链路才可达</template
+          ><template v-else>
+            本步<b>不动订单</b>（货还在加工场所，订单要到「配送中」才该动）</template
+          >。
+        </p>
+
+        <el-alert
+          v-if="laggingOf(advRow)"
+          type="warning"
+          show-icon
+          :closable="false"
+          title="本楼群有订单还停在「已截单」"
+          description="那些订单不会跟着动（上游出餐未确认）。请先让供应商完成出餐确认，否则这部分订单会一直卡住、佣金也不会产生。"
+        />
+
+        <el-form label-width="90px" class="form">
+          <el-form-item label="补充说明">
+            <el-input
+              v-model="advNote"
+              maxlength="64"
+              placeholder="可选，如「堵车晚点 20 分钟」，会写入操作日志"
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <template #footer>
+        <el-button @click="advVisible = false">取消</el-button>
+        <el-button type="success" :loading="advancing" @click="submitAdvance">
+          确认推进到「{{ labelOf(advTo) }}」
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -392,6 +570,48 @@ onMounted(load);
 }
 .muted {
   color: var(--el-text-color-placeholder);
+}
+/* 订单进度：状态分布 chips（⚠️ 停在 cut_off 的高亮 —— 那是「没跟上」） */
+.bd {
+  display: inline-block;
+  margin: 0 4px 2px 0;
+  padding: 1px 6px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 3px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.bd--warn {
+  border-color: var(--el-color-warning);
+  color: var(--el-color-warning);
+  font-weight: 600;
+}
+.bd__warn {
+  margin-top: 2px;
+  color: var(--el-color-warning);
+  font-size: 12px;
+}
+/* 推进弹窗 */
+.adv {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+.adv__from {
+  color: var(--el-text-color-placeholder);
+  text-decoration: line-through;
+}
+.adv__arrow {
+  color: var(--el-text-color-secondary);
+}
+.adv__to {
+  font-size: 18px;
+  font-weight: 700;
+}
+.adv__hint {
+  margin-bottom: 12px;
 }
 .dlg .form {
   margin-top: 8px;

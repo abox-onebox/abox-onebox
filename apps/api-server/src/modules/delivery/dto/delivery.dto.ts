@@ -12,7 +12,7 @@ import {
   MinLength,
 } from 'class-validator';
 
-import { DELIVERY_STATUS_ORDER } from '@abox/shared-types';
+import { DELIVERY_STATUS_ORDER, DeliveryStatus } from '@abox/shared-types';
 
 /** `YYYY-MM-DD`（出餐日） */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -130,4 +130,49 @@ export class DeliveryPatchDto {
   @IsString({ message: 'remark 必须是字符串' })
   @MaxLength(256, { message: 'remark 最多 256 字' })
   remark?: string;
+}
+
+/**
+ * D63 · 配送单状态推进（履约流转 · **M5-8 · 状态机 T8/T9**）
+ *
+ * ## 为什么它**不**塞进 D62（人工修正）
+ * D62 的注释里已经写死了这条边界：「只允许改份数 / 司机 / 电话 / 车牌 / 备注，
+ * **不动 `status`** —— 配送状态是履约流转，有它自己的时点与责任，属独立批次」。
+ * 本 DTO 就是那个「独立批次」。分开的收益是**审计可分**：
+ * 「改了数字」与「推进了履约」在操作日志里是两条不同的 action，
+ * 不会出现「份数 5→3 顺便把状态也推了」这种一条记录两件事的账。
+ *
+ * ## 为什么「一次只能一步」（跳级 → `30018`）
+ * 每一步各自**联动订单**（`en_route` → T8、`arrived` → T9，见 D63 服务注释）。
+ * 跳级会跳过 T8：`pending → arrived` 时订单还在 `cooked`，而 T9 的条件更新是
+ * `delivering → delivered` —— 不命中 ⇒ **一单都不动且不报错**（#79 的形状）。
+ *
+ * ## 为什么只有 `to`（目标态）而没有 `from`
+ * 前端回传「我现在看到的是 `called`」毫无意义 —— 服务端**本来就以库里的当前值为准**，
+ * 端上那份快照可能已经过期。真正需要防的「快照过期」由 `version` 乐观锁承担
+ * （与 D62 同一个机制、同一个错误码 `30016`），职责不重复。
+ *
+ * ## 为什么 `note` 是可选而 `reason`（D62）是必填
+ * 两者性质不同：**改数字**必须回答「为什么改」（数字本身看不出对错），
+ * 而**推进履约**是标准作业流，动作本身就是它的理由。
+ * `note` 留给「这次晚了 20 分钟，因东风路堵车」这类**有信息量的补充**，不强制。
+ */
+export class DeliveryStatusAdvanceDto {
+  @ApiProperty({
+    description: '目标状态（只能向前、且只能一步：`pending → called → en_route → arrived`）',
+    enum: DELIVERY_STATUS_ORDER,
+  })
+  @IsIn([...DELIVERY_STATUS_ORDER], { message: 'to 不在允许范围内' })
+  to!: DeliveryStatus;
+
+  @ApiProperty({ description: '乐观锁版本号（取列表出参的 `version`，原样回传）' })
+  @IsInt({ message: 'version 必须是整数' })
+  @Min(0, { message: 'version 不能为负' })
+  version!: number;
+
+  @ApiPropertyOptional({ description: '补充说明（可选，写入操作日志，如「堵车晚点 20 分钟」）' })
+  @IsOptional()
+  @IsString({ message: 'note 必须是字符串' })
+  @MaxLength(REASON_MAX, { message: `note 最多 ${REASON_MAX} 字` })
+  note?: string;
 }

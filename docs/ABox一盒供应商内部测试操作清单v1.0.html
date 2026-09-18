@@ -77,6 +77,12 @@
   .warn .t { font-weight: bold; color: var(--warn-text); letter-spacing: .5px; }
   .warn ul { margin: 6px 0 0 16px; }
   .warn li { margin-bottom: 4px; }
+  /* M5-8：与 warn 同构但语义相反 —— 用于「原先的说明已失效 / 这件事现在会真的发生」，
+     避免把「好消息」画成警告色，让测试人误以为仍有未完成项 */
+  .tip { background: rgba(91,124,58,.07); border: 1px solid rgba(91,124,58,.32); border-left: 3px solid var(--ok); border-radius: 6px; padding: 11px 14px; font-size: 12.5px; margin-top: 10px; }
+  .tip .t { font-weight: bold; color: var(--ok); letter-spacing: .5px; }
+  .tip ul { margin: 6px 0 0 16px; }
+  .tip li { margin-bottom: 4px; }
 
   .rules { list-style: none; }
   .rules li { position: relative; padding-left: 20px; margin-bottom: 7px; font-size: 13px; }
@@ -107,7 +113,7 @@
     .foot { padding: 10px 0; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
-  /* M5-7：给「已知未完成」的步骤加小徽标 —— 测试人是照着页面一路点，不会回头读提示块，所以标注必须落在**步骤那一行**上 */
+  /* M5-7 的「已知未完成」小徽标（.dep）已随 #79 收口停用 —— 本清单从未用它，保留定义只为旧打印件 */
   .dep { display: inline-block; font-family: var(--mono); font-size: 10.5px; line-height: 1; padding: 3px 5px; margin-left: 6px; border-radius: 3px; background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text); vertical-align: 1px; white-space: nowrap; }
 </style>
 </head>
@@ -238,12 +244,13 @@
       </ul>
     </div>
 
-        <!-- 内部引用：《缺陷与陷阱》#79 · 供应商侧出餐确认只写生产计划，不推进订单状态 -->
-    <div class="warn">
-      <div class="t">⚠️ 一条不会影响你的说明（但会让你少报一个错）</div>
+        <!-- 内部引用：《缺陷与陷阱》#79 —— 2026-09-18（M5-8）起「确认出餐」**会**联动订单状态（T7） -->
+    <div class="tip">
+      <div class="t">✅ 一条关于「确认出餐」的说明（2026-09-18 起已变化，别照旧报告）</div>
       <ul>
-        <li><b>「确认出餐」不会改变订单的状态。</b>它写的是<b>你那边的出餐计划与应付单</b>（这正是本轮要验的）；订单侧「已出餐 / 配送中 / 已送达」那一段<b>本轮还没接上</b>，属已知未完成项。</li>
-        <li>所以：如果你去后台订单页看，订单仍停在「已截单」——<b>这不是缺陷</b>，也不影响本节 S1–S18 的任何一条判据。</li>
+        <li><b>「确认出餐」现在还会把订单推进到「已出餐」。</b>除了写<b>你那边的出餐计划与应付单</b>（这是本节 S1–S18 要验的），它同时是「<b>出餐 → 配送 → 佣金</b>」这条链的<b>起点</b>：没有这一步，后面的配送推进与佣金都动不起来。</li>
+        <li>所以：你确认出餐之后去后台订单页看，订单<b>应当</b>从「已截单」变成「<b>已出餐</b>」。<b>仍然停在「已截单」才是问题</b>（请按 P1 记，注明「出餐确认后订单未推进」）。</li>
+        <li>⚠️ 注意范围：只有<b>本加工场所、本出餐日</b>的、且当时正停在「已截单」的订单会被推进；已退款/已取消的单不受影响。</li>
       </ul>
     </div>
 
@@ -545,7 +552,7 @@
     <span>环境由工程起，问题由供应商攒 —— <b>不要为了「跑通」而绕过一步</b></span>
     <span>ABox 一盒 · 北京巡礼之年科技有限公司</span>
   </div>
-  <div class="ver">供应商内部测试操作清单 v1.0 · 2026-09-17 · 配套《本地开发手册》§9.3 · 只用于内网，请勿外发链接</div>
+  <div class="ver">供应商内部测试操作清单 v1.0 · 修订单 2026-09-18（确认出餐**现在会**联动订单状态 T7，原「不会改变订单状态」的说明已作废）· 配套《本地开发手册》§9.3 · 只用于内网，请勿外发链接</div>
 
 </div>
 </body>

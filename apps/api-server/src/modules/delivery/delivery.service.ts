@@ -1,8 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import type { QueryDeepPartialEntity } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 
-import { DELIVERY_STATUS_LABEL, DELIVERY_STATUS_ORDER, OrderStatus } from '@abox/shared-types';
+import {
+  DELIVERY_STATUS_LABEL,
+  DELIVERY_STATUS_ORDER,
+  DeliveryStatus,
+  ORDER_STATUS_VIEW,
+  OrderStatus,
+} from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
@@ -10,7 +17,34 @@ import { arrivalAtOf, toBjIso } from '../../common/utils/time';
 import { BuildingGroup } from '../../database/entities/building.entity';
 import { MealAssignment } from '../../database/entities/meal.entity';
 import { DeliveryRecord, Order } from '../../database/entities/order.entity';
-import { DeliveryListQueryDto, DeliveryPatchDto } from './dto/delivery.dto';
+import { OperationLog } from '../../database/entities/system.entity';
+import {
+  DeliveryListQueryDto,
+  DeliveryPatchDto,
+  DeliveryStatusAdvanceDto,
+} from './dto/delivery.dto';
+
+/**
+ * 一次配送单推进**联动的订单迁移**（「声明」的载体）
+ *
+ * ⭐ 它由两个具名方法 `advanceGroupOrdersToDelivering` / `...Delivered` **各自返回**，
+ *    不另立一张映射表 —— 本项目反复踩过的就是「同一件事有两份表述」
+ *    （#15 / #63 / #67 / #76）。写入语句与它自述的 `from → to` 挨在同一段代码里，
+ *    谁改了一边忘了另一边，读代码的人当场就能看出来。
+ */
+interface OrderTransitionHit {
+  advanced: number;
+  from: OrderStatus;
+  to: OrderStatus;
+}
+
+/** 订单状态分布（D61 行内 / D63 出参共用同一形状） */
+type OrderStatusBreakdown = Array<{
+  status: string;
+  statusText: string;
+  orderCount: number;
+  quantity: number;
+}>;
 
 /** 配送单生成出参（`generateByDate` · 4.3） */
 export interface DeliveryGenerateResult {
@@ -86,6 +120,19 @@ export interface DeliveryRow extends DeliverySnapshot {
   statusText: string;
   /** 乐观锁版本（D62 提交时原样回传） */
   version: number;
+  /**
+   * ⭐ 该楼群当日订单的**状态分布**（M5-8 新增 · 履约链可见性）
+   *
+   * ## 为什么配送单页必须带上它
+   * 配送单状态与订单状态是**两条链**（T8/T9 才把它们接上）。只看配送单的
+   * 「在途」，运营无法知道这批货对应的订单有没有跟上 —— 而「没跟上」的表现是
+   * **订单永远停在 `cut_off`、佣金永不产生、且不报任何错**（#79）。
+   * 把它摆在每一行上，「有几单没跟上」就从「一个看不见的洞」变成「列表里的一行」。
+   *
+   * 只列**实际出现过**的状态（没单的状态不占位），按主流程进度排序；
+   * 份数与 `orderQuantity` 同源聚合，两项相加必然等于它。
+   */
+  orderStatusBreakdown: OrderStatusBreakdown;
 }
 
 /** D61 出参 */
@@ -129,6 +176,48 @@ export interface DeliveryPatchResult {
 }
 
 /**
+ * D63 出参（M5-8 · 状态机 T8 / T9）
+ *
+ * 把「配送单推进了」与「订单跟着动了没有」**放在同一个响应里** ——
+ * 分成两个接口或让运营自己去订单页看，就会出现「推了但没联动」的静默状态：
+ * 物理上的车已经开走，而系统里的订单还原地不动，且**两边都不报错**。
+ */
+export interface DeliveryAdvanceResult {
+  id: number;
+  mealDate: string;
+  buildingGroupId: number;
+  buildingGroupName: string | null;
+  from: string;
+  fromText: string;
+  to: string;
+  toText: string;
+  /** 推进后的新版本号（端上用它刷新本地快照） */
+  version: number;
+  /** 实际送达时刻（推进到 `arrived` 时写入；其余情况保持原值） */
+  actualAt: string | null;
+  /**
+   * 本次**联动的订单状态迁移**
+   *
+   * `called` 时为 `null`（车还没发，订单不该动 —— 这不是「没联动」，是**本就不联动**）。
+   * 响应里必须把这个区别表达出来，否则端上无法区分「没联动」与「联动失败」。
+   */
+  orderTransition: {
+    from: string;
+    fromText: string;
+    to: string;
+    toText: string;
+    /** 本次真的被推进的订单数（条件更新 `affected` 判归属） */
+    advanced: number;
+    /** 推进后该楼群当日订单的状态分布（份）—— 「还有几单没跟上」一眼可见 */
+    remaining: Array<{ status: string; statusText: string; orderCount: number; quantity: number }>;
+    /** `advanced = 0` 而订单还在原地时，给人看的原因（fail-closed 但不静默） */
+    note?: string;
+  } | null;
+  /** 口径说明（随出参下发 · 端上不复制第二份文案） */
+  note: string;
+}
+
+/**
  * D61 口径说明（随出参下发）
  *
  * ⚠️ 这段话是**产品口径**的一部分，不是注释 —— 端上原样展示，不复制第二份。
@@ -166,6 +255,7 @@ export class DeliveryService {
   private readonly logger = new Logger('Delivery');
 
   constructor(
+    private readonly dataSource: DataSource,
     @InjectRepository(DeliveryRecord)
     private readonly deliveryRepo: Repository<DeliveryRecord>,
     @InjectRepository(Order) private readonly orderRepo: Repository<Order>,
@@ -357,16 +447,23 @@ export class DeliveryService {
     // ⚠️ 份数对比必须用**全量**订单聚合（不受 `status` / `buildingGroupId` 筛选影响）——
     //    否则筛了 status 之后「订单份数」也跟着只剩那部分，差异会被算成一个
     //    毫无意义的数（同 §28「出参一份口径、落库另一份口径」的教训）。
-    const [orderQty, groups] = await Promise.all([
+    const [orderQty, groups, orderBreak] = await Promise.all([
       this.aggregateOrderQuantity(date),
       records.length
         ? this.groupRepo.find({ where: { id: In(records.map((r) => r.buildingGroupId)) } })
         : Promise.resolve([] as BuildingGroup[]),
+      // 订单状态分布同样取**全量**（不受筛选影响）—— 理由同上
+      this.aggregateOrderBreakdown(date),
     ]);
     const nameOf = new Map(groups.map((g) => [g.id, g.name ?? null]));
 
     const list = records.map((r) =>
-      this.toRow(r, orderQty.get(r.buildingGroupId) ?? 0, nameOf.get(r.buildingGroupId) ?? null),
+      this.toRow(
+        r,
+        orderQty.get(r.buildingGroupId) ?? 0,
+        nameOf.get(r.buildingGroupId) ?? null,
+        orderBreak.get(r.buildingGroupId) ?? [],
+      ),
     );
 
     return {
@@ -390,7 +487,12 @@ export class DeliveryService {
   }
 
   /** 组装一行为出参（份数差异与人工痕迹在此判定） */
-  private toRow(r: DeliveryRecord, orderQuantity: number, groupName: string | null): DeliveryRow {
+  private toRow(
+    r: DeliveryRecord,
+    orderQuantity: number,
+    groupName: string | null,
+    orderStatusBreakdown: OrderStatusBreakdown = [],
+  ): DeliveryRow {
     const quantityDiff = Number(r.totalQuantity) - orderQuantity;
     return {
       id: r.id,
@@ -411,7 +513,431 @@ export class DeliveryService {
       status: r.status,
       statusText: DELIVERY_STATUS_LABEL[r.status] ?? r.status,
       version: r.version,
+      orderStatusBreakdown,
     };
+  }
+
+  /**
+   * 按楼群聚合「订单状态分布」（M5-8 · 履约链可见性）
+   *
+   * 与 `aggregateOrderQuantity()` 同一份 `WHERE`（排除 `pending_pay` / `cancelled`）——
+   * 两份口径若不一致，就会出现「份数对得上、状态分布加起来对不上」这种
+   * **自己跟自己矛盾**的出参（同 D61「两处各写一遍 SQL」的教训）。
+   * 故这里的分组键多一列 `status`，过滤条件**逐字复用**同一段。
+   */
+  private async aggregateOrderBreakdown(date: string): Promise<Map<number, OrderStatusBreakdown>> {
+    const rows = await this.orderRepo
+      .createQueryBuilder('o')
+      .select('o.building_group_id', 'buildingGroupId')
+      .addSelect('o.status', 'status')
+      .addSelect('COUNT(*)', 'orderCount')
+      .addSelect('SUM(o.quantity)', 'quantity')
+      .where('o.meal_date = :date', { date })
+      .andWhere('o.status NOT IN (:...excluded)', {
+        excluded: [OrderStatus.PENDING_PAY, OrderStatus.CANCELLED],
+      })
+      .groupBy('o.building_group_id')
+      .addGroupBy('o.status')
+      .getRawMany<{
+        buildingGroupId: string | number;
+        status: string;
+        orderCount: string | number;
+        quantity: string | number;
+      }>();
+
+    const out = new Map<number, OrderStatusBreakdown>();
+    for (const r of rows) {
+      const gid = Number(r.buildingGroupId);
+      const list = out.get(gid) ?? [];
+      list.push({
+        status: r.status,
+        statusText: ORDER_STATUS_VIEW[r.status as OrderStatus]?.admin ?? r.status,
+        orderCount: Number(r.orderCount),
+        quantity: Number(r.quantity),
+      });
+      out.set(gid, list);
+    }
+    // 按**主流程进度**排序（与 `STATUS_PROGRESS` 同一顺序），异常态附在末尾 ——
+    // 让「订单走到哪一步了」在列表里是**从上到下**可读的，而不是字典序
+    const rank = [
+      OrderStatus.CUT_OFF,
+      OrderStatus.COOKED,
+      OrderStatus.DELIVERING,
+      OrderStatus.DELIVERED,
+      OrderStatus.COMPLETED,
+      OrderStatus.REFUND_APPLYING,
+      OrderStatus.REFUNDED,
+    ];
+    for (const list of out.values()) {
+      list.sort(
+        (a, b) => rank.indexOf(a.status as OrderStatus) - rank.indexOf(b.status as OrderStatus),
+      );
+    }
+    return out;
+  }
+
+  // =====================================================================
+  // D63：配送单状态推进（履约流转 · M5-8 · 状态机 T8 / T9）
+  // =====================================================================
+
+  /**
+   * 推进配送单状态（D63）并把**订单**一起推到位（状态机 T8 / T9）
+   *
+   * ## 为什么这是 #79 的另一半
+   * `delivery.service` 此前只**读** `cut_off` 订单生成配送单，**从不写 `ab_order.status`**
+   * —— 于是 `cooked` / `delivering` / `delivered` 三个状态全仓零写入点，
+   * 订单支付后永远停在 `cut_off`（详见 `supplier.service.advanceOrdersToCooked` 的注释）。
+   * 本方法是 T8 / T9 的**唯一写入点**：货拉拉发出 → 订单 `delivering`；
+   * 送到楼下 → 订单 `delivered`，下游 T10（团长确认）/ T11（14:00 兜底）**这才可达**。
+   *
+   * ## 四道闸门（顺序不可调换：先判「有没有」，再判「是不是你的版本」，最后判「能不能这么走」）
+   * ① **存在性** → `30017`
+   * ② **乐观锁** → `30016`（`version` 不匹配即拒，附 `current`）
+   * ③ **单向性** → `30018`：只能向前（`pending → called → en_route → arrived`），
+   *    回退 / 跳级 / 原地一律拒，附 `data.allowed`
+   * ④ **CAS 写入** → 前置校验与写入之间仍有窗口，写入时再带一次 `version`，`affected=0` → `30016`
+   *
+   * ## 订单联动是「尽力而为 + 如实报告」，不是「要么全成要么全败」
+   * 物理世界不会因为系统里订单状态不对就不发车 —— 若把「订单必须都在 `cooked`」
+   * 当作推进的前置条件，运营会被**卡在门口**，然后绕过系统直接打电话（系统失去记录）。
+   * 故：能推的推（条件更新 `cooked → delivering`），推不动的**如实计数**在
+   * `orderTransition.remaining` 里，并给一句人能照着排查的 `note`。
+   * ⚠️ 这不是「静默跳过」：数字与话都在出参里，且订单停在 `cut_off` 会在
+   *    T 日 14:00 的 `auto-confirm` 里被计入 `notDelivered`（fail-closed 的告警出口）。
+   *
+   * ## T9 的「取餐通知」为什么不在本方法里发
+   * 状态机 T9 的副作用列写着「订阅消息：取餐通知（团长）」，但**场景 `leader_delivery`
+   * 一期渠道只有微信群**（`message-template.specs.ts` 里 `wiring='pending'`，
+   * 理由是原型原文「初期采用微信群人工通知兜底」）。往 `wechat_group` 场景调
+   * `MessageService.notify()` 会被它自己判为「无程序投递点」而跳过 ——
+   * 加一个必然跳过的调用点，只会让接线状态变成假的 `live`。故此处**不装样子**，
+   * 由运营按场景文案人工发群（P36 页面可复制），并已如实登记在《缺陷与陷阱》。
+   */
+  async advanceStatus(
+    id: number,
+    dto: DeliveryStatusAdvanceDto,
+    operatorId?: number | null,
+  ): Promise<DeliveryAdvanceResult> {
+    // ---- ① 存在性 ----
+    const record = await this.deliveryRepo.findOne({ where: { id } });
+    if (!record) {
+      throw new BizException(ErrorCode.DELIVERY_NOT_FOUND, `配送单 #${id} 不存在`);
+    }
+
+    // ---- ② 乐观锁前置校验 ----
+    if (record.version !== dto.version) {
+      throw new BizException(
+        ErrorCode.DELIVERY_CONFLICT,
+        '这张配送单已被他人修改，请刷新后重试',
+        undefined,
+        { current: { ...this.snapshotOf(record), status: record.status, version: record.version } },
+      );
+    }
+
+    // ---- ③ 单向 **且单步** ----
+    //
+    // ⚠️ `allowed` 只放**紧邻的下一态**，而不是 `slice(fromIdx + 1)` 的全部后续态。
+    //    放走「跳级」的代价不是「少点两次按钮」，而是**静默跳过订单联动**：
+    //    `pending → arrived` 一步到底时，`to === ARRIVED` 只会跑 T9
+    //    （条件更新 `delivering → delivered`），而订单此刻还在 `cooked`
+    //    —— 条件不命中 ⇒ **一单都不会动，且不报任何错**，订单永远停在 `cooked`。
+    //    这正是 #79 的形状（写入点缺失 ⇒ 静默卡死），不能在刚补好它的同一批里重开一次。
+    //    要让系统补记物理上已经发生的过程，正确做法是**逐步补按**（每步各留一条日志、
+    //    各联动一次订单），而不是让一次请求同时代表三件事。
+    const fromIdx = DELIVERY_STATUS_ORDER.indexOf(record.status as DeliveryStatus);
+    const allowed =
+      fromIdx < 0 || fromIdx >= DELIVERY_STATUS_ORDER.length - 1
+        ? []
+        : [DELIVERY_STATUS_ORDER[fromIdx + 1] as string];
+    if (!allowed.includes(dto.to)) {
+      throw new BizException(
+        ErrorCode.DELIVERY_STATUS_ILLEGAL,
+        `配送单当前状态「${DELIVERY_STATUS_LABEL[record.status] ?? record.status}」不能推进到` +
+          `「${DELIVERY_STATUS_LABEL[dto.to] ?? dto.to}」—— 履约流只能向前，且**一次只能一步**` +
+          (allowed.length
+            ? `，当前可推进到：${allowed.map((s) => DELIVERY_STATUS_LABEL[s] ?? s).join('、')}`
+            : '（已是终态）'),
+        undefined,
+        {
+          current: { status: record.status, version: record.version },
+          allowed,
+        },
+      );
+    }
+
+    const at = new Date();
+    const group = await this.groupRepo.findOne({ where: { id: record.buildingGroupId } });
+
+    const outcome = await this.dataSource.transaction(async (m: EntityManager) => {
+      // ---- ④ CAS 推进配送单 ----
+      const upd = await m
+        .createQueryBuilder()
+        .update(DeliveryRecord)
+        .set({
+          status: dto.to,
+          actualAt: dto.to === DeliveryStatus.ARRIVED ? at : record.actualAt,
+          version: record.version + 1,
+          updatedAt: at,
+        })
+        .where('id = :id AND version = :version', { id, version: record.version })
+        .execute();
+      if (!upd.affected) {
+        const fresh = await m.findOne(DeliveryRecord, { where: { id } });
+        throw new BizException(
+          ErrorCode.DELIVERY_CONFLICT,
+          '这张配送单刚刚被他人修改，请刷新后重试',
+          undefined,
+          {
+            current: fresh
+              ? { ...this.snapshotOf(fresh), status: fresh.status, version: fresh.version }
+              : null,
+          },
+        );
+      }
+
+      const logs: QueryDeepPartialEntity<OperationLog>[] = [
+        {
+          adminUserId: operatorId ?? null,
+          module: 'delivery',
+          action: '推进配送状态',
+          targetId: String(id),
+          requestData: {
+            mealDate: record.mealDate,
+            buildingGroupId: record.buildingGroupId,
+            to: dto.to,
+            note: dto.note ?? null,
+          },
+          snapshot: {
+            fromStatus: record.status,
+            toStatus: dto.to,
+            source: 'admin',
+            reason: dto.note ?? '履约流转',
+          },
+        },
+      ];
+
+      // ---- ⑤ 联动订单（T8 / T9）----
+      //
+      // ⚠️ **两段迁移刻意各写一个具名方法**，而不是共用「传 `to` 进去」的通用循环：
+      //    写法上 `set({ status: to })` 更短，但那样两处订单状态写入点在静态扫描下
+      //    都是「动态值 · 判不出来」—— 而门禁 `state:audit` 正是靠**能静态判定**才
+      //    对得上「声明 ↔ 写入点」。把状态写成变量，等于亲手把 #79 逃过全部门禁的
+      //    那个盲区重新打开一次（同批的教训：**不要为了少写几行，把可对账性让掉**）。
+      let advanced = 0;
+      let transition: OrderTransitionHit | null = null;
+      if (dto.to === DeliveryStatus.EN_ROUTE) {
+        transition = await this.advanceGroupOrdersToDelivering(m, record, logs, operatorId);
+      } else if (dto.to === DeliveryStatus.ARRIVED) {
+        transition = await this.advanceGroupOrdersToDelivered(m, record, logs, operatorId);
+      }
+      advanced = transition?.advanced ?? 0;
+      await m.getRepository(OperationLog).insert(logs);
+
+      // 推进后的分布（事务内取，与本次写入同一快照）
+      const remaining = await this.breakdownOf(m, record.mealDate, record.buildingGroupId);
+
+      return { advanced, transition, remaining };
+    });
+
+    this.logger.log(
+      `配送单推进 id=${id}（${record.mealDate} / 楼群 ${record.buildingGroupId}）` +
+        `${record.status} → ${dto.to}` +
+        (outcome.transition
+          ? ` · 联动订单 ${outcome.advanced} 单 ` +
+            `${outcome.transition.from} → ${outcome.transition.to}`
+          : ' · 无订单联动（已叫车阶段不动订单）') +
+        (operatorId ? `（操作人#${operatorId}）` : ''),
+    );
+
+    const fromText = DELIVERY_STATUS_LABEL[record.status] ?? record.status;
+    const toText = DELIVERY_STATUS_LABEL[dto.to] ?? dto.to;
+    const pair = outcome.transition;
+    let transitionNote: string | undefined;
+    if (pair && outcome.advanced === 0) {
+      const stillFrom = outcome.remaining.find((r) => r.status === pair.from);
+      transitionNote = stillFrom
+        ? `该楼群当日仍有 ${stillFrom.orderCount} 单停在「${stillFrom.statusText}」而无法推进 —— ` +
+          '请先确认上游是否完成（出餐确认 / 上一段发车），订单不会替物理流程做假设'
+        : `该楼群当日已没有停在「${ORDER_STATUS_VIEW[pair.from]?.admin ?? pair.from}」的订单（可能已推进过）`;
+    }
+
+    return {
+      id,
+      mealDate: record.mealDate,
+      buildingGroupId: record.buildingGroupId,
+      buildingGroupName: group?.name ?? null,
+      from: record.status,
+      fromText,
+      to: dto.to,
+      toText,
+      version: record.version + 1,
+      actualAt: dto.to === DeliveryStatus.ARRIVED ? toBjIso(at) : toBjIso(record.actualAt),
+      orderTransition: pair
+        ? {
+            from: pair.from,
+            fromText: ORDER_STATUS_VIEW[pair.from]?.admin ?? pair.from,
+            to: pair.to,
+            toText: ORDER_STATUS_VIEW[pair.to]?.admin ?? pair.to,
+            advanced: outcome.advanced,
+            remaining: outcome.remaining,
+            ...(transitionNote ? { note: transitionNote } : {}),
+          }
+        : null,
+      note:
+        (pair
+          ? `本次已联动订单：${ORDER_STATUS_VIEW[pair.from]?.admin ?? pair.from} → ` +
+            `${ORDER_STATUS_VIEW[pair.to]?.admin ?? pair.to}（${outcome.advanced} 单）。`
+          : '「已叫车」只是运力安排，货还在加工场所 —— **订单状态刻意不动**，' +
+            '订单要到「配送中」（货拉拉发出）才推进，这不是漏了联动。') +
+        (dto.to === DeliveryStatus.ARRIVED
+          ? '⭐ 送达通知（场景 `leader_delivery`）一期渠道为微信群，需运营按模板文案人工发群；' +
+            '订阅消息渠道属二期（缺微信模板 ID）。'
+          : ''),
+    };
+  }
+
+  /** 事务内取「某楼群当日订单状态分布」（D63 出参用 · 与 D61 同口径） */
+  private async breakdownOf(
+    m: EntityManager,
+    mealDate: string,
+    buildingGroupId: number,
+  ): Promise<OrderStatusBreakdown> {
+    const rows = await m
+      .createQueryBuilder(Order, 'o')
+      .select('o.status', 'status')
+      .addSelect('COUNT(*)', 'orderCount')
+      .addSelect('SUM(o.quantity)', 'quantity')
+      .where('o.meal_date = :date', { date: mealDate })
+      .andWhere('o.building_group_id = :gid', { gid: buildingGroupId })
+      .andWhere('o.status NOT IN (:...excluded)', {
+        excluded: [OrderStatus.PENDING_PAY, OrderStatus.CANCELLED],
+      })
+      .groupBy('o.status')
+      .getRawMany<{ status: string; orderCount: string | number; quantity: string | number }>();
+
+    const rank = [
+      OrderStatus.CUT_OFF,
+      OrderStatus.COOKED,
+      OrderStatus.DELIVERING,
+      OrderStatus.DELIVERED,
+      OrderStatus.COMPLETED,
+      OrderStatus.REFUND_APPLYING,
+      OrderStatus.REFUNDED,
+    ];
+    return rows
+      .map((r) => ({
+        status: r.status,
+        statusText: ORDER_STATUS_VIEW[r.status as OrderStatus]?.admin ?? r.status,
+        orderCount: Number(r.orderCount),
+        quantity: Number(r.quantity),
+      }))
+      .sort(
+        (a, b) => rank.indexOf(a.status as OrderStatus) - rank.indexOf(b.status as OrderStatus),
+      );
+  }
+
+  /**
+   * 状态机 **T8**：配送单 `en_route`（货拉拉发出）→ 该楼群订单 `cooked → delivering`
+   *
+   * 幂等：逐单条件更新（`WHERE id = ? AND status = 'cooked'`），`affected` 判归属。
+   * 不吃 `delivered` / 更后面的状态（那些已有各自的上游），也不吃 `cut_off`
+   * （出餐确认还没做 —— 那是上游缺失，会被如实计进 `remaining` 而不是被顺手跳过）。
+   */
+  private async advanceGroupOrdersToDelivering(
+    m: EntityManager,
+    record: DeliveryRecord,
+    logs: QueryDeepPartialEntity<OperationLog>[],
+    operatorId: number | null | undefined,
+  ): Promise<OrderTransitionHit> {
+    const orders = await m.find(Order, {
+      where: {
+        mealDate: record.mealDate,
+        buildingGroupId: record.buildingGroupId,
+        status: OrderStatus.COOKED,
+      },
+      order: { id: 'ASC' },
+    });
+
+    let advanced = 0;
+    for (const o of orders) {
+      const u = await m
+        .createQueryBuilder()
+        .update(Order)
+        .set({ status: OrderStatus.DELIVERING, version: () => 'version + 1' })
+        .where('id = :id', { id: o.id })
+        .andWhere('status = :st', { st: OrderStatus.COOKED })
+        .execute();
+      if ((u.affected ?? 0) === 0) continue;
+
+      advanced += 1;
+      // 状态机 §2.1.5：每次迁移落 `ab_operation_log`（事务内，全局拦截器不生效）
+      logs.push({
+        adminUserId: operatorId ?? null,
+        module: 'order',
+        action: '发车推进',
+        targetId: String(o.id),
+        requestData: { orderNo: o.orderNo, mealDate: record.mealDate },
+        snapshot: {
+          fromStatus: OrderStatus.COOKED,
+          toStatus: OrderStatus.DELIVERING,
+          source: 'admin',
+          reason: '运营标记货拉拉发出（状态机 T8）',
+        },
+      });
+    }
+    return { advanced, from: OrderStatus.COOKED, to: OrderStatus.DELIVERING };
+  }
+
+  /**
+   * 状态机 **T9**：配送单 `arrived`（送达办公楼楼下）→ 该楼群订单 `delivering → delivered`
+   *
+   * `delivered` 一到，下游两条路**这才可达**：T10 团长一键分发（L9）、
+   * T11 14:00 自动确认兜底 —— 而它们正是「佣金产生」的两个入口。
+   *
+   * ⚠️ 不动 `completedAt`：那是 T10/T11（确认收货）的落点，不是送达的落点。
+   */
+  private async advanceGroupOrdersToDelivered(
+    m: EntityManager,
+    record: DeliveryRecord,
+    logs: QueryDeepPartialEntity<OperationLog>[],
+    operatorId: number | null | undefined,
+  ): Promise<OrderTransitionHit> {
+    const orders = await m.find(Order, {
+      where: {
+        mealDate: record.mealDate,
+        buildingGroupId: record.buildingGroupId,
+        status: OrderStatus.DELIVERING,
+      },
+      order: { id: 'ASC' },
+    });
+
+    let advanced = 0;
+    for (const o of orders) {
+      const u = await m
+        .createQueryBuilder()
+        .update(Order)
+        .set({ status: OrderStatus.DELIVERED, version: () => 'version + 1' })
+        .where('id = :id', { id: o.id })
+        .andWhere('status = :st', { st: OrderStatus.DELIVERING })
+        .execute();
+      if ((u.affected ?? 0) === 0) continue;
+
+      advanced += 1;
+      logs.push({
+        adminUserId: operatorId ?? null,
+        module: 'order',
+        action: '送达推进',
+        targetId: String(o.id),
+        requestData: { orderNo: o.orderNo, mealDate: record.mealDate },
+        snapshot: {
+          fromStatus: OrderStatus.DELIVERING,
+          toStatus: OrderStatus.DELIVERED,
+          source: 'admin',
+          reason: '运营标记送达办公楼（状态机 T9）',
+        },
+      });
+    }
+    return { advanced, from: OrderStatus.DELIVERING, to: OrderStatus.DELIVERED };
   }
 
   /**

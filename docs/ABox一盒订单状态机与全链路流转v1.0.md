@@ -32,7 +32,7 @@
 | `completed` | 已完成 | 团长确认 / 14:00 自动确认 + 佣金入账 | ✅ |
 | `cancelled` | 已取消 | 截单前取消 / 超时未支付 | ✅ |
 | `refund_applying` | 退款申请中 | 团长代退申请已提交，待平台审批 | — |
-| `refunding` | 退款中 | 审批通过，微信退款处理中 | — |
+| `refunding` | 退款中 | 通道退款处理中（⭐ **保留态**：`ab_refund.status` 用它表达通道进度；**订单本身不进这一态** —— 见 §2.2） | — |
 | `refunded` | 已退款 | 退款到账 + 反向结算完成（佣金冲销 + 余额回退；⚠️ 2026-09-16 自营口径：**不冲减供应商应付**） | ✅ |
 
 ### 1.2 三视角状态映射
@@ -65,14 +65,14 @@
 | T4 | `pending_pay` / `paid` | `cancelled` | 用户 | 自助取消（**仅截单前**） | 若 `paid`：发起原路退款（系统自动）；解冻/退余额 |
 | T5 | `pending_pay` | `cancelled` | 系统 | **T-1 24:00 截单** 时兜底取消 | 同上（批量，`cutoff.task`） |
 | T6 | `paid` | `cut_off` | 系统 | **T-1 24:00** 截单锁定 | 汇总份数 → 推送 4 家供应商备料量；不可逆 |
-| T7 | `cut_off` | `cooked` | 供应商 | 出餐确认（**须 ≤ 09:30**） | 写 `ab_supplier_dish_daily.produced_at`；**订阅消息：出餐提醒** |
-| T8 | `cooked` | `delivering` | 运营/系统 | 货拉拉发出（运营在后台标记，或 `delivery-generate.task` 后由配送单驱动） | 更新 `ab_delivery_record.status='delivering'` |
-| T9 | `delivering` | `delivered` | 运营 | 11:30 送达办公楼 | 写 `ab_delivery_record.arrived_at`；**订阅消息：取餐通知（团长）** |
+| T7 | `cut_off` | `cooked` | 供应商 | 出餐确认（**须 ≤ 09:30**） | 写 `ab_supplier_dish_daily.produced_at`；⭐ **同一事务**把该**加工场所**下当日 `cut_off` 订单推进为 `cooked`（`ab_operation_log` = `出餐推进`）；**订阅消息：出餐提醒** |
+| T8 | `cooked` | `delivering` | 运营 | 货拉拉发出（运营在后台 d63 标记：`en_route`） | 更新 `ab_delivery_record.status='en_route'`；⭐ 该**楼群**当日 `cooked` 订单 → `delivering`（逐单条件更新 + `ab_operation_log` = `发车推进`） |
+| T9 | `delivering` | `delivered` | 运营 | 11:30 送达办公楼（运营在后台 D63 标记：`arrived`） | 写 `ab_delivery_record.actual_at`；⭐ 该楼群当日 `delivering` 订单 → `delivered`（`发车推进`／`送达推进`）；**取餐通知一期走微信群人工发** |
 | T10 | `delivered` | `completed` | 团长 | 手动确认收货并分发（幂等） | 写 `ab_commission`（按团长等级 · **`status='pending'` —— 只计佣、不动余额**） |
 | T11 | `delivered` | `completed` | 系统 | **T 日 14:00** 自动确认兜底（**只转 `delivered`** —— 异常态 fail-closed 原样不动） | 同上（批量，`auto-confirm.task`） |
 | T12 | `cut_off`/`cooked`/`delivering`/`delivered`/`completed` | `refund_applying` | 团长 | **代退申请**（C6 第一段） | 写 `ab_refund`（`status='applying'`）；**不退款、不回退账务**；通知客服 |
-| T13 | `refund_applying` | `refunding` | 运营 | **后台审批通过**（C6 第二段） | 调微信退款 API → 写 `ab_refund.status='refunding'` |
-| T14 | `refunding` | `refunded` | 系统 | 微信退款回调成功 | **反向结算**（见 §5.3）；扣减佣金；**订阅消息：退款结果（必推）** |
+| T13 | `refund_applying` | `refunded` | 运营 | **后台审批通过**（C6 第二段） | ⭐ **订单一步到 `refunded`** + 账务冲销（余额退回 / 佣金反冲）在同一事务内完成；微信退款通道在**事务外**调用 → `ab_refund.status='refunding'` |
+| T14 | —（`ab_refund`） | `refunded` | 系统 | 微信退款回调成功 | 只更新 `ab_refund.status='refunded'` 并收口；**订阅消息：退款结果（必推）**。⚠️ 订单**不在这里改状态**（它在 T13 已到终态）—— 订单若也走一遍 `refunding`，就等于把通道进度重复表达了一次 |
 | T15 | `refund_applying` | （回原状态） | 运营 | **后台驳回** | `ab_refund.status='rejected'`；**订阅消息：驳回原因** |
 | T16 | 任意非终态 | `cancelled` | 运营 | 强制退款（M32-05） | 同上 T4；**必须写 `ab_operation_log`** |
 
@@ -83,6 +83,27 @@
 3. **截单是硬闸**：T6 之后，**任何用户侧写操作**（改数量、改地址、自助取消）一律拒绝（`30003`）。
 4. **幂等要求**：T10 / T11 / T13 / T14 均须幂等——以 `(order_id, action)` 或微信单号做键，重复触发返回首次结果。
 5. **状态变更必须落日志**：每次迁移写 `ab_operation_log`（`target_type='order'`），记录 `from_status → to_status`、操作者、时间、来源（`system` / `user` / `leader` / `admin`）。
+6. ⭐ **声明 ↔ 写入点必须机械对账**（M5-8 新增 · 门禁 `state:audit`）：本表是**声明**，不是守门人
+   （`canTransit()` 全仓只被单测引用，真正写 `ab_order.status` 的地方不经过它）。故
+   `order-state-audit.ts` 每轮机械比对「**本表声明为迁移目标的每个状态** ↔ **生产代码里真的写过的状态**」，
+   并要求：① 声明了却**零写入点** → 阻断（#79 就是这一形态：`cooked`/`delivering`/`delivered`
+   三态全仓零写入点，订单支付后永远停在 `cut_off`，而 **19 道门禁 + 969 条 e2e 全绿**）；
+   ② 写了却没登记 → 阻断；③ 不可达态（无入边且非初始态）必须显式登记为保留态 → 否则阻断。
+
+### 2.2 保留态：`refunding` 为什么留在契约里、而订单永远不会进入它
+
+⭐ M5-8 修正的**第二处口径漂移**：本表原本留着一条 `refund_applying → refunding` 的边，
+而实现从 M4-3 起就不走它了（审批通过时订单**一步到 `refunded`**，通道进度交给 `ab_refund.status`）。
+这条边在此之前躺了**三个批次**：声明表说订单会经过 `refunding`，而实现从没这么做过，
+**两边都不报错**，e2e 与结构门禁全绿 —— 与 #79 同族（同一件事有多份表述，而不被自动化执行的那一份必然是错的）。
+
+处理方式**不是**去实现那条边（那会回退一个已落地的设计决定），而是：
+
+| 动作 | 说明 |
+| --- | --- |
+| 删边 | `ORDER_TRANSITIONS` 去掉 `refund_applying → refunding` |
+| 登记保留态 | `OrderStatus.REFUNDING` 仍留在 11 态契约里，但写入 `ORDER_RESERVED_STATUSES` 显式声明「订单不进」 —— 理由是三视角文案映射（`ORDER_STATUS_VIEW`）、原型页面、后台筛选枚举都还在用它，**删枚举值才是破坏性改动**（属产品契约裁决，不属实现批次） |
+| 门禁兜住 | 规则③要求「无入边 ∧ ≠ 初始态 ∧ ∉ 保留清单」= 0 —— 于是「一个永远进不去的状态」不能再心安理得地留在契约里而**没有任何检查会提它** |
 
 ---
 

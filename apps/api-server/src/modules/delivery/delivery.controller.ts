@@ -1,11 +1,28 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Put, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Put,
+  Query,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
-import { Roles } from '../../common/decorators/auth.decorator';
+import { CurrentAdmin, Roles } from '../../common/decorators/auth.decorator';
+import { Idempotent } from '../../common/decorators/idempotent.decorator';
 import { OperationLog } from '../../common/decorators/operation-log.decorator';
 import { AdminGuard } from '../../common/guards/admin.guard';
+import { IdempotentInterceptor } from '../../common/interceptors/idempotent.interceptor';
 import { DeliveryService } from './delivery.service';
-import { DeliveryListQueryDto, DeliveryPatchDto } from './dto/delivery.dto';
+import {
+  DeliveryListQueryDto,
+  DeliveryPatchDto,
+  DeliveryStatusAdvanceDto,
+} from './dto/delivery.dto';
 
 /**
  * 运营后台 · 配送单（M5-1 · D61 查看 / D62 人工修正）
@@ -31,11 +48,14 @@ import { DeliveryListQueryDto, DeliveryPatchDto } from './dto/delivery.dto';
  * `DeliveryService.aggregateOrderQuantity()` 一份份数口径 —— 不另写第二套，
  * 杜绝「生成的份数」与「页面上显示的应送份数」不一致而**两边都不报错**。
  *
- * ## 为什么只有 GET 与 PUT
+ * ## 为什么只有 GET / PUT / PATCH
  * · 不提供 `POST`（配送单由跑批生成，不手工建 —— 手工建单会绕过
  *   截单定格的份数口径，造出一张与订单脱钩的单）。
  * · 不提供 `DELETE`（删单一会让当日配送链缺一个楼群且**无任何痕迹**；
  *   份数改成 0 才是「这个楼群今天不送」的正确表达）。
+ * · ⭐ **改数字（PUT `:id`）与推进履约（PATCH `:id/status`）刻意分成两个动作**
+ *   —— M5-1 刻意把 `status` 挡在 D62 之外，M5-8 才补上 D63。合成一个端点会让
+ *   「份数 5→3 顺便把状态也推了」变成一条记录两件事，审计上分不清责任。
  */
 @ApiTags('后台·配送单')
 @ApiBearerAuth()
@@ -83,5 +103,42 @@ export class DeliveryController {
   })
   patch(@Param('id', ParseIntPipe) id: number, @Body() dto: DeliveryPatchDto) {
     return this.delivery.patch(id, dto);
+  }
+
+  // ---------------------------------------------------------- D63 状态推进
+
+  @Patch(':id/status')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'delivery-status', required: false })
+  @OperationLog({ module: 'delivery', action: '推进配送状态', targetParam: 'id' })
+  @ApiOperation({
+    summary: 'D63 配送单状态推进（履约流转 · 联动订单状态机 T8 / T9）',
+    description:
+      '配送单是 `pending → called → en_route → arrived` 的**单向**履约流，只能向前推进，' +
+      '**且一次只能一步**（回退 / 跳级 / 原地 → `30018`，出参 `allowed` 给出**唯一**可推进到的状态）。\n\n' +
+      '⚠️ 「一次只能一步」不是为了多收几次点击，而是因为**每一步各自联动订单**：' +
+      '跳级（如 `pending → arrived`）会让 T8 被跳过、只跑 T9，而 T9 的条件更新是' +
+      '`delivering → delivered` —— 订单此刻还在 `cooked`，条件不命中 ⇒ **一单都不会动，' +
+      '且不报任何错**（正是本批要收口的 #79 的形状）。要补记已发生的过程，请逐步补按。\n\n' +
+      '⭐ **推进配送状态会联动订单状态**（这正是此前后端缺失的一环）：\n' +
+      '· `called`（已叫车）→ **订单不动**（货还在加工场所，订单要到「配送中」才该动）；\n' +
+      '· `en_route`（货拉拉发出）→ 该楼群订单 `cooked → delivering`（状态机 T8）；\n' +
+      '· `arrived`（送达楼下）→ 该楼群订单 `delivering → delivered` 并写 `actual_at`（状态机 T9）。\n' +
+      '订单「送达」之后，T10 团长一键分发 / T11 14:00 自动确认兜底**才可达** —— ' +
+      '而佣金正是在那两处产生。此前订单会永远停在 `cut_off`，且**不报任何错**。\n\n' +
+      '`version` 乐观锁与 D62 同机制同错误码（`30016`，附 `current`）。\n' +
+      '`note` 可选（如「堵车晚点 20 分钟」），写入操作日志。\n\n' +
+      '⚠️ **订单联动是「尽力而为 + 如实报告」而非「要么全成要么全败」**：物理上不会因为' +
+      '系统里订单状态不对就不发车，故能推的推、推不动的如实计进 `orderTransition.remaining`' +
+      '（哪个状态还有几单）并给一句可照着排查的 `note` —— **不静默跳过**。\n\n' +
+      '⚠️ T9 的「取餐通知（团长）」一期走**微信群人工发**（场景 `leader_delivery` 的渠道' +
+      '就是微信群，订阅消息渠道属二期）—— 本接口**不假装已推送**，出参 `note` 明确写出。',
+  })
+  advanceStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: DeliveryStatusAdvanceDto,
+    @CurrentAdmin('sub') operatorId: number,
+  ) {
+    return this.delivery.advanceStatus(id, dto, operatorId);
   }
 }

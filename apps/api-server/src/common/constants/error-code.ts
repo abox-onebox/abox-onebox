@@ -140,6 +140,20 @@ export enum ErrorCode {
    * 「查哪张单」这件事不该让运营去猜。
    */
   DELIVERY_NOT_FOUND = 30017,
+  /**
+   * 扩展（M5-8）：配送单状态**不能这样推进**（D63）
+   *
+   * 配送单是 `pending → called → en_route → arrived` 的**单向**履约流，只允许向前。
+   * 回退 / 跳级 / 原地不动一律拒绝，并回带 `data.allowed`（当前状态允许推进到哪几态）
+   * 与 `data.current`（当前值与版本），让端上能直接照着刷新。
+   *
+   * ⚠️ **刻意不复用 `30016`（乐观锁冲突）**：两者形态相似（都是「这次写入没落」），
+   *    但**排查入口完全不同** —— `30016` 说「别人改过了，刷新重提即可」，
+   *    本码说「刷新也没用，你按的是错的按钮」。合成一个码会让运营反复刷新后重试，
+   *    而正确的动作其实是换一个动作或找技术核对。
+   * ⚠️ **也不复用 `30003`（订单状态机拒绝）**：那是订单域的话术，配送单没有「订单状态」。
+   */
+  DELIVERY_STATUS_ILLEGAL = 30018,
 
   /** ---- 4xxxx 支付 / 退款 / 出款 ---- */
   PAY_CREATE_FAILED = 40001,
@@ -320,6 +334,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.ORDER_STATUS_ILLEGAL]: '当前订单状态不支持该操作',
   [ErrorCode.DUPLICATE_ORDER]: '请勿重复下单',
   [ErrorCode.MEAL_NOT_PUBLISHED]: '该办公楼今日未开团',
+  [ErrorCode.DELIVERY_STATUS_ILLEGAL]: '配送单当前状态不支持该推进（履约流只能向前）',
   [ErrorCode.BALANCE_AMOUNT_INVALID]: '余额抵扣金额不合法',
   [ErrorCode.LEADER_NOT_FOUND]: '团长不存在或已停用',
   [ErrorCode.MEAL_NOT_FOUND]: '套餐不存在',

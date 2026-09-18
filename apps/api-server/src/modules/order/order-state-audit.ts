@@ -14,11 +14,17 @@
  * 这正是本项目反复出现的同一族：**「多处表述 + 没有机械对账」**（#15 / #67 / #76），
  * 只不过 #79 的形态是「**根本没写**」而不是「写错了」—— 连一条报错都不会有。
  *
- * ## 它做哪两件事（都是**状态级**，不是**边级** —— 如实标注边界）
+ * ## 它做哪三件事（都是**状态级**，不是**边级** —— 如实标注边界）
  *   ① **declared ⊆ written**：状态机里作为**迁移目标**出现过的每个状态，
  *      必须在生产代码里至少有一个**写入点**。缺 → FAIL（`#79` 就是这一条第一次生效时的形态）。
  *   ② **written ⊆ declared**：生产代码里写过的状态（含建单初始态）必须都在状态机里登记过。
  *      出现没登记的字面量 → FAIL（防 #67 那类「跨端字面量写错、没人报错」）。
+ *   ③ **不可达态归零**（M5-8 新增）：一个**无入边**又不是初始态的状态永远进不去。
+ *      它接的是规则 ① 的**下一手**：规则 ① 发现「声明了目标却零写入点」后允许登记豁免
+ *      「先记着」，但一旦查明是**声明本身错了**（那条边不成立）而删掉它，
+ *      被删的状态就变成无人过问的孤儿 —— 豁免表对「已经不是目标」的状态一无所知。
+ *      故此处要求「保留在契约里但订单不进」的状态必须写进 `ORDER_RESERVED_STATUSES`。
+ *      （M5-8 修掉的 `→ refunding` 正是这个形态：它躺了三个批次，而 e2e 与结构门禁全绿。）
  *
  * ⚠️ **本门禁不验证「边」**：它证明不了 `cut_off → cooked` 这条**迁移**是合法的，
  *    只证明 `cooked` 这个**状态**有人写。边级校验需要把写入语句与它的 `WHERE status = ?`
@@ -32,16 +38,19 @@
  * 与 `route-audit` 用 `Reflect.getMetadata` 读装饰器元数据同一思路。
  *
  * ## 自证能力（每次运行必跑，不通过则脚本自身失败）
- * 把判定逻辑抽成纯函数 `judge(targets, exempt)`，每轮用**人为构造的三份输入**跑它：
+ * 把判定逻辑抽成纯函数，每轮用**人为构造的输入**跑它：
  *   ① 从 `targets` 里删掉一个真实存在的目标 → **必须报出该状态**（证明 ① 不是恒真）
  *   ② 往 `targets` 里塞一个状态机里没有的状态 → **必须报出该状态**（证明 ② 不是恒真）
  *   ③ 给 `exempt` 塞一个**已经写入了的**状态 → **必须报「豁免已过期」**（证明豁免不会腐烂）
+ *   ④ 喂 `judgeReachable()` 一张**人造迁移表**（含两个无入边的非法态）→ **必须两个都报出**，
+ *      且把其中一个加进保留清单后**必须只剩另一个**（证明 ③ 真的在判图结构，不是恒绿）
  * 任一项报不出来 → 脚本失败。**「恒绿的检查比没有检查更糟」**。
  *
- * ## 豁免表是**会自收紧**的
+ * ## 豁免表是**会自收紧**的（M5-8 后为空）
  * 未实装的目标状态写在 `UNIMPLEMENTED_TARGETS` 里（每条带理由 + 账本引用），
  * 于是「能力没做」这件事**在 CI 输出里是可见的**，而不是一个看不见的洞；
  * 而一旦有人把它实现了，第 ③ 项自证会立刻要求**删掉豁免** —— 豁免只能如实存在，不能腐烂。
+ * ⭐ M5-8 补实现履约链后，该表**已清空**：声明的迁移目标与生产写入点完全对齐。
  *
  * 运行：`gate.mjs state:audit`（或 `gate.mjs all` 的一部分）
  */
@@ -50,7 +59,11 @@ import * as path from 'path';
 
 import { OrderStatus } from '@abox/shared-types';
 
-import { ORDER_TRANSITIONS } from './order-state-machine';
+import {
+  ORDER_INITIAL_STATUS,
+  ORDER_RESERVED_STATUSES,
+  ORDER_TRANSITIONS,
+} from './order-state-machine';
 
 // ---------------------------------------------------------------------------
 // 声明侧（源 A）
@@ -74,22 +87,20 @@ const ENUM_VALUES = new Set(Object.values(OrderStatus as Record<string, string>)
 /**
  * ⚠️ **已声明为迁移目标、但全仓零写入点**的状态（= 该能力未实装）
  *
- * 这不是「允许」，而是**如实登记**：报告 §三.1 给的三个处置里选的是第 ③ 条
- * （「维持现状但如实登记，并在测试清单里写明相关测试项跳过」），因为
- * **补实现属产品范围裁决**，不该由一次静态审计单方面改掉业务链路。
+ * ## 本表现在是**空的**（M5-8 · 2026-09-18）
+ * 上一批（M5-7）建本门禁时，这里有 4 条：
+ *   · `cooked` / `delivering` / `delivered` —— 履约链 T7–T9 未实装（#79）
+ *   · `refunding` —— 声明表留着一条实现从不走的边（口径漂移）
+ * 用户裁定「**补实现**」后，前三条已由 `SupplierService.cookConfirm`（T7）与
+ * `DeliveryService.advanceStatus`（T8/T9）补上写入点，第四条**从声明表里删掉了
+ * 那条不可达的边**（而不是去实现它 —— M4-3 已把通道进度交给 `ab_refund.status`，
+ * 让订单再走一遍 `refunding` 是回退一个已落地的设计决定）。
  *
- * 本表的纪律：**每一条都必须带理由与账本引用**；一旦有人把它实现了，
- * 自证第 ③ 项会要求立刻删除本条 —— 不允许它悄悄变成历史包袱。
+ * ⭐ **表空着本身就是一条要被守住的结论**：一旦有人把某条豁免写回来，
+ *    就意味着某处又出现了「声明了却没人写」的状态；而自证第 ③ 项会保证
+ *    任何**被动实现**的豁免都被立刻要求删除 —— 这张表只能如实存在，不能腐烂。
  */
-const UNIMPLEMENTED_TARGETS: Record<string, string> = {
-  [OrderStatus.COOKED]:
-    '履约链 T7（供应商出餐确认推进订单）未实装 —— 见《缺陷与陷阱》#79 / 整体审查报告 §三.1',
-  [OrderStatus.DELIVERING]: '履约链 T8（配送单驱动订单）未实装 —— 见 #79',
-  [OrderStatus.DELIVERED]: '履约链 T9（运营标记送达）未实装 —— 见 #79',
-  [OrderStatus.REFUNDING]:
-    'M4-3 起**订单**不再进入 refunding（通道进度改由 `ab_refund.status` 表达，订单审批通过即 `refunded`）' +
-    '—— `ORDER_TRANSITIONS[refund_applying]` 仍留着这条边未同步，属**声明表 ↔ 实现的口径漂移**，待产品/契约侧裁决',
-};
+const UNIMPLEMENTED_TARGETS: Record<string, string> = {};
 
 // ---------------------------------------------------------------------------
 // 写入侧（源 B）—— 机械提取
@@ -320,6 +331,41 @@ function judge(
   return out;
 }
 
+/**
+ * ④ **不可达态**：本表里「没有任何入边、又不是初始态、也不在保留清单里」的源状态
+ *
+ * ## 它和规则 ① 不是重复，而是**同一处漂移的两个阶段**（M5-8 新增）
+ * 以 M5-8 修掉的那处 `refund_applying → refunding` 为例：
+ *
+ * | 阶段 | 形态 | 谁能抓 | 出口 |
+ * | --- | --- | --- | --- |
+ * | ① 未实装 | `refunding` 是**迁移目标**、但零写入点 | 规则 ①（FAIL） | `UNIMPLEMENTED_TARGETS`「先记下来」 |
+ * | ② 定位漂移 | 查明「这条边本身不成立」→ **删边** | — | 删完就没人再管它了 ⚠️ |
+ * | ③ 留下孤儿 | `refunding` 从此**无入边** ⇒ 永远进不去 | 规则 ④（FAIL） | 必须显式回答「保留态 or 残骸」 |
+ *
+ * ⭐ 关键在于**豁免表在 ② 之后就失去作用了**：它只回答「这个**目标**实现了没有」，
+ *    而删边之后 `refunding` 已经不是任何人的目标 —— 豁免表对它一无所知，
+ *    于是「一个永远进不去的状态」可以心安理得地留在契约里，**没有任何一道检查会提它**。
+ *    规则 ④ 补的就是这一格：无入边 ∧ ≠ 初始态 ⇒ 除了「显式登记为保留态」，没有第三种解释。
+ *
+ * ⚠️ 边界（如实标注）：这是**图结构**级的判定，不是**边级**的语义校验 ——
+ *    它证明不了 `cut_off → cooked` 这条边「业务上正确」，只证明每条边的两端都活着。
+ *
+ * ⭐ 写成**纯函数**（而非散在 `main()` 里的三行）是为了让它**可被自证** ——
+ *    见自证第 ④ 项：喂人造迁移表，必须报出人造的不可达态。
+ */
+export function judgeReachable(
+  transitions: Record<string, string[]>,
+  initial: string,
+  reserved: string[],
+): string[] {
+  const incoming = new Set<string>();
+  for (const tos of Object.values(transitions)) for (const t of tos) incoming.add(t);
+  return Object.keys(transitions).filter(
+    (s) => !incoming.has(s) && s !== initial && !reserved.includes(s),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
@@ -431,6 +477,39 @@ function main(): void {
       selfProof.push('自证③失败：给已写入的状态加豁免后未报出 exemption-stale');
     }
   }
+  {
+    // ④ 人造迁移表：`a` 是初始态、`b` 有入边（`a → b`）合法；`c` / `d` 都无入边 →
+    //    必须报出 c、d；再把 `c` 加进保留清单 → 只剩 `d`。两问都过，
+    //    才证明这条规则真的在判**图结构**（且「保留清单」确实能放行被点名的状态）。
+    //    ⚠️ 首版把 `b`（有入边）当成期望的不可达态 —— 自证当场报「实得 c / c」，
+    //       这正是自证的价值：**恒绿的自证等于没有自证**。
+    const fake: Record<string, string[]> = { a: ['b'], b: [], c: [], d: [] };
+    const hit = judgeReachable(fake, 'a', []).sort();
+    const hit2 = judgeReachable(fake, 'a', ['c']);
+    if (hit.join(',') !== 'c,d' || hit2.join(',') !== 'd') {
+      selfProof.push(
+        `自证④失败：不可达态判定不工作（人造表应报出 c,d 与「保留 c 后」的 d，实得 ${hit.join(',') || '空'} / ${hit2.join(',') || '空'}）`,
+      );
+    }
+  }
+
+  // ---- 规则 ④ 的真实输入（纯声明侧，与扫描结果无关）----
+  const unreachable = judgeReachable(
+    ORDER_TRANSITIONS,
+    ORDER_INITIAL_STATUS,
+    ORDER_RESERVED_STATUSES,
+  );
+  for (const s of unreachable) {
+    findings.push({
+      level: 'FAIL',
+      rule: 'declared-unreachable',
+      detail:
+        `状态机里的 \`${s}\` **没有任何入边**、也不是初始态（\`${ORDER_INITIAL_STATUS}\`）—— ` +
+        `它永远进不去，所以「声明表里有它」这件事本身就是一处漂移：` +
+        `要么实现里真的有一条迁移被删了（那声明表该跟着删），要么这里写了一个谁都不去的残骸。` +
+        `确属「保留在契约里、但订单不进」的状态，请加进 \`ORDER_RESERVED_STATUSES\` 并写明理由`,
+    });
+  }
 
   for (const f of findings) {
     console.log(`  ${f.level === 'FAIL' ? '✘' : '△'} [${f.rule}] ${f.detail}`);
@@ -455,6 +534,16 @@ function main(): void {
     console.log(
       '    ⚠️ 这一份就是「人工测试可以跳过哪些项」的依据；实现任意一条后，本门禁会要求同步删除豁免。',
     );
+  } else {
+    console.log(
+      '\n✔ 豁免表为空：**声明的迁移目标和生产写入点已完全对齐**（M5-8 前这里有 4 条，见本文件注释）。',
+    );
+    if (ORDER_RESERVED_STATUSES.length) {
+      console.log(
+        `    · 保留态（在契约里、订单不进 · 显式登记 ${ORDER_RESERVED_STATUSES.length} 个）：` +
+          ORDER_RESERVED_STATUSES.join('、'),
+      );
+    }
   }
 
   if (selfProof.length) {
@@ -471,8 +560,8 @@ function main(): void {
   }
 
   console.log(
-    `\n✔ 状态机写入对账通过：声明的迁移目标全部有写入点（已豁免 ${Object.keys(UNIMPLEMENTED_TARGETS).length} 项未实装）· ` +
-      `写入的状态全部在状态机内 · 自证 3/3`,
+    `\n✔ 状态机写入对账通过：声明的迁移目标全部有写入点（豁免 ${Object.keys(UNIMPLEMENTED_TARGETS).length} 项）· ` +
+      `写入的状态全部在状态机内 · 无未登记的不可达态 · 自证 4/4`,
   );
 }
 

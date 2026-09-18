@@ -12131,6 +12131,470 @@ async function main() {
   }
 
   // ==========================================================================
+  // §35 M5-8 履约全链路（T7 出餐 / T8 发车 / T9 送达 —— 缺陷 #79 的「补实现」验收）
+  //
+  // ## 为什么必须有这一节（它不是「补几条断言」，而是补一个**盲区**）
+  // #79 的形态是 `ab_order` 的 `cooked` / `delivering` / `delivered` **三个状态全仓
+  // 零写入点**：订单支付后永远停在 `cut_off`，团长「确认取餐」永远返回零值（**且不报错**），
+  // **佣金永不产生**，自动确认跑批每天把当天全部订单报成「履约异常」。
+  // 而当时 **19 道门禁 + 969 条 e2e 全绿**。为什么一条都没红：
+  //   · 没有任何门禁检查「状态机声明了哪些状态 ↔ 生产代码真的写过哪些状态」；
+  //   · e2e 夹具**直接 `UPDATE ab_order SET status='delivered'`** 造数据
+  //     （§29 的 4.4 计佣正是这么造的）→ 测试永远从链路**中间**开始，
+  //     上游那次状态推进**有没有实现，它看不见**。
+  // 故 #79 的处置意见里写了一条硬约束，本节即它的落地：
+  //   ⭐ **凡是用「直插某状态」造数据的套件，都必须额外有一条走完整链路的用例。**
+  // 本节就是那一条 —— 除了 D 步那一处「其余三家供应商已送达」的夹具
+  // （那三家在种子里没有账号，只能这么摆；§20 G 步同一手法），
+  // **订单的每一次状态变化都来自真实 HTTP 调用**：
+  //   U6 下单 → mock 支付 → 截单补跑 → 配送单生成 → 供应商出餐确认（T7）
+  //     → D63 已叫车（**刻意不联动**）→ D63 配送中（T8）→ D63 已送达（T9）
+  //     → 4.4 自动确认（T11）→ 4.5 佣金入账
+  //
+  // ## 三个隔离设计（否则断言会被别的章节污染）
+  //   ① **专用用户**：`ab_user` 直插 + `building_id` 指向目标楼（§28/§29 同款）；
+  //   ② **专用团长**（同楼 · 正式 9%）—— §29 同款理由：借既有团长会让
+  //      「余额正好 +¥4.64」退化成「至少 +¥4.64」，一条硬断言变成抛硬币；
+  //   ③ **楼群按「当日没有会被截单/履约牵连的订单」挑选**（见 `base35` 的 SQL）。
+  //      ⚠️ 隔离日在这里**不可用**：U6 只能给「明日」下单（`isOrderable`），
+  //      故出餐日**只能是 TMR**；隔离只能落在「用户 / 团长 / 楼群」上。
+  //
+  // ## 本节钉死的八条不变量
+  //   ① ⭐ **T7**：出餐确认 →（事务内）该加工场所下 `cut_off` 订单 → `cooked`
+  //   ② ⭐ **T8**：配送单 `en_route` → 该楼群 `cooked` → `delivering`
+  //   ③ ⭐ **T9**：配送单 `arrived` → `delivering` → `delivered` + `actual_at`
+  //   ④ ⭐ `called` **不动订单**（货还在加工场所）—— 出参 `orderTransition=null` 且有 `note` 说明
+  //   ⑤ ⭐ D63 四道闸门：`30017` 不存在 / `30016` 版本不符（附 `current`）/
+  //      `30018` 回退与原地（附 `allowed`）/ 双主体 `10003`
+  //   ⑥ ⭐ D61 每行附**订单状态分布**，且其份数之和 == 该行 `orderQuantity`（两个口径同源）
+  //   ⑦ ⭐⭐ **下游这才可达**：4.4 把本单从「履约异常」名单里拿出来（#79 的可见症状
+  //      正是「跑批每天报履约异常」）—— 这是「上游写点补齐了」的**因果证据**
+  //   ⑧ ⭐⭐ **佣金真的产生**：`pending` → 入账 `settled`，团长余额与累计佣金同步增加
+  // ==========================================================================
+  {
+    log('\n§35 M5-8 履约全链路（T7 出餐 / T8 发车 / T9 送达 · 缺陷 #79 补实现）');
+
+    const SCH35 = '/admin/schedule';
+    const P35 = `E2E35${stamp}`;
+    const TMR35 = addDaysStr(bjToday(), 1);
+    const AT35 = `${bjToday()} 02:00:00.000`;
+    const QTY35 = 2;
+    /** round2(25.80 × 2 × 9%) = 4.64 → 464 分 */
+    const FEN35 = 464;
+
+    // 挑一个**当日不会被别的章节牵连**的楼群：active + 有加工场所 + 当日没有
+    // 会被截单或履约推进动到的订单（`refunded` / `cancelled` 这类终态不算牵连）。
+    // ⚠️ 这不是「随手挑一个」—— 挑错的后果是「advanced 恰好等于 1」变成「通常等于 1」，
+    //    而那种「多数时候绿」的断言在真出问题时**会假装通过**。
+    const base35 = readDb(
+      `SELECT a.id AS aid, a.building_group_id AS gid, a.set_meal_id AS smid,
+              a.distribution_center_id AS dcid, b.id AS bid
+         FROM ab_meal_assignment a
+         JOIN ab_building b ON b.building_group_id = a.building_group_id
+        WHERE a.meal_date = ? AND a.status = 'active' AND a.distribution_center_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM ab_set_meal_item i
+                       WHERE i.set_meal_id = a.set_meal_id AND i.supplier_id = 1)
+          AND NOT EXISTS (SELECT 1 FROM ab_order o
+                           WHERE o.meal_date = a.meal_date
+                             AND o.building_group_id = a.building_group_id
+                             AND o.status IN ('pending_pay','paid','cut_off','cooked','delivering','delivered'))
+        ORDER BY a.id LIMIT 1`,
+      [TMR35],
+    );
+    assert(
+      !!base35,
+      '§35 前置：存在一个「当日 active · 有加工场所 · 当日没有会被截单/履约牵连的订单」的楼群（本节的隔离靶子）',
+      `gid=${Number(base35?.gid)} dc=${Number(base35?.dcid)} bid=${Number(base35?.bid)}`,
+    );
+
+    if (base35) {
+      const G35 = Number(base35.gid);
+      const B35 = Number(base35.bid);
+      const DC35 = Number(base35.dcid);
+
+      // ---- 专用用户（买方）与专用团长（同楼）--------------------------------
+      const buyCode35 = `${P35}b`;
+      writeDb(
+        'INSERT INTO ab_user (openid, nickname, gender, status, version, created_at, updated_at) VALUES (?, ?, 0, 1, 0, ?, ?)',
+        [`mock_openid_${buyCode35}`, `${P35}履约用户`, AT35, AT35],
+      );
+      const buyId35 = Number(
+        readDb('SELECT id FROM ab_user WHERE openid = ?', [`mock_openid_${buyCode35}`])?.id ?? 0,
+      );
+      writeDb('UPDATE ab_user SET building_id = ? WHERE id = ?', [B35, buyId35]);
+
+      const ldCode35 = `${P35}l`;
+      writeDb(
+        'INSERT INTO ab_user (openid, nickname, gender, status, version, created_at, updated_at) VALUES (?, ?, 0, 1, 0, ?, ?)',
+        [`mock_openid_${ldCode35}`, `${P35}履约团长`, AT35, AT35],
+      );
+      const ldUid35 = Number(
+        readDb('SELECT id FROM ab_user WHERE openid = ?', [`mock_openid_${ldCode35}`])?.id ?? 0,
+      );
+      writeDb('UPDATE ab_user SET building_id = ? WHERE id = ?', [B35, ldUid35]);
+      writeDb(
+        'INSERT INTO ab_team_leader (user_id, building_id, phone, real_name, level, commission_rate, status, total_orders, total_commission, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0.00, 0, ?, ?)',
+        [ldUid35, B35, '1380013****', `${P35}履约团长`, 'formal', '0.0900', AT35, AT35],
+      );
+      const L35 = Number(
+        readDb('SELECT id FROM ab_team_leader WHERE user_id = ?', [ldUid35])?.id ?? 0,
+      );
+      // 团长余额账户：`creditCommissions` 在**没有账户行时只写流水、不动余额**
+      // （见其 `if (account)` 分支）—— 少了这一行，「余额 +4.64」会**看着像通过**。
+      writeDb(
+        "INSERT INTO ab_balance (user_id, balance, frozen, total_in, total_out, version, created_at, updated_at) VALUES (?, '0.00', '0.00', '0.00', '0.00', 0, ?, ?)",
+        [ldUid35, AT35, AT35],
+      );
+
+      const buyer35 = await userLogin(`dev:${buyCode35}`);
+      assert(
+        !!buyer35.token && buyId35 > 0 && L35 > 0,
+        '§35 夹具：专用买方（楼 ' + B35 + ' · 楼群 ' + G35 + '）与专用团长（正式 9%）就位',
+        `buyer=${buyId35} leader=${L35} uid=${ldUid35}`,
+      );
+
+      // ------------------------------------------------------ A. T1/T3 下单 + 支付
+      const ord35 = await call('POST', '/orders', {
+        token: buyer35.token,
+        idem: `${P35}-create`,
+        body: { mealDate: TMR35, quantity: QTY35, leaderCode: String(L35) },
+      });
+      const no35 = ord35.body?.data?.orderNo;
+      const row35new = readDb(
+        'SELECT id, status, team_leader_id, building_group_id, assignment_id, quantity, total_amount FROM ab_order WHERE order_no = ?',
+        [no35],
+      );
+      assert(
+        ord35.body?.code === 0 &&
+          !!no35 &&
+          row35new?.status === 'pending_pay' &&
+          Number(row35new?.team_leader_id) === L35 &&
+          Number(row35new?.building_group_id) === G35,
+        '§35 起点 · U6 下单（真实接口）→ `pending_pay`，归属本节的专用团长与楼群',
+        `orderNo=${no35} code=${ord35.body?.code} status=${row35new?.status} leader=${row35new?.team_leader_id}`,
+      );
+      const oid35 = Number(row35new?.id ?? 0);
+
+      const pay35 = await call('POST', '/pay/mock/paid', { body: { orderNo: no35 } });
+      const row35pay = await waitDb(
+        'SELECT status FROM ab_order WHERE order_no = ?',
+        [no35],
+        (r) => r.status === 'paid',
+      );
+      assert(
+        pay35.body?.code === 0 && row35pay?.status === 'paid',
+        '§35 T3 · mock 支付回调落地 → `paid`（异步回调，故用 `waitDb` 等而非单次读库）',
+        `code=${pay35.body?.code} status=${row35pay?.status}`,
+      );
+
+      // ------------------------------------------------------ B. 截单（4.2）
+      const cut35 = await call('POST', `${SCH35}/cutoff/run`, {
+        token: adminToken,
+        body: { date: TMR35 },
+      });
+      const row35cut = readDb('SELECT status FROM ab_order WHERE order_no = ?', [no35]);
+      assert(
+        cut35.body?.code === 0 && row35cut?.status === 'cut_off',
+        '§35 T4 · 截单补跑（同一执行口）→ 本单 `paid → cut_off`（**不可逆**，此后订单才可能被上游推进）',
+        `code=${cut35.body?.code} status=${row35cut?.status}`,
+      );
+
+      // ------------------------------------------------------ C. 配送单生成（4.3）
+      const dg35 = await call('POST', `${SCH35}/delivery-generate/run`, {
+        token: adminToken,
+        body: { date: TMR35 },
+      });
+      const drec35 = readDb(
+        'SELECT id, status, version, total_quantity FROM ab_delivery_record WHERE meal_date = ? AND building_group_id = ?',
+        [TMR35, G35],
+      );
+      assert(
+        dg35.body?.code === 0 && !!drec35 && drec35.status === 'pending' && Number(drec35.version) === 0,
+        '§35 T5 · 配送单生成 → 本楼群 `pending` / `version=0`（**必须在出餐确认之前**：`generateByDate` 只扫 `cut_off` 订单定楼群，先出餐就会漏掉本楼群）',
+        `code=${dg35.body?.code} id=${Number(drec35?.id)} status=${drec35?.status} v=${drec35?.version}`,
+      );
+
+      // ------------------------------------------------------ D. T7 出餐确认 → cooked
+      const sup35 = await adminLogin('sanweiwu', 'supplier123');
+      // 先触发**生产计划全量派生**（幂等）：其余三家在种子里没有账号，
+      // 它们的分中心明细只能靠这条派生路径生成（§20 C 步同一手法）。
+      await call('GET', `/admin/packing-tasks?date=${TMR35}`, { token: adminToken });
+      const swRow35 = readDb(
+        'SELECT dish_id AS did FROM ab_supplier_dish_center_daily WHERE produce_date = ? AND distribution_center_id = ? AND supplier_id = 1 AND plan_quantity > 0 ORDER BY id LIMIT 1',
+        [TMR35, DC35],
+      );
+      assert(
+        !!swRow35 && !!sup35.token,
+        '§35 前置：三味屋在目标加工场所当日有生产计划行（否则「确认」这一步无从谈起）',
+        `dish=${Number(swRow35?.did)} dc=${DC35} sup=${!!sup35.token}`,
+      );
+
+      if (swRow35) {
+        // 夹具：其余三家「已送达」。**只摆「上游已完成」这个前提**，
+        // 不碰任何订单状态 —— 订单的推进必须由下一行的接口调用**因果地**产生。
+        const others35 = writeDb(
+          "UPDATE ab_supplier_dish_center_daily SET status = 'confirmed', actual_quantity = plan_quantity, confirmed_at = datetime('now') WHERE produce_date = ? AND distribution_center_id = ? AND supplier_id <> 1",
+          [TMR35, DC35],
+        );
+        const row35pre = readDb('SELECT status FROM ab_order WHERE order_no = ?', [no35]);
+        assert(
+          row35pre?.status === 'cut_off',
+          '⭐ §35 **因果对照前置**：其余三家已送达（夹具）+ 三味屋**尚未确认** → 订单仍停在 `cut_off`。' +
+            '不先证这一步，后面「调用后变 cooked」就无法排除「它早就被别的东西改过」',
+          `others=${others35} status=${row35pre?.status}`,
+        );
+
+        const cf35 = await call('POST', '/supplier/meal/cook-confirm', {
+          token: sup35.token,
+          body: { date: TMR35, items: [{ dishId: Number(swRow35.did), distributionCenterId: DC35 }] },
+        });
+        const adv35 = cf35.body?.data?.orderAdvance;
+        const row35cook = readDb('SELECT status, version FROM ab_order WHERE order_no = ?', [no35]);
+        assert(
+          cf35.body?.code === 0 && (adv35?.cooked ?? 0) >= 1,
+          '⭐⭐ §35 **T7**：供应商出餐确认（真实接口）→ 该加工场所下的 `cut_off` 订单被推进为 `cooked`。' +
+            '出参把这件事**明说**在 `orderAdvance` 里 —— #79 之所以能隐身，正是因为这条副作用**过去完全不存在、也不出现在任何出参里**',
+          `code=${cf35.body?.code} cooked=${adv35?.cooked} readyCenters=${JSON.stringify(adv35?.readyCenters ?? [])} stillCutOff=${adv35?.stillCutOff}`,
+        );
+        assert(
+          row35cook?.status === 'cooked',
+          '⭐⭐ §35 T7 落库：本单 `cut_off → cooked`（**这是 #79 修复的核心证据** —— 此前该状态全仓零写入点，订单会永远停在 `cut_off`）',
+          `status=${row35cook?.status} v=${row35cook?.version}`,
+        );
+        const cookLog35 = readDb(
+          "SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = 'order' AND action = '出餐推进' AND target_id = ?",
+          [String(oid35)],
+        );
+        assert(
+          Number(cookLog35?.c ?? 0) === 1,
+          '§35 T7 留痕：状态机 §2.1.5「每次迁移落 `ab_operation_log`」在**事务内**也必须成立（全局拦截器在事务里不生效，故是显式写入）',
+          `log=${Number(cookLog35?.c)}`,
+        );
+
+        // ------------------------------------------------ E. D61 履约可见性（新增字段）
+        const list35a = await call('GET', `/admin/deliveries?date=${TMR35}`, { token: adminToken });
+        const row35a = (list35a.body?.data?.list ?? []).find(
+          (r) => Number(r.buildingGroupId) === G35,
+        );
+        const bd35 = row35a?.orderStatusBreakdown ?? [];
+        assert(
+          list35a.body?.code === 0 &&
+            !!row35a &&
+            bd35.length > 0 &&
+            bd35.some((b) => b.status === 'cooked') &&
+            bd35.reduce((s, b) => s + Number(b.quantity), 0) === Number(row35a?.orderQuantity),
+          '⭐ §35 D61 每行附**当日订单状态分布**（M5-8 新增的履约可见性），且其份数之和 == 该行 `orderQuantity` —— ' +
+            '两个口径若各写一遍 SQL，就会出现「份数对得上、分布加起来对不上」的**自相矛盾出参**（D61 份数口径的教训）',
+          `bd=${JSON.stringify(bd35.map((b) => `${b.status}:${b.orderCount}/${b.quantity}`))} orderQty=${row35a?.orderQuantity}`,
+        );
+
+        // ------------------------------------------------------ F. D63 T8 / T9
+        const cal35 = await call('PATCH', `/admin/deliveries/${row35a.id}/status`, {
+          token: adminToken,
+          body: { to: 'called', version: 0, note: 'e2e 已叫车' },
+        });
+        const row35cal = readDb('SELECT status FROM ab_order WHERE order_no = ?', [no35]);
+        assert(
+          cal35.body?.code === 0 &&
+            cal35.body?.data?.to === 'called' &&
+            cal35.body?.data?.orderTransition === null &&
+            row35cal?.status === 'cooked',
+          '⭐⭐ §35 「已叫车」**刻意不动订单**：运力安排了但货还在加工场所 —— 订单要到「配送中」才该动。' +
+            '出参 `orderTransition=null` 且 `note` 写明「这不是漏了联动」，避免运营把它读成 bug',
+          `code=${cal35.body?.code} to=${cal35.body?.data?.to} order=${row35cal?.status}`,
+        );
+
+        // ⭐ 跳级必须在**最危险的那个位置**上验：`called` 时直接跳 `arrived`，
+        //    正是「跳过 T8」的那一步（订单还在 `cooked`，而 T9 只改 `delivering` ⇒ 一单不动、不报错）。
+        const jump35 = await call('PATCH', `/admin/deliveries/${row35a.id}/status`, {
+          token: adminToken,
+          body: { to: 'arrived', version: 1, note: 'e2e 试图跳级' },
+        });
+        assert(
+          jump35.body?.code === 30018 &&
+            JSON.stringify(jump35.body?.data?.allowed) === JSON.stringify(['en_route']),
+          '⭐⭐ §35 D63 闸门 ③ **跳级**（called → arrived）→ `30018`，且 `allowed` **恰好只有紧邻下一态**（`["en_route"]`）' +
+            '—— 这一步若放行，T8 被跳过 ⇒ 订单还在 `cooked` 而 T9 只条件更新 `delivering` ⇒ **一单都不动且不报错**（正是 #79 的形状，不能在刚补好它的同一批里重开）',
+          `code=${jump35.body?.code} allowed=${JSON.stringify(jump35.body?.data?.allowed)}`,
+        );
+
+        const env35 = await call('PATCH', `/admin/deliveries/${row35a.id}/status`, {
+          token: adminToken,
+          body: { to: 'en_route', version: 1, note: 'e2e 货拉拉发出' },
+        });
+        const t35env = env35.body?.data?.orderTransition;
+        const row35env = readDb('SELECT status FROM ab_order WHERE order_no = ?', [no35]);
+        assert(
+          env35.body?.code === 0 &&
+            t35env?.from === 'cooked' &&
+            t35env?.to === 'delivering' &&
+            t35env?.advanced === 1 &&
+            row35env?.status === 'delivering',
+          '⭐⭐ §35 **T8**：配送单 `en_route`（货拉拉发出）→ 该楼群 `cooked → delivering`。' +
+            '出参把「配送单推进」与「订单跟没跟上」放在**同一个响应**里 —— 分成两个接口就会出现「车开走了、系统里的订单原地不动，两边都不报错」',
+          `code=${env35.body?.code} advanced=${t35env?.advanced} from=${t35env?.from}→${t35env?.to} order=${row35env?.status}`,
+        );
+
+        // ⚠️ 版本号**不写死**：`version` 在**每一次**订单更新上都会 +1（支付 / 截单 / 出餐 / 发车 …），
+        //    写死一个数就等于把「上游一共改过几次」也变成了断言的一部分 —— 那种断言
+        //    会在无关改动里红，而真出问题时不红。故此处取**差值**。
+        const v35pre = Number(readDb('SELECT version FROM ab_order WHERE order_no = ?', [no35])?.version ?? -1);
+        const arr35 = await call('PATCH', `/admin/deliveries/${row35a.id}/status`, {
+          token: adminToken,
+          body: { to: 'arrived', version: 2, note: 'e2e 送达楼下' },
+        });
+        const t35arr = arr35.body?.data?.orderTransition;
+        const row35arr = readDb('SELECT status, version FROM ab_order WHERE order_no = ?', [no35]);
+        const drec35b = readDb('SELECT status, actual_at FROM ab_delivery_record WHERE id = ?', [
+          row35a.id,
+        ]);
+        assert(
+          arr35.body?.code === 0 &&
+            t35arr?.from === 'delivering' &&
+            t35arr?.to === 'delivered' &&
+            t35arr?.advanced === 1 &&
+            row35arr?.status === 'delivered' &&
+            !!arr35.body?.data?.actualAt &&
+            !!drec35b?.actual_at,
+          '⭐⭐ §35 **T9**：配送单 `arrived`（送达楼下）→ `delivering → delivered`，并写 `ab_delivery_record.actual_at`。' +
+            '`delivered` 一到，下游两条路**这才可达**：T10 团长一键分发 / T11 14:00 自动确认兜底 —— 而佣金正是在那两处产生',
+          `code=${arr35.body?.code} advanced=${t35arr?.advanced} order=${row35arr?.status} actualAt=${arr35.body?.data?.actualAt}`,
+        );
+        assert(
+          row35arr?.version === v35pre + 1,
+          '§35 这次订单迁移把 `version` **恰好 +1**（取差值而非写死绝对值：`version` 每次订单更新都加，写死会把「上游改过几次」也变成断言）',
+          `before=${v35pre} after=${row35arr?.version}`,
+        );
+
+        // ------------------------------------------------ G. 闸门（四道 + 双主体）
+        const back35 = await call('PATCH', `/admin/deliveries/${row35a.id}/status`, {
+          token: adminToken,
+          body: { to: 'called', version: 3 },
+        });
+        assert(
+          back35.body?.code === 30018 &&
+            Array.isArray(back35.body?.data?.allowed) &&
+            back35.body.data.allowed.length === 0,
+          '⭐ §35 D63 闸门 ③ **回退**（arrived → called）→ `30018`，且 `allowed=[]` 明确回答「已是终态、无处可去」—— 履约流在物理世界不可逆，接口也不该允许回退',
+          `code=${back35.body?.code} allowed=${JSON.stringify(back35.body?.data?.allowed)}`,
+        );
+        const same35 = await call('PATCH', `/admin/deliveries/${row35a.id}/status`, {
+          token: adminToken,
+          body: { to: 'arrived', version: 3 },
+        });
+        assert(
+          same35.body?.code === 30018,
+          '⭐ §35 D63 闸门 ③ **原地**（arrived → arrived）→ `30018`（已终态 ⇒ `allowed=[]`）—— 否则重复点击会一路刷出假的操作日志',
+          `code=${same35.body?.code}`,
+        );
+        const stale35 = await call('PATCH', `/admin/deliveries/${row35a.id}/status`, {
+          token: adminToken,
+          body: { to: 'arrived', version: 1 },
+        });
+        assert(
+          stale35.body?.code === 30016 && stale35.body?.data?.current?.version !== undefined,
+          '⭐ §35 D63 闸门 ② **版本不符** → `30016` 且附 `current`（两位运营先后推同一张单时，后写者若用旧快照会把前者一起覆盖，且双方都不报错）',
+          `code=${stale35.body?.code} current=${JSON.stringify(stale35.body?.data?.current)}`,
+        );
+        const missing35 = await call('PATCH', '/admin/deliveries/99999999/status', {
+          token: adminToken,
+          body: { to: 'called', version: 0 },
+        });
+        assert(
+          missing35.body?.code === 30017,
+          '⭐ §35 D63 闸门 ① **不存在** → `30017`（不静默成功 —— 静默成功会让运营以为已经推进了）',
+          `code=${missing35.body?.code}`,
+        );
+        const mini35 = await call('PATCH', `/admin/deliveries/${row35a.id}/status`, {
+          token: buyer35.token,
+          body: { to: 'called', version: 3 },
+        });
+        assert(
+          mini35.body?.code === 10003,
+          '§35 双主体隔离：小程序 token 打 `/admin/deliveries/:id/status` → `10003`（与 D61/D62 同一依据；配送推进是运营动作，不开放给 C 端）',
+          `code=${mini35.body?.code}`,
+        );
+
+        // ------------------------------------------------ H. 下游可达性 + 佣金
+        const conf35 = await call('POST', `${SCH35}/auto-confirm/run`, {
+          token: adminToken,
+          body: { date: TMR35 },
+        });
+        const c35 = conf35.body?.data?.result;
+        const row35done = readDb(
+          'SELECT status, completed_at FROM ab_order WHERE order_no = ?',
+          [no35],
+        );
+        assert(
+          conf35.body?.code === 0 && (c35?.confirmedCount ?? 0) >= 1 && row35done?.status === 'completed',
+          '⭐⭐ §35 **下游这才可达**（T11 · 4.4）：自动确认兜底把本单 `delivered → completed`。' +
+            '在此之前 `delivered` 零写入点 ⇒ 这条兜底**每天扫到 0 单**，而它看起来像「今天没单」',
+          `code=${conf35.body?.code} confirmed=${c35?.confirmedCount} order=${row35done?.status}`,
+        );
+        assert(
+          !(c35?.notDelivered?.orderNos ?? []).includes(no35),
+          '⭐⭐ §35 本单**不在「履约异常」名单里** —— #79 的可见症状正是「自动确认跑批每天把当天全部订单报成履约异常」（订单永远停在 `cut_off`、两条兜底链全不可达）。' +
+            '这条断言与上一条互为因果：只说「确认了 1 单」不够，必须同时证明**它不再被判为异常**',
+          `notDelivered=${c35?.notDelivered?.count} 名单里有没有本单=${(c35?.notDelivered?.orderNos ?? []).includes(no35)}`,
+        );
+
+        const cm35 = readDb(
+          'SELECT status, amount, rate, quantity, type, team_leader_id, meal_date FROM ab_commission WHERE order_no = ?',
+          [no35],
+        );
+        assert(
+          !!cm35 &&
+            cm35.status === 'pending' &&
+            Number(cm35.amount) === FEN35 / 100 &&
+            Number(cm35.rate) === 0.09 &&
+            Number(cm35.quantity) === QTY35 &&
+            Number(cm35.team_leader_id) === L35,
+          `⭐⭐ §35 **佣金真的产生了**（#79 的核心症状：佣金永不产生 —— \`accrueForOrders\` 的两个调用点此前都在不可达分支里）。` +
+            `两段式：此处只写 \`pending\`、**不动余额**（事实与钱分开记，否则「补入账」会把单数重复加上）`,
+          `status=${cm35?.status} amount=${cm35?.amount} expected=${(FEN35 / 100).toFixed(2)} rate=${cm35?.rate} qty=${cm35?.quantity}`,
+        );
+
+        const settle35 = await call('POST', `${SCH35}/commission-settle/run`, {
+          token: adminToken,
+          body: { date: TMR35 },
+        });
+        const s35 = settle35.body?.data?.result;
+        const cm35b = readDb('SELECT status, settled_at FROM ab_commission WHERE order_no = ?', [
+          no35,
+        ]);
+        const bal35 = readDb('SELECT balance, total_in FROM ab_balance WHERE user_id = ?', [ldUid35]);
+        const ld35 = readDb('SELECT total_orders, total_commission FROM ab_team_leader WHERE id = ?', [
+          L35,
+        ]);
+        assert(
+          settle35.body?.code === 0 &&
+            (s35?.settled ?? 0) >= 1 &&
+            cm35b?.status === 'settled' &&
+            !!cm35b?.settled_at &&
+            Number(bal35?.balance) === FEN35 / 100 &&
+            Number(ld35?.total_commission) === FEN35 / 100 &&
+            Number(ld35?.total_orders) === QTY35,
+          '⭐⭐ §35 **一条真实链路走完，钱才真的到账**（4.5）：`pending → settled` + 团长余额 +¥4.64 + 累计佣金 ¥4.64 + 累计份数 2。' +
+            '这是全节唯一的「钱」断言 —— 它之所以成立，是因为前面每一步（T7/T8/T9/T11）都真的发生了；任何一处缺失，这里都会是 ¥0.00',
+          `settled=${s35?.settled} 佣金=${cm35b?.status} 余额=${bal35?.balance} 累计佣金=${ld35?.total_commission} 累计份数=${ld35?.total_orders}`,
+        );
+
+        const chain35 = readRows(
+          "SELECT action FROM ab_operation_log WHERE module = 'order' AND target_id = ? ORDER BY id",
+          [String(oid35)],
+        );
+        assert(
+          ['出餐推进', '发车推进', '送达推进', '自动确认收货'].every((a) =>
+            chain35.some((r) => r.action === a),
+          ),
+          '⭐ §35 全链路**四次订单迁移各自留痕**（出餐推进 / 发车推进 / 送达推进 / 自动确认收货）—— 状态机 §2.1.5 在真实链路上逐条成立，而不只是在单点断言里成立',
+          `logs=${JSON.stringify(chain35.map((r) => r.action))}`,
+        );
+      }
+    }
+  }
+
+  // ==========================================================================
   // §34 M5-6 限流（收口报告 §二 P2-7：`10005` 从「有码无实现」到真生效）
   //
   // ⚠️ 本节**必须放在最后**，且**必须另起一台开启限流的实例**。两个理由：

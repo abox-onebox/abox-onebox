@@ -1,10 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import type { QueryDeepPartialEntity } from 'typeorm';
 import { DataSource, EntityManager, In, IsNull, Repository } from 'typeorm';
 
 import {
   LICENSE_EXPIRING_DAYS,
   LicenseState,
+  OrderStatus,
   SUPPLIER_AUDIT_STATUS_LABEL,
   SUPPLIER_STATUS_LABEL,
   SupplierAuditStatus,
@@ -18,12 +20,14 @@ import { addDays, bjDateTime, toBjIso, todayBj, tomorrowBj } from '../../common/
 import { Building, BuildingGroup } from '../../database/entities/building.entity';
 import { DistributionCenter } from '../../database/entities/finance.entity';
 import { MealAssignment, SetMealItem } from '../../database/entities/meal.entity';
+import { Order } from '../../database/entities/order.entity';
 import {
   Dish,
   Supplier,
   SupplierDishCenterDaily,
   SupplierDishDaily,
 } from '../../database/entities/supplier.entity';
+import { OperationLog } from '../../database/entities/system.entity';
 import {
   CookConfirmDto,
   PackingTasksQueryDto,
@@ -73,6 +77,24 @@ export interface ProducePlanFreezeResult {
   /** 已开工（cooking/done）而未覆盖的行数 —— 需人工核对 */
   skippedStarted: number;
   supplierCount: number;
+}
+
+/**
+ * 出餐确认对订单状态机的影响（`advanceOrdersToCooked` 的出参）
+ *
+ * 四个数**刻意都给**：只回「推进了几单」时，运营无法区分
+ * 「今天本来就没有单」与「有单但一直推不动」—— 而后者正是 #79 的形态
+ * （**看起来像「今天没单」，不像故障**）。
+ */
+export interface OrderAdvanceResult {
+  /** 本次真正推进 `cut_off → cooked` 的订单数 */
+  cooked: number;
+  /** 本轮「菜品全部到齐」的加工场所数 */
+  readyCenterCount: number;
+  /** 达标场所（id + 名） */
+  readyCenters: Array<{ centerId: number; centerName: string }>;
+  /** 该出餐日**仍停在 `cut_off`** 的订单数（场所未齐 / 订单没配加工场所） */
+  stillCutOff: number;
 }
 
 /**
@@ -280,6 +302,13 @@ export class SupplierService {
     const skipped: Array<Record<string, unknown>> = [];
     const touched = new Set<number>();
     const now = new Date();
+    /** 履约推进结果（见 `advanceOrdersToCooked`）—— 必须由事务内赋值，事务外不可重算 */
+    let orderAdvance: OrderAdvanceResult = {
+      cooked: 0,
+      readyCenterCount: 0,
+      readyCenters: [],
+      stillCutOff: 0,
+    };
 
     await this.dataSource.transaction(async (m: EntityManager) => {
       for (const item of dto.items) {
@@ -354,6 +383,13 @@ export class SupplierService {
         daily.completedAt = allConfirmed ? now : null;
         await m.save(daily);
       }
+
+      // ⭐⭐ M5-8：出餐确认的**下游** —— 把「菜品到齐」的加工场所下的订单推进为 `cooked`（状态机 T7）
+      //
+      // 放在**同一个事务**里是刻意的：若「明细已确认」提交而「订单已出餐」回滚，
+      // 就留下「菜到齐了、但订单系统里没人知道」的中间态 —— 而它的表现是
+      // 「订单永远停在 `cut_off`，佣金永不产生，且不报任何错」（正是 #79 的形态）。
+      orderAdvance = await this.advanceOrdersToCooked(m, dto.date, adminId);
     });
 
     const after = await this.dailyRepo.find({
@@ -369,6 +405,14 @@ export class SupplierService {
       date: dto.date,
       confirmed,
       skipped,
+      /**
+       * ⭐⭐ **本次出餐确认对「订单状态机」做了什么**（M5-8 · 状态机 T7）
+       *
+       * 这是本端点唯一的**履约副作用**，也是它此前**完全缺失**的那一半：
+       * 出餐确认过去只写 `ab_supplier_dish_*`，**从不碰 `ab_order`** —— 于是订单
+       * 永远停在 `cut_off`，团长「确认取餐」永远返回零值（且不回错）、**佣金永不产生**。
+       */
+      orderAdvance,
       dishes: after.map((d) => {
         const rows = afterDetails.filter((r) => r.dishId === d.dishId);
         const confirmedCenters = rows.filter((r) => r.status === DETAIL_CONFIRMED).length;
@@ -393,9 +437,157 @@ export class SupplierService {
   }
 
   // =====================================================================
-  // 加工场所打包任务（原 S3 · M4-0 起由运营后台 `GET /admin/packing-tasks` 消费）
+  // 出餐确认的下游：订单履约推进（状态机 T7 · `cut_off → cooked`）
   // =====================================================================
 
+  /**
+   * 把「菜品到齐」的加工场所下的订单推进为 `cooked`（**状态机 T7**）
+   *
+   * ## 为什么需要它（《缺陷与陷阱》#79 · 2026-09-18 用户裁定「补实现」）
+   * `cookConfirm` 此前只写 `ab_supplier_dish_daily` / `..._center_daily`，
+   * **从不碰 `ab_order`**；`delivery.service` 也只读 `cut_off` 订单生成配送单、不推状态。
+   * 合起来的结果是 `ab_order.status` 里的 `cooked` / `delivering` / `delivered`
+   * **全仓零写入点** —— 订单支付后永远停在 `cut_off`，而下游三条链**全部不可达**：
+   *   · 团长「确认取餐」（L9 准入 `delivering` / `delivered`）→ 永远返回零值（**且不报错**）
+   *   · 自动确认兜底（T11 准入 `delivered`）→ 每天把全部订单报成「履约异常」
+   *   · ⭐ **佣金永不产生**（`accrueForOrders` 的两个调用点都在上述不可达分支里）
+   * 即「结算跑批天天扫到 0、团长余额永不增加」，而**看起来像「今天没单」**。
+   *
+   * ## 判据与「加工场所打包」闸门**同源**（刻意的）
+   * 某加工场所当日 `plan_quantity > 0` 的明细行**全部** `confirmed` → 该场所「菜到齐」。
+   * 这条判据在 `packingTasks()` 的 `ready` 里已经用了（原型 P22「出餐确认后推送给集散中心，
+   * 由兼职打包并安排货拉拉配送」）—— 本方法**不另立一套**：
+   * 两处各写一遍「什么叫到齐」，将来改一处就会出现「能打包了却不算已出餐」
+   * 那种**两边都不报错**的分叉（同 D61 份数口径的教训）。
+   *
+   * ⚠️ **粒度是「加工场所」而不是「出餐日」**：一份套餐的 4 道菜来自 4 家供应商，
+   *    按出餐日整批推进的话，**第一家确认就会把全部订单标成已出餐**（另外 3 道菜还没到），
+   *    而用户端时间线上已经亮起「已出餐」。故按订单所属的加工场所分别判定
+   *    （订单 → `assignment_id` → `ab_meal_assignment.distribution_center_id`）。
+   *
+   * ## 幂等
+   * 逐单条件更新（`WHERE id = ? AND status = 'cut_off'`），`affected` 判归属：
+   * 已被推进过的单 `affected = 0`，跳过、不重复落审计行。故重复确认、多供应商交叉确认、
+   * 手动补确认都安全。
+   *
+   * ⚡ 与 `cutoffByDate` / `autoConfirmByDate` 同一纪律：**逐单判定归属**（不用集合更新），
+   *    因为每一次状态迁移都要落一条独立的 `ab_operation_log`（状态机 §2.1.5），
+   *    而集合更新不回「哪几行归我」。
+   *
+   * @param m   出餐确认所在的事务管理器（**必须同事务** —— 见调用点注释）
+   * @param date 出餐日（T 日）
+   * @param operatorId 操作账号（供应商账号 = admin 域主体）
+   */
+  private async advanceOrdersToCooked(
+    m: EntityManager,
+    date: string,
+    operatorId: number | null | undefined,
+  ): Promise<OrderAdvanceResult> {
+    // ---- ① 本轮「菜到齐」的加工场所 -------------------------------------
+    const details = await m.find(SupplierDishCenterDaily, { where: { produceDate: date } });
+    const byCenter = new Map<number, SupplierDishCenterDaily[]>();
+    for (const d of details) {
+      const dcId = Number(d.distributionCenterId);
+      const list = byCenter.get(dcId) ?? [];
+      list.push(d);
+      byCenter.set(dcId, list);
+    }
+    const readyCenterIds: number[] = [];
+    for (const [dcId, rows] of byCenter) {
+      // 与 packingTasks 的 `ready` 逐字同源：只算应送 > 0 的行
+      const effective = rows.filter((r) => Number(r.planQuantity) > 0);
+      if (effective.length && effective.every((r) => r.status === DETAIL_CONFIRMED)) {
+        readyCenterIds.push(dcId);
+      }
+    }
+
+    // 该出餐日仍停在 `cut_off` 的订单数（**无论场所是否到齐**）—— 用于把
+    // 「今天没单」与「有单但推不动」分开，这是 #79 之所以能隐身的原因
+    const stillCutOff = await m.count(Order, {
+      where: { mealDate: date, status: OrderStatus.CUT_OFF },
+    });
+
+    if (!readyCenterIds.length) {
+      return { cooked: 0, readyCenterCount: 0, readyCenters: [], stillCutOff };
+    }
+
+    const centers = await m.find(DistributionCenter, { where: { id: In(readyCenterIds) } });
+
+    // ---- ② 场所 → 当日订单（订单的 `assignment_id` 指向「楼群 × 日期」的分配行）----
+    const assignments = await m.find(MealAssignment, {
+      where: { mealDate: date, distributionCenterId: In(readyCenterIds) },
+    });
+    const assignIds = assignments.map((a) => Number(a.id));
+    if (!assignIds.length) {
+      return {
+        cooked: 0,
+        readyCenterCount: readyCenterIds.length,
+        readyCenters: centers.map((c) => ({ centerId: c.id, centerName: c.name })),
+        stillCutOff,
+      };
+    }
+
+    const orders = await m.find(Order, {
+      where: {
+        mealDate: date,
+        status: OrderStatus.CUT_OFF,
+        assignmentId: In(assignIds),
+      },
+      order: { id: 'ASC' },
+    });
+
+    // ---- ③ 逐单条件推进 + 落审计行 ---------------------------------------
+    const logs: QueryDeepPartialEntity<OperationLog>[] = [];
+    let cooked = 0;
+    for (const o of orders) {
+      const upd = await m
+        .createQueryBuilder()
+        .update(Order)
+        .set({ status: OrderStatus.COOKED, version: () => 'version + 1' })
+        .where('id = :id', { id: o.id })
+        .andWhere('status = :st', { st: OrderStatus.CUT_OFF })
+        .execute();
+      if ((upd.affected ?? 0) === 0) continue;
+
+      cooked += 1;
+      // 状态机 §2.1.5：每次迁移落 `ab_operation_log`（本方法在事务内，全局拦截器不生效，
+      // 故显式写入 —— 与 `cutoffByDate` / `autoConfirmByDate` 同一写法）
+      logs.push({
+        adminUserId: operatorId ?? null,
+        module: 'order',
+        action: '出餐推进',
+        targetId: String(o.id),
+        requestData: { orderNo: o.orderNo, mealDate: date },
+        snapshot: {
+          fromStatus: OrderStatus.CUT_OFF,
+          toStatus: OrderStatus.COOKED,
+          // 出餐确认由**供应商账号**发起（admin 域主体）→ source=admin、操作者可追溯
+          source: 'admin',
+          reason: '供应商出餐确认：该加工场所当日菜品已全部到齐（状态机 T7）',
+        },
+      });
+    }
+    if (logs.length) await m.getRepository(OperationLog).insert(logs);
+
+    if (cooked) {
+      this.logger.log(
+        `出餐推进 date=${date} ${cooked} 单 cut_off → cooked ` +
+          `（到齐场所 ${readyCenterIds.length} 个：${centers.map((c) => c.name).join('、')}）` +
+          (stillCutOff - cooked > 0 ? ` · 仍有 ${stillCutOff - cooked} 单未推进` : ''),
+      );
+    }
+
+    return {
+      cooked,
+      readyCenterCount: readyCenterIds.length,
+      readyCenters: centers.map((c) => ({ centerId: c.id, centerName: c.name })),
+      stillCutOff,
+    };
+  }
+
+  // =====================================================================
+  // 加工场所打包任务（原 S3 · M4-0 起由运营后台 `GET /admin/packing-tasks` 消费）
+  // =====================================================================
   /**
    * 加工场所打包任务派生（原型 P22 下游 · 消费方 = 运营后台「加工场所打包」页）
    *

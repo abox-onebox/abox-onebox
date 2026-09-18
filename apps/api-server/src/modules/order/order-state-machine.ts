@@ -4,6 +4,18 @@ import { OrderStatus, ORDER_STATUS_VIEW, RefundStatus } from '@abox/shared-types
  * 订单状态机映射
  * 权威来源：《ABox一盒订单状态机与全链路流转v1.0.md》§二 状态迁移表
  * 主流程 T1–T11 单向不可逆；退款分支 T12–T16 见文档。
+ *
+ * ⚠️ **这张表是「声明」不是「守门人」** —— `canTransit()` 全仓只在单测里被引用，
+ *    真正写 `ab_order.status` 的地方不会经过它。故「声明 ↔ 写入点」的一致性
+ *    由 `order-state-audit.ts`（门禁 `state:audit`）**机械对账**，不靠人记得。
+ *
+ * ⚠️ M5-8 修正（本表第二处口径漂移 · 见《缺陷与陷阱》#79 / #84）：
+ *    `refund_applying → refunding` 这条边**已删除**。M4-3 起「订单」不再进入 `refunding`
+ *    —— 通道进度改由 `ab_refund.status` 表达，审批通过时订单**一步到 `refunded`**
+ *    （`settleRefundDb` 的第一条语句即 `… SET status='refunded' WHERE status IN (:...ok)`）。
+ *    这条边在此之前躺了三个批次：**声明表说订单会经过 `refunding`，而实现从没这么做过**，
+ *    两边都不报错，e2e 与结构门禁全绿（同族：#15 / #67 / #76 —— 同一件事有多份表述，
+ *    而不被自动化执行的那一份必然是错的）。
  */
 export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.PENDING_PAY]: [OrderStatus.PAID, OrderStatus.CANCELLED],
@@ -14,10 +26,33 @@ export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED, OrderStatus.REFUND_APPLYING],
   [OrderStatus.COMPLETED]: [OrderStatus.REFUND_APPLYING],
   [OrderStatus.CANCELLED]: [],
-  [OrderStatus.REFUND_APPLYING]: [OrderStatus.REFUNDING, OrderStatus.REFUNDED],
+  // ⚠️ 没有 `→ refunding`（M5-8 删边 · 理由见上）
+  [OrderStatus.REFUND_APPLYING]: [OrderStatus.REFUNDED],
   [OrderStatus.REFUNDING]: [OrderStatus.REFUNDED],
   [OrderStatus.REFUNDED]: [],
 };
+
+/**
+ * 建单初始态（本表里**唯一**允许「无入边」的状态）
+ *
+ * 供 `state:audit` 区分「合法的起点」与「漂移残留的不可达态」——
+ * 一个**没有任何入边**的状态意味着永远进不去，而它若同时不是初始态，
+ * 就只能是「声明改了、实现没跟」或「实现改了、声明没跟」的残骸（#79 / #84）。
+ */
+export const ORDER_INITIAL_STATUS: OrderStatus = OrderStatus.PENDING_PAY;
+
+/**
+ * 保留态：仍留在 11 态契约里、但**订单永远不会进入**（无入边）的状态
+ *
+ * ⭐ 这不是「忘了实现」，而是**两条事实被合并表达**的结果：
+ *    · 「订单」的退款进度：`refund_applying → refunded`（审批通过一步到底）
+ *    · 「退款单」的通道进度：`applying → refunding → refunded`（`ab_refund.status`）
+ *    `OrderStatus.REFUNDING` 保留在枚举里，是因为**三视角文案映射（`ORDER_STATUS_VIEW`）
+ *    与 11 态契约、原型页面、后台筛选枚举都还在用它**；删掉枚举值才是真正的破坏性改动
+ *    （属于产品契约裁决，不属本次实现批次）。故此处**如实登记**它的不可达性，
+ *    由门禁 `state:audit` 保证「不可达态只有这一个，且必须是显式登记的」。
+ */
+export const ORDER_RESERVED_STATUSES: OrderStatus[] = [OrderStatus.REFUNDING];
 
 /** 截单后（cut_off 及以后）用户不可自助取消（C6） */
 export const USER_SELF_CANCEL_ALLOWED: OrderStatus[] = [OrderStatus.PENDING_PAY, OrderStatus.PAID];
