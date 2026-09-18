@@ -1,9 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { FindOptionsWhere, In, Repository } from 'typeorm';
 
-import { Balance, Commission } from '../../database/entities/finance.entity';
+import { BALANCE_LOG_TYPE_LABEL } from '../constants/balance-log';
+import { Balance, BalanceLog, Commission } from '../../database/entities/finance.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
+import { normalizePage, paginate } from '../utils/response';
 import { toFen } from '../utils/money';
 
 /**
@@ -55,6 +57,7 @@ import { toFen } from '../utils/money';
 export class LeaderMoneyService {
   constructor(
     @InjectRepository(Balance) private readonly balanceRepo: Repository<Balance>,
+    @InjectRepository(BalanceLog) private readonly balanceLogRepo: Repository<BalanceLog>,
     @InjectRepository(Commission) private readonly commissionRepo: Repository<Commission>,
     @InjectRepository(Withdraw) private readonly withdrawRepo: Repository<Withdraw>,
   ) {}
@@ -132,6 +135,87 @@ export class LeaderMoneyService {
     }
     return out;
   }
+
+  /**
+   * 余额流水（`ab_balance_log`）分页 + **全量**收支汇总
+   *
+   * ## ⭐ 为什么按 `userId` 而不是「团长」
+   *
+   * 本服务原先叫「团长钱的真源」，但 `ab_balance` / `ab_balance_log` 的主键维度
+   * 从来就是 **`user_id`**：用户与团长**共用同一小程序身份**，佣金入账与下单抵扣
+   * 走的是**同一条余额链路**（团长佣金既能提现、也能直接抵餐费）。
+   * 故这里收 `userId`，两个读侧各自映射：
+   *   · `CommissionService.listBalanceLogs(leader)` → 传 `leader.userId`（L19 · P17）
+   *   · `UserController.balanceLogs(user)`         → 传 `user.sub`（U14 · P9）
+   *
+   * ## ⭐ 单一实现，不抄第二份
+   *
+   * 提取到本服务（`common/`）之前，用户侧要展示流水只能：
+   *   ① 跨模块 import `CommissionService`（`modules/user` → `modules/finance` 的
+   *      业务模块耦合，且要连带把 FinanceModule 拖进 UserModule）；
+   *   ② 或在用户侧再写一份「查表 + 映射 + 汇总」。
+   * ②的后果不是多 20 行代码，而是**两份汇总口径会分叉**：`summary` 按**全量**统计
+   * （不受分页影响，与 L10 同一约定），哪天有人只改了其中一份，用户看到的
+   * 「累计收入」与团长看到的就对不上，而两边都不报错。
+   *
+   * ⚠️ `amount` 恒为正数，方向看 `direction`（1 收入 / -1 支出）——
+   *    与 L10 佣金明细的冲销笔（`type='reversal'`，金额**本身为负**）**口径不同**，
+   *    端上不得混用同一套正负号逻辑。
+   */
+  async logsOf(userId: number, q: BalanceLogQuery = {}) {
+    const where: FindOptionsWhere<BalanceLog> = { userId: Number(userId) };
+    if (q.type) where.type = q.type;
+
+    const { page, pageSize, skip } = normalizePage(q);
+    const [rows, total] = await this.balanceLogRepo.findAndCount({
+      where,
+      order: { id: 'DESC' },
+      skip,
+      take: pageSize,
+    });
+
+    // 汇总按**全量**统计（不受分页影响），与 L10 同一约定
+    const all = await this.balanceLogRepo.find({ where });
+    let inFen = 0;
+    let outFen = 0;
+    for (const r of all) {
+      const amt = toFen(Number(r.amount));
+      if (Number(r.direction) > 0) inFen += amt;
+      else outFen += amt;
+    }
+
+    return {
+      summary: { inFen, outFen, netFen: inFen - outFen, count: Number(total) },
+      ...paginate(
+        rows.map((r) => ({
+          id: Number(r.id),
+          type: r.type,
+          /** 中文文案由服务端给（与订单状态文案同一纪律：端上不自造） */
+          typeText: BALANCE_LOG_TYPE_LABEL[r.type] ?? r.type,
+          direction: Number(r.direction),
+          /** ⚠️ 恒为正数；方向看 `direction` */
+          amountFen: toFen(Number(r.amount)),
+          /** 该笔操作后的余额（整数分） */
+          balanceAfterFen: toFen(Number(r.balanceAfter)),
+          relatedId: r.relatedId ?? null,
+          remark: r.remark ?? null,
+          taxWithheldFen: toFen(Number(r.taxWithheldAmount || 0)),
+          payoutChannel: r.payoutChannel ?? null,
+          createdAt: r.createdAt,
+        })),
+        total,
+        page,
+        pageSize,
+      ),
+    };
+  }
+}
+
+/** 余额流水查询入参（`page` / `pageSize` 由 `normalizePage` 收口） */
+export interface BalanceLogQuery {
+  type?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 /** 单账户快照（`ab_balance` 派生） */

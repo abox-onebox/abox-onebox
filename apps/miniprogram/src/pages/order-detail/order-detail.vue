@@ -1,5 +1,8 @@
 <template>
   <view class="page">
+    <!-- ⭐ 版式基准 = prototype/index.html renderP5（v4.10.0）：
+         状态渐变卡 → 出餐进度（6 步）→ 订单号（可复制）→ 套餐明细 → 取餐方式 → 动作 -->
+
     <ab-loading v-if="loading && !detail" text="正在加载订单" />
 
     <ab-empty-state
@@ -11,141 +14,154 @@
     />
 
     <template v-else>
-      <!-- 状态 -->
-      <view class="status">
-        <ab-status-badge :text="detail.statusText" :status="detail.status" />
-        <text class="status__hint">{{ statusHint }}</text>
+      <!-- 状态卡：正常流转用金棕渐变；异常态（取消 / 退款族）用灰渐变 -->
+      <view class="status" :class="abnormal ? 'status--muted' : ''">
+        <view class="status__left">
+          <text class="status__label">订单状态</text>
+          <text class="status__text">{{ detail.statusText }}</text>
+        </view>
+        <text class="status__icon">{{ abnormal ? '🗑️' : '🍱' }}</text>
       </view>
+      <text class="status__hint">{{ statusHint }}</text>
 
-      <!-- 状态机时间线 -->
-      <view class="section">
-        <view class="section__hd">
-          <text class="section__title">出餐进度</text>
+      <!-- 出餐进度（服务端 6 步状态机时间线） -->
+      <view class="card">
+        <view class="card__hd">
+          <text class="card__title">📍 出餐进度</text>
+          <text class="card__sub">{{ doneCount }}/{{ detail.timeline.length }} 步</text>
         </view>
         <view class="timeline">
           <view
             v-for="(node, i) in detail.timeline"
             :key="node.node"
-            class="timeline__item"
+            class="tl"
             :class="{ 'is-done': node.done, 'is-last': i === detail.timeline.length - 1 }"
           >
-            <view class="timeline__rail">
-              <view class="timeline__dot" />
-              <view v-if="i !== detail.timeline.length - 1" class="timeline__line" />
+            <view class="tl__rail">
+              <view class="tl__dot" />
+              <view v-if="i !== detail.timeline.length - 1" class="tl__line" />
             </view>
-            <view class="timeline__body">
-              <text class="timeline__text">{{ node.text }}</text>
-              <text class="timeline__at">{{ formatDateTime(node.at) }}</text>
+            <view class="tl__body">
+              <text class="tl__text">{{ node.text }}</text>
+              <text class="tl__at">{{ node.at ? formatDateTime(node.at) : '—' }}</text>
             </view>
           </view>
-          <view v-if="!detail.timeline.length" class="timeline__empty">
-            <text class="timeline__empty-text">暂无可展示的进度节点</text>
+          <view v-if="!detail.timeline.length" class="tl__empty">
+            <text class="tl__empty-text">暂无可展示的进度节点</text>
           </view>
         </view>
+      </view>
+
+      <!-- 订单号 + 复制 -->
+      <view class="card card--row">
+        <view class="ono">
+          <text class="ono__label">订单号</text>
+          <text class="ono__value">{{ detail.orderNo }}</text>
+        </view>
+        <button class="mini-btn" hover-class="mini-btn--hover" @tap="copyOrderNo">📋 复制</button>
       </view>
 
       <!-- 套餐明细 -->
-      <view class="section">
-        <view class="section__hd">
-          <text class="section__title">本单套餐</text>
-          <text class="section__sub">{{ formatMealDate(detail.mealDate) }}</text>
+      <view class="card">
+        <view class="card__hd">
+          <text class="card__title">🍱 套餐明细</text>
+          <text class="card__sub"
+            >{{ formatMealDate(detail.mealDate) }} · × {{ detail.quantity }}</text
+          >
         </view>
-        <view class="card">
-          <view v-for="dish in detail.dishes" :key="`${dish.slot}-${dish.name}`" class="card__row">
-            <text class="card__slot">{{ SLOT_LABEL[dish.slot] || '菜品' }}</text>
-            <text class="card__name">{{ dish.name }}</text>
-            <text v-if="dish.supplierName" class="card__from">{{ dish.supplierName }}</text>
-          </view>
-          <view v-if="!detail.dishes.length" class="card__row">
-            <text class="card__name">套餐配菜待公布</text>
-          </view>
+        <view v-for="dish in detail.dishes" :key="`${dish.slot}-${dish.name}`" class="dish">
+          <text class="dish__slot">{{ SLOT_LABEL[dish.slot] || '菜品' }}</text>
+          <text class="dish__name">{{ dish.name }}</text>
+          <text class="dish__from">{{
+            dish.supplierName ? `来自：${dish.supplierName}` : ''
+          }}</text>
         </view>
-      </view>
+        <view v-if="!detail.dishes.length" class="dish">
+          <text class="dish__slot">套餐</text>
+          <text class="dish__name">配菜待公布</text>
+          <text class="dish__from" />
+        </view>
 
-      <!-- 取餐信息 -->
-      <view class="section">
-        <view class="section__hd">
-          <text class="section__title">取餐信息</text>
-        </view>
-        <view class="card">
-          <view class="card__row card__row--between">
-            <text class="card__slot">取餐点</text>
-            <text class="card__value">{{ detail.pickup.point }}</text>
-          </view>
-          <view v-if="detail.pickup.leaderName" class="card__row card__row--between">
-            <text class="card__slot">团长</text>
-            <text class="card__value">
-              {{ detail.pickup.leaderName }}
-              <text v-if="detail.pickup.leaderPhone" class="card__weak">
-                {{ detail.pickup.leaderPhone }}
-              </text>
+        <!-- 金额：单价 → 份数 → 合计 →（余额抵扣）→ 实付 -->
+        <view class="sum">
+          <view class="sum__row">
+            <text class="sum__label">单价 × 份数</text>
+            <text class="sum__value">
+              {{ fenToYuanText(detail.unitPriceFen) }} × {{ detail.quantity }}
             </text>
           </view>
+          <view class="sum__row">
+            <text class="sum__label">订单金额</text>
+            <text class="sum__value">{{ fenToYuanText(detail.totalAmountFen) }}</text>
+          </view>
+          <view v-if="detail.balanceUsedFen > 0" class="sum__row">
+            <text class="sum__label">余额抵扣</text>
+            <text class="sum__value">−{{ fenToYuanText(detail.balanceUsedFen) }}</text>
+          </view>
+          <view class="sum__row sum__row--total">
+            <text class="sum__label">实付</text>
+            <text class="sum__total">{{ fenToYuanText(detail.payAmountFen) }}</text>
+          </view>
+        </view>
+
+        <view v-if="detail.remark" class="remark">
+          <text class="remark__text">备注：{{ detail.remark }}</text>
         </view>
       </view>
 
-      <!-- 金额 -->
-      <view class="section">
-        <view class="section__hd">
-          <text class="section__title">金额</text>
-        </view>
-        <view class="card">
-          <view class="card__row card__row--between">
-            <text class="card__slot">单价</text>
-            <text class="card__value">{{ fenToYuanText(detail.unitPriceFen) }}</text>
-          </view>
-          <view class="card__row card__row--between">
-            <text class="card__slot">份数</text>
-            <text class="card__value">× {{ detail.quantity }}</text>
-          </view>
-          <view class="card__row card__row--between">
-            <text class="card__slot">合计</text>
-            <text class="card__value">{{ fenToYuanText(detail.totalAmountFen) }}</text>
-          </view>
-          <view v-if="detail.balanceUsedFen > 0" class="card__row card__row--between">
-            <text class="card__slot">余额抵扣</text>
-            <text class="card__value">−{{ fenToYuanText(detail.balanceUsedFen) }}</text>
-          </view>
-          <view class="card__row card__row--between card__row--total">
-            <text class="card__slot">实付</text>
-            <text class="card__total">{{ fenToYuanText(detail.payAmountFen) }}</text>
-          </view>
+      <!-- 取餐方式 -->
+      <view class="card">
+        <text class="card__title">📍 取餐方式</text>
+        <text class="pickup__who">
+          <text class="pickup__strong">{{ leaderName }}</text
+          >（团长）· {{ detail.pickup.point }}
+        </text>
+        <text class="pickup__when">明日 11:30 由团长统一取餐并分发至取餐点</text>
+        <view class="pickup__acts">
+          <button class="ghost-btn" hover-class="ghost-btn--hover" @tap="contactLeader">
+            📞 联系团长
+          </button>
+          <button class="ghost-btn" hover-class="ghost-btn--hover" @tap="goSupport">
+            💬 平台客服
+          </button>
         </view>
       </view>
 
-      <!-- 订单信息 -->
-      <view class="section">
-        <view class="section__hd">
-          <text class="section__title">订单信息</text>
+      <!-- 订单信息（原型未单列，保留既有验收点：下单/支付时间） -->
+      <view class="card">
+        <view class="kv">
+          <text class="kv__k">下单时间</text>
+          <text class="kv__v">{{ formatDateTime(detail.createdAt) }}</text>
         </view>
-        <view class="card">
-          <view class="card__row card__row--between">
-            <text class="card__slot">订单号</text>
-            <text class="card__value">{{ detail.orderNo }}</text>
-          </view>
-          <view class="card__row card__row--between">
-            <text class="card__slot">下单时间</text>
-            <text class="card__value">{{ formatDateTime(detail.createdAt) }}</text>
-          </view>
-          <view class="card__row card__row--between">
-            <text class="card__slot">支付时间</text>
-            <text class="card__value">{{ formatDateTime(detail.paidAt) }}</text>
-          </view>
-          <view v-if="detail.remark" class="card__row card__row--between">
-            <text class="card__slot">备注</text>
-            <text class="card__value">{{ detail.remark }}</text>
-          </view>
+        <view class="kv">
+          <text class="kv__k">支付时间</text>
+          <text class="kv__v">{{ formatDateTime(detail.paidAt) }}</text>
         </view>
       </view>
 
-      <!-- 操作 -->
-      <view class="actions">
-        <button v-if="cancellable" class="btn btn--ghost" hover-class="btn--hover" @tap="goCancel">
-          取消订单
-        </button>
-        <button class="btn btn--primary" hover-class="btn--hover" @tap="goList">
-          返回订单列表
-        </button>
+      <!-- 动作 -->
+      <view class="acts">
+        <template v-if="abnormal">
+          <button class="btn-primary" hover-class="btn-primary--hover" @tap="goHome">
+            看看今日套餐 ›
+          </button>
+          <button class="btn-secondary" hover-class="btn-secondary--hover" @tap="goList">
+            查看我的全部订单
+          </button>
+        </template>
+        <template v-else>
+          <button
+            v-if="cancellable"
+            class="btn-warning"
+            hover-class="btn-warning--hover"
+            @tap="goCancel"
+          >
+            取消订单（截单前可自助）
+          </button>
+          <button class="btn-secondary" hover-class="btn-secondary--hover" @tap="goHome">
+            返回首页
+          </button>
+        </template>
       </view>
     </template>
   </view>
@@ -155,8 +171,15 @@
 /**
  * P5 · 订单详情（状态机时间线）
  *
- * 验收要点（M1 标准 2 / 3）：状态文案与《状态机 v1.0》三视角映射一致
- * （文案由服务端下发，端上不自造）；截单前可自助取消，截单后引导联系团长。
+ * ⭐ 版式基准 = prototype/index.html renderP5（v4.10.0）
+ *
+ * 验收要点（M1 标准 2 / 3）：
+ *   · 状态文案**由服务端下发**（`statusText`，三视角映射唯一来源，端上不自造）
+ *   · 截单前可自助取消；截单后引导联系团长（服务端 `40004` + `leaderContact`）
+ *
+ * ⚠️ 团长手机号在出参里**已脱敏**（§1.6），故「联系团长」**不做 `makePhoneCall`**
+ *    （拨一个 `138****0001` 只会失败），改为提示走楼栋微信群 / 平台客服 ——
+ *    这比渲染一个点了没反应的按钮诚实。
  */
 import { computed, ref } from 'vue';
 import { onLoad, onShow } from '@dcloudio/uni-app';
@@ -180,6 +203,27 @@ const cancellable = computed(() => {
   const s = detail.value?.status;
   return s === OrderStatus.PENDING_PAY || s === OrderStatus.PAID;
 });
+
+/**
+ * 异常态 = 取消 / 退款族（原型用灰渐变卡片表示「这单不再往前走」）
+ *
+ * ⚠️ 用**状态机常量**判断而不是字符串字面量：新增状态时这里会跟着走类型检查。
+ */
+const abnormal = computed(() => {
+  const s = detail.value?.status;
+  return (
+    s === OrderStatus.CANCELLED ||
+    s === OrderStatus.REFUND_APPLYING ||
+    s === OrderStatus.REFUNDING ||
+    s === OrderStatus.REFUNDED
+  );
+});
+
+const doneCount = computed(() => detail.value?.timeline.filter((n) => n.done).length ?? 0);
+
+const leaderName = computed(
+  () => detail.value?.pickup.leaderName || detail.value?.leaderContact?.name || '本楼团长',
+);
 
 const statusHint = computed(() => {
   switch (detail.value?.status) {
@@ -218,12 +262,38 @@ async function load(): Promise<void> {
   }
 }
 
+function copyOrderNo(): void {
+  const no = detail.value?.orderNo;
+  if (!no) return;
+  uni.setClipboardData({
+    data: no,
+    success: () => uni.showToast({ title: '订单号已复制', icon: 'none' }),
+  });
+}
+
+/** ⚠️ 手机号已脱敏 → 不拨号，引导走微信群（原型示例里的「已拨打」在本期做不到） */
+function contactLeader(): void {
+  uni.showToast({
+    title: `请在楼栋微信群 @${leaderName.value}，或联系平台客服`,
+    icon: 'none',
+    duration: 2600,
+  });
+}
+
+function goSupport(): void {
+  navigateTo('/pages/support/contact');
+}
+
 function goCancel(): void {
   navigateTo(buildUrl('/pages/order-cancel/order-cancel', { orderNo: orderNo.value }));
 }
 
 function goList(): void {
   switchTab('/pages/order-list/order-list');
+}
+
+function goHome(): void {
+  switchTab('/pages/index/index');
 }
 
 onLoad((options) => {
@@ -240,37 +310,81 @@ onShow(() => {
 <style lang="scss" scoped>
 .page {
   min-height: 100vh;
-  padding: $space-4 $space-4 120rpx;
+  padding: $space-3 $space-4 $space-5;
   box-sizing: border-box;
 }
 
+// ---- 状态渐变卡 ----
 .status {
   display: flex;
   align-items: center;
-  padding: $space-4 0 $space-2;
+  justify-content: space-between;
+  padding: $space-4;
+  background: linear-gradient(135deg, #d2c5a0, #b8892f);
+  border-radius: 28rpx;
+  color: #ffffff;
+  box-shadow: 0 8rpx 24rpx rgba(184, 137, 47, 0.22);
+
+  &--muted {
+    background: linear-gradient(135deg, #9a9a9a, #5a5a5a);
+    box-shadow: none;
+  }
+
+  &__left {
+    display: flex;
+    flex-direction: column;
+  }
+
+  &__label {
+    font-size: $fs-caption;
+    opacity: 0.9;
+  }
+
+  &__text {
+    margin-top: $space-1;
+    font-size: $fs-h1;
+    font-weight: bold;
+  }
+
+  &__icon {
+    font-size: 64rpx;
+    line-height: 1;
+  }
 
   &__hint {
-    flex: 1;
-    margin-left: $space-3;
+    display: block;
+    margin: $space-2 $space-1 0;
     font-size: $fs-caption;
-    line-height: 1.5;
+    line-height: 1.7;
     color: $c-text-weak;
   }
 }
 
-.section {
-  margin-top: $space-4;
+// ---- 卡片 ----
+.card {
+  margin-top: $space-3;
+  padding: $space-4;
+  background: $c-surface;
+  border: 1px solid $c-border;
+  border-radius: $radius-lg;
+  box-shadow: 0 2rpx 8rpx rgba(110, 84, 53, 0.06);
+
+  &--row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
 
   &__hd {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    margin-bottom: $space-3;
+    margin-bottom: $space-2;
   }
 
   &__title {
     font-size: $fs-h2;
-    font-weight: 600;
+    font-weight: bold;
     color: $c-text;
   }
 
@@ -280,26 +394,24 @@ onShow(() => {
   }
 }
 
+// ---- 时间线 ----
 .timeline {
-  padding: $space-4;
-  background: $c-surface;
-  border: 1px solid $c-border;
-  border-radius: $radius-md;
+  padding-top: $space-1;
+}
 
-  &__item {
-    display: flex;
-    min-height: 72rpx;
-  }
+.tl {
+  display: flex;
+  min-height: 76rpx;
 
   &__rail {
     position: relative;
     flex: none;
-    width: 40rpx;
+    width: 44rpx;
   }
 
   &__dot {
-    width: 16rpx;
-    height: 16rpx;
+    width: 18rpx;
+    height: 18rpx;
     margin-top: 8rpx;
     background: $c-border;
     border-radius: 50%;
@@ -307,16 +419,16 @@ onShow(() => {
 
   &__line {
     position: absolute;
-    top: 28rpx;
+    top: 30rpx;
     bottom: 0;
-    left: 7rpx;
+    left: 8rpx;
     width: 2rpx;
     background: $c-border;
   }
 
   &__body {
     flex: 1;
-    padding-bottom: $space-4;
+    padding-bottom: $space-3;
   }
 
   &__text {
@@ -332,15 +444,16 @@ onShow(() => {
     color: $c-text-weak;
   }
 
-  &__item.is-done &__dot {
+  &.is-done .tl__dot {
     background: $c-gold;
   }
 
-  &__item.is-done &__text {
+  &.is-done .tl__text {
+    font-weight: bold;
     color: $c-text;
   }
 
-  &__item.is-last &__body {
+  &.is-last .tl__body {
     padding-bottom: 0;
   }
 
@@ -355,34 +468,55 @@ onShow(() => {
   }
 }
 
-.card {
-  padding: $space-2 $space-4;
-  background: $c-surface;
-  border: 1px solid $c-border;
-  border-radius: $radius-md;
+// ---- 订单号 ----
+.ono {
+  display: flex;
+  flex-direction: column;
 
-  &__row {
-    display: flex;
-    align-items: baseline;
-    padding: $space-3 0;
-    border-bottom: 1px solid rgba(228, 216, 195, 0.5);
-
-    &:last-child {
-      border-bottom: none;
-    }
-
-    &--between {
-      justify-content: space-between;
-    }
-
-    &--total {
-      margin-top: $space-1;
-    }
+  &__label {
+    font-size: $fs-caption;
+    color: $c-text-weak;
   }
+
+  &__value {
+    margin-top: 2rpx;
+    font-family: monospace;
+    font-size: $fs-body;
+    font-weight: bold;
+    color: $c-text;
+  }
+}
+
+.mini-btn {
+  flex: none;
+  height: 56rpx;
+  padding: 0 $space-3;
+  line-height: 56rpx;
+  color: $c-text;
+  font-size: $fs-caption;
+  background: #fbf7ee;
+  border: 1px solid $c-border;
+  border-radius: $radius-pill;
+
+  &::after {
+    border: none;
+  }
+
+  &--hover {
+    opacity: 0.85;
+  }
+}
+
+// ---- 套餐明细 ----
+.dish {
+  display: flex;
+  align-items: baseline;
+  padding: $space-3 0;
+  border-bottom: 1px dashed #d4c4a8;
 
   &__slot {
     flex: none;
-    width: 96rpx;
+    width: 72rpx;
     font-size: $fs-caption;
     color: $c-text-weak;
   }
@@ -397,53 +531,182 @@ onShow(() => {
     flex: none;
     margin-left: $space-2;
     font-size: $fs-caption;
+    color: #b8915c;
+  }
+}
+
+// ---- 金额 ----
+.sum {
+  margin-top: $space-3;
+
+  &__row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: $space-1 0;
+
+    &--total {
+      margin-top: $space-2;
+      padding-top: $space-3;
+      border-top: 1px solid $c-border;
+    }
+  }
+
+  &__label {
+    font-size: $fs-caption;
     color: $c-text-weak;
   }
 
   &__value {
     font-size: $fs-caption;
     color: $c-text;
-    text-align: right;
-  }
-
-  &__weak {
-    margin-left: $space-2;
-    color: $c-text-weak;
   }
 
   &__total {
-    font-size: $fs-h2;
-    font-weight: 600;
-    color: $c-text;
+    font-size: 40rpx;
+    font-weight: bold;
+    color: #b8892f;
   }
 }
 
-.actions {
-  display: flex;
-  flex-direction: column;
-  gap: $space-3;
-  margin-top: $space-5;
+.remark {
+  margin-top: $space-3;
+  padding: $space-2 $space-3;
+  background: #fbf7ee;
+  border-radius: $radius-sm;
+
+  &__text {
+    font-size: $fs-caption;
+    line-height: 1.7;
+    color: $c-text-weak;
+  }
 }
 
-.btn {
-  height: 80rpx;
-  font-size: $fs-body;
-  line-height: 80rpx;
+// ---- 取餐方式 ----
+.pickup {
+  &__who {
+    display: block;
+    margin-top: $space-2;
+    font-size: $fs-body;
+    color: $c-text;
+  }
+
+  &__strong {
+    font-weight: bold;
+  }
+
+  &__when {
+    display: block;
+    margin-top: $space-1;
+    font-size: $fs-caption;
+    color: $c-text-weak;
+  }
+
+  &__acts {
+    display: flex;
+    gap: $space-3;
+    margin-top: $space-3;
+  }
+}
+
+.ghost-btn {
+  flex: 1;
+  height: 68rpx;
+  line-height: 68rpx;
+  color: $c-text;
+  font-size: $fs-caption;
+  background: #fbf7ee;
+  border: 1px solid $c-border;
   border-radius: $radius-pill;
 
   &::after {
     border: none;
   }
 
-  &--primary {
-    color: $c-surface;
-    background: $c-text;
+  &--hover {
+    opacity: 0.85;
+  }
+}
+
+// ---- 键值行 ----
+.kv {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: $space-2 0;
+
+  &__k {
+    font-size: $fs-caption;
+    color: $c-text-weak;
   }
 
-  &--ghost {
+  &__v {
+    font-size: $fs-caption;
     color: $c-text;
-    background: transparent;
-    border: 1px solid $c-text;
+  }
+}
+
+// ---- 动作 ----
+// ⚠️ 三个按钮**刻意直写**而不抽 `%placeholder` + `@extend`：
+//    uni-app 的 scoped SCSS 在 `@extend` 跨样式块时行为随版本变化，
+//    一旦解析失败，报错位置会指到 vue-loader 而不是这一行（排障成本远高于重复三行）。
+.acts {
+  display: flex;
+  flex-direction: column;
+  gap: $space-3;
+  margin-top: $space-5;
+}
+
+.btn-primary {
+  height: 88rpx;
+  line-height: 88rpx;
+  color: $c-bg;
+  font-size: $fs-h2;
+  font-weight: bold;
+  letter-spacing: 2rpx;
+  background: linear-gradient(135deg, $c-text 0%, #b8915c 100%);
+  border: none;
+  border-radius: $radius-pill;
+
+  &::after {
+    border: none;
+  }
+
+  &--hover {
+    filter: brightness(1.08);
+  }
+}
+
+.btn-warning {
+  height: 88rpx;
+  line-height: 88rpx;
+  color: #ffffff;
+  font-size: $fs-h2;
+  font-weight: bold;
+  background: linear-gradient(135deg, $c-warning, #a02818);
+  border: none;
+  border-radius: $radius-pill;
+
+  &::after {
+    border: none;
+  }
+
+  &--hover {
+    filter: brightness(1.08);
+  }
+}
+
+.btn-secondary {
+  height: 88rpx;
+  line-height: 88rpx;
+  color: $c-text;
+  font-size: $fs-body;
+  background: transparent;
+  border: 1px solid $c-border;
+  border-radius: $radius-pill;
+
+  &::after {
+    border: none;
   }
 
   &--hover {

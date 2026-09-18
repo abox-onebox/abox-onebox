@@ -11,120 +11,120 @@
     />
 
     <template v-else>
-      <view class="section">
-        <ab-countdown :remain-sec="remainSec" label="距截单" />
+      <!-- 倒计时横幅（P3 原型用警示红底） -->
+      <view class="countdown countdown--warn">
+        <text class="countdown__label">距离截单还剩</text>
+        <text class="countdown__num">{{ countdownText }}</text>
       </view>
 
-      <view class="section">
-        <ab-meal-card
-          :name="daily.setName"
-          :meal-date="daily.mealDate"
-          :dishes="daily.dishes"
-          :rice="daily.rice"
-          :price-fen="daily.priceFen"
-        />
-      </view>
-
-      <!-- 已有订单：不再允许下单，直接引导查看 -->
-      <view v-if="daily.existingOrderNo" class="section">
-        <view class="notice notice--warn">
-          <text class="notice__text">
-            你已提交过本场订单（{{ daily.existingOrderNo }}），请勿重复下单
-          </text>
+      <!-- 套餐清单卡 -->
+      <view class="card">
+        <view class="card__hd">
+          <text class="card__title">明日套餐（{{ quantity }} 份）</text>
+          <view v-if="!daily.existingOrderNo" class="stepper">
+            <view class="stepper__btn" :class="{ 'is-disabled': quantity <= 1 }" @tap="decQuantity">
+              <text>−</text>
+            </view>
+            <text class="stepper__value">{{ quantity }}</text>
+            <view
+              class="stepper__btn"
+              :class="{ 'is-disabled': quantity >= ORDER_MAX_QUANTITY }"
+              @tap="incQuantity"
+            >
+              <text>+</text>
+            </view>
+          </view>
+        </view>
+        <view v-for="(d, i) in daily.dishes" :key="i" class="menu-row">
+          <text class="menu-row__name">{{ d.name }}</text>
+          <text class="menu-row__from">来自：{{ d.supplierName }}</text>
+        </view>
+        <view v-if="daily.rice" class="menu-row">
+          <text class="menu-row__name">米饭</text>
+          <text class="menu-row__from">来自：集散中心</text>
+        </view>
+        <view class="menu-total">
+          <text class="menu-total__calc">{{ quantity }} 份 × ¥{{ unitPriceText }}</text>
+          <text class="menu-total__price">¥{{ totalText }}</text>
         </view>
       </view>
 
+      <!-- 已有订单：不再允许下单，直接引导查看 -->
+      <view v-if="daily.existingOrderNo" class="guide guide--warn">
+        <text class="guide__text">
+          你已提交过本场订单（{{ daily.existingOrderNo }}），请勿重复下单
+        </text>
+      </view>
+
       <template v-else>
-        <!-- 份数 -->
-        <view class="section">
-          <view class="row">
-            <text class="row__label">份数</text>
-            <view class="stepper">
-              <view
-                class="stepper__btn"
-                :class="{ 'is-disabled': quantity <= 1 }"
-                @tap="decQuantity"
-              >
-                <text class="stepper__sign">−</text>
-              </view>
-              <text class="stepper__value">{{ quantity }}</text>
-              <view
-                class="stepper__btn"
-                :class="{ 'is-disabled': quantity >= ORDER_MAX_QUANTITY }"
-                @tap="incQuantity"
-              >
-                <text class="stepper__sign">+</text>
-              </view>
-            </view>
+        <!-- 取餐信息 -->
+        <view class="card">
+          <text class="card__title">📍 取餐信息（跟随团长）</text>
+          <view class="pickup-row">
+            <text class="pickup-row__leader">
+              {{ daily.leader?.name ?? '本楼团长' }}（团长）· {{ daily.leader?.building ?? '' }}
+            </text>
+          </view>
+          <text class="pickup-row__hint">明天 11:30 由团长统一取餐并分发</text>
+          <view class="pickup-row__tip">
+            <text>💡 有问题？微信直接联系团长沟通</text>
           </view>
         </view>
 
         <!-- 备注 -->
-        <view class="section">
-          <view class="row row--top">
-            <text class="row__label">备注</text>
-            <textarea
-              v-model="remark"
-              class="remark"
-              placeholder="过敏忌口等（选填，不超过 256 字）"
-              placeholder-class="remark__placeholder"
-              :maxlength="256"
-              auto-height
-            />
+        <view class="card">
+          <text class="card__title">备注</text>
+          <textarea
+            v-model="remark"
+            class="remark"
+            placeholder="过敏忌口等（选填，不超过 256 字）"
+            placeholder-class="remark__placeholder"
+            :maxlength="256"
+            auto-height
+          />
+        </view>
+
+        <!-- 支付方式 -->
+        <view class="card">
+          <text class="card__title">💳 支付方式</text>
+          <view class="pay-row">
+            <text class="pay-row__name">🟢 微信支付</text>
+            <text class="pay-row__dot">●</text>
           </view>
         </view>
 
-        <!-- 金额 -->
-        <view class="section">
-          <view class="amount">
-            <view class="amount__row">
-              <text class="amount__label">单价</text>
-              <text class="amount__value">¥{{ unitPriceText }}</text>
-            </view>
-            <view class="amount__row">
-              <text class="amount__label">份数</text>
-              <text class="amount__value">× {{ quantity }}</text>
-            </view>
-            <view class="amount__row amount__row--total">
-              <text class="amount__label">合计</text>
-              <text class="amount__total">¥{{ totalText }}</text>
-            </view>
-          </view>
-        </view>
+        <button
+          class="btn-primary"
+          :class="{ 'is-disabled': !canSubmit }"
+          hover-class="btn-primary--hover"
+          :disabled="!canSubmit"
+          @tap="submit"
+        >
+          {{ submitting ? '提交中…' : daily.canOrder ? `确认支付 ¥${totalText}` : '本场已截单' }}
+        </button>
       </template>
-    </template>
 
-    <!-- 固定底部提交条 -->
-    <view v-if="daily" class="submit-bar">
-      <view class="submit-bar__amount">
-        <text class="submit-bar__label">应付</text>
-        <text class="submit-bar__value">¥{{ submitAmountText }}</text>
-      </view>
       <button
         v-if="daily.existingOrderNo"
-        class="btn btn--ghost"
-        hover-class="btn--hover"
+        class="btn-primary btn-primary--ghost"
+        hover-class="btn-primary--hover"
         @tap="goDetail(daily.existingOrderNo)"
       >
         查看订单
       </button>
-      <button
-        v-else
-        class="btn btn--primary"
-        :class="{ 'btn--disabled': !canSubmit }"
-        hover-class="btn--hover"
-        :disabled="!canSubmit"
-        @tap="submit"
-      >
-        {{ submitting ? '提交中…' : daily.canOrder ? '提交订单' : '本场已截单' }}
-      </button>
-    </view>
+    </template>
   </view>
 </template>
 
 <script setup lang="ts">
 /**
  * P3 · 下单确认
+ *
+ * ⭐ 版式基准 = prototype/index.html renderP3（2026-09-18 裁定「19 页逐页对齐原型」）：
+ *   警示红倒计时横幅 → 套餐清单卡（菜名 + 来自：供应商，份数 × 单价 = 合计）→
+ *   取餐信息卡（跟随团长 · 明天 11:30 统一分发）→ 支付方式卡 → 确认支付。
+ *   与原型的差异：备注输入**保留**（原型「简化版」删了它，但 256 字备注是既有验收点）；
+ *   份数 stepper 收进套餐卡标题行（原型放在 P1，此处保留便于直接改数）。
  *
  * 验收要点（M1 标准 2 / 4）：
  *   · 下单 → 支付成功 → 支付结果页 → 订单详情，状态 pending_pay → paid
@@ -165,10 +165,18 @@ let orderIdemKey = '';
 /** 支付幂等键（U7 独立作用域 `idem:pay:*`） */
 let payIdemKey = '';
 
+const countdownText = computed(() => {
+  const s = Math.max(0, remainSec.value);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(h)}:${pad(m)}:${pad(sec)}`;
+});
+
 const unitPriceText = computed(() => fenToYuan(daily.value?.priceFen ?? 0));
 const totalFen = computed(() => (daily.value?.priceFen ?? 0) * quantity.value);
 const totalText = computed(() => fenToYuan(totalFen.value));
-const submitAmountText = computed(() => (daily.value?.existingOrderNo ? '0.00' : totalText.value));
 const canSubmit = computed(
   () => !!daily.value?.canOrder && !daily.value.existingOrderNo && !submitting.value,
 );
@@ -250,7 +258,13 @@ function goDetail(orderNo: string): void {
 }
 
 onLoad((options) => {
-  const mealDate = pageQuery(options as Record<string, unknown>, 'mealDate');
+  const query = options as Record<string, unknown>;
+  const mealDate = pageQuery(query, 'mealDate');
+  // P1 首页 stepper 带入的份数（原型交互：P1 选份数 → P3 确认）；非法值回落 1
+  const qtyRaw = Number(pageQuery(query, 'qty'));
+  if (Number.isFinite(qtyRaw) && qtyRaw >= 1) {
+    quantity.value = Math.min(Math.floor(qtyRaw), ORDER_MAX_QUANTITY);
+  }
   orderIdemKey = uuid();
   payIdemKey = uuid();
   void load(mealDate);
@@ -260,70 +274,172 @@ onLoad((options) => {
 <style lang="scss" scoped>
 .page {
   min-height: 100vh;
-  padding: $space-4 $space-4 200rpx;
+  padding-bottom: 60rpx;
   box-sizing: border-box;
 }
 
-.section {
-  margin-bottom: $space-4;
-}
-
-.row {
+// ---- 倒计时横幅（P3 原型 = 警示红底） ----
+.countdown {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
   padding: $space-3 $space-4;
-  background: $c-surface;
-  border: 1px solid $c-border;
-  border-radius: $radius-md;
+  background: $c-text;
+  color: $c-bg;
+  border-radius: 0 0 36rpx 36rpx;
+  text-align: center;
 
-  &--top {
-    align-items: flex-start;
+  &--warn {
+    background: $c-warning;
   }
 
   &__label {
-    flex: none;
-    font-size: $fs-body;
+    font-size: $fs-caption;
+    opacity: 0.92;
+  }
+
+  &__num {
+    margin-top: $space-1;
+    font-size: 36rpx;
+    font-weight: bold;
+    color: $c-gold;
+    letter-spacing: 2rpx;
+    font-family: monospace;
+  }
+}
+
+// ---- 卡片 ----
+.card {
+  margin: $space-3 $space-4 0;
+  padding: $space-4;
+  background: $c-surface;
+  border: 1px solid $c-border;
+  border-radius: $radius-lg;
+  box-shadow: 0 2rpx 8rpx rgba(110, 84, 53, 0.06);
+
+  &__hd {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: $space-2;
+  }
+
+  &__title {
+    display: block;
+    font-size: $fs-h2;
+    font-weight: bold;
+    letter-spacing: 1rpx;
     color: $c-text;
   }
 }
 
+// ---- 套餐清单行 ----
+.menu-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: $space-2 0;
+  border-bottom: 1px dashed #d4c4a8;
+
+  &__name {
+    font-size: $fs-body;
+    color: $c-text;
+  }
+
+  &__from {
+    font-size: $fs-caption;
+    color: $c-text-weak;
+  }
+}
+
+.menu-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-top: $space-3;
+  padding-top: $space-3;
+
+  &__calc {
+    margin-bottom: $space-1;
+    font-size: $fs-caption;
+    color: $c-text-weak;
+  }
+
+  &__price {
+    font-size: 60rpx;
+    font-weight: bold;
+    color: $c-text;
+    line-height: 1.2;
+  }
+}
+
+// ---- 份数 stepper ----
 .stepper {
   display: flex;
   align-items: center;
 
   &__btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 56rpx;
     height: 56rpx;
-    line-height: 52rpx;
-    text-align: center;
-    border: 1px solid $c-border;
+    background: #efe5d0;
     border-radius: $radius-sm;
+    color: $c-text;
+    font-size: $fs-h2;
 
     &.is-disabled {
-      opacity: 0.4;
+      opacity: 0.35;
     }
   }
 
-  &__sign {
-    font-size: $fs-h2;
-    color: $c-text;
-  }
-
   &__value {
-    min-width: 88rpx;
+    min-width: 80rpx;
     font-size: $fs-h2;
+    font-weight: bold;
     text-align: center;
     color: $c-text;
   }
 }
 
+// ---- 取餐信息 ----
+.pickup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  &__leader {
+    font-size: $fs-body;
+    font-weight: bold;
+    color: $c-text;
+  }
+
+  &__hint {
+    display: block;
+    margin-top: $space-1;
+    font-size: $fs-caption;
+    color: $c-text-weak;
+  }
+
+  &__tip {
+    margin-top: $space-3;
+    padding: $space-2 $space-3;
+    background: $c-bg;
+    border-radius: $radius-md;
+
+    text {
+      font-size: $fs-caption;
+      color: $c-text-weak;
+    }
+  }
+}
+
+// ---- 备注 ----
 .remark {
-  flex: 1;
-  margin-left: $space-4;
+  width: 100%;
   min-height: 60rpx;
   font-size: $fs-body;
-  text-align: right;
   color: $c-text;
 
   &__placeholder {
@@ -332,98 +448,76 @@ onLoad((options) => {
   }
 }
 
-.amount {
-  padding: $space-3 $space-4;
-  background: $c-surface;
-  border: 1px solid $c-border;
-  border-radius: $radius-md;
+// ---- 支付方式 ----
+.pay-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: $space-2 0;
 
-  &__row {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    padding: $space-2 0;
-
-    &--total {
-      margin-top: $space-2;
-      padding-top: $space-3;
-      border-top: 1px solid $c-border;
-    }
-  }
-
-  &__label {
-    font-size: $fs-caption;
-    color: $c-text-weak;
-  }
-
-  &__value {
+  &__name {
     font-size: $fs-body;
     color: $c-text;
   }
 
-  &__total {
-    font-size: $fs-h1;
-    font-weight: 600;
-    color: $c-text;
+  &__dot {
+    font-size: $fs-body;
+    font-weight: bold;
+    color: $c-gold;
   }
 }
 
-.submit-bar {
-  position: fixed;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: $space-3 $space-4;
-  padding-bottom: calc(#{$space-3} + env(safe-area-inset-bottom));
-  background: $c-surface;
-  border-top: 1px solid $c-border;
+// ---- 无订单提示（左红边） ----
+.guide {
+  margin: $space-3 $space-4 0;
+  padding: $space-2 $space-3;
+  background: #fbf7ee;
+  border-left: 6rpx solid $c-gold;
+  border-radius: $radius-sm;
 
-  &__label {
+  &--warn {
+    border-left-color: $c-warning;
+  }
+
+  &__text {
     font-size: $fs-caption;
+    line-height: 1.7;
     color: $c-text-weak;
   }
-
-  &__value {
-    margin-left: $space-2;
-    font-size: $fs-h1;
-    font-weight: 600;
-    color: $c-text;
-  }
 }
 
-.btn {
-  min-width: 260rpx;
-  height: 76rpx;
-  padding: 0 $space-5;
-  font-size: $fs-body;
-  line-height: 76rpx;
+// ---- 确认支付（金棕渐变大按钮） ----
+.btn-primary {
+  display: block;
+  width: calc(100% - #{($space-4 * 2)});
+  margin: $space-4 $space-4 0;
+  padding: $space-3 0;
+  background: linear-gradient(135deg, $c-text 0%, #b8915c 100%);
+  color: $c-bg;
+  font-size: $fs-h2;
+  font-weight: bold;
+  letter-spacing: 4rpx;
+  text-align: center;
+  border: none;
   border-radius: $radius-pill;
 
   &::after {
     border: none;
   }
 
-  &--primary {
-    color: $c-surface;
-    background: $c-text;
+  &--hover {
+    filter: brightness(1.08);
   }
 
   &--ghost {
+    background: $c-surface;
     color: $c-text;
-    background: transparent;
     border: 1px solid $c-text;
   }
 
-  &--disabled {
+  &.is-disabled {
+    background: rgba(154, 139, 114, 0.2);
     color: $c-text-weak;
-    background: rgba(154, 139, 114, 0.14);
-  }
-
-  &--hover {
-    opacity: 0.85;
   }
 }
 </style>

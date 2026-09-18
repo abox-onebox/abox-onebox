@@ -8,31 +8,31 @@
   "pages": [
     {
       "path": "pages/index/index",
-      "style": { "navigationBarTitleText": "P1 · 首页（融合套餐详情）" }
+      "style": { "navigationBarTitleText": "明日套餐" }
     },
     {
       "path": "pages/order-create/order-create",
-      "style": { "navigationBarTitleText": "P3 · 下单确认" }
+      "style": { "navigationBarTitleText": "下单确认" }
     },
     {
       "path": "pages/pay-result/pay-result",
-      "style": { "navigationBarTitleText": "P4 · 支付结果" }
+      "style": { "navigationBarTitleText": "支付结果" }
     },
     {
       "path": "pages/order-detail/order-detail",
-      "style": { "navigationBarTitleText": "P5 · 订单详情（状态机时间线）" }
+      "style": { "navigationBarTitleText": "订单详情" }
     },
     {
       "path": "pages/order-list/order-list",
-      "style": { "navigationBarTitleText": "P6 · 订单列表" }
+      "style": { "navigationBarTitleText": "我的订单" }
     },
     {
       "path": "pages/order-cancel/order-cancel",
-      "style": { "navigationBarTitleText": "P7 · 取消订单（仅截单前可自助退）" }
+      "style": { "navigationBarTitleText": "取消订单" }
     },
     {
       "path": "pages/mine/mine",
-      "style": { "navigationBarTitleText": "P8 · 个人中心（身份专区 / 申请团长）" }
+      "style": { "navigationBarTitleText": "个人中心" }
     },
     {
       "path": "pages/leader-apply/leader-apply",
@@ -40,55 +40,55 @@
     },
     {
       "path": "pages/balance-detail/balance-detail",
-      "style": { "navigationBarTitleText": "P9 · 余额明细" }
+      "style": { "navigationBarTitleText": "账户余额" }
     },
     {
       "path": "pages/leader-invite/leader-invite",
-      "style": { "navigationBarTitleText": "P10 · 团长邀请落地页（带团长 ID 参数）" }
+      "style": { "navigationBarTitleText": "欢迎加入" }
     },
     {
       "path": "pages/traceability/traceability",
-      "style": { "navigationBarTitleText": "P38 · 今日这盒 · 商家溯源（C8）" }
+      "style": { "navigationBarTitleText": "今日这盒 · 溯源" }
     },
     {
       "path": "pages/leader/workbench",
-      "style": { "navigationBarTitleText": "P11 · 团长工作台" }
+      "style": { "navigationBarTitleText": "团长工作台" }
     },
     {
       "path": "pages/leader/building",
-      "style": { "navigationBarTitleText": "P12 · 本楼概况" }
+      "style": { "navigationBarTitleText": "本楼概况" }
     },
     {
       "path": "pages/leader/orders",
-      "style": { "navigationBarTitleText": "P13 · 订单明细（含异常入口）" }
+      "style": { "navigationBarTitleText": "订单明细" }
     },
     {
       "path": "pages/leader/refund",
-      "style": { "navigationBarTitleText": "P14 · 退款 / 异常处理（代退申请入口 · C6）" }
+      "style": { "navigationBarTitleText": "异常订单处理" }
     },
     {
       "path": "pages/leader/pickup",
-      "style": { "navigationBarTitleText": "P15 · 取餐确认（一键分发）" }
+      "style": { "navigationBarTitleText": "取餐确认" }
     },
     {
       "path": "pages/leader/commission",
-      "style": { "navigationBarTitleText": "P16 · 佣金中心（4 级分佣）" }
+      "style": { "navigationBarTitleText": "佣金中心" }
     },
     {
       "path": "pages/leader/balance-log",
-      "style": { "navigationBarTitleText": "P17 · 余额流水" }
+      "style": { "navigationBarTitleText": "佣金流水" }
     },
     {
       "path": "pages/leader/withdraw",
-      "style": { "navigationBarTitleText": "P18 · 提现申请" }
+      "style": { "navigationBarTitleText": "提现申请" }
     },
     {
       "path": "pages/leader/share",
-      "style": { "navigationBarTitleText": "P19 · 分享中心" }
+      "style": { "navigationBarTitleText": "分享中心" }
     },
     {
       "path": "pages/leader/profile",
-      "style": { "navigationBarTitleText": "P20 · 团长资料（含退出团长身份）" }
+      "style": { "navigationBarTitleText": "团长资料" }
     },
     {
       "path": "pages/support/contact",

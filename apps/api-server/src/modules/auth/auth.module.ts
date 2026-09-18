@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { Building } from '../../database/entities/building.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { AdminUser } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
@@ -14,7 +15,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 /** 鉴权模块 · 见《接口规范 v1.0》§二（A1–A5）与《目录结构 v2.0》 */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, TeamLeader, AdminUser]),
+    /** ⚠️ M5-10 补 `Building`：A2 资料要出 `buildingName`（P8 个人中心） */
+    TypeOrmModule.forFeature([User, TeamLeader, AdminUser, Building]),
     PassportModule,
     JwtModule.registerAsync({
       inject: [ConfigService],

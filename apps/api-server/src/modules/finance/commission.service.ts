@@ -5,6 +5,7 @@ import { Between, DataSource, EntityManager, FindOptionsWhere, In, Repository } 
 import { LEADER_LEVEL_META, LeaderLevel, WITHDRAW_FROZEN_STATUS } from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
+import { BALANCE_LOG_TYPE_LABEL } from '../../common/constants/balance-log';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { BizConfigService } from '../../common/services/biz-config.service';
 import { LeaderMoneyService } from '../../common/services/leader-money.service';
@@ -156,50 +157,13 @@ export class CommissionService {
    *      （与 L10 佣金明细的「冲销存负数」不同，注意区分）。
    */
   async listBalanceLogs(leader: TeamLeader, q: BalanceLogQueryDto) {
-    const userId = Number(leader.userId);
-    const where: FindOptionsWhere<BalanceLog> = { userId };
-    if (q.type) where.type = q.type;
-
-    const { page, pageSize, skip } = normalizePage(q);
-    const [rows, total] = await this.balanceLogRepo.findAndCount({
-      where,
-      order: { id: 'DESC' },
-      skip,
-      take: pageSize,
-    });
-
-    // 汇总按**全量**统计（不受分页影响），与 L10 同一约定
-    const all = await this.balanceLogRepo.find({ where });
-    let inFen = 0;
-    let outFen = 0;
-    for (const r of all) {
-      const amt = Math.round(Number(r.amount) * 100);
-      if (Number(r.direction) > 0) inFen += amt;
-      else outFen += amt;
-    }
-
-    return {
-      summary: { inFen, outFen, netFen: inFen - outFen, count: Number(total) },
-      ...paginate(
-        rows.map((r) => ({
-          id: Number(r.id),
-          type: r.type,
-          /** 中文文案由服务端给（与订单状态文案同一纪律：端上不自造） */
-          typeText: BALANCE_LOG_TYPE_LABEL[r.type] ?? r.type,
-          direction: Number(r.direction),
-          amountFen: Math.round(Number(r.amount) * 100),
-          balanceAfterFen: Math.round(Number(r.balanceAfter) * 100),
-          relatedId: r.relatedId ?? null,
-          remark: r.remark ?? null,
-          taxWithheldFen: Math.round(Number(r.taxWithheldAmount || 0) * 100),
-          payoutChannel: r.payoutChannel ?? null,
-          createdAt: r.createdAt,
-        })),
-        total,
-        page,
-        pageSize,
-      ),
-    };
+    /**
+     * ⭐ M5-10：实现体已提取到 `LeaderMoneyService.logsOf(userId, q)` ——
+     * 用户侧 U14（P9 账户余额明细）与团长侧 L19（P17）读的是**同一条余额链路**，
+     * 两份实现必然在「全量汇总不受分页影响」这类约定上悄悄分叉。
+     * 本方法只剩「把 leader 映射成 userId」这一个职责。
+     */
+    return this.leaderMoney.logsOf(Number(leader.userId), q);
   }
 
   /**
@@ -961,22 +925,8 @@ function amountFenOf(value: unknown): number {
   return Number.isFinite(n) ? Math.round(n * 100) : 0;
 }
 
-/** `ab_balance_log.type` → 中文文案（服务端唯一来源，端上不自造） */
-export const BALANCE_LOG_TYPE_LABEL: Record<string, string> = {
-  commission: '佣金入账',
-  order_pay: '下单抵扣',
-  withdraw: '提现',
-  withdraw_refund: '提现退回',
-  refund: '退款回退',
-  /**
-   * M3-14 新增：管理端手工调整（充 / 扣 / 冻 / 解）
-   *
-   * ⚠️ 漏了这条，团长在 P17 余额明细里会看到裸英文 `adjust` ——
-   *    `listBalanceLogs` 的文案回退是 `LABEL[type] ?? type`，**不报错、只是变丑**，
-   *    属于最容易漏且最难被发现的一类。值的定义见 `balance-admin.service.ts`。
-   */
-  adjust: '管理端调整',
-};
+/** `ab_balance_log.type` → 中文文案（**服务端唯一来源**，端上不自造） */
+export { BALANCE_LOG_TYPE_LABEL };
 
 export function levelLabel(level: string): string {
   return LEADER_LEVEL_META[level as LeaderLevel]?.label ?? level;

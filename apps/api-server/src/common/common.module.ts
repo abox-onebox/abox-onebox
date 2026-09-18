@@ -2,7 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
-import { Balance, Commission } from '../database/entities/finance.entity';
+import { Balance, BalanceLog, Commission } from '../database/entities/finance.entity';
 import { TeamLeader } from '../database/entities/leader.entity';
 import { OperationLog } from '../database/entities/system.entity';
 import { Withdraw } from '../database/entities/withdraw.entity';
@@ -39,7 +39,17 @@ import { LeaderMoneyService } from './services/leader-money.service';
  */
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([TeamLeader, OperationLog, Balance, Commission, Withdraw])],
+  imports: [
+    TypeOrmModule.forFeature([
+      TeamLeader,
+      OperationLog,
+      Balance,
+      /** M5-10：U14 用户余额明细（`LeaderMoneyService.logsOf`）也要读流水，故一并注册 */
+      BalanceLog,
+      Commission,
+      Withdraw,
+    ]),
+  ],
   providers: [
     KvService,
     QueueService,

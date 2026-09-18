@@ -50,6 +50,16 @@ export interface LoginResult {
 }
 
 export interface MeResult extends LoginUser {
+  /**
+   * ⭐ M5-10 派生只读字段（未绑定 → null）
+   *
+   * P8 个人中心要显示「跟随团长：李明 · 国贸三期 A 座」；此前出参只有
+   * `buildingId` / `teamLeaderId` 两个**数字**，端上无法渲染，只能糊一句
+   * 「已绑定办公楼（见首页取餐点）」。故 A2 补这两个名字字段
+   * （**不新开 U12 `/me`**，那份数据本来就在 A2 里）。
+   */
+  buildingName: string | null;
+  leaderName: string | null;
   isLeader: boolean;
   leader:
     | (LoginLeaderBrief & {

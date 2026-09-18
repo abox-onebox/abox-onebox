@@ -286,9 +286,9 @@
 
 | # | 方法 | 路径 | 说明 |
 | --- | --- | --- | --- |
-| U12 | GET | `/me` | 用户信息（含所属团长、办公楼） |
-| U13 | GET | `/me/balance` | 可用余额（**单位分**） |
-| U14 | GET | `/me/balance/logs?type=&page=` | 余额明细（M04-03） |
+| U12 | GET | `/me` | 用户信息（含所属团长、办公楼）· ⚠️ **由 A2 `GET /auth/me` 承担，不另设端点**（M5-10 裁定：同一份数据两个端点必然漂移；`buildingName`/`leaderName` 两个派生只读字段已在 A2 出参补齐） |
+| U13 | GET | `/me/balance` | 可用余额（**单位分**）· M5-10 实装；出参含 `hasBalanceAccount`（与 A2 逐字一致）+ **服务端下发口径说明 `note`**：「余额来自订单退款与团长佣金入账（用户与团长共用同一账户），不支持充值；下单时可直接抵扣」—— ⚠️ 原型 P9 的「用户余额仅来自订单退款、团长佣金是独立账户」为**过时文案**（`ab_balance` 主键是 `user_id`，两身份共用同一账户） |
+| U14 | GET | `/me/balance/logs?type=&page=` | 余额明细（M04-03）· M5-10 实装；与 L19 `GET /leader/balance-logs` **共用同一实现**（`LeaderMoneyService.logsOf`），`summary` 按全量统计不受分页影响；**不传 `type` 即返回全部流水**（不做「用户只看退款」的默认筛选，否则大卡总额与流水对不上） |
 | U15 | POST | `/me/subscribe` | 上报订阅消息授权结果（模板 ID 列表）· ⚠️ **一期未实装**（见下方 M4-3 说明） |
 | U16 | GET | `/me/agreements?type=user\|privacy` | 用户协议 / 隐私政策正文（M04-06） |
 | U17 | GET | `/me/support` | 客服入口配置（**一期：客服微信号 + 服务时间**） |

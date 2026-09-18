@@ -18,6 +18,7 @@ import {
 } from '../../common/services/leader-money.service';
 import { durationToSeconds } from '../../common/utils/time';
 import { verifyPassword } from '../../common/utils/password';
+import { Building } from '../../database/entities/building.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { AdminUser } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
@@ -40,6 +41,12 @@ export class AuthService {
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectRepository(TeamLeader) private readonly leaderRepo: Repository<TeamLeader>,
     @InjectRepository(AdminUser) private readonly adminRepo: Repository<AdminUser>,
+    /**
+     * M5-10：A2 资料补 `buildingName` —— P8 个人中心要显示「跟随团长：李明 ·
+     * 国贸三期 A 座」，此前只出 `buildingId`，端上只能写一句
+     * 「已绑定办公楼（见首页取餐点）」糊过去。
+     */
+    @InjectRepository(Building) private readonly buildingRepo: Repository<Building>,
     @Inject(WX_MINI_PROVIDER) private readonly wxMini: WxMiniProvider,
     private readonly jwt: JwtService,
     private readonly kv: KvService,
@@ -108,7 +115,23 @@ export class AuthService {
     };
   }
 
-  /** 当前登录用户资料 */
+  /**
+   * 当前登录用户资料（A2 `GET /auth/me` / A5 `GET /auth/profile` 共用）
+   *
+   * ⭐ M5-10 补两个**派生只读**字段 `buildingName` / `leaderName`：
+   *    P8 个人中心原型要显示「跟随团长：李明 · 国贸三期 A 座」，
+   *    而此前只出 `buildingId` / `teamLeaderId` 两个数字，端上无法渲染。
+   *
+   *    ⚠️ 为什么不新开 `GET /me`（规范 U12）承担：U12 要的就是这份数据，
+   *       本方法已是它的实现，再建端点 = 两个端点一份数据（详见
+   *       `modules/user/user.controller.ts` 头注）。
+   *
+   *    ⚠️ 两个字段都**可空**：未绑定办公楼（新用户首次进入）→ `null`，
+   *       端上显示引导文案而不是渲染 `undefined`。
+   *       注意 `teamLeaderId` 有值但团长已停职时也要能显示名字 ——
+   *       故按 id 直查，**不过滤 `status`**（与「跟随团长」的绑定关系无关，
+   *       停职是团长侧的运营状态）。
+   */
   async profile(userId: number) {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new BizException(ErrorCode.USER_NOT_FOUND);
@@ -116,13 +139,37 @@ export class AuthService {
     const leader = await this.leaderRepo.findOne({ where: { userId } });
     const account = leader ? await this.leaderMoney.accountOf(userId) : null;
 
+    /**
+     * 楼栋名与团长名的取数口径：
+     *   · 绑定团长（`user.teamLeaderId`）优先 —— 用户「跟随」的是它；
+     *   · 没有绑定团长但自己是团长 → 退回「自己的办公楼」（`leader.buildingId`），
+     *     否则团长本人在 P8 上会看到「未绑定办公楼」。
+     * ⚠️ 两次查询合并成一次 `In([...])`：两个 id 常常相同，去重后再查，
+     *    `In` 列表长度恒 ≤ 2（SQLite 绑定变量上限 999 与本处无关，但保持习惯）。
+     */
+    const effectiveLeaderId = user.teamLeaderId ?? leader?.id ?? null;
+    const followedLeader = effectiveLeaderId
+      ? effectiveLeaderId === leader?.id
+        ? leader
+        : await this.leaderRepo.findOne({ where: { id: effectiveLeaderId } })
+      : null;
+
+    const buildingId = user.buildingId ?? leader?.buildingId ?? null;
+    const building = buildingId
+      ? await this.buildingRepo.findOne({ where: { id: Number(buildingId) } })
+      : null;
+
     return {
       id: user.id,
       nickname: user.nickname ?? null,
       avatarUrl: user.avatarUrl ?? null,
       phone: user.phone ?? null,
       buildingId: user.buildingId ?? null,
+      /** ⭐ 派生：办公楼名称（未绑定 → null），P8「跟随团长：X · {本字段}」 */
+      buildingName: building?.name ?? null,
       teamLeaderId: user.teamLeaderId ?? null,
+      /** ⭐ 派生：跟随团长姓名（未跟随/已解绑 → null） */
+      leaderName: followedLeader?.realName ?? null,
       isLeader: !!leader && leader.status === LeaderStatus.ACTIVE,
       leader: leader
         ? {

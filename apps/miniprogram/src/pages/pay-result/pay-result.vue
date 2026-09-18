@@ -3,48 +3,59 @@
     <ab-loading v-if="loading && !result" text="正在确认支付结果" />
 
     <template v-else-if="result">
+      <!-- 结果 hero（原型 P4：大 ✅ + 标题 + 订单号） -->
       <view class="hero">
-        <text class="hero__icon">{{ paid ? '✓' : result.status === 'cancelled' ? '×' : '·' }}</text>
+        <text class="hero__icon">{{
+          paid ? '✅' : result.status === 'cancelled' ? '🚫' : '⏳'
+        }}</text>
         <text class="hero__title">{{ heroTitle }}</text>
-        <text class="hero__amount">¥{{ fenToYuan(result.payAmountFen) }}</text>
+        <text class="hero__order-no">订单号 {{ result.orderNo }}</text>
         <text v-if="result.failReason" class="hero__reason">{{ result.failReason }}</text>
       </view>
 
-      <view class="section">
-        <view class="info">
-          <view class="info__row">
-            <text class="info__label">订单号</text>
-            <text class="info__value">{{ result.orderNo }}</text>
-          </view>
-          <view class="info__row">
-            <text class="info__label">订单状态</text>
-            <ab-status-badge :text="result.statusText" :status="result.status" />
-          </view>
-          <view class="info__row">
-            <text class="info__label">支付时间</text>
-            <text class="info__value">{{ formatDateTime(result.paidAt) }}</text>
-          </view>
+      <!-- 订单信息卡（原型 P4：套餐/金额/支付方式/截单时间） -->
+      <view class="info">
+        <view class="info__row">
+          <text class="info__label">金额</text>
+          <text class="info__value">¥{{ fenToYuan(result.payAmountFen) }}</text>
+        </view>
+        <view class="info__row">
+          <text class="info__label">支付方式</text>
+          <text class="info__value">微信支付</text>
+        </view>
+        <view class="info__row">
+          <text class="info__label">截单时间</text>
+          <text class="info__value">今晚 24:00</text>
+        </view>
+        <view class="info__row">
+          <text class="info__label">订单状态</text>
+          <ab-status-badge :text="result.statusText" :status="result.status" />
+        </view>
+        <view v-if="result.paidAt" class="info__row">
+          <text class="info__label">支付时间</text>
+          <text class="info__value">{{ formatDateTime(result.paidAt) }}</text>
         </view>
       </view>
 
-      <view class="section">
-        <view class="notice">
-          <text class="notice__text">{{ tipText }}</text>
-        </view>
+      <view class="tip">
+        <text class="tip__text">{{ tipText }}</text>
       </view>
 
-      <view class="actions">
-        <button class="btn btn--primary" hover-class="btn--hover" @tap="goDetail">查看订单</button>
-        <button
-          v-if="!paid && canRetry"
-          class="btn btn--ghost"
-          hover-class="btn--hover"
-          @tap="retryPay"
-        >
-          {{ paying ? '支付中…' : '重新支付' }}
-        </button>
-        <button class="btn btn--plain" hover-class="btn--hover" @tap="goHome">回到首页</button>
-      </view>
+      <button class="btn-primary" hover-class="btn-primary--hover" @tap="goDetail">
+        查看订单详情
+      </button>
+      <button
+        v-if="!paid && canRetry"
+        class="btn-secondary"
+        hover-class="btn-secondary--hover"
+        :disabled="paying"
+        @tap="retryPay"
+      >
+        {{ paying ? '支付中…' : '重新支付' }}
+      </button>
+      <button class="btn-secondary" hover-class="btn-secondary--hover" @tap="goHome">
+        返回首页
+      </button>
     </template>
 
     <ab-empty-state
@@ -60,6 +71,12 @@
 <script setup lang="ts">
 /**
  * P4 · 支付结果
+ *
+ * ⭐ 版式基准 = prototype/index.html renderP4（2026-09-18 裁定「19 页逐页对齐原型」）：
+ *   大 ✅ + 「支付成功」+ 订单号 → 信息卡（金额 / 支付方式 / 截单时间 / 订单状态）→
+ *   查看订单详情 / 返回首页。
+ *   与原型的差异：原型只画了支付成功一个态；实装保留**完整三态**
+ *   （等待支付 + 重新支付 / 已取消 —— U7「支付失败不改单」与 U8 服务端查询为准是既有验收点）。
  *
  * ⚠️ 状态以 **U8 服务端查询**为准，不看 `uni.requestPayment` 的回调结果：
  *    微信的 success 只代表「用户完成支付动作」，真正入账由服务端回调决定。
@@ -137,39 +154,34 @@ onLoad((options) => {
 <style lang="scss" scoped>
 .page {
   min-height: 100vh;
-  padding: $space-4;
+  padding: $space-4 $space-4 80rpx;
   box-sizing: border-box;
 }
 
+// ---- 结果 hero（居中大图标） ----
 .hero {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: $space-5 0 $space-5;
+  padding: 100rpx 0 $space-4;
   text-align: center;
 
   &__icon {
-    width: 96rpx;
-    height: 96rpx;
-    font-size: 48rpx;
-    line-height: 96rpx;
-    color: $c-surface;
-    background: $c-success;
-    border-radius: 50%;
+    font-size: 160rpx;
+    line-height: 1;
   }
 
   &__title {
-    margin-top: $space-3;
-    font-size: $fs-h1;
-    font-weight: 600;
+    margin-top: $space-4;
+    font-size: 44rpx;
+    font-weight: bold;
     color: $c-text;
   }
 
-  &__amount {
+  &__order-no {
     margin-top: $space-2;
-    font-size: $fs-display;
-    font-weight: 600;
-    color: $c-text;
+    font-size: $fs-caption;
+    color: $c-text-weak;
   }
 
   &__reason {
@@ -179,15 +191,13 @@ onLoad((options) => {
   }
 }
 
-.section {
-  margin-bottom: $space-4;
-}
-
+// ---- 订单信息卡 ----
 .info {
-  padding: $space-3 $space-4;
-  background: $c-surface;
-  border: 1px solid $c-border;
-  border-radius: $radius-md;
+  margin: $space-4 $space-2 0;
+  padding: $space-4 $space-4;
+  background: #fbf7ee;
+  border: 1px solid #d4c4a8;
+  border-radius: 28rpx;
 
   &__row {
     display: flex;
@@ -207,7 +217,9 @@ onLoad((options) => {
   }
 }
 
-.notice {
+// ---- 状态提示 ----
+.tip {
+  margin: $space-4 $space-2 0;
   padding: $space-3;
   background: rgba(201, 168, 118, 0.1);
   border-radius: $radius-md;
@@ -219,37 +231,48 @@ onLoad((options) => {
   }
 }
 
-.actions {
-  display: flex;
-  flex-direction: column;
-  gap: $space-3;
-  margin-top: $space-5;
-}
-
-.btn {
-  height: 80rpx;
-  font-size: $fs-body;
-  line-height: 80rpx;
+// ---- 按钮（主 = 金棕渐变 · 次 = 描边） ----
+.btn-primary {
+  display: block;
+  width: 100%;
+  margin: $space-5 0 0;
+  padding: $space-3 0;
+  background: linear-gradient(135deg, $c-text 0%, #b8915c 100%);
+  color: $c-bg;
+  font-size: $fs-h2;
+  font-weight: bold;
+  letter-spacing: 4rpx;
+  text-align: center;
+  border: none;
   border-radius: $radius-pill;
 
   &::after {
     border: none;
   }
 
-  &--primary {
-    color: $c-surface;
-    background: $c-text;
+  &--hover {
+    filter: brightness(1.08);
+  }
+}
+
+.btn-secondary {
+  display: block;
+  width: 100%;
+  margin: $space-3 0 0;
+  padding: $space-3 0;
+  background: $c-surface;
+  color: $c-text;
+  font-size: $fs-body;
+  text-align: center;
+  border: 1px solid $c-text;
+  border-radius: $radius-pill;
+
+  &::after {
+    border: none;
   }
 
-  &--ghost {
-    color: $c-text;
-    background: transparent;
-    border: 1px solid $c-text;
-  }
-
-  &--plain {
-    color: $c-text-weak;
-    background: transparent;
+  &[disabled] {
+    opacity: 0.5;
   }
 
   &--hover {
