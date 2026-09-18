@@ -33,7 +33,7 @@
 | 工程骨架 | `abox-onebox/` · **608 个文件**（阶段四产出） |
 | 数据库表 | **27 张**（ER v2.1：23 张 + 评审新增 `ab_leader_invite` + M2 新增 `ab_withdraw` + M3-8 新增 `ab_supplier_dish_center_daily` + M3-12 新增 `ab_message_template`）· ⚠️ **表数对齐 ≠ 结构对齐**：自 2026-09-17（M5-2 · #76）起，「实体 → 迁移」的**逐表逐列**对齐由门禁 **`schema:parity`** 机械保证（27 表 / 394 列），且**开发期用 sqlite 建表、生产用迁移建表**这一分叉已由此门禁兜住 |
 | 技术栈 | uni-app(Vue3+TS) + NestJS + MySQL 8 + Redis 7 + 微信支付 V3；**佣金出款走灵活用工平台代发**（C11，见目录结构 v2.0） |
-| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `eb43b8d`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
+| 基线 commit | 基线 tag `v1.1-local-dev-base`（`0e9552e` · 388 文件）· 生成时 HEAD `983cc78`（**回溯基准**：清单是生成物，其自身提交号 = 上述 HEAD 的下一笔 `chore(baseline)` 提交） |
 | 准备期状态 | **阶段一 / 二 / 三 / 四 全部完成 + M0 启动评审已通过**；M1（后端 + 小程序基座）· M2（团长端全链路）已端到端验收；**M3（运营后台 + 供应商端）已完成（M3-1 ~ M3-15）**：已落地 M3-1 后台鉴权基座 · M3-2 套餐编排 D1–D7 · M3-3 订单中心 D8–D12 · M3-4 退款审批 D40–D42 · M3-5 后台团长管理 D19–D22 · M3-6 后台供应商管理 + 集散 D23–D32 · M3-7 后台办公楼与楼群 D13–D18 · M3-8 供应商端出餐确认 S1–S3 · M3-9 应付结算 S9（自营口径首次实装）· M3-10 系统配置 D57–D58 · M3-11 数据看板 D47–D50 · **M3-12 通知模板 D59–D60** · **M3-13 财务端点 D33–D35** · **M3-14 余额账户管理与调整 D38–D39** · **M3-15 微信支付对账 D43 + 发票管理 D44** · **M4-0 契约级修正 + S3 打包任务迁运营后台** · **M4-1 日切链路（4.1/4.2/4.3 + 调度基座 + 手动补跑）** · **M4-2 结算链路（4.4/4.5/4.7）** · **M4-3 队列贯通（BullMQ 三消费者 + 订阅消息投递点 + 外部通道移出 DB 事务）** · **M4-4 提现审批（D45 列表 + D46/D46a/D46b/D46c 四动作 · 资金链收口）** · **M5-0 部署运维基座（探针分级 + 优雅关闭 + 生产迁移 glob + 双镜像 / compose.prod / 5 脚本 + 部署运维手册；修真缺陷 #71–#75）** · **M5-1 配送单人工修正（D61/D62 · 收口挂账 #61）** · **M5-2 生产迁移补齐 + 结构对账门禁（收口 #76 · 补 2 表 9 列 1 索引 + `schema:parity`）** · **M5-3 试运营交付 + 安全自检 + #49 时间类配置接调度（收口 #49 · 门禁 16 → 18 道）**；⭐ **M5 主线（三方联调 + 灰度上线）仍被外部条件阻塞**（5.2 压测 / 5.4 真机部署 / 5.5 灰度 / 5.6 演练），故 M5-0/1/2 是**前置子批次 ≠ M5**；《部署运维手册 v1.0》**已产出**（M5-0），其中 **R2 已由 M5-2 升级为「结构已机械对账」** |
 
 ---
@@ -52,11 +52,11 @@
 | 8 | `ABox一盒专家团进场隐患修复验收单v1.0.md` | 3 P0 + 9 P1 + 8 P2 隐患修复验收单（CI 全绿 · M1 可开工） | 8,188 | `e7c6ace16e7c` |
 | 9 | `ABox一盒业务运作理解v2.0.md` | 业务时序与关键事实（已最终确认） | 9,059 | `37e971cf0bd0` |
 | 10 | `ABox一盒代码审查修复批次交付报告v1.0.md` | 【M5-7 · 2026-09-18 · 输入=《代码整体审查与缺陷汇总》§二 21 条发现】把**能落地修复**的项全部实施（不是只审不改）：**4 条 P1 资金链缺口 + 1 条 P1 安全默认值 + 5 类 P2 加固项全部落地**（资金链四处收口 = 原子占位一处覆盖余额/佣金/通道三段 + 三处乐观锁 + 无账户 fail-closed `40019`；写钱入口两层齐备 = 服务层原子占位 + 控制器 `@Idempotent`）· ⭐ **门禁 19 → 20 道**（新增 `state:audit` 状态机「声明 ↔ 写入点」机械对账，**首跑即报出第二处此前无人登记的漂移**：`ORDER_TRANSITIONS[refund_applying]` 仍声明 `→ refunding` 而 M4-3 起订单不再进该态）· e2e m3 **969 → 980**（新增 §33b 11 条断言）· 新增错误码 **2 个**（`40018`/`40019`）· **零 DDL / 零新表 / 零新列** · ⚠️ **6 条 P0/P3 结构性缺口按性质分流**为「建门禁」或「如实登记待裁决」—— **#79 履约链未实现**（只做「测试清单标注依赖」+「根因建门禁」，实现待产品范围裁决）· ⚠️ **资金链并发断言本地不可验**（e2e 走 sqlite 单连接把事务串行化，本测不具鉴别力 → 转真机 MySQL）；⚠️ 并更正原审查报告一处因果误判（#83 根因不是「豁免放过默认值」而是**压根没有规则命中**） | 14,892 | `39471256c8fe` |
-| 11 | `ABox一盒代码整体审查与缺陷汇总v1.0.md` | 【2026-09-18 · 基线 70030ca · 门禁 19/19 · e2e m3 969】5 域并发只读深审（资金链 / 订单履约与供应链 / 认证授权安全 / 任务队列驱动资源 / 契约与一致性）+ **逐条代码级复核**（不采信未复核的推断）· 21 条发现 = **1 P0 + 5 P1 + 9 P2 + 6 P3**；⭐ 核心结论 **⛔ 订单履约链 T7–T9 在 `ab_order` 上零写入点**（`cooked`/`delivering`/`delivered` 无实现 → 订单永远停在 `cut_off`、佣金永不产生），而 **e2e 全绿恰恰掩盖了它**（夹具直接 `UPDATE ab_order SET status='delivered'` 造数据，测的是下游、上游那次状态推进没有实现）—— 「机械证据全绿、真实链路是断的」的教科书案例；⚠️ 定位：**正式人工测试前的最后一轮静态审计**，目的是把人的时间花在只有人能验的地方 | 28,965 | `1e88ac51e91c` |
-| 12 | `ABox一盒供应商内部测试操作清单v1.0.html` | 【M5-6 · 交付给执行测试的人】供应商侧可打印 A4 操作清单：入口 = **与运营共用后台 `:5173`**（不是独立系统）+ 账号分角色 + 6 项菜单里**3 项是未实装占位页**（⚠️ 默认落点 `/dashboard` 空白是**未实装**、不是登录失败）+ 出餐确认三件事 + 结算页「今天本来为空」的原因（锚 = **出餐日**）+ 「**找不到才对**」类判据（I1：不该出现 ¥25.80 / 佣金 / 毛利） | 29,144 | `a3b7d5e768fa` |
+| 11 | `ABox一盒代码整体审查与缺陷汇总v1.0.md` | 【2026-09-18 · 基线 70030ca · 门禁 19/19 · e2e m3 969】5 域并发只读深审（资金链 / 订单履约与供应链 / 认证授权安全 / 任务队列驱动资源 / 契约与一致性）+ **逐条代码级复核**（不采信未复核的推断）· 21 条发现 = **1 P0 + 5 P1 + 9 P2 + 6 P3**；⭐ 核心结论 **⛔ 订单履约链 T7–T9 在 `ab_order` 上零写入点**（`cooked`/`delivering`/`delivered` 无实现 → 订单永远停在 `cut_off`、佣金永不产生），而 **e2e 全绿恰恰掩盖了它**（夹具直接 `UPDATE ab_order SET status='delivered'` 造数据，测的是下游、上游那次状态推进没有实现）—— 「机械证据全绿、真实链路是断的」的教科书案例；⚠️ 定位：**正式人工测试前的最后一轮静态审计**，目的是把人的时间花在只有人能验的地方 | 32,484 | `1f8fc0a4ca97` |
+| 12 | `ABox一盒供应商内部测试操作清单v1.0.html` | 【M5-6 · 交付给执行测试的人】供应商侧可打印 A4 操作清单：入口 = **与运营共用后台 `:5173`**（不是独立系统）+ 账号分角色 + 6 项菜单里**3 项是未实装占位页**（⚠️ 默认落点 `/dashboard` 空白是**未实装**、不是登录失败）+ 出餐确认三件事 + 结算页「今天本来为空」的原因（锚 = **出餐日**）+ 「**找不到才对**」类判据（I1：不该出现 ¥25.80 / 佣金 / 毛利） | 30,689 | `7dfd70d16069` |
 | 13 | `ABox一盒供应商出餐卡v1.0.html` | 【M5-3 · 试运营交付物】供应商端**一页出餐卡**：时间轴（前一日 24:00 截单汇总 → 当日出餐送达 → 次日 02:00 生成应付）+ 三件事（截单后看量 / 出餐时确认 / 次日对账）+ 结款口径（**实收 × 出餐日冻结单价** · 日结 · 人工对公转账 · **取回单 + 发票**）+ 三条红线 | 10,364 | `170048211be1` |
 | 14 | `ABox一盒全面检查与测试报告v1.0.md` | 【2026-09-18 · 正式测试前全量排查】五维度审计（功能逻辑 / 边界与异常输入 / 错误处理与日志 / 性能与资源 / 代码规范与一致性）：4 路只读代理 + 主审运行时实测（28 项边界 / 越权 / 幂等，**零 500**）+ **契约 vs 实现对账**（规范 91 端点 vs 实装 135）；⭐ 已修复 2 项（P0 红线 emoji · 异常过滤器两处口径）· 未修复 9 项（含位置 / 原因 / 建议验证方式）· **误报澄清 3 项**（含反证）· 门禁 18/18 复跑全绿；⚠️ 能力边界与「测不了什么」如实标注 | 19,293 | `52b87f2041c8` |
-| 15 | `ABox一盒内部测试操作清单v1.0.html` | 【M5-5 · 交付给执行测试的人】38 步可打印 A4 操作清单：用户端 U1–U15 / 运营后台 A1–A20 / 负向用例 N1–N3 + **问题记录表**（严重度三档 P0 卡死 / P1 结果不对 / P2 不好用，兜底「拿不准写 P1」）+ **身份分配表**（⚠️ 同一身份同一业务日只能做一次 → 多人共用必撞、必被误报成 bug）+ 收工复原；定位：**工程看手册、测试人看清单**（不出现同源代理 / 幂等键这类技术名词） | 27,109 | `e0daabb796e6` |
+| 15 | `ABox一盒内部测试操作清单v1.0.html` | 【M5-5 · 交付给执行测试的人】38 步可打印 A4 操作清单：用户端 U1–U15 / 运营后台 A1–A20 / 负向用例 N1–N3 + **问题记录表**（严重度三档 P0 卡死 / P1 结果不对 / P2 不好用，兜底「拿不准写 P1」）+ **身份分配表**（⚠️ 同一身份同一业务日只能做一次 → 多人共用必撞、必被误报成 bug）+ 收工复原；定位：**工程看手册、测试人看清单**（不出现同源代理 / 幂等键这类技术名词） | 30,606 | `873ce4162cab` |
 | 16 | `ABox一盒协作规范v1.0.md` | 分支 / 提交 / 评审 / 配置纪律 / 文档变更流程 / DoD（阶段四） | 12,095 | `41d9c7b51a8e` |
 | 17 | `ABox一盒合规资质与协议清单v1.0.md` | 资质与协议要点（阶段三）· 资金定性=自营 + 佣金个税走灵活用工 · 2026-09-16 结算改采购应付口径 | 15,644 | `17c806a2a074` |
 | 18 | `ABox一盒团长操作卡v1.0.html` | 【M5-3 · 试运营交付物】团长端**一页操作卡**：一天时间轴（前一日 14:00 开团 / 24:00 截单 / 当日 11:30 送达 / 14:00 确认）+ 每天三件事（开团后转发 / 截单前提醒 / 11:30 取餐确认）+ 佣金四级（见习 8% / 正式 9% / 金牌 10% / 首席 12%，见习 30 天未促单失效）+ 三条红线（不收现金 / 不承诺加单 / 不替退款）；口径逐条对齐《业务运作理解 v2.0》与**真实接口**（不编造操作） | 11,110 | `7b4bdb17b001` |
@@ -65,17 +65,17 @@
 | 21 | `ABox一盒安全自检报告v1.0.md` | 【M5-3 · 5.3 安全自检的本地部分】越权全量机械对账（135 端点 / 10 条规则 R1——R10）+ 密钥扫描（工作区 **与完整 git 历史**）+ 日志脱敏核查 + `POST /pay/mock/paid` 显式 fail-closed 加固；⭐ 两支检查器**自带自证能力**（每次运行人为构造违规/真凭据样本，报不出即自身失败）；⚠️ 边界**如实标注**：不覆盖「服务层数据收窄」（按 `supplier_id` 过滤做到没有）· 未做 `npm audit` · 生产白名单与 HTTPS 待环境 | 11,498 | `3fd7496edd1e` |
 | 22 | `ABox一盒开发前准备计划v1.0.html` | 四阶段推进路线（准备期总纲） | 28,685 | `feb3c6c759a2` |
 | 23 | `ABox一盒开发里程碑计划v1.0.md` | M1–M5 里程碑 + W1–W10 甘特 + 验收标准 + 风险登记册（阶段四）· ⭐ v1.1.13（2026-09-17）M5 段**四个子批次**（M5-0 / 1 / 2 / 3）：**M5-0 部署运维基座** + **M5-1 配送单人工修正**（D61/D62 · 收口挂账 #61）+ **M5-2 生产迁移补齐 + 结构对账门禁**（收口 #76 · 补 2 表 9 列 1 索引 + `schema:parity`）+ **M5-3 试运营交付 + 安全自检 + #49 时间类配置接调度**（收口 #49 · **关单** · `gate.mjs` 16 → **18 道**）；M5 段标注 4 项**外部条件阻塞**（5.2 压测 / 5.4 真机部署 / 5.5 灰度 / 5.6 演练）（⚠️ 子批次是前置 **≠ M5**；验收标准 4 条**全部要求真机执行**，三个子批次的完成**均不构成**对它们的满足） | 137,256 | `f1e5e50cace6` |
-| 24 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 · 2026-09-17 **M5-1 加 D61 `GET /admin/deliveries` + D62 `PUT /admin/deliveries/{id}`（配送单人工修正）+ 错误码 30016/30017** · 2026-09-16 S9 应付结算改「采购应付」口径 · 2026-09-17 **M5-3 #49 接线**（§6.7 五个时刻键 `unwired`→`live` + 新增「业务时刻」组 6→7 + D58 接受 **`24:00`** + **跨键自洽校验**「开团必须早于截单」；§6.8 S1 出参增 `registeredCron` / `effectiveAt` / `summary.registered`，`dateKind` 改为**由时间轴派生**）—— **零新增错误码** | 247,381 | `cbfbae723193` |
+| 24 | `ABox一盒接口规范v1.0.md` | 接口契约（阶段二）· 60+ 端点 / 错误码 / 幂等 · 2026-09-17 **M5-1 加 D61 `GET /admin/deliveries` + D62 `PUT /admin/deliveries/{id}`（配送单人工修正）+ 错误码 30016/30017** · 2026-09-16 S9 应付结算改「采购应付」口径 · 2026-09-17 **M5-3 #49 接线**（§6.7 五个时刻键 `unwired`→`live` + 新增「业务时刻」组 6→7 + D58 接受 **`24:00`** + **跨键自洽校验**「开团必须早于截单」；§6.8 S1 出参增 `registeredCron` / `effectiveAt` / `summary.registered`，`dateKind` 改为**由时间轴派生**）—— **零新增错误码** | 260,234 | `f6acd4092ffc` |
 | 25 | `ABox一盒数据库ER设计v2.1.md` | 数据模型 · 26 张表（2026-09-15 补 ab_withdraw 提现单 + ab_balance_log 出款字段 + ab_team_leader 收款方式/floor + ab_refund.order_status_before）· 2026-09-16 M3-5 后台团长管理零 DDL（§5.4）· M3-6 ab_supplier 补 7 列（§5.5：资质审核四列 + license_expire_at + invoice_title + takeout_links）· M3-7 ab_building 增 population + 状态三态（§5.6，唯一 DDL、无新表）· **M3-8 新增 ab_supplier_dish_center_daily**（§3.6.1，供应商出餐确认分中心明细）· **M3-12 新增 ab_message_template**（§3.9，通知模板 5 场景 —— 场景定义留在代码里，库表只存可编辑部分；**合计 27 张表**）· ⭐ **M5-2 两处更正**（《缺陷与陷阱》#76）：**§5.3 `ab_refund.order_status_before` 类型 `tinyint` → `VARCHAR(16)`**（原文档记录**与代码不符** —— 代码写入的是 `order.status` 字符串；**文档比代码更错的场合，机械对账的源必须是代码**）+ 新增 **§5.8 迁移↔实体结构对齐**（缺口 2 表 9 列 1 索引 / 为何长期未发现 / 增量补法 / `schema:parity` 门禁 / ⚠️ **边界：ER 仍是三份结构表述里唯一无自动校验的一份**）+ 表数总览补警示「**表数对齐 ≠ 结构对齐**」 | 70,884 | `9dfb9bddbbcb` |
 | 26 | `ABox一盒本地开发手册v1.0.md` | 不依赖云资源的本地开发手册（四驱动开关 · 本地跑通登录→下单→支付→回调） | 32,387 | `ba67284194a1` |
 | 27 | `ABox一盒种子数据清单v1.0.md` | 开发初始数据（阶段二）· 12 楼 / 5 团长 / 4 供应商 · 2026-09-17 **M5-3**：`set_meal.cutoff_time` 由 `23:59` 更正为 **`24:00`**（#49 —— 模型缺 `24:00` 这个值，把「配置 23:59 / cron 00:00」的 1 分钟偏差固化了下来） | 26,403 | `17c6030ca37c` |
 | 28 | `ABox一盒自营结算口径定义v1.0.md` | 自营口径下结算定义（2026-09-16 定稿）· 4 条裁定 + 2 条不变量：**退款不冲减供应商应付** / 计费基数取**实收量** / 应付对象**仅供应商采购款** / siteFee 改**自有场所摊销**；S9 出单 fail-closed + 幂等键；错误码预留 50012–50014 | 21,869 | `3085fad7f658` |
 | 29 | `ABox一盒表结构评审意见v1.0.md` | ER 评审结论（阶段二）· P0×6 + 4 张补齐 DDL | 24,817 | `53e5f67f568c` |
-| 30 | `ABox一盒订单状态机与全链路流转v1.0.md` | 订单域行为契约（阶段二）· 11 态 / 8 定时任务 / C6 退款三段式 / C11 出款通道 | 32,243 | `df4bcd377261` |
+| 30 | `ABox一盒订单状态机与全链路流转v1.0.md` | 订单域行为契约（阶段二）· 11 态 / 8 定时任务 / C6 退款三段式 / C11 出款通道 | 35,130 | `8dab16984b36` |
 | 31 | `ABox一盒设计token规范v1.0.html` | 设计与实现共用视觉变量 | 20,375 | `34faff40f86e` |
 | 32 | `ABox一盒账号资源与密钥清单v1.0.md` | 外部资源核对表（阶段三）· 含 C10/C11 结算与出款通道定案 | 16,157 | `3ccb06fe9245` |
 | 33 | `ABox一盒部署运维手册v1.0.md` | 【M5-0 · M5-2 增补】生产部署与运行手册（2026-09-17）· 环境矩阵 / 拓扑（本地 compose 与 `docker-compose.prod.yml` 是两套东西）/ 密钥纪律 / 部署流程（含首次核对 9 项）/ 禁发窗口 / 两级探针监控 + 8 任务时刻表 + 队列观测 / 备份恢复 / **应急预案 6 类** / 日巡检清单 / ⚠️ **遗留风险 9 条（R1 Docker 未真机执行 · R2 生产库从未跑迁移 · R3 e2e 用 sqlite · R4 微信回调未验 · R5 未压测 · R6 HTTPS 未配 · R7 镜像未瘦身 · R8 账号未到位 · R9 食品经营许可证）** · ⭐ **v1.0.1（M5-2）：R2 升级**为「**结构已机械对账**（`schema:parity` · 27 表 / 394 列）+ 仍需真机空库首迁预演」，并补明「**两支迁移都要 applied**」与 `migration:show` 核对步骤 —— ⚠️ **不写成已验**：本机无 Docker / 无 MySQL | 26,624 | `a43d2d044c5e` |
-| 34 | `ABox一盒项目目录结构v2.0.md` | Monorepo 布局 · 端页模块映射 · ⭐ v2.0.11（2026-09-18 M5-7 落点：§四 `modules/order/` 补 **`order-state-audit.ts`**（状态机声明 ↔ 生产写入点机械对账 · 门禁 `state:audit`）· §一 `gate.mjs` **19 道 → 20 道**）· ⭐ v2.0.10（2026-09-17 M5-6 落点：§四 `database/` 补 **`index-parity.ts`**（索引对账 · 门禁 `index:parity`）+ `migrations/` 由**两支改三支**（+ `1700000000002-index-commission-meal.ts`）· §四 `common/middleware/rate-limit.middleware.ts` 由占位改**实装**（且注明注册点必须是 `AppModule.configure()`）· §一 `gate.mjs` 18 道 → **19 道**）· ⭐ v2.0.9（2026-09-17 M5-4 落点：§一 `scripts/` 补 **`local-test.mjs`** —— 云服务器就绪前的内部测试入口，一键起「API + 用户端 H5 + 运营后台」并打印手机扫码地址）· ⭐ v2.0.8（2026-09-17 M5-3 落点：§四 `common/utils/` 补 **`order-timeline.ts`**（业务时刻唯一真相）/ **`tz.ts`** · 新增 **`common/security/`**（`route-audit.ts` 越权全量机械对账 / `security-scan.ts` 密钥+日志扫描）· `tasks/` 补 **`schedule.registrar.ts`**（cron 运行时注册 + 热重载）并标注「8 个任务类均不含 `@Cron`」；§一 `gate.mjs` 16 道 → **18 道**）· v2.0.7（2026-09-17 M5-2 落点：§四 `database/` 补 **`schema-parity.ts`**（迁移↔实体机械对账 · 门禁名 `schema:parity`）+ `migrations/` 登记为**两支**并标注「**两支合并推演才等于实体**」；§一 `gate.mjs` 15 道 → **16 道**）· v2.0.6 M5-1 落点（§四 `modules/delivery/` 由占位改**实装**说明 + §三 `views/order/delivery.vue` / `api/delivery.ts` + §五 `enums/delivery-status.ts`（收敛两处重复映射）+ §10.3 补 P39 与配送单管理两行；⚠️ 同时更正 v2.0.5 的一处事实错误 —— `db-migrate.sh` / `db-seed.sh` **确实存在**，只是 `pnpm --filter` 的薄包装且本机 pnpm 不可用，实际走 `gate.mjs`）· v2.0.5 M5-0 部署落点（`docker-compose.prod.yml` / 双 Dockerfile / nginx.conf / `.dockerignore` / 五个运维脚本）· v2.0.2 补 leader-expire.task | 57,518 | `5293b5cfd569` |
+| 34 | `ABox一盒项目目录结构v2.0.md` | Monorepo 布局 · 端页模块映射 · ⭐ v2.0.11（2026-09-18 M5-7 落点：§四 `modules/order/` 补 **`order-state-audit.ts`**（状态机声明 ↔ 生产写入点机械对账 · 门禁 `state:audit`）· §一 `gate.mjs` **19 道 → 20 道**）· ⭐ v2.0.10（2026-09-17 M5-6 落点：§四 `database/` 补 **`index-parity.ts`**（索引对账 · 门禁 `index:parity`）+ `migrations/` 由**两支改三支**（+ `1700000000002-index-commission-meal.ts`）· §四 `common/middleware/rate-limit.middleware.ts` 由占位改**实装**（且注明注册点必须是 `AppModule.configure()`）· §一 `gate.mjs` 18 道 → **19 道**）· ⭐ v2.0.9（2026-09-17 M5-4 落点：§一 `scripts/` 补 **`local-test.mjs`** —— 云服务器就绪前的内部测试入口，一键起「API + 用户端 H5 + 运营后台」并打印手机扫码地址）· ⭐ v2.0.8（2026-09-17 M5-3 落点：§四 `common/utils/` 补 **`order-timeline.ts`**（业务时刻唯一真相）/ **`tz.ts`** · 新增 **`common/security/`**（`route-audit.ts` 越权全量机械对账 / `security-scan.ts` 密钥+日志扫描）· `tasks/` 补 **`schedule.registrar.ts`**（cron 运行时注册 + 热重载）并标注「8 个任务类均不含 `@Cron`」；§一 `gate.mjs` 16 道 → **18 道**）· v2.0.7（2026-09-17 M5-2 落点：§四 `database/` 补 **`schema-parity.ts`**（迁移↔实体机械对账 · 门禁名 `schema:parity`）+ `migrations/` 登记为**两支**并标注「**两支合并推演才等于实体**」；§一 `gate.mjs` 15 道 → **16 道**）· v2.0.6 M5-1 落点（§四 `modules/delivery/` 由占位改**实装**说明 + §三 `views/order/delivery.vue` / `api/delivery.ts` + §五 `enums/delivery-status.ts`（收敛两处重复映射）+ §10.3 补 P39 与配送单管理两行；⚠️ 同时更正 v2.0.5 的一处事实错误 —— `db-migrate.sh` / `db-seed.sh` **确实存在**，只是 `pnpm --filter` 的薄包装且本机 pnpm 不可用，实际走 `gate.mjs`）· v2.0.5 M5-0 部署落点（`docker-compose.prod.yml` / 双 Dockerfile / nginx.conf / `.dockerignore` / 五个运维脚本）· v2.0.2 补 leader-expire.task | 62,587 | `a810bfcb4d9a` |
 | 35 | `手机测试指南.md` | 原型真机测试方式 | 5,615 | `fdadff0b2889` |
 | 36 | `prototype/index.html` | 可点击原型 v4.10.0（37 页 · 结算成本项可配置版 · 已部署线上） | 275,848 | `6069906879d5` |
 | 37 | `prototype/README.md` | 原型变更日志（已刷新至 v4.10.0，页索引 37 页；页面归属仍以《目录结构 v2.0》§十 为准） | 43,872 | `4ced2a5caa17` |
@@ -187,9 +187,9 @@
 | 27 | `apps/admin-web/src/constants/index.ts` |  | 8,219 | `d4b384ccc4f3` |
 | 28 | `apps/admin-web/src/styles/element-override.scss` |  | 830 | `6dab60cc998b` |
 | 29 | `apps/api-server/src/app.module.ts` |  | 4,811 | `1d9f958455c6` |
-| 30 | `apps/api-server/src/modules/order/order-state-machine.ts` |  | 6,246 | `c71905a46aca` |
+| 30 | `apps/api-server/src/modules/order/order-state-machine.ts` |  | 8,729 | `45abb2ca5fcc` |
 | 31 | `apps/api-server/src/tasks/leader-expire.task.ts` |  | 3,004 | `4c928d5c47b1` |
-| 32 | `apps/api-server/test/unit/order-state-machine.spec.ts` |  | 1,546 | `fb77b77fb8a4` |
+| 32 | `apps/api-server/test/unit/order-state-machine.spec.ts` |  | 3,394 | `0d97a195ea46` |
 | 33 | `apps/api-server/src/database/entities/withdraw.entity.ts` |  | 4,582 | `cf011255684d` |
 | 34 | `packages/shared-types/src/enums/withdraw-status.ts` |  | 2,335 | `26f7cdd618d1` |
 | 35 | `packages/shared-types/src/enums/refund.ts` |  | 1,270 | `64248c8dd16d` |
@@ -210,7 +210,7 @@
 | 50 | `apps/api-server/src/common/constants/admin-role.ts` |  | 7,334 | `881891b8ce6e` |
 | 51 | `apps/api-server/src/common/decorators/operation-log.decorator.ts` |  | 1,463 | `d9980b6251a1` |
 | 52 | `apps/api-server/src/common/interceptors/operation-log.interceptor.ts` |  | 8,065 | `73d818c25b99` |
-| 53 | `apps/api-server/src/common/constants/error-code.ts` |  | 20,911 | `3e12143316fa` |
+| 53 | `apps/api-server/src/common/constants/error-code.ts` |  | 22,004 | `57644e4c60d5` |
 | 54 | `apps/admin-web/src/api/request.ts` |  | 7,188 | `2c244ead0e24` |
 | 55 | `apps/admin-web/src/api/auth.ts` |  | 2,262 | `2341475025f9` |
 | 56 | `apps/admin-web/src/router/guards.ts` |  | 2,523 | `47f9d2ab636d` |
@@ -225,7 +225,7 @@
 | 65 | `apps/api-server/src/modules/finance/reversal.service.ts` |  | 20,475 | `b7ba8f39dab0` |
 | 66 | `apps/admin-web/src/api/order.ts` |  | 8,547 | `d4706221d804` |
 | 67 | `apps/admin-web/src/views/order/list.vue` |  | 17,647 | `57aa7b1b806b` |
-| 68 | `scripts/e2e-m3.mjs` |  | 634,986 | `bb24a245f42c` |
+| 68 | `scripts/e2e-m3.mjs` |  | 663,075 | `df5cd174d7ec` |
 | 69 | `apps/api-server/src/modules/finance/refund-admin.service.ts` |  | 12,431 | `c510cc162bb7` |
 | 70 | `apps/api-server/src/modules/finance/refund-admin.controller.ts` |  | 5,642 | `710e8940e792` |
 | 71 | `apps/api-server/src/modules/finance/dto/refund-admin.dto.ts` |  | 3,839 | `afe4177c79ec` |
@@ -271,7 +271,7 @@
 | 111 | `apps/admin-web/src/views/building/groups.vue` |  | 15,984 | `edb70213a27d` |
 | 112 | `apps/admin-web/src/views/building/leader-binding.vue` |  | 8,687 | `46eacab91f64` |
 | 113 | `apps/admin-web/src/views/building/delivery-map.vue` |  | 9,988 | `42d5d0180d80` |
-| 114 | `apps/api-server/src/modules/supplier/supplier.service.ts` |  | 42,223 | `1a82a657413a` |
+| 114 | `apps/api-server/src/modules/supplier/supplier.service.ts` |  | 51,788 | `b00dfb7eb793` |
 | 115 | `apps/api-server/src/modules/supplier/supplier.controller.ts` |  | 6,718 | `2da2bbf6a478` |
 | 116 | `apps/api-server/src/modules/supplier/dto/supplier.dto.ts` |  | 3,376 | `54e45cd27b2e` |
 | 117 | `apps/admin-web/src/api/supplier-portal.ts` |  | 7,567 | `820992eb4cad` |
@@ -377,11 +377,11 @@
 | 217 | `scripts/restore-db.sh` |  | 4,208 | `9bbf0dc79f2e` |
 | 218 | `scripts/healthcheck.sh` |  | 4,285 | `0852cac865b9` |
 | 219 | `packages/shared-types/src/enums/delivery-status.ts` |  | 2,621 | `ab88d8a8b78e` |
-| 220 | `apps/api-server/src/modules/delivery/delivery.controller.ts` |  | 5,166 | `f511a7fb2a00` |
-| 221 | `apps/api-server/src/modules/delivery/delivery.service.ts` |  | 21,523 | `3e52f553d3fc` |
-| 222 | `apps/api-server/src/modules/delivery/dto/delivery.dto.ts` |  | 5,641 | `f6e61a66adc7` |
-| 223 | `apps/admin-web/src/views/order/delivery.vue` |  | 14,043 | `a403dd54d9bf` |
-| 224 | `apps/admin-web/src/api/delivery.ts` |  | 3,162 | `167ef1229d29` |
+| 220 | `apps/api-server/src/modules/delivery/delivery.controller.ts` |  | 8,621 | `dc38d3470323` |
+| 221 | `apps/api-server/src/modules/delivery/delivery.service.ts` |  | 43,948 | `531aa503a2e6` |
+| 222 | `apps/api-server/src/modules/delivery/dto/delivery.dto.ts` |  | 8,221 | `a8e7576c4e2f` |
+| 223 | `apps/admin-web/src/views/order/delivery.vue` |  | 22,410 | `e54dc300fe78` |
+| 224 | `apps/admin-web/src/api/delivery.ts` |  | 6,027 | `6249ba73c00c` |
 | 225 | `apps/api-server/src/database/migrations/1700000000000-init.ts` |  | 29,797 | `c212a499b654` |
 | 226 | `apps/api-server/src/database/migrations/1700000000001-parity-fix.ts` |  | 11,854 | `0c1440ba47f4` |
 | 227 | `apps/api-server/src/database/schema-parity.ts` |  | 21,057 | `6f7d08e7a774` |
@@ -393,7 +393,7 @@
 | 233 | `apps/api-server/src/database/index-parity.ts` |  | 16,157 | `22d0ecda706a` |
 | 234 | `apps/api-server/src/database/migrations/1700000000002-index-commission-meal.ts` |  | 4,387 | `ec25d44c3b48` |
 | 235 | `apps/api-server/src/common/middleware/rate-limit.middleware.ts` |  | 14,488 | `f354c1f926bb` |
-| 236 | `apps/api-server/src/modules/order/order-state-audit.ts` |  | 23,468 | `2716eb511988` |
+| 236 | `apps/api-server/src/modules/order/order-state-audit.ts` |  | 28,747 | `115c9700abd7` |
 
 > 骨架含：根配置（pnpm workspace / TS / ESLint / Prettier / commitlint）+ CI 四作业 + Docker Compose（MySQL 8 + Redis 7，无 RabbitMQ）
 > + 小程序 21 页骨架 + 后台 33 视图骨架 + 后端 15 模块 / 8 定时任务 / 3 消费者 + 4 个 packages。
