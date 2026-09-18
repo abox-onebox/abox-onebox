@@ -76,23 +76,52 @@ export async function assertPortFree(port = PORT) {
 /** 已启动的服务进程（供退出钩子统一回收） */
 const running = new Set();
 
-function buildEnv(port) {
+/**
+ * 构造子进程环境。`extra` 用于**单次覆盖**（见下 `startApiServer`）。
+ *
+ * ⭐ `ABOX_RATE_LIMIT: 'off'` —— e2e 主线**默认关闭限流**，理由是实测数字：
+ *    一轮 `e2e-m3` 会打 **54 次** `POST /auth/admin-login`（`finance`/`sanweiwu` 等
+ *    同一账号各被复用近 10 次），而生产阈值是 **IP 10/分 · 账号 5/分**（按「一栋办公楼
+ *    共用 NAT 出口」定的，见 `rate-limit.middleware.ts`）。不关的话套件会被**自己的防护**
+ *    打成 429 而红 —— 那不是被测行为出错，是把安全机制变成了不稳定因素。
+ *
+ * ⚠️ 关掉它**不等于**限流没被验证：`e2e-m3.mjs` §33 会**另起一台开启限流的实例**
+ *    （`startApiServer(PORT, { ABOX_RATE_LIMIT: 'on' })`）走真实 HTTP 断言 429/10005。
+ *    两者是**故意分开**的：主线测业务，§33 测防护本身。
+ * ⚠️ 服务端对 `NODE_ENV=production` 硬忽略此开关，故这里传 off 不会削弱生产。
+ *
+ * 覆盖优先级（低 → 高）：**本文件的默认 `off`** < `process.env.ABOX_RATE_LIMIT`
+ * < `extra.ABOX_RATE_LIMIT`。中间那一层不是冗余 —— 调用方（如 `local-test.mjs`）
+ * 的既有习惯是「先设 `process.env` 再起服务」，若把默认值写成不可覆盖的常量，
+ * 那种写法会**静默失效**（正是本批反复在收的那类假绿）。
+ */
+function buildEnv(port, extra = {}) {
   return {
     ...process.env,
     // dotenv 不覆盖既有环境变量 → 这里的值优先于 apps/api-server/.env 的 APP_PORT
     APP_PORT: String(port),
-    PATH: [join(API_DIR, 'node_modules', '.bin'), join(ROOT, 'node_modules', '.bin'), NODE_DIR, process.env.PATH].join(
-      PATH_SEP,
-    ),
+    ABOX_RATE_LIMIT: process.env.ABOX_RATE_LIMIT ?? 'off',
+    ...extra,
+    PATH: [
+      join(API_DIR, 'node_modules', '.bin'),
+      join(ROOT, 'node_modules', '.bin'),
+      NODE_DIR,
+      process.env.PATH,
+    ].join(PATH_SEP),
     NODE_PATH: join(dirname(NODE_DIR), 'workspace', 'node_modules'),
   };
 }
 
-export function startApiServer(port = PORT) {
+/**
+ * 起 API 服务。
+ * @param port  监听端口
+ * @param extra 额外环境变量（可覆盖默认值，如 `{ ABOX_RATE_LIMIT: 'on' }`）
+ */
+export function startApiServer(port = PORT, extra = {}) {
   const child = spawn('ts-node -r tsconfig-paths/register src/main.ts', {
     cwd: API_DIR,
     shell: true,
-    env: buildEnv(port),
+    env: buildEnv(port, extra),
     stdio: ['ignore', 'pipe', 'pipe'],
     // POSIX 下建独立进程组，便于整组回收；Windows 不支持进程组语义，靠 taskkill /T
     detached: !IS_WIN,
@@ -118,7 +147,10 @@ export function killTree(child) {
   if (!pid) return;
   try {
     if (IS_WIN) {
-      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', timeout: 10_000 });
+      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        stdio: 'ignore',
+        timeout: 10_000,
+      });
     } else {
       try {
         process.kill(-pid, 'SIGKILL');

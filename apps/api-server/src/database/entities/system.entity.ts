@@ -50,15 +50,15 @@ export class AdminUser {
 
 /** ab_operation_log 操作日志（含 snapshot 变更前后值 · P2-1） */
 @Entity('ab_operation_log')
+@Index('idx_oplog_user_time', ['adminUserId', 'createdAt'])
+@Index('idx_oplog_module_action', ['module', 'action'])
 export class OperationLog {
   @PkColumn()
   id!: number;
 
-  @Index('idx_oplog_user_time')
   @Column({ name: 'admin_user_id', type: 'bigint', transformer: bigintTransformer, nullable: true })
   adminUserId?: number | null;
 
-  @Index('idx_oplog_module_action')
   @Column({ type: 'varchar', length: 32, comment: '模块名' })
   module!: string;
 
@@ -109,11 +109,11 @@ export class SysConfig {
 
 /** ab_message 消息推送日志（订阅消息，保留 90 天） */
 @Entity('ab_message')
+@Index('idx_msg_user_time', ['userId', 'createdAt'])
 export class Message {
   @PkColumn()
   id!: number;
 
-  @Index('idx_msg_user_time')
   @Column({ name: 'user_id', type: 'bigint', transformer: bigintTransformer, nullable: true })
   userId?: number | null;
 

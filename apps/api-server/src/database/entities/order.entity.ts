@@ -5,8 +5,18 @@ import { bigintTransformer, moneyTransformer, PkColumn } from './transformers';
  * ab_order 订单表
  * 依据：《ER v2.1》§4.6 + 《表结构评审意见 v1.0》P0-2（补 refund_applying / refunding 态）、
  *   P1-5（MVP 阶段**先不分区**，单量破万再引入；分区键须含于所有唯一索引）
+ *
+ * ⚠️ 本表的索引**多数是复合索引**（`(xxx, meal_date)`），且**迁移才是权威表述**
+ *   （生产结构只由迁移决定）—— 索引声明必须与 `1700000000000-init.ts` 逐名逐列一致，
+ *   否则本地（实体 synchronize）与生产（迁移）会成为**两套索引**，
+ *   两边都不报错、只表现为查询计划不同。由门禁 `index:parity` 看住。
  */
 @Entity('ab_order')
+@Index('idx_order_user', ['userId', 'mealDate'])
+@Index('idx_order_team_leader', ['teamLeaderId', 'mealDate'])
+@Index('idx_order_status', ['status', 'mealDate'])
+@Index('idx_order_refund_status', ['status', 'mealDate'])
+@Index('idx_order_building_meal', ['buildingId', 'mealDate'])
 export class Order {
   @PkColumn()
   id!: number;
@@ -20,11 +30,9 @@ export class Order {
   })
   orderNo!: string;
 
-  @Index('idx_order_user')
   @Column({ name: 'user_id', type: 'bigint', transformer: bigintTransformer })
   userId!: number;
 
-  @Index('idx_order_team_leader')
   @Column({
     name: 'team_leader_id',
     type: 'bigint',
@@ -51,7 +59,6 @@ export class Order {
   })
   assignmentId!: number;
 
-  @Index('idx_order_status')
   @Column({ name: 'meal_date', type: 'date' })
   mealDate!: string;
 
@@ -116,7 +123,6 @@ export class Order {
    * pending_pay/paid/cut_off/cooked/delivering/delivered/completed
    * /cancelled/refund_applying/refunding/refunded
    */
-  @Index('idx_order_refund_status')
   @Column({ type: 'varchar', length: 24, default: 'pending_pay' })
   status!: string;
 
@@ -141,6 +147,7 @@ export class Order {
 
 /** ab_payment_log 支付流水（永久保留 · 合规要求） */
 @Entity('ab_payment_log')
+@Index('idx_payment_status', ['status', 'createdAt'])
 export class PaymentLog {
   @PkColumn()
   id!: number;
@@ -174,7 +181,6 @@ export class PaymentLog {
   @Column({ name: 'pay_method', type: 'varchar', length: 16, default: 'wxpay_jsapi' })
   payMethod!: string;
 
-  @Index('idx_payment_status')
   @Column({
     type: 'varchar',
     length: 16,
@@ -201,6 +207,7 @@ export class PaymentLog {
  * 依据：《表结构评审意见 v1.0》P0-5 完整 DDL
  */
 @Entity('ab_refund')
+@Index('idx_refund_status_time', ['status', 'createdAt'])
 export class Refund {
   @PkColumn()
   id!: number;
@@ -258,7 +265,6 @@ export class Refund {
   @Column({ type: 'varchar', length: 256, nullable: true })
   reason?: string | null;
 
-  @Index('idx_refund_status_time')
   @Column({
     type: 'varchar',
     length: 16,

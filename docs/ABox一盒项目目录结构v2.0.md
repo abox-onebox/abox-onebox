@@ -62,7 +62,7 @@ abox-onebox/                            ← 项目根目录
 │   ├── setup.sh                        ← 一键初始化项目（PowerShell 版：setup.ps1）
 │   ├── init.sql                        ← MySQL 初始化（供 docker 入口挂载）
 │   ├── sync-docs.mjs                   ← 根文档 → docs/ 镜像同步
-│   ├── gate.mjs                        ← 免 pnpm 门禁执行器（⭐ **18 道**：M5-2 增 `schema:parity`，M5-3 增 `route:audit` + `security:scan`）
+│   ├── gate.mjs                        ← 免 pnpm 门禁执行器（⭐ **19 道**：M5-2 增 `schema:parity`，M5-3 增 `route:audit` + `security:scan`，M5-6 增 `index:parity`）
 │   ├── e2e-m1.mjs / e2e-m2.mjs / e2e-m3.mjs   ← 端到端验收（真实起服务 + 真实 HTTP）
 │   ├── lib/e2e-server.mjs              ← e2e 共用托管（端口隔离 + 进程树回收 + 健康轮询）
 │   ├── local-test.mjs                  ← 【本地内部测试】一键起「API + 用户端 H5 + 运营后台」并打印**手机扫码地址**（云服务器就绪前的内部测试入口）
@@ -354,9 +354,11 @@ apps/api-server/
 │   │   ├── database.module.ts
 │   │   ├── data-source.ts              ← TypeORM data source（`synchronize: driver === 'sqlite'`）
 │   │   ├── schema-parity.ts            ← ⭐ M5-2「迁移推演 ≡ 实体真库」机械对账（`gate.mjs` 门禁 `schema:parity`）
-│   │   ├── migrations/                 ← 数据库迁移（**两支合并推演才等于实体结构**）
+│   │   ├── index-parity.ts             ← ⭐ M5-6「迁移索引 ≡ 实体索引」机械对账（门禁 `index:parity`）—— 补 `schema:parity` 自述的**不比索引**边界（比索引名 + 列有序 + 唯一性）
+│   │   ├── migrations/                 ← 数据库迁移（**三支合并推演才等于实体结构**）
 │   │   │   ├── 1700000000000-init.ts           25 张表（基础结构）
-│   │   │   └── 1700000000001-parity-fix.ts     ⭐ M5-2 补 2 表 + 9 列 + 1 索引（#76 修复载体，幂等可重入）
+│   │   │   ├── 1700000000001-parity-fix.ts     ⭐ M5-2 补 2 表 + 9 列 + 1 索引（#76 修复载体，幂等可重入）
+│   │   │   └── 1700000000002-index-commission-meal.ts  ⭐ M5-6 补 `ab_commission` 的 `idx_commission_meal`（`meal_date` 打头查询的索引缺口，幂等可重入）
 │   │   └── seeds/                      ← 种子数据（¥25.80 / 4 级佣金 / 4 集散中心 / 12 楼）
 │   │       └── seed.ts
 │   ├── modules/
@@ -802,7 +804,8 @@ echo "  pnpm dev:admin        # 仅启动后台"
 | **v2.0.7** | 2026-09-17 | **M5-2 迁移补齐与结构对账工具落点登记**：§四 `database/` 补 **`schema-parity.ts`**（迁移推演 ↔ 实体真库机械对账，`gate.mjs` 门禁名 `schema:parity`）并把 `migrations/` 登记为**两支** —— `1700000000000-init.ts`（25 张表）+ **`1700000000001-parity-fix.ts`**（M5-2 补 2 表 + 9 列 + 1 索引，《缺陷与陷阱》#76 的修复载体 · 幂等可重入），并就地标注 ⚠️ **「两支合并推演才等于实体结构」**（单看 init 会少 2 表 9 列，是刻意的）；§一 `gate.mjs` 由「15 道」改为「**16 道**」（增 `schema:parity`）。⚠️ 本表仍有 M4-0…M4-4 各批次**未逐批登记**的历史欠账 |
 | **v2.0.8** | 2026-09-17 | **M5-3 试运营交付 / 安全自检 / #49 时刻接线落点登记**：§四 `common/utils/` 补 **`tz.ts`**（全项目统一时区常量，时间轴与调度声明表共用，避免两处各写一份）+ **`order-timeline.ts`**（⭐ **业务时刻的唯一真相** `DEFAULT_TIMELINE` 9 时刻 —— 跑批 cron 与下单窗口锚点**都是它的派生值**）；新增 **`common/security/`**（`route-audit.ts` 越权全量机械对账 · `security-scan.ts` 密钥 + 日志脱敏扫描，两支并入 `gate.mjs` 门禁）；`tasks/` 补 **`schedule.registrar.ts`**（cron **运行时注册 + 订阅时间轴变更热重载**）并就地标注 ⚠️「**8 个任务类均已不含 `@Cron`**」—— 装饰器参数在模块加载时求值一次即成静态元数据，这正是 #49「配了不生效」的**机制性根因**；§一 `gate.mjs` 由「**16 道**」改为「**18 道**」（增 `route:audit` / `security:scan`）。⚠️ 本表仍有 M4-0…M4-4 各批次**未逐批登记**的历史欠账 |
 | **v2.0.9** | 2026-09-17 | **本地内部测试工具落点登记（云服务器就绪前的内部测试入口）**：§一 `scripts/` 补 **`local-test.mjs`**（一键起「API + 用户端 H5 + 运营后台」并打印**手机扫码地址**；开关 `--seed` / `--build` / `--smoke` / `--clock` / `--only`）+ **`lib/local-server.mjs`**（静态托管 + `/api` **同源反向代理**）+ **`lib/local-smoke.mjs`**（**11 项**端到端自检）。三处刻意设计与理由已就地标注：① 自检走**端上那条路**（页面 → 同源代理 → 后端）而**非直连后端** —— 直连只能证明「后端活着」，证明不了「手机打开能登录取数」；② 用户端 H5 必须以**相对路径**构建（`VITE_API_BASE_URL=/api/v1`），写成固定局域网 IP 则换网络环境后全部请求失败；③ 默认注入 `ABOX_SHIFT_TO_HOUR=20`，否则 `isOrderable` 窗口每天只开 9 小时，内部测试大部分时段**连单都下不了**。§一 同步补记《本地开发手册》由此新增 **§9.3 云服务器就绪前的内部测试**；`.gitignore` 补 `dist-h5/` —— 用户端 H5 产物**刻意不落在 `dist/`**（那里归 `build:mp` 所有，构建前整个改名挪走 → 跑一次门禁就把手机测试环境清掉，表现为「昨天还能开、今天说缺产物」）。⚠️ 本表仍有 M4-0…M4-4 各批次**未逐批登记**的历史欠账 |
+| **v2.0.10** | 2026-09-17 | **M5-6 全面检查报告五项「本地可完成」修复落点登记**（零 DDL 之外的 1 支增量迁移 · 零新增错误码）：§四 `database/` 补 **`index-parity.ts`**（迁移索引 ≡ 实体索引机械对账，`gate.mjs` 门禁名 `index:parity`）—— 补 `schema-parity.ts` **自述的「不比索引」边界**（比索引名 + 列**有序** + 唯一性，且自带自证）；⚠️ 它首跑即报出 **25 处「实体写属性级单列 / 迁移写类级复合」漂移** —— 两边**各自都自洽**，任何既有门禁都看不出（本地与生产跑的是两套索引）· `migrations/` 由**两支**改登记为**三支**：+ **`1700000000002-index-commission-meal.ts`**（补 `ab_commission` 的 `idx_commission_meal (meal_date)` —— 该表**永续增长**，3 处 `meal_date` 打头查询此前只能全表扫；`information_schema` 守卫幂等可重入）· §一 `gate.mjs` 由「**18 道**」改为「**19 道**」（增 `index:parity`）· ⭐ §四 `common/middleware/rate-limit.middleware.ts` 由**空占位改实装**（收口报告 §二 P2-7：`10005` 从「有码无实现」到真生效）：**固定窗口** + **IP/账号双维度** + **复用同一个 `AllExceptionsFilter`** 产出 429（不手写第二套响应形状 = 不制造第二种 429 形状）；⚠️ 注册点**必须**是 `AppModule.configure()` —— `app.use()` 放在 `await app.init()` 之前（body 未解析 → 账号维度静默失效）或之后（**排在路由之后 → 一次都不执行**）**都不行**，见《缺陷与陷阱》#78；⭐ 阈值按本业务主场景「**一栋办公楼共用 NAT 出口**」定（IP 10/分 · 账号 5/分）并**刻意不设全局写兜底**（一刀切会把整栋楼的写操作一起打掉）；测试开关 `ABOX_RATE_LIMIT` 生产**硬忽略**（同 `ABOX_SHIFT_TO_HOUR` 范式）· ⚠️ `scripts/e2e-m3.mjs` 增 **§33 退款执行闸门**（同一订单两张 `applying` 退款单 → 恰好一次执行 + 余额流水恰好 1 条；**如实标注它不是并发测试**，并发项挂账见《缺陷与陷阱》#77）与 **§34 限流**（**另起一台真开限流的实例**做真实 HTTP 断言，双维度 + 响应体形状 + `/health` 跳过）—— e2e 主线套件因一轮要打 **54 次 `admin-login`** 而默认 `ABOX_RATE_LIMIT=off`（否则会被自己的防护打成 429）· ⭐ 25 个空壳文件补「**真实实现在哪**」弃用头注释（§二 P2-8） |
 
 ---
 
-*文档结束 · ABox 一盒 · 项目目录结构 v2.0（现行 v2.0.9） · 2026-09-17*
+*文档结束 · ABox 一盒 · 项目目录结构 v2.0（现行 v2.0.10） · 2026-09-17*

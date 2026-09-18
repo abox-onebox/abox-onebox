@@ -389,8 +389,7 @@ async function main() {
       `menus=${JSON.stringify(menus)}`,
     );
     assert(
-      menus.every((m) => m === '/dashboard' || m.startsWith('/supplier/')) &&
-        !menus.includes('*'),
+      menus.every((m) => m === '/dashboard' || m.startsWith('/supplier/')) && !menus.includes('*'),
       'A2 供应商 menus **每一项**都落在 `/dashboard` 或 `/supplier/*` 内，且不含通配符 —— 这比「恰好 N 项」耐久：将来加减 P 页不用改断言，而混入 `/finance/*`、`/system/*` 会立刻撞红',
       `menus=${JSON.stringify(menus)}`,
     );
@@ -414,7 +413,9 @@ async function main() {
   } else {
     const fin = await adminLogin('finance', 'finance123');
     assert(
-      fin.code === 0 && fin.account?.role === 'finance' && fin.account?.menus?.includes('/dashboard'),
+      fin.code === 0 &&
+        fin.account?.role === 'finance' &&
+        fin.account?.menus?.includes('/dashboard'),
       'A2 finance 登录成功，菜单含工作台但不含 /system/*',
       `menus=${JSON.stringify(fin.account?.menus)}`,
     );
@@ -1011,11 +1012,7 @@ async function main() {
     token: adminToken,
     body: { mealDate: dPlus4, buildingGroupId: 999999, setMealId: 1 },
   });
-  assert(
-    badGroup.body?.code === 10004,
-    'D2 楼群不存在 → 10004',
-    `code=${badGroup.body?.code}`,
-  );
+  assert(badGroup.body?.code === 10004, 'D2 楼群不存在 → 10004', `code=${badGroup.body?.code}`);
 
   // ---------------------------------------------------------- D3 编辑
   const editOk = await call('PUT', `/admin/meal/assignments/${pId}`, {
@@ -1079,7 +1076,9 @@ async function main() {
     body: { action: 'publish' },
   });
   assert(
-    pubOk.body?.code === 0 && pubOk.body?.data?.status === 'active' && !!pubOk.body?.data?.publishAt,
+    pubOk.body?.code === 0 &&
+      pubOk.body?.data?.status === 'active' &&
+      !!pubOk.body?.data?.publishAt,
     'D4 publish：pending → active，并写 publishAt',
     `status=${pubOk.body?.data?.status}`,
   );
@@ -1149,9 +1148,7 @@ async function main() {
     ? uDailyOn.body?.data?.canOrder === true
     : uDailyOn.body?.data?.canOrder === false && /开团/.test(onReason) && !/未开团/.test(onReason);
   assert(
-    repubSeed.body?.code === 0 &&
-      repubSeed.body?.data?.status === 'active' &&
-      repubVisible,
+    repubSeed.body?.code === 0 && repubSeed.body?.data?.status === 'active' && repubVisible,
     'D4 重新上架 → 用户端 canOrder=true（可见性开关闭环，且已还原种子状态）',
     `canOrder=${uDailyOn.body?.data?.canOrder} reason=${onReason} bjWindow=${windowOpen}` +
       ` countdown=${uDailyOn.body?.data?.countdownSec}s`,
@@ -1169,9 +1166,11 @@ async function main() {
   );
   assert(
     (copy1.body?.data?.created ?? []).every((c) => c.assignmentId > 0) &&
-      (await call('GET', `/admin/meal/matrix?startDate=${dPlus4}&endDate=${dPlus4}`, {
-        token: adminToken,
-      })).body?.data?.cells?.find((c) => c.groupId === 1)?.status === 'pending',
+      (
+        await call('GET', `/admin/meal/matrix?startDate=${dPlus4}&endDate=${dPlus4}`, {
+          token: adminToken,
+        })
+      ).body?.data?.cells?.find((c) => c.groupId === 1)?.status === 'pending',
     'D5 复制出的分配**一律 pending**（绝不能把源日的 active 一起复制 —— 那会绕过 D4 开团）',
   );
 
@@ -1223,11 +1222,7 @@ async function main() {
   // ---------------------------------------------------------- D6 模板库
   const tpls = await call('GET', '/admin/meal/templates?page=1&pageSize=50', { token: adminToken });
   const tpl1 = (tpls.body?.data?.list ?? []).find((t) => t.id === 1);
-  assert(
-    tpls.body?.code === 0 && !!tpl1,
-    'D6 模板库可查询',
-    `total=${tpls.body?.data?.total}`,
-  );
+  assert(tpls.body?.code === 0 && !!tpl1, 'D6 模板库可查询', `total=${tpls.body?.data?.total}`);
   assert(
     tpl1?.dishCount === 4 && (tpl1?.items ?? []).length === 4 && !!tpl1?.items?.[0]?.slotLabel,
     'D6 模板带菜品明细与档位文案（一饭四菜）',
@@ -1239,7 +1234,9 @@ async function main() {
     `usedCount=${tpl1?.usedCount}`,
   );
 
-  const tplFiltered = await call('GET', '/admin/meal/templates?keyword=红烧', { token: adminToken });
+  const tplFiltered = await call('GET', '/admin/meal/templates?keyword=红烧', {
+    token: adminToken,
+  });
   assert(
     tplFiltered.body?.code === 0 &&
       (tplFiltered.body?.data?.list ?? []).every((t) => String(t.name).includes('红烧')),
@@ -1543,9 +1540,13 @@ async function main() {
       'D8 keyword 命中订单号（精确到一单）',
       `count=${byKwNo.body?.data?.list?.length}`,
     );
-    const byKwName = await call('GET', `/admin/orders?keyword=${encodeURIComponent('王芳')}&pageSize=50`, {
-      token: adminToken,
-    });
+    const byKwName = await call(
+      'GET',
+      `/admin/orders?keyword=${encodeURIComponent('王芳')}&pageSize=50`,
+      {
+        token: adminToken,
+      },
+    );
     assert(
       byKwName.body?.code === 0 &&
         (byKwName.body?.data?.list ?? []).length > 0 &&
@@ -2095,7 +2096,9 @@ async function main() {
     // 退款接口负责写的字段（余额变动、流水）一律不碰。
     const cqBal = readDb('SELECT id FROM ab_balance WHERE user_id = 1004');
     if (cqBal) {
-      writeDb("UPDATE ab_balance SET balance = '20.00', version = version + 1 WHERE user_id = 1004");
+      writeDb(
+        "UPDATE ab_balance SET balance = '20.00', version = version + 1 WHERE user_id = 1004",
+      );
     } else {
       writeDb(
         "INSERT INTO ab_balance (user_id, balance, frozen, total_in, total_out, version, created_at, updated_at) VALUES (1004, '20.00', '0.00', '20.00', '0.00', 1, datetime('now'), datetime('now'))",
@@ -2241,7 +2244,9 @@ async function main() {
     const rawPhones40 = JSON.stringify(pendList).match(/1[3-9]\d{9}/g) ?? [];
     assert(
       rawPhones40.length === 0 &&
-        pendList.every((r) => r.user?.phoneMasked === null || String(r.user.phoneMasked).includes('****')),
+        pendList.every(
+          (r) => r.user?.phoneMasked === null || String(r.user.phoneMasked).includes('****'),
+        ),
       'D40 手机号脱敏（后台列表不给全号 —— 完整号只有 D12 导出那条受审计的通道）',
       `found=${rawPhones40.join(',') || '无'}`,
     );
@@ -2249,9 +2254,9 @@ async function main() {
       (pend40.body?.data?.statusOptions ?? []).some((s) => s.value === 'refunded') &&
         (pend40.body?.data?.sourceOptions ?? []).some((s) => s.value === 'leader'),
       'D40 枚举映射由服务端下发（状态 / 来源两张表，端上不维护第二份）',
-      `statuses=${(pend40.body?.data?.statusOptions ?? []).length} sources=${(
-        pend40.body?.data?.sourceOptions ?? []
-      ).length}`,
+      `statuses=${(pend40.body?.data?.statusOptions ?? []).length} sources=${
+        (pend40.body?.data?.sourceOptions ?? []).length
+      }`,
     );
 
     const pg1 = await call('GET', '/admin/finance/refunds?tab=all&page=1&pageSize=1', {
@@ -2304,8 +2309,7 @@ async function main() {
       `before=${ap1?.orderStatusBefore} after=${ap1?.order?.status}`,
     );
     assert(
-      ap1?.reversal?.commissionReversedFen === 0 &&
-        ap1?.reversal?.commissionReversedQuantity === 0,
+      ap1?.reversal?.commissionReversedFen === 0 && ap1?.reversal?.commissionReversedQuantity === 0,
       'D41 未计佣的订单退款**不产生佣金负行**（反冲逻辑与 D11 完全共用 —— 唯一执行口）',
       `reversed=${ap1?.reversal?.commissionReversedFen}`,
     );
@@ -2424,7 +2428,9 @@ async function main() {
       `refund=${rj3?.refundStatus} order=${rj3?.orderStatus}/${rj3?.orderStatusText} fundsMoved=${rj3?.fundsMoved}`,
     );
     const rowR3AfterRej = readDb('SELECT status FROM ab_order WHERE order_no = ?', [noR3]);
-    const rfR3AfterRej = readDb('SELECT status, audit_remark FROM ab_refund WHERE id = ?', [rfR3.id]);
+    const rfR3AfterRej = readDb('SELECT status, audit_remark FROM ab_refund WHERE id = ?', [
+      rfR3.id,
+    ]);
     assert(
       rowR3AfterRej?.status === 'paid' &&
         rfR3AfterRej?.status === 'rejected' &&
@@ -3310,9 +3316,7 @@ async function main() {
   const finReadL = await call('GET', '/admin/leaders', { token: finL.token });
   const supReadL = await call('GET', '/admin/leaders', { token: supL.token });
   assert(
-    vwReadL.body?.code === 10003 &&
-      finReadL.body?.code === 10003 &&
-      supReadL.body?.code === 10003,
+    vwReadL.body?.code === 10003 && finReadL.body?.code === 10003 && supReadL.body?.code === 10003,
     'D19 viewer / finance / supplier 都不进团长域 → 10003（财务管钱不管人；供应商更不该看见同业名录）',
     `viewer=${vwReadL.body?.code} finance=${finReadL.body?.code} supplier=${supReadL.body?.code}`,
   );
@@ -3369,9 +3373,7 @@ async function main() {
   );
   const detLx = await call('GET', `/admin/leaders/${lyLeaderId}`, { token: lAdmin });
   assert(
-    (detLx.body?.data?.operationLogs ?? []).some(
-      (o) => String(o.targetId) === String(lyU.userId),
-    ),
+    (detLx.body?.data?.operationLogs ?? []).some((o) => String(o.targetId) === String(lyU.userId)),
     'D19 详情**双键查日志**：D20 转交那条日志的 targetId 是**继任者用户 id**，只按团长 id 查会漏掉「他是怎么上任的」',
     `logs=${JSON.stringify((detLx.body?.data?.operationLogs ?? []).map((o) => o.targetId))}`,
   );
@@ -3439,7 +3441,9 @@ async function main() {
   );
 
   // ======================================================== A · D23 名录
-  const sList = await call('GET', `/admin/suppliers?${qs({ pageSize: 100 })}`, { token: adminToken });
+  const sList = await call('GET', `/admin/suppliers?${qs({ pageSize: 100 })}`, {
+    token: adminToken,
+  });
   const sRows = sList.body?.data?.list ?? [];
   const sSum = sList.body?.data?.summary ?? {};
   const sTotal = sList.body?.data?.total;
@@ -3473,7 +3477,9 @@ async function main() {
   assert(
     sRows.every((r) => r.contactPhone === undefined),
     'D23 列表**不回真实手机号**（连字段都不出现；只有详情才给，见 B 段）',
-    `keys=${Object.keys(sRows[0] ?? {}).filter((k) => /phone/i.test(k)).join(',')}`,
+    `keys=${Object.keys(sRows[0] ?? {})
+      .filter((k) => /phone/i.test(k))
+      .join(',')}`,
   );
   assert(
     sList.body?.data?.typeOptions === undefined &&
@@ -3504,9 +3510,13 @@ async function main() {
     `code=${onlyBoth.body?.code} msg=${onlyBoth.body?.message}`,
   );
 
-  const onlyExpired = await call('GET', `/admin/suppliers?${qs({ licenseState: 'expired', pageSize: 100 })}`, {
-    token: adminToken,
-  });
+  const onlyExpired = await call(
+    'GET',
+    `/admin/suppliers?${qs({ licenseState: 'expired', pageSize: 100 })}`,
+    {
+      token: adminToken,
+    },
+  );
   assert(
     onlyExpired.body?.code === 0 &&
       (onlyExpired.body?.data?.list ?? []).every((r) => r.licenseState === 'expired'),
@@ -3598,17 +3608,15 @@ async function main() {
     },
   });
   const supAId = Number(cSupA.body?.data?.id ?? 0);
-  assert(
-    cSupA.body?.code === 0 && supAId > 0,
-    'D24 新增供应商成功',
-    `id=${supAId}`,
-  );
+  assert(cSupA.body?.code === 0 && supAId > 0, 'D24 新增供应商成功', `id=${supAId}`);
   assert(
     cSupA.body?.data?.auditStatus === 'pending' && cSupA.body?.data?.status === 1,
     'D24 新建即 `audit_status=pending` 且 `status=1`（**创建 ≠ 可出餐**：资质未核验前 canServe=false）',
     `audit=${cSupA.body?.data?.auditStatus} status=${cSupA.body?.data?.status}`,
   );
-  const supADb = readDb('SELECT audit_status, status, payee_type FROM ab_supplier WHERE id = ?', [supAId]);
+  const supADb = readDb('SELECT audit_status, status, payee_type FROM ab_supplier WHERE id = ?', [
+    supAId,
+  ]);
   assert(
     supADb?.audit_status === 'pending' && Number(supADb?.status) === 1,
     'D24 落库值与出参一致（接口回什么，库里就是什么）',
@@ -3671,7 +3679,9 @@ async function main() {
     'D25 把证照有效期改成**过去** → 同步下架关联菜品，并回报 `unpublishedDishCount=2`（不做「偷偷改了却不说」）',
     `state=${uExpired.body?.data?.licenseState} unpublished=${uExpired.body?.data?.unpublishedDishCount}`,
   );
-  const dishAfterExpire = readRows('SELECT id, status FROM ab_dish WHERE supplier_id = ?', [supAId]);
+  const dishAfterExpire = readRows('SELECT id, status FROM ab_dish WHERE supplier_id = ?', [
+    supAId,
+  ]);
   assert(
     dishAfterExpire.length === 2 && dishAfterExpire.every((d) => Number(d.status) === 0),
     'D25 联动下架**真的落库**（123 号令：证照过期不得出餐 —— 不是只改个标记给前端看）',
@@ -3827,7 +3837,10 @@ async function main() {
   // ============================================ F · 扩展 · 外卖平台店铺链接
   const tk1 = await call('PUT', `/admin/suppliers/${supAId}/takeout-links`, {
     token: adminToken,
-    body: { meituan: { url: 'pages/shop/index?shop_id=e2e', shopId: 'e2e-mt' }, recommended: 'meituan' },
+    body: {
+      meituan: { url: 'pages/shop/index?shop_id=e2e', shopId: 'e2e-mt' },
+      recommended: 'meituan',
+    },
   });
   assert(
     tk1.body?.code === 0 &&
@@ -3880,7 +3893,9 @@ async function main() {
   );
 
   // ================================================ G · 扩展 · 菜品库
-  const dishList = await call('GET', `/admin/dishes?${qs({ pageSize: 100 })}`, { token: adminToken });
+  const dishList = await call('GET', `/admin/dishes?${qs({ pageSize: 100 })}`, {
+    token: adminToken,
+  });
   const dSum = dishList.body?.data?.summary ?? {};
   assert(
     dishList.body?.code === 0 && Array.isArray(dishList.body?.data?.list),
@@ -3910,9 +3925,13 @@ async function main() {
     `sample=${(dishList.body?.data?.list ?? [])[0]?.costPriceFen}/${(dishList.body?.data?.list ?? [])[0]?.costPriceYuan}`,
   );
 
-  const dishBySup = await call('GET', `/admin/dishes?${qs({ supplierId: supAId, pageSize: 100 })}`, {
-    token: adminToken,
-  });
+  const dishBySup = await call(
+    'GET',
+    `/admin/dishes?${qs({ supplierId: supAId, pageSize: 100 })}`,
+    {
+      token: adminToken,
+    },
+  );
   assert(
     dishBySup.body?.code === 0 &&
       (dishBySup.body?.data?.list ?? []).length === 2 &&
@@ -4012,7 +4031,10 @@ async function main() {
     `rice=${dcSum.totalRiceFeeFen} pack=${dcSum.totalPackFeeFen}`,
   );
   assert(
-    dcRows.every((r) => !!r.statusLabel && Array.isArray(r.serviceGroups) && Array.isArray(r.serviceGroupNames)),
+    dcRows.every(
+      (r) =>
+        !!r.statusLabel && Array.isArray(r.serviceGroups) && Array.isArray(r.serviceGroupNames),
+    ),
     'D29 行内带状态文案、服务楼群 id 与**名称**（端上显示名字，不显示 #3）',
     `sample=${JSON.stringify(dcRows[0]?.serviceGroupNames)}`,
   );
@@ -4021,9 +4043,13 @@ async function main() {
     'D29 两道删除前置（历史应付 / 被分配引用）合成 `canDelete` 下发 —— 前端据此禁用按钮，而不是点了才知道不行',
     `canDelete=${dcRows.filter((r) => r.canDelete).length}/${dcRows.length}`,
   );
-  const dcByGroup = await call('GET', `/admin/distribution-centers?${qs({ groupId: 1, pageSize: 100 })}`, {
-    token: adminToken,
-  });
+  const dcByGroup = await call(
+    'GET',
+    `/admin/distribution-centers?${qs({ groupId: 1, pageSize: 100 })}`,
+    {
+      token: adminToken,
+    },
+  );
   assert(
     dcByGroup.body?.code === 0 &&
       (dcByGroup.body?.data?.list ?? []).length > 0 &&
@@ -4068,9 +4094,10 @@ async function main() {
     'D30 新建集散中心成功（ABox 自有加工场所，不挂任何供应商）',
     `id=${dcId}`,
   );
-  const dcDb = readDb('SELECT rice_fee, pack_fee, service_groups FROM ab_distribution_center WHERE id = ?', [
-    dcId,
-  ]);
+  const dcDb = readDb(
+    'SELECT rice_fee, pack_fee, service_groups FROM ab_distribution_center WHERE id = ?',
+    [dcId],
+  );
   assert(
     Number(dcDb?.rice_fee) === 0 && Number(dcDb?.pack_fee) === 0,
     'D30 场地费 / 打包费**不填即为 0**（C9 默认，不是「必须显式传 0」）',
@@ -4116,9 +4143,13 @@ async function main() {
     'D31 `status=0` 即**停用**（保留记录、退出新分配、随时可恢复）',
     `status=${dcSuspend.body?.data?.status}`,
   );
-  const dcAfterSuspend = await call('GET', `/admin/distribution-centers?${qs({ status: 0, pageSize: 100 })}`, {
-    token: adminToken,
-  });
+  const dcAfterSuspend = await call(
+    'GET',
+    `/admin/distribution-centers?${qs({ status: 0, pageSize: 100 })}`,
+    {
+      token: adminToken,
+    },
+  );
   assert(
     (dcAfterSuspend.body?.data?.list ?? []).some((r) => r.id === dcId),
     'D31 **停用 ≠ 删除**：停用后仍出现在列表里（这才是「可恢复」的前提）',
@@ -4132,13 +4163,18 @@ async function main() {
     'INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, quantity, unit_price, amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     [`E2E${stamp}${dcId}`, bjToday(), bjToday(), 'distribution_center', dcId, 100, '0.00', '0.00'],
   );
-  const dcLocked = await call('DELETE', `/admin/distribution-centers/${dcId}`, { token: adminToken });
+  const dcLocked = await call('DELETE', `/admin/distribution-centers/${dcId}`, {
+    token: adminToken,
+  });
   assert(
     dcLocked.body?.code === 50002,
     'D32 删除**有历史应付**的集散中心 → 50002，且错误信息给出「改用停用」的出路（不是只说不行）',
     `code=${dcLocked.body?.code} msg=${dcLocked.body?.message?.slice(0, 40)}…`,
   );
-  const dcStillThere = readDb('SELECT deleted_at, status FROM ab_distribution_center WHERE id = ?', [dcId]);
+  const dcStillThere = readDb(
+    'SELECT deleted_at, status FROM ab_distribution_center WHERE id = ?',
+    [dcId],
+  );
   assert(
     dcStillThere?.deleted_at === null,
     'D32 被拒绝时**没有落 deleted_at**（软删标记只在两道前置都通过时才写）',
@@ -4150,15 +4186,21 @@ async function main() {
     body: { name: `e2e临时_${stamp}`, address: '朝阳区测试路 3 号' },
   });
   const dcFreshId = Number(dcFresh.body?.data?.id ?? 0);
-  const dcDeleted = await call('DELETE', `/admin/distribution-centers/${dcFreshId}`, { token: adminToken });
+  const dcDeleted = await call('DELETE', `/admin/distribution-centers/${dcFreshId}`, {
+    token: adminToken,
+  });
   assert(
     dcDeleted.body?.code === 0 && dcDeleted.body?.data?.deleted === true,
     'D32 无历史应付、未被引用的「建错了」记录可软删（这才是 DELETE 的用武之地）',
     `deleted=${dcDeleted.body?.data?.deleted}`,
   );
-  const dcGone = await call('GET', `/admin/distribution-centers?${qs({ keyword: `e2e临时_${stamp}` })}`, {
-    token: adminToken,
-  });
+  const dcGone = await call(
+    'GET',
+    `/admin/distribution-centers?${qs({ keyword: `e2e临时_${stamp}` })}`,
+    {
+      token: adminToken,
+    },
+  );
   assert(
     dcGone.body?.code === 0 && (dcGone.body?.data?.list ?? []).length === 0,
     'D32 软删后不再出现在任何列表（`deleted_at IS NULL` 是列表的硬条件）',
@@ -4166,7 +4208,9 @@ async function main() {
   );
 
   // ======================================================== I · 权限边界
-  const opRead = await call('GET', `/admin/suppliers?${qs({ pageSize: 5 })}`, { token: supOpToken });
+  const opRead = await call('GET', `/admin/suppliers?${qs({ pageSize: 5 })}`, {
+    token: supOpToken,
+  });
   assert(
     opRead.body?.code === 0 && opRead.body?.data?.actions?.canManage === false,
     '两级白名单①：operator **能读**名录，但 `actions.canManage=false` —— 权限按「能不能动钱」分层，不按页面分层',
@@ -4187,7 +4231,8 @@ async function main() {
     body: { name: 'e2e 越权新建', type: 'dish', contactName: 'x', contactPhone: mkPhone(4) },
   });
   assert(
-    opCreate.body?.code === 10003 && !readDb('SELECT id FROM ab_supplier WHERE name = ?', ['e2e 越权新建']),
+    opCreate.body?.code === 10003 &&
+      !readDb('SELECT id FROM ab_supplier WHERE name = ?', ['e2e 越权新建']),
     '两级白名单③：operator 新建被拒**且库里没有这条记录**—— @Roles 挡在业务层之前，不是「先执行再回滚」',
     `code=${opCreate.body?.code}`,
   );
@@ -4229,13 +4274,16 @@ async function main() {
     body: { supplierId: supAId, name: 'e2e 越权菜品', category: 'main', costPriceFen: 100 },
   });
   assert(
-    opDish.body?.code === 10003 && !readDb('SELECT id FROM ab_dish WHERE name = ?', ['e2e 越权菜品']),
+    opDish.body?.code === 10003 &&
+      !readDb('SELECT id FROM ab_dish WHERE name = ?', ['e2e 越权菜品']),
     '两级白名单⑧：operator 改菜品（供价是 C9 输入项）→ 10003 且无记录',
     `code=${opDish.body?.code}`,
   );
 
   // ======================================================== J · 操作日志
-  const supLogs = await call('GET', `/admin/system/logs?${qs({ pageSize: 100 })}`, { token: adminToken });
+  const supLogs = await call('GET', `/admin/system/logs?${qs({ pageSize: 100 })}`, {
+    token: adminToken,
+  });
   const supLogRows = supLogs.body?.data?.list ?? [];
   assert(
     supLogRows.some((l) => l.action === '新增供应商' && String(l.targetId) === String(supAId)),
@@ -4271,515 +4319,561 @@ async function main() {
   {
     log('\n§19 M3-7 办公楼 / 楼群（D13–D18）');
 
-  const bldA = `e2e楼A_${stamp}`;
-  const bldB = `e2e楼B_${stamp}`;
-  const grpA = `e2e群A_${stamp}`;
-  const grpB = `e2e群B_${stamp}`;
+    const bldA = `e2e楼A_${stamp}`;
+    const bldB = `e2e楼B_${stamp}`;
+    const grpA = `e2e群A_${stamp}`;
+    const grpB = `e2e群B_${stamp}`;
 
-  // ---------------------------------------------------------- A · D13 列表
-  const bList = await call('GET', `/admin/buildings?${qs({ pageSize: 100 })}`, { token: adminToken });
-  const bRows = bList.body?.data?.list ?? [];
-  const bSum = bList.body?.data?.summary ?? {};
-  const bTotal = bList.body?.data?.total;
-  const bById = new Map(bRows.map((b) => [b.id, b]));
+    // ---------------------------------------------------------- A · D13 列表
+    const bList = await call('GET', `/admin/buildings?${qs({ pageSize: 100 })}`, {
+      token: adminToken,
+    });
+    const bRows = bList.body?.data?.list ?? [];
+    const bSum = bList.body?.data?.summary ?? {};
+    const bTotal = bList.body?.data?.total;
+    const bById = new Map(bRows.map((b) => [b.id, b]));
 
-  assert(
-    bList.body?.code === 0 && Array.isArray(bRows) && bTotal >= 12,
-    'D13 办公楼列表返回成功，且至少含种子 12 栋',
-    `code=${bList.body?.code} total=${bTotal}`,
-  );
-  assert(
-    bSum.totalCount === bTotal,
-    'D13 summary 按**同一过滤条件的全量**统计（翻页不跳 KPI：totalCount 恒等于 total）',
-    `summary=${bSum.totalCount} total=${bTotal} 本页=${bRows.length}`,
-  );
-  assert(
-    bRows.every((b) => b.statusLabel && b.gapLabel),
-    'D13 每行带派生文案 statusLabel / gapLabel（文案由服务端统一，端上不维护第二份）',
-    `sample=${JSON.stringify(bRows[0]?.statusLabel)}/${JSON.stringify(bRows[0]?.gapLabel)}`,
-  );
+    assert(
+      bList.body?.code === 0 && Array.isArray(bRows) && bTotal >= 12,
+      'D13 办公楼列表返回成功，且至少含种子 12 栋',
+      `code=${bList.body?.code} total=${bTotal}`,
+    );
+    assert(
+      bSum.totalCount === bTotal,
+      'D13 summary 按**同一过滤条件的全量**统计（翻页不跳 KPI：totalCount 恒等于 total）',
+      `summary=${bSum.totalCount} total=${bTotal} 本页=${bRows.length}`,
+    );
+    assert(
+      bRows.every((b) => b.statusLabel && b.gapLabel),
+      'D13 每行带派生文案 statusLabel / gapLabel（文案由服务端统一，端上不维护第二份）',
+      `sample=${JSON.stringify(bRows[0]?.statusLabel)}/${JSON.stringify(bRows[0]?.gapLabel)}`,
+    );
 
-  // 三态修复：M3-7 之前「待开通」与「已暂停」都写成 status=2（一值两义）
-  assert(
-    bById.get(3)?.status === 2 && bById.get(3)?.statusLabel === '待开通',
-    'D13 种子「国贸三期 C 座」= status 2 **待开通**（三态扩展：2 待开通 ≠ 3 已暂停）',
-    `status=${bById.get(3)?.status} label=${bById.get(3)?.statusLabel}`,
-  );
-  assert(
-    bById.get(10)?.status === 3 && bById.get(10)?.statusLabel === '已暂停',
-    'D13 种子「华贸 3 号楼」= status 3 **已暂停** —— 与 C 座区分开（旧数据两者都是 2）',
-    `status=${bById.get(10)?.status} label=${bById.get(10)?.statusLabel}`,
-  );
+    // 三态修复：M3-7 之前「待开通」与「已暂停」都写成 status=2（一值两义）
+    assert(
+      bById.get(3)?.status === 2 && bById.get(3)?.statusLabel === '待开通',
+      'D13 种子「国贸三期 C 座」= status 2 **待开通**（三态扩展：2 待开通 ≠ 3 已暂停）',
+      `status=${bById.get(3)?.status} label=${bById.get(3)?.statusLabel}`,
+    );
+    assert(
+      bById.get(10)?.status === 3 && bById.get(10)?.statusLabel === '已暂停',
+      'D13 种子「华贸 3 号楼」= status 3 **已暂停** —— 与 C 座区分开（旧数据两者都是 2）',
+      `status=${bById.get(10)?.status} label=${bById.get(10)?.statusLabel}`,
+    );
 
-  // 派生：种子 4 个集散中心覆盖 1–5 全部楼群 → 种子楼无缺口
-  assert(
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].every((id) => bById.get(id)?.gap === 'none'),
-    'D13 覆盖缺口派生：种子 5 个楼群均被集散中心覆盖 → 12 栋种子楼 gap 全部为 none',
-    `gaps=${JSON.stringify([...new Set(bRows.slice(0, 12).map((b) => b.gap))])}`,
-  );
-  assert(
-    bById.get(1)?.mainDcName === '集散中心 1（国贸/建外）' && bById.get(1)?.routeNo === 'R1',
-    'D13 主集散中心与路线号**由「集散中心 → 服务楼群」实时派生**（主 = 服务该楼群、启用中 id 最小者）',
-    `main=${bById.get(1)?.mainDcName} route=${bById.get(1)?.routeNo}`,
-  );
-  assert(
-    bById.get(4)?.backupDcName === '集散中心 3（国贸/远洋）',
-    'D13 备用集散中心 = 服务同一楼群的其他启用集散中心（国贸三期组被 DC1 与 DC3 同时服务）',
-    `backup=${bById.get(4)?.backupDcName}`,
-  );
-  assert(
-    bRows.every((b) => b.canOrder === (b.status === 1 && b.buildingGroupId !== null)),
-    'D13 `canOrder` = 营业中 ∧ 已归群 —— 未归群的楼无法分配套餐，不能算「可开团」',
-    `mismatch=${JSON.stringify(bRows.filter((b) => b.canOrder !== (b.status === 1 && b.buildingGroupId !== null)).map((b) => b.id))}`,
-  );
+    // 派生：种子 4 个集散中心覆盖 1–5 全部楼群 → 种子楼无缺口
+    assert(
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].every((id) => bById.get(id)?.gap === 'none'),
+      'D13 覆盖缺口派生：种子 5 个楼群均被集散中心覆盖 → 12 栋种子楼 gap 全部为 none',
+      `gaps=${JSON.stringify([...new Set(bRows.slice(0, 12).map((b) => b.gap))])}`,
+    );
+    assert(
+      bById.get(1)?.mainDcName === '集散中心 1（国贸/建外）' && bById.get(1)?.routeNo === 'R1',
+      'D13 主集散中心与路线号**由「集散中心 → 服务楼群」实时派生**（主 = 服务该楼群、启用中 id 最小者）',
+      `main=${bById.get(1)?.mainDcName} route=${bById.get(1)?.routeNo}`,
+    );
+    assert(
+      bById.get(4)?.backupDcName === '集散中心 3（国贸/远洋）',
+      'D13 备用集散中心 = 服务同一楼群的其他启用集散中心（国贸三期组被 DC1 与 DC3 同时服务）',
+      `backup=${bById.get(4)?.backupDcName}`,
+    );
+    assert(
+      bRows.every((b) => b.canOrder === (b.status === 1 && b.buildingGroupId !== null)),
+      'D13 `canOrder` = 营业中 ∧ 已归群 —— 未归群的楼无法分配套餐，不能算「可开团」',
+      `mismatch=${JSON.stringify(bRows.filter((b) => b.canOrder !== (b.status === 1 && b.buildingGroupId !== null)).map((b) => b.id))}`,
+    );
 
-  const bActive = await call('GET', `/admin/buildings?${qs({ status: 1, pageSize: 100 })}`, {
-    token: adminToken,
-  });
-  assert(
-    (bActive.body?.data?.list ?? []).every((b) => b.status === 1) &&
-      (bActive.body?.data?.list ?? []).length > 0,
-    'D13 状态筛选生效（status=1 只回营业中）',
-    `count=${(bActive.body?.data?.list ?? []).length}`,
-  );
-  const bVacant = await call('GET', `/admin/buildings?${qs({ leaderState: 'unassigned', pageSize: 100 })}`, {
-    token: adminToken,
-  });
-  assert(
-    (bVacant.body?.data?.list ?? []).every((b) => b.leaderId === null) &&
-      (bVacant.body?.data?.list ?? []).length > 0,
-    'D13 团长归属筛选生效（unassigned 只回无在职团长的楼）',
-    `count=${(bVacant.body?.data?.list ?? []).length}`,
-  );
-  const bKw = await call('GET', `/admin/buildings?${qs({ keyword: '国贸', pageSize: 100 })}`, {
-    token: adminToken,
-  });
-  assert(
-    (bKw.body?.data?.list ?? []).length > 0 &&
-      (bKw.body?.data?.list ?? []).every((b) => b.name.includes('国贸') || b.address.includes('国贸')),
-    'D13 关键词命中楼名或地址',
-    `count=${(bKw.body?.data?.list ?? []).length}`,
-  );
-  const bPaged = await call('GET', `/admin/buildings?${qs({ pageSize: 3, page: 1 })}`, {
-    token: adminToken,
-  });
-  assert(
-    (bPaged.body?.data?.list ?? []).length === 3 && bPaged.body?.data?.summary.totalCount === bSum.totalCount,
-    'D13 分页只影响本页条数，summary 仍是全量（与 D8/D19/D23 同一约定）',
-    `本页=${(bPaged.body?.data?.list ?? []).length} summary=${bPaged.body?.data?.summary?.totalCount}`,
-  );
+    const bActive = await call('GET', `/admin/buildings?${qs({ status: 1, pageSize: 100 })}`, {
+      token: adminToken,
+    });
+    assert(
+      (bActive.body?.data?.list ?? []).every((b) => b.status === 1) &&
+        (bActive.body?.data?.list ?? []).length > 0,
+      'D13 状态筛选生效（status=1 只回营业中）',
+      `count=${(bActive.body?.data?.list ?? []).length}`,
+    );
+    const bVacant = await call(
+      'GET',
+      `/admin/buildings?${qs({ leaderState: 'unassigned', pageSize: 100 })}`,
+      {
+        token: adminToken,
+      },
+    );
+    assert(
+      (bVacant.body?.data?.list ?? []).every((b) => b.leaderId === null) &&
+        (bVacant.body?.data?.list ?? []).length > 0,
+      'D13 团长归属筛选生效（unassigned 只回无在职团长的楼）',
+      `count=${(bVacant.body?.data?.list ?? []).length}`,
+    );
+    const bKw = await call('GET', `/admin/buildings?${qs({ keyword: '国贸', pageSize: 100 })}`, {
+      token: adminToken,
+    });
+    assert(
+      (bKw.body?.data?.list ?? []).length > 0 &&
+        (bKw.body?.data?.list ?? []).every(
+          (b) => b.name.includes('国贸') || b.address.includes('国贸'),
+        ),
+      'D13 关键词命中楼名或地址',
+      `count=${(bKw.body?.data?.list ?? []).length}`,
+    );
+    const bPaged = await call('GET', `/admin/buildings?${qs({ pageSize: 3, page: 1 })}`, {
+      token: adminToken,
+    });
+    assert(
+      (bPaged.body?.data?.list ?? []).length === 3 &&
+        bPaged.body?.data?.summary.totalCount === bSum.totalCount,
+      'D13 分页只影响本页条数，summary 仍是全量（与 D8/D19/D23 同一约定）',
+      `本页=${(bPaged.body?.data?.list ?? []).length} summary=${bPaged.body?.data?.summary?.totalCount}`,
+    );
 
-  // ---------------------------------------------------------- B · D14 新增
-  const grpACreate = await call('POST', '/admin/building-groups', {
-    token: adminToken,
-    body: { name: grpA, description: 'e2e 办公楼夹具楼群' },
-  });
-  const grpAId = grpACreate.body?.data?.id;
-  assert(
-    grpACreate.body?.code === 0 && grpAId > 0,
-    'D17 新建空楼群成功',
-    `code=${grpACreate.body?.code} id=${grpAId}`,
-  );
-  assert(
-    grpACreate.body?.data?.coverageState === 'empty',
-    'D17 空楼群 coverageState=empty（**空不是异常**：新群还没挂楼）',
-    `state=${grpACreate.body?.data?.coverageState}`,
-  );
+    // ---------------------------------------------------------- B · D14 新增
+    const grpACreate = await call('POST', '/admin/building-groups', {
+      token: adminToken,
+      body: { name: grpA, description: 'e2e 办公楼夹具楼群' },
+    });
+    const grpAId = grpACreate.body?.data?.id;
+    assert(
+      grpACreate.body?.code === 0 && grpAId > 0,
+      'D17 新建空楼群成功',
+      `code=${grpACreate.body?.code} id=${grpAId}`,
+    );
+    assert(
+      grpACreate.body?.data?.coverageState === 'empty',
+      'D17 空楼群 coverageState=empty（**空不是异常**：新群还没挂楼）',
+      `state=${grpACreate.body?.data?.coverageState}`,
+    );
 
-  const bldACreate = await call('POST', '/admin/buildings', {
-    token: adminToken,
-    body: { name: bldA, address: 'e2e 测试路 1 号', population: 300, buildingGroupId: grpAId },
-  });
-  const bldAId = bldACreate.body?.data?.id;
-  assert(
-    bldACreate.body?.code === 0 && bldAId > 0 && bldACreate.body?.data?.buildingGroupId === grpAId,
-    'D14 新增办公楼（已归群）成功',
-    `code=${bldACreate.body?.code} id=${bldAId} group=${bldACreate.body?.data?.buildingGroupId}`,
-  );
-  assert(
-    bldACreate.body?.data?.gap === 'no_center' &&
-      (bldACreate.body?.data?.warnings ?? []).some((w) => w.includes('集散中心')),
-    'D14 新建楼群尚无集散中心服务 → gap=no_center，且出参 warnings **逐条说明**「还差什么才能开团」',
-    `gap=${bldACreate.body?.data?.gap} warnings=${JSON.stringify(bldACreate.body?.data?.warnings)}`,
-  );
+    const bldACreate = await call('POST', '/admin/buildings', {
+      token: adminToken,
+      body: { name: bldA, address: 'e2e 测试路 1 号', population: 300, buildingGroupId: grpAId },
+    });
+    const bldAId = bldACreate.body?.data?.id;
+    assert(
+      bldACreate.body?.code === 0 &&
+        bldAId > 0 &&
+        bldACreate.body?.data?.buildingGroupId === grpAId,
+      'D14 新增办公楼（已归群）成功',
+      `code=${bldACreate.body?.code} id=${bldAId} group=${bldACreate.body?.data?.buildingGroupId}`,
+    );
+    assert(
+      bldACreate.body?.data?.gap === 'no_center' &&
+        (bldACreate.body?.data?.warnings ?? []).some((w) => w.includes('集散中心')),
+      'D14 新建楼群尚无集散中心服务 → gap=no_center，且出参 warnings **逐条说明**「还差什么才能开团」',
+      `gap=${bldACreate.body?.data?.gap} warnings=${JSON.stringify(bldACreate.body?.data?.warnings)}`,
+    );
 
-  const bldBCreate = await call('POST', '/admin/buildings', {
-    token: adminToken,
-    body: { name: bldB, address: 'e2e 测试路 2 号', population: 200 },
-  });
-  const bldBId = bldBCreate.body?.data?.id;
-  assert(
-    bldBCreate.body?.code === 0 && bldBCreate.body?.data?.buildingGroupId === null,
-    'D14 不传 buildingGroupId 即「未归群」（楼能建档，但不参与任何套餐分配）',
-    `group=${bldBCreate.body?.data?.buildingGroupId}`,
-  );
-  assert(
-    bldBCreate.body?.data?.canOrder === false && bldBCreate.body?.data?.gap === 'no_group',
-    'D14 未归群楼 canOrder=false 且 gap=no_group（未归群与「楼群无集散」是两种成因，不能合并）',
-    `canOrder=${bldBCreate.body?.data?.canOrder} gap=${bldBCreate.body?.data?.gap}`,
-  );
+    const bldBCreate = await call('POST', '/admin/buildings', {
+      token: adminToken,
+      body: { name: bldB, address: 'e2e 测试路 2 号', population: 200 },
+    });
+    const bldBId = bldBCreate.body?.data?.id;
+    assert(
+      bldBCreate.body?.code === 0 && bldBCreate.body?.data?.buildingGroupId === null,
+      'D14 不传 buildingGroupId 即「未归群」（楼能建档，但不参与任何套餐分配）',
+      `group=${bldBCreate.body?.data?.buildingGroupId}`,
+    );
+    assert(
+      bldBCreate.body?.data?.canOrder === false && bldBCreate.body?.data?.gap === 'no_group',
+      'D14 未归群楼 canOrder=false 且 gap=no_group（未归群与「楼群无集散」是两种成因，不能合并）',
+      `canOrder=${bldBCreate.body?.data?.canOrder} gap=${bldBCreate.body?.data?.gap}`,
+    );
 
-  const bDup = await call('POST', '/admin/buildings', {
-    token: adminToken,
-    body: { name: bldA, address: 'e2e 测试路 9 号' },
-  });
-  assert(
-    bDup.body?.code === 60005,
-    'D14 楼名重复 → 60005（同名楼会让「按楼筛选」变成歧义操作）',
-    `code=${bDup.body?.code}`,
-  );
-  const bBadGroup = await call('POST', '/admin/buildings', {
-    token: adminToken,
-    body: { name: `e2e楼C_${stamp}`, address: 'e2e 测试路 3 号', buildingGroupId: 999999 },
-  });
-  assert(
-    bBadGroup.body?.code === 60002,
-    'D14 楼群不存在 → 60002（不静默落成「未归群」：运营以为挂上了，实际没挂）',
-    `code=${bBadGroup.body?.code}`,
-  );
+    const bDup = await call('POST', '/admin/buildings', {
+      token: adminToken,
+      body: { name: bldA, address: 'e2e 测试路 9 号' },
+    });
+    assert(
+      bDup.body?.code === 60005,
+      'D14 楼名重复 → 60005（同名楼会让「按楼筛选」变成歧义操作）',
+      `code=${bDup.body?.code}`,
+    );
+    const bBadGroup = await call('POST', '/admin/buildings', {
+      token: adminToken,
+      body: { name: `e2e楼C_${stamp}`, address: 'e2e 测试路 3 号', buildingGroupId: 999999 },
+    });
+    assert(
+      bBadGroup.body?.code === 60002,
+      'D14 楼群不存在 → 60002（不静默落成「未归群」：运营以为挂上了，实际没挂）',
+      `code=${bBadGroup.body?.code}`,
+    );
 
-  // ---------------------------------------------------------- C · D15 编辑
-  const bNoop = await call('PUT', `/admin/buildings/${bldAId}`, {
-    token: adminToken,
-    body: { name: bldA },
-  });
-  assert(
-    bNoop.body?.code === 10001,
-    'D15 空变更 → 10001（不写库、不写日志；否则审计里全是「改了但什么都没改」）',
-    `code=${bNoop.body?.code}`,
-  );
-  assert(
-    bNoop.body?.code === 10001 || readRows('SELECT id FROM ab_building WHERE name = ?', [bldA]).length === 1,
-    'D15 空变更不产生重复记录',
-    `rows=${readRows('SELECT id FROM ab_building WHERE name = ?', [bldA]).length}`,
-  );
+    // ---------------------------------------------------------- C · D15 编辑
+    const bNoop = await call('PUT', `/admin/buildings/${bldAId}`, {
+      token: adminToken,
+      body: { name: bldA },
+    });
+    assert(
+      bNoop.body?.code === 10001,
+      'D15 空变更 → 10001（不写库、不写日志；否则审计里全是「改了但什么都没改」）',
+      `code=${bNoop.body?.code}`,
+    );
+    assert(
+      bNoop.body?.code === 10001 ||
+        readRows('SELECT id FROM ab_building WHERE name = ?', [bldA]).length === 1,
+      'D15 空变更不产生重复记录',
+      `rows=${readRows('SELECT id FROM ab_building WHERE name = ?', [bldA]).length}`,
+    );
 
-  const bLeaderField = await call('PUT', `/admin/buildings/${bldAId}`, {
-    token: adminToken,
-    body: { leaderId: 1 },
-  });
-  assert(
-    bLeaderField.body?.code === 10001,
-    'D15 **刻意不收 leaderId** → 10001（改团长只有 D20/D21 一个入口，避免绕过 20012 撞车闸门）',
-    `code=${bLeaderField.body?.code}`,
-  );
+    const bLeaderField = await call('PUT', `/admin/buildings/${bldAId}`, {
+      token: adminToken,
+      body: { leaderId: 1 },
+    });
+    assert(
+      bLeaderField.body?.code === 10001,
+      'D15 **刻意不收 leaderId** → 10001（改团长只有 D20/D21 一个入口，避免绕过 20012 撞车闸门）',
+      `code=${bLeaderField.body?.code}`,
+    );
 
-  const bRename = await call('PUT', `/admin/buildings/${bldAId}`, {
-    token: adminToken,
-    body: { name: `${bldA}_改`, population: 350 },
-  });
-  assert(
-    bRename.body?.code === 0 && bRename.body?.data?.name === `${bldA}_改`,
-    'D15 部分更新生效（改名 + 改覆盖人数）',
-    `code=${bRename.body?.code} name=${bRename.body?.data?.name}`,
-  );
+    const bRename = await call('PUT', `/admin/buildings/${bldAId}`, {
+      token: adminToken,
+      body: { name: `${bldA}_改`, population: 350 },
+    });
+    assert(
+      bRename.body?.code === 0 && bRename.body?.data?.name === `${bldA}_改`,
+      'D15 部分更新生效（改名 + 改覆盖人数）',
+      `code=${bRename.body?.code} name=${bRename.body?.data?.name}`,
+    );
 
-  const bDetach = await call('PUT', `/admin/buildings/${bldAId}`, {
-    token: adminToken,
-    body: { buildingGroupId: null },
-  });
-  assert(
-    bDetach.body?.code === 0 &&
-      bDetach.body?.data?.buildingGroupId === null &&
-      bDetach.body?.data?.gap === 'no_group',
-    'D15 `buildingGroupId: null` = **移出楼群**（否则永远无法把楼摘出去，只能建空壳楼群当垃圾桶）',
-    `code=${bDetach.body?.code} group=${bDetach.body?.data?.buildingGroupId} gap=${bDetach.body?.data?.gap}`,
-  );
-  assert(
-    readDb('SELECT id FROM ab_building WHERE id = ? AND building_group_id IS NULL', [bldAId]) !== null,
-    'D15 移出楼群落库为 NULL（不是 0，也不是保持原值）',
-    `hit=${readDb('SELECT id FROM ab_building WHERE id = ? AND building_group_id IS NULL', [bldAId]) ? 'yes' : 'no'}`,
-  );
+    const bDetach = await call('PUT', `/admin/buildings/${bldAId}`, {
+      token: adminToken,
+      body: { buildingGroupId: null },
+    });
+    assert(
+      bDetach.body?.code === 0 &&
+        bDetach.body?.data?.buildingGroupId === null &&
+        bDetach.body?.data?.gap === 'no_group',
+      'D15 `buildingGroupId: null` = **移出楼群**（否则永远无法把楼摘出去，只能建空壳楼群当垃圾桶）',
+      `code=${bDetach.body?.code} group=${bDetach.body?.data?.buildingGroupId} gap=${bDetach.body?.data?.gap}`,
+    );
+    assert(
+      readDb('SELECT id FROM ab_building WHERE id = ? AND building_group_id IS NULL', [bldAId]) !==
+        null,
+      'D15 移出楼群落库为 NULL（不是 0，也不是保持原值）',
+      `hit=${readDb('SELECT id FROM ab_building WHERE id = ? AND building_group_id IS NULL', [bldAId]) ? 'yes' : 'no'}`,
+    );
 
-  const bReattach = await call('PUT', `/admin/buildings/${bldAId}`, {
-    token: adminToken,
-    body: { buildingGroupId: grpAId },
-  });
-  assert(
-    bReattach.body?.code === 0 && bReattach.body?.data?.buildingGroupId === grpAId,
-    'D15 重新归群生效',
-    `group=${bReattach.body?.data?.buildingGroupId}`,
-  );
+    const bReattach = await call('PUT', `/admin/buildings/${bldAId}`, {
+      token: adminToken,
+      body: { buildingGroupId: grpAId },
+    });
+    assert(
+      bReattach.body?.code === 0 && bReattach.body?.data?.buildingGroupId === grpAId,
+      'D15 重新归群生效',
+      `group=${bReattach.body?.data?.buildingGroupId}`,
+    );
 
-  const bMissing = await call('PUT', '/admin/buildings/99999999', {
-    token: adminToken,
-    body: { population: 1 },
-  });
-  assert(
-    bMissing.body?.code === 60001,
-    'D15 楼栋不存在 → 60001',
-    `code=${bMissing.body?.code}`,
-  );
+    const bMissing = await call('PUT', '/admin/buildings/99999999', {
+      token: adminToken,
+      body: { population: 1 },
+    });
+    assert(bMissing.body?.code === 60001, 'D15 楼栋不存在 → 60001', `code=${bMissing.body?.code}`);
 
-  // ---------------------------------------------------------- D · D16 楼群列表
-  const gList = await call('GET', `/admin/building-groups?${qs({ pageSize: 100 })}`, { token: adminToken });
-  const gRows = gList.body?.data?.list ?? [];
-  const gSum = gList.body?.data?.summary ?? {};
-  assert(
-    gList.body?.code === 0 && gRows.length >= 5 && gList.body?.data?.total >= 5,
-    'D16 楼群列表返回成功，且至少含种子 5 个',
-    `code=${gList.body?.code} total=${gList.body?.data?.total}`,
-  );
-  assert(
-    gSum.totalCount === gList.body?.data?.total,
-    'D16 summary 为全量统计（翻页不跳 KPI）',
-    `summary=${gSum.totalCount} total=${gList.body?.data?.total}`,
-  );
-  const gA = gRows.find((g) => g.id === grpAId);
-  assert(
-    gA?.memberCount === 1 && (gA?.members ?? []).length === 1,
-    'D16 `memberCount` 与 `members` 数组**同一次查询得出**（分两处算必然出现「列表 2 栋、详情 1 栋」）',
-    `memberCount=${gA?.memberCount} members=${(gA?.members ?? []).length}`,
-  );
-  assert(
-    gA?.coverageState === 'uncovered' && gA?.mainDcName === null,
-    'D16 覆盖状态派生：有成员楼但无集散中心服务 → uncovered（**下单能成立、履约断链**）',
-    `state=${gA?.coverageState} main=${gA?.mainDcName}`,
-  );
-  const gSeed1 = gRows.find((g) => g.id === 1);
-  assert(
-    gSeed1?.mainDcName === '集散中心 1（国贸/建外）' &&
-      gSeed1?.backupDcName === '集散中心 3（国贸/远洋）' &&
-      gSeed1?.coverageState === 'covered',
-    'D16 种子楼群主/备集散中心派生正确（国贸三期组：主 DC1 / 备 DC3）',
-    `main=${gSeed1?.mainDcName} backup=${gSeed1?.backupDcName} state=${gSeed1?.coverageState}`,
-  );
-  const gKw = await call('GET', `/admin/building-groups?${qs({ keyword: bldA, pageSize: 100 })}`, {
-    token: adminToken,
-  });
-  assert(
-    (gKw.body?.data?.list ?? []).some((g) => g.id === grpAId),
-    'D16 关键词可命中**成员楼名**（运营记得楼名、未必记得楼群名）',
-    `hits=${(gKw.body?.data?.list ?? []).map((g) => g.id).join(',')}`,
-  );
+    // ---------------------------------------------------------- D · D16 楼群列表
+    const gList = await call('GET', `/admin/building-groups?${qs({ pageSize: 100 })}`, {
+      token: adminToken,
+    });
+    const gRows = gList.body?.data?.list ?? [];
+    const gSum = gList.body?.data?.summary ?? {};
+    assert(
+      gList.body?.code === 0 && gRows.length >= 5 && gList.body?.data?.total >= 5,
+      'D16 楼群列表返回成功，且至少含种子 5 个',
+      `code=${gList.body?.code} total=${gList.body?.data?.total}`,
+    );
+    assert(
+      gSum.totalCount === gList.body?.data?.total,
+      'D16 summary 为全量统计（翻页不跳 KPI）',
+      `summary=${gSum.totalCount} total=${gList.body?.data?.total}`,
+    );
+    const gA = gRows.find((g) => g.id === grpAId);
+    assert(
+      gA?.memberCount === 1 && (gA?.members ?? []).length === 1,
+      'D16 `memberCount` 与 `members` 数组**同一次查询得出**（分两处算必然出现「列表 2 栋、详情 1 栋」）',
+      `memberCount=${gA?.memberCount} members=${(gA?.members ?? []).length}`,
+    );
+    assert(
+      gA?.coverageState === 'uncovered' && gA?.mainDcName === null,
+      'D16 覆盖状态派生：有成员楼但无集散中心服务 → uncovered（**下单能成立、履约断链**）',
+      `state=${gA?.coverageState} main=${gA?.mainDcName}`,
+    );
+    const gSeed1 = gRows.find((g) => g.id === 1);
+    assert(
+      gSeed1?.mainDcName === '集散中心 1（国贸/建外）' &&
+        gSeed1?.backupDcName === '集散中心 3（国贸/远洋）' &&
+        gSeed1?.coverageState === 'covered',
+      'D16 种子楼群主/备集散中心派生正确（国贸三期组：主 DC1 / 备 DC3）',
+      `main=${gSeed1?.mainDcName} backup=${gSeed1?.backupDcName} state=${gSeed1?.coverageState}`,
+    );
+    const gKw = await call(
+      'GET',
+      `/admin/building-groups?${qs({ keyword: bldA, pageSize: 100 })}`,
+      {
+        token: adminToken,
+      },
+    );
+    assert(
+      (gKw.body?.data?.list ?? []).some((g) => g.id === grpAId),
+      'D16 关键词可命中**成员楼名**（运营记得楼名、未必记得楼群名）',
+      `hits=${(gKw.body?.data?.list ?? []).map((g) => g.id).join(',')}`,
+    );
 
-  // ---------------------------------------------------------- E · D17 / D18
-  const gDup = await call('POST', '/admin/building-groups', {
-    token: adminToken,
-    body: { name: grpA },
-  });
-  assert(gDup.body?.code === 60004, 'D17 楼群名重复 → 60004', `code=${gDup.body?.code}`);
+    // ---------------------------------------------------------- E · D17 / D18
+    const gDup = await call('POST', '/admin/building-groups', {
+      token: adminToken,
+      body: { name: grpA },
+    });
+    assert(gDup.body?.code === 60004, 'D17 楼群名重复 → 60004', `code=${gDup.body?.code}`);
 
-  const gBadMember = await call('POST', '/admin/building-groups', {
-    token: adminToken,
-    body: { name: grpB, buildingIds: [99999999] },
-  });
-  assert(
-    gBadMember.body?.code === 60001,
-    'D17 `buildingIds` 含不存在的楼 → 60001（不静默跳过：运营以为挂上了 3 栋，实际只挂上 2 栋）',
-    `code=${gBadMember.body?.code}`,
-  );
+    const gBadMember = await call('POST', '/admin/building-groups', {
+      token: adminToken,
+      body: { name: grpB, buildingIds: [99999999] },
+    });
+    assert(
+      gBadMember.body?.code === 60001,
+      'D17 `buildingIds` 含不存在的楼 → 60001（不静默跳过：运营以为挂上了 3 栋，实际只挂上 2 栋）',
+      `code=${gBadMember.body?.code}`,
+    );
 
-  const gBCreate = await call('POST', '/admin/building-groups', {
-    token: adminToken,
-    body: { name: grpB, buildingIds: [bldBId] },
-  });
-  const grpBId = gBCreate.body?.data?.id;
-  assert(
-    gBCreate.body?.code === 0 && gBCreate.body?.data?.memberCount === 1,
-    'D17 新建楼群并**整体设置**初始成员楼',
-    `code=${gBCreate.body?.code} id=${grpBId} members=${gBCreate.body?.data?.memberCount}`,
-  );
-  assert(
-    readDb('SELECT building_group_id AS g FROM ab_building WHERE id = ?', [bldBId])?.g === grpBId,
-    'D17 成员楼落库：`ab_building.building_group_id` 指向新楼群（一楼一群，单值即覆盖）',
-    `dbG=${readDb('SELECT building_group_id AS g FROM ab_building WHERE id = ?', [bldBId])?.g}`,
-  );
+    const gBCreate = await call('POST', '/admin/building-groups', {
+      token: adminToken,
+      body: { name: grpB, buildingIds: [bldBId] },
+    });
+    const grpBId = gBCreate.body?.data?.id;
+    assert(
+      gBCreate.body?.code === 0 && gBCreate.body?.data?.memberCount === 1,
+      'D17 新建楼群并**整体设置**初始成员楼',
+      `code=${gBCreate.body?.code} id=${grpBId} members=${gBCreate.body?.data?.memberCount}`,
+    );
+    assert(
+      readDb('SELECT building_group_id AS g FROM ab_building WHERE id = ?', [bldBId])?.g === grpBId,
+      'D17 成员楼落库：`ab_building.building_group_id` 指向新楼群（一楼一群，单值即覆盖）',
+      `dbG=${readDb('SELECT building_group_id AS g FROM ab_building WHERE id = ?', [bldBId])?.g}`,
+    );
 
-  const gStopNonEmpty = await call('PUT', `/admin/building-groups/${grpBId}`, {
-    token: adminToken,
-    body: { status: 2 },
-  });
-  assert(
-    gStopNonEmpty.body?.code === 60003,
-    'D18 停用**仍有成员楼**的楼群 → 60003 —— 停用会让成员楼静默失去开团能力，而楼自身状态仍是「营业中」，列表上看不出异常（fail-closed）',
-    `code=${gStopNonEmpty.body?.code} remaining=${gStopNonEmpty.body?.data?.remaining}`,
-  );
-  assert(
-    readDb('SELECT status FROM ab_building_group WHERE id = ?', [grpBId])?.status === 1,
-    'D18 被 60003 拦下时**零副作用**（状态没被动成 2 —— 「先改再校验」会留下停了一半的楼群）',
-    `dbStatus=${readDb('SELECT status FROM ab_building_group WHERE id = ?', [grpBId])?.status}`,
-  );
+    const gStopNonEmpty = await call('PUT', `/admin/building-groups/${grpBId}`, {
+      token: adminToken,
+      body: { status: 2 },
+    });
+    assert(
+      gStopNonEmpty.body?.code === 60003,
+      'D18 停用**仍有成员楼**的楼群 → 60003 —— 停用会让成员楼静默失去开团能力，而楼自身状态仍是「营业中」，列表上看不出异常（fail-closed）',
+      `code=${gStopNonEmpty.body?.code} remaining=${gStopNonEmpty.body?.data?.remaining}`,
+    );
+    assert(
+      readDb('SELECT status FROM ab_building_group WHERE id = ?', [grpBId])?.status === 1,
+      'D18 被 60003 拦下时**零副作用**（状态没被动成 2 —— 「先改再校验」会留下停了一半的楼群）',
+      `dbStatus=${readDb('SELECT status FROM ab_building_group WHERE id = ?', [grpBId])?.status}`,
+    );
 
-  const gClearAndStop = await call('PUT', `/admin/building-groups/${grpBId}`, {
-    token: adminToken,
-    body: { buildingIds: [], status: 2 },
-  });
-  assert(
-    gClearAndStop.body?.code === 0 &&
-      gClearAndStop.body?.data?.memberCount === 0 &&
-      gClearAndStop.body?.data?.status === 2,
-    'D18 **一次请求内「清空成员 + 停用」应当放行**（先搬楼再判闸门；否则运营必须分两次调用，中间态毫无意义）',
-    `code=${gClearAndStop.body?.code} members=${gClearAndStop.body?.data?.memberCount} status=${gClearAndStop.body?.data?.status}`,
-  );
-  assert(
-    readDb('SELECT building_group_id AS g FROM ab_building WHERE id = ?', [bldBId])?.g === null,
-    'D18 整体替换语义：传 `[]` = 清空成员楼（不是「保持原值」—— 那样运营会以为解绑了、实际还挂着）',
-    `dbG=${readDb('SELECT building_group_id AS g FROM ab_building WHERE id = ?', [bldBId])?.g}`,
-  );
+    const gClearAndStop = await call('PUT', `/admin/building-groups/${grpBId}`, {
+      token: adminToken,
+      body: { buildingIds: [], status: 2 },
+    });
+    assert(
+      gClearAndStop.body?.code === 0 &&
+        gClearAndStop.body?.data?.memberCount === 0 &&
+        gClearAndStop.body?.data?.status === 2,
+      'D18 **一次请求内「清空成员 + 停用」应当放行**（先搬楼再判闸门；否则运营必须分两次调用，中间态毫无意义）',
+      `code=${gClearAndStop.body?.code} members=${gClearAndStop.body?.data?.memberCount} status=${gClearAndStop.body?.data?.status}`,
+    );
+    assert(
+      readDb('SELECT building_group_id AS g FROM ab_building WHERE id = ?', [bldBId])?.g === null,
+      'D18 整体替换语义：传 `[]` = 清空成员楼（不是「保持原值」—— 那样运营会以为解绑了、实际还挂着）',
+      `dbG=${readDb('SELECT building_group_id AS g FROM ab_building WHERE id = ?', [bldBId])?.g}`,
+    );
 
-  const gMissing = await call('PUT', '/admin/building-groups/99999999', {
-    token: adminToken,
-    body: { name: 'e2e 不存在群' },
-  });
-  assert(gMissing.body?.code === 60002, 'D18 楼群不存在 → 60002', `code=${gMissing.body?.code}`);
+    const gMissing = await call('PUT', '/admin/building-groups/99999999', {
+      token: adminToken,
+      body: { name: 'e2e 不存在群' },
+    });
+    assert(gMissing.body?.code === 60002, 'D18 楼群不存在 → 60002', `code=${gMissing.body?.code}`);
 
-  // ---------------------------------------------------------- F · 派生联动 + 视图聚合
-  // 给 grpA 挂一个**新建**集散中心 → 覆盖状态应由 uncovered 翻成 covered（跨批次联动：M3-6 D30/D31 → M3-7 派生）
-  // ⚠️ M4-0：场所不再归属供应商（`supplierId` 已从入参移除），本节只需一个能服务 grpA 的场所。
-  const dcCreate = await call('POST', '/admin/distribution-centers', {
-    token: adminToken,
-    body: {
-      name: `e2e集散_${stamp}`,
-      address: 'e2e 集散地址',
-      serviceGroups: [grpAId],
-      status: 1,
-    },
-  });
-  const dcxId = dcCreate.body?.data?.id;
-  assert(
-    dcCreate.body?.code === 0 && dcxId > 0,
-    'D30 新建集散中心并服务本节的楼群（跨批次夹具：M3-6 的配置驱动 M3-7 的派生）',
-    `code=${dcCreate.body?.code} id=${dcxId}`,
-  );
+    // ---------------------------------------------------------- F · 派生联动 + 视图聚合
+    // 给 grpA 挂一个**新建**集散中心 → 覆盖状态应由 uncovered 翻成 covered（跨批次联动：M3-6 D30/D31 → M3-7 派生）
+    // ⚠️ M4-0：场所不再归属供应商（`supplierId` 已从入参移除），本节只需一个能服务 grpA 的场所。
+    const dcCreate = await call('POST', '/admin/distribution-centers', {
+      token: adminToken,
+      body: {
+        name: `e2e集散_${stamp}`,
+        address: 'e2e 集散地址',
+        serviceGroups: [grpAId],
+        status: 1,
+      },
+    });
+    const dcxId = dcCreate.body?.data?.id;
+    assert(
+      dcCreate.body?.code === 0 && dcxId > 0,
+      'D30 新建集散中心并服务本节的楼群（跨批次夹具：M3-6 的配置驱动 M3-7 的派生）',
+      `code=${dcCreate.body?.code} id=${dcxId}`,
+    );
 
-  const bAfterDc = await call('GET', `/admin/buildings?${qs({ groupId: grpAId, pageSize: 100 })}`, {
-    token: adminToken,
-  });
-  const bA2 = (bAfterDc.body?.data?.list ?? []).find((b) => b.id === bldAId);
-  assert(
-    bA2?.gap === 'none' && bA2?.mainDcName === `e2e集散_${stamp}` && bA2?.routeNo !== null,
-    'D13 派生随配置**实时变化**：集散中心挂上该楼群后，该楼的 gap 立刻由 no_center 翻成 none（不是落库快照）',
-    `gap=${bA2?.gap} main=${bA2?.mainDcName} route=${bA2?.routeNo}`,
-  );
-  assert(
-    bA2?.canOrder === true,
-    'D13 覆盖补齐后 canOrder=true（营业中 ∧ 已归群）',
-    `canOrder=${bA2?.canOrder}`,
-  );
+    const bAfterDc = await call(
+      'GET',
+      `/admin/buildings?${qs({ groupId: grpAId, pageSize: 100 })}`,
+      {
+        token: adminToken,
+      },
+    );
+    const bA2 = (bAfterDc.body?.data?.list ?? []).find((b) => b.id === bldAId);
+    assert(
+      bA2?.gap === 'none' && bA2?.mainDcName === `e2e集散_${stamp}` && bA2?.routeNo !== null,
+      'D13 派生随配置**实时变化**：集散中心挂上该楼群后，该楼的 gap 立刻由 no_center 翻成 none（不是落库快照）',
+      `gap=${bA2?.gap} main=${bA2?.mainDcName} route=${bA2?.routeNo}`,
+    );
+    assert(
+      bA2?.canOrder === true,
+      'D13 覆盖补齐后 canOrder=true（营业中 ∧ 已归群）',
+      `canOrder=${bA2?.canOrder}`,
+    );
 
-  const dcDisable = await call('PUT', `/admin/distribution-centers/${dcxId}`, {
-    token: adminToken,
-    body: { status: 0 },
-  });
-  assert(dcDisable.body?.code === 0, 'D31 停用（非删除）集散中心', `code=${dcDisable.body?.code}`);
+    const dcDisable = await call('PUT', `/admin/distribution-centers/${dcxId}`, {
+      token: adminToken,
+      body: { status: 0 },
+    });
+    assert(
+      dcDisable.body?.code === 0,
+      'D31 停用（非删除）集散中心',
+      `code=${dcDisable.body?.code}`,
+    );
 
-  const bAfterDisable = await call('GET', `/admin/buildings?${qs({ groupId: grpAId, pageSize: 100 })}`, {
-    token: adminToken,
-  });
-  const bA3 = (bAfterDisable.body?.data?.list ?? []).find((b) => b.id === bldAId);
-  assert(
-    bA3?.gap === 'all_center_disabled' && bA3?.mainDcName === null,
-    'D13 「集散中心已停用」是**第三种**覆盖缺口（≠ 楼群无集散中心）—— 三种成因三种修法，合成一个「未覆盖」运营只能猜',
-    `gap=${bA3?.gap} main=${bA3?.mainDcName}`,
-  );
+    const bAfterDisable = await call(
+      'GET',
+      `/admin/buildings?${qs({ groupId: grpAId, pageSize: 100 })}`,
+      {
+        token: adminToken,
+      },
+    );
+    const bA3 = (bAfterDisable.body?.data?.list ?? []).find((b) => b.id === bldAId);
+    assert(
+      bA3?.gap === 'all_center_disabled' && bA3?.mainDcName === null,
+      'D13 「集散中心已停用」是**第三种**覆盖缺口（≠ 楼群无集散中心）—— 三种成因三种修法，合成一个「未覆盖」运营只能猜',
+      `gap=${bA3?.gap} main=${bA3?.mainDcName}`,
+    );
 
-  // 视图聚合一致性：overview / delivery-map 与 D13 必须同源
-  const ovw = await call('GET', '/admin/buildings/overview', { token: adminToken });
-  const ovwData = ovw.body?.data ?? {};
-  assert(
-    ovw.body?.code === 0 && ovwData.buildings?.totalCount >= 12,
-    'P37 总览接口返回成功（主数据健康度聚合）',
-    `code=${ovw.body?.code} total=${ovwData.buildings?.totalCount}`,
-  );
-  const gapFiltered = await call('GET', `/admin/buildings?${qs({ gap: 'no_group', pageSize: 100 })}`, {
-    token: adminToken,
-  });
-  const gapRows2 = gapFiltered.body?.data?.list ?? [];
-  assert(
-    gapRows2.every((b) => b.gap === 'no_group') && gapRows2.length > 0,
-    'D13 覆盖缺口筛选生效（gap=no_group 只回未归群的楼）',
-    `count=${gapRows2.length}`,
-  );
-  assert(
-    (ovwData.uncoveredBuildings ?? []).some((b) => b.id === bldAId) &&
-      !(ovwData.uncoveredBuildings ?? []).some((b) => b.gap === 'none'),
-    'P37 总览的「未覆盖楼栋」清单与 D13 的 gap 判定**同源**（总览不另算一套）',
-    `uncovered=${(ovwData.uncoveredBuildings ?? []).length}`,
-  );
-  assert(
-    ovwData.groupDistribution?.find((g) => g.groupId === grpAId)?.coverageState === 'uncovered',
-    'P37 总览的楼群分布沿用 D16 的覆盖状态派生（停用集散中心后该楼群回到 uncovered）',
-    `state=${ovwData.groupDistribution?.find((g) => g.groupId === grpAId)?.coverageState}`,
-  );
+    // 视图聚合一致性：overview / delivery-map 与 D13 必须同源
+    const ovw = await call('GET', '/admin/buildings/overview', { token: adminToken });
+    const ovwData = ovw.body?.data ?? {};
+    assert(
+      ovw.body?.code === 0 && ovwData.buildings?.totalCount >= 12,
+      'P37 总览接口返回成功（主数据健康度聚合）',
+      `code=${ovw.body?.code} total=${ovwData.buildings?.totalCount}`,
+    );
+    const gapFiltered = await call(
+      'GET',
+      `/admin/buildings?${qs({ gap: 'no_group', pageSize: 100 })}`,
+      {
+        token: adminToken,
+      },
+    );
+    const gapRows2 = gapFiltered.body?.data?.list ?? [];
+    assert(
+      gapRows2.every((b) => b.gap === 'no_group') && gapRows2.length > 0,
+      'D13 覆盖缺口筛选生效（gap=no_group 只回未归群的楼）',
+      `count=${gapRows2.length}`,
+    );
+    assert(
+      (ovwData.uncoveredBuildings ?? []).some((b) => b.id === bldAId) &&
+        !(ovwData.uncoveredBuildings ?? []).some((b) => b.gap === 'none'),
+      'P37 总览的「未覆盖楼栋」清单与 D13 的 gap 判定**同源**（总览不另算一套）',
+      `uncovered=${(ovwData.uncoveredBuildings ?? []).length}`,
+    );
+    assert(
+      ovwData.groupDistribution?.find((g) => g.groupId === grpAId)?.coverageState === 'uncovered',
+      'P37 总览的楼群分布沿用 D16 的覆盖状态派生（停用集散中心后该楼群回到 uncovered）',
+      `state=${ovwData.groupDistribution?.find((g) => g.groupId === grpAId)?.coverageState}`,
+    );
 
-  const dmap = await call('GET', '/admin/buildings/delivery-map', { token: adminToken });
-  const dm = dmap.body?.data ?? {};
-  const dmStops = (dm.routes ?? []).flatMap((r) => r.stops ?? []);
-  assert(dmap.body?.code === 0 && Array.isArray(dm.routes), '配送映射接口返回成功', `code=${dmap.body?.code}`);
-  assert(
-    dm.summary?.coveredBuildingCount + dm.summary?.uncoveredBuildingCount === dm.summary?.totalBuildingCount,
-    '配送映射守恒：已覆盖楼栋 + 未覆盖楼栋 = 楼栋总数（派生视图最容易在这里漏行）',
-    `covered=${dm.summary?.coveredBuildingCount} uncovered=${dm.summary?.uncoveredBuildingCount} total=${dm.summary?.totalBuildingCount}`,
-  );
-  assert(
-    (dm.unassigned ?? []).some((u) => u.buildingId === bldAId && u.gap === 'all_center_disabled'),
-    '配送映射的「未分配」清单带上**缺口原因**（让运营知道去改哪里，而不是只看到「未分配」）',
-    `unassigned=${(dm.unassigned ?? []).map((u) => u.buildingId).join(',')}`,
-  );
-  assert(
-    dmStops.every((s) => typeof s.seq === 'number' && s.buildingName) &&
-      (dm.routes ?? []).every((r) => (r.stops ?? []).every((x, i) => x.seq === i + 1)),
-    '配送映射：站点序号在**同一路线内**从 1 递增（路线内顺序 = 楼栋 id 升序）',
-    `maxSeq=${Math.max(0, ...dmStops.map((s) => s.seq))}`,
-  );
-  assert(
-    dmStops.every((s) => s.distanceKm === undefined && s.durationMin === undefined) &&
-      (dm.routes ?? []).every((r) => r.distanceKm === undefined),
-    '配送映射**不返回距离与单段时长**（需地图与真实路况数据，一期不具备；原型上的 km/分钟是演示值，不当成交付口径）',
-    `keys=${Object.keys(dmStops[0] ?? {}).join(',')}`,
-  );
-  assert(
-    (dm.routes ?? []).every((r) => new Set((r.stops ?? []).map((s) => s.buildingId)).size === (r.stops ?? []).length),
-    '配送映射：一条路线内不出现重复楼栋',
-    `routes=${(dm.routes ?? []).length}`,
-  );
+    const dmap = await call('GET', '/admin/buildings/delivery-map', { token: adminToken });
+    const dm = dmap.body?.data ?? {};
+    const dmStops = (dm.routes ?? []).flatMap((r) => r.stops ?? []);
+    assert(
+      dmap.body?.code === 0 && Array.isArray(dm.routes),
+      '配送映射接口返回成功',
+      `code=${dmap.body?.code}`,
+    );
+    assert(
+      dm.summary?.coveredBuildingCount + dm.summary?.uncoveredBuildingCount ===
+        dm.summary?.totalBuildingCount,
+      '配送映射守恒：已覆盖楼栋 + 未覆盖楼栋 = 楼栋总数（派生视图最容易在这里漏行）',
+      `covered=${dm.summary?.coveredBuildingCount} uncovered=${dm.summary?.uncoveredBuildingCount} total=${dm.summary?.totalBuildingCount}`,
+    );
+    assert(
+      (dm.unassigned ?? []).some((u) => u.buildingId === bldAId && u.gap === 'all_center_disabled'),
+      '配送映射的「未分配」清单带上**缺口原因**（让运营知道去改哪里，而不是只看到「未分配」）',
+      `unassigned=${(dm.unassigned ?? []).map((u) => u.buildingId).join(',')}`,
+    );
+    assert(
+      dmStops.every((s) => typeof s.seq === 'number' && s.buildingName) &&
+        (dm.routes ?? []).every((r) => (r.stops ?? []).every((x, i) => x.seq === i + 1)),
+      '配送映射：站点序号在**同一路线内**从 1 递增（路线内顺序 = 楼栋 id 升序）',
+      `maxSeq=${Math.max(0, ...dmStops.map((s) => s.seq))}`,
+    );
+    assert(
+      dmStops.every((s) => s.distanceKm === undefined && s.durationMin === undefined) &&
+        (dm.routes ?? []).every((r) => r.distanceKm === undefined),
+      '配送映射**不返回距离与单段时长**（需地图与真实路况数据，一期不具备；原型上的 km/分钟是演示值，不当成交付口径）',
+      `keys=${Object.keys(dmStops[0] ?? {}).join(',')}`,
+    );
+    assert(
+      (dm.routes ?? []).every(
+        (r) => new Set((r.stops ?? []).map((s) => s.buildingId)).size === (r.stops ?? []).length,
+      ),
+      '配送映射：一条路线内不出现重复楼栋',
+      `routes=${(dm.routes ?? []).length}`,
+    );
 
-  // ---------------------------------------------------------- G · 权限（两级白名单）
-  const opRead = await call('GET', `/admin/buildings?${qs({ pageSize: 5 })}`, { token: supOpToken });
-  assert(opRead.body?.code === 0, '两级白名单①：operator 可读办公楼列表', `code=${opRead.body?.code}`);
-  const opWrite = await call('POST', '/admin/buildings', {
-    token: supOpToken,
-    body: { name: `e2e越权楼_${stamp}`, address: 'e2e 越权地址' },
-  });
-  assert(
-    opWrite.body?.code === 10003 &&
-      readRows('SELECT id FROM ab_building WHERE name = ?', [`e2e越权楼_${stamp}`]).length === 0,
-    '两级白名单②：operator 新建办公楼 → 10003 且**无记录**（守卫挡在业务层之前，不是「执行了再回滚」）',
-    `code=${opWrite.body?.code}`,
-  );
-  const viewRead = await call('GET', '/admin/buildings', { token: supViewToken });
-  assert(
-    viewRead.body?.code === 10003,
-    '两级白名单③：viewer 类级就不放（菜单矩阵里没有 /building/*，API 放行会出现「能调但进不去」的诡异状态）',
-    `code=${viewRead.body?.code}`,
-  );
-  const finRead = await call('GET', '/admin/building-groups', { token: finToken2 });
-  assert(
-    finRead.body?.code === 10003,
-    '两级白名单④：finance 同样收窄（财务不改楼栋主数据）',
-    `code=${finRead.body?.code}`,
-  );
+    // ---------------------------------------------------------- G · 权限（两级白名单）
+    const opRead = await call('GET', `/admin/buildings?${qs({ pageSize: 5 })}`, {
+      token: supOpToken,
+    });
+    assert(
+      opRead.body?.code === 0,
+      '两级白名单①：operator 可读办公楼列表',
+      `code=${opRead.body?.code}`,
+    );
+    const opWrite = await call('POST', '/admin/buildings', {
+      token: supOpToken,
+      body: { name: `e2e越权楼_${stamp}`, address: 'e2e 越权地址' },
+    });
+    assert(
+      opWrite.body?.code === 10003 &&
+        readRows('SELECT id FROM ab_building WHERE name = ?', [`e2e越权楼_${stamp}`]).length === 0,
+      '两级白名单②：operator 新建办公楼 → 10003 且**无记录**（守卫挡在业务层之前，不是「执行了再回滚」）',
+      `code=${opWrite.body?.code}`,
+    );
+    const viewRead = await call('GET', '/admin/buildings', { token: supViewToken });
+    assert(
+      viewRead.body?.code === 10003,
+      '两级白名单③：viewer 类级就不放（菜单矩阵里没有 /building/*，API 放行会出现「能调但进不去」的诡异状态）',
+      `code=${viewRead.body?.code}`,
+    );
+    const finRead = await call('GET', '/admin/building-groups', { token: finToken2 });
+    assert(
+      finRead.body?.code === 10003,
+      '两级白名单④：finance 同样收窄（财务不改楼栋主数据）',
+      `code=${finRead.body?.code}`,
+    );
 
-  // ---------------------------------------------------------- H · 主体隔离 + 日志
-  const miniBld = await call('GET', '/admin/buildings', { token: u.token });
-  assert(
-    miniBld.body?.code === 10003,
-    '双主体隔离：小程序 token 打 /admin/buildings → 10003',
-    `code=${miniBld.body?.code}`,
-  );
-  const bldLogs = await call('GET', `/admin/system/logs?${qs({ pageSize: 100 })}`, { token: adminToken });
-  const bldLogRows = bldLogs.body?.data?.list ?? [];
-  assert(
-    bldLogRows.some((l) => l.action === '新增办公楼' && String(l.targetId) === String(bldAId)),
-    'D14 自动落操作日志且 `targetId` = **新楼 id**（新建接口请求里没有 id，靠响应体兜底取得 —— 否则日志永远挂不到这栋楼上）',
-    `targetIds=${JSON.stringify(bldLogRows.filter((l) => l.action === '新增办公楼').map((l) => l.targetId))} 期望含 ${bldAId}`,
-  );
-  assert(
-    bldLogRows.some((l) => l.action === '编辑楼群' && String(l.targetId) === String(grpBId)),
-    'D18 编辑楼群留痕（`targetId` = 楼群 id）',
-    `hit=${bldLogRows.filter((l) => l.action === '编辑楼群').length}`,
-  );
+    // ---------------------------------------------------------- H · 主体隔离 + 日志
+    const miniBld = await call('GET', '/admin/buildings', { token: u.token });
+    assert(
+      miniBld.body?.code === 10003,
+      '双主体隔离：小程序 token 打 /admin/buildings → 10003',
+      `code=${miniBld.body?.code}`,
+    );
+    const bldLogs = await call('GET', `/admin/system/logs?${qs({ pageSize: 100 })}`, {
+      token: adminToken,
+    });
+    const bldLogRows = bldLogs.body?.data?.list ?? [];
+    assert(
+      bldLogRows.some((l) => l.action === '新增办公楼' && String(l.targetId) === String(bldAId)),
+      'D14 自动落操作日志且 `targetId` = **新楼 id**（新建接口请求里没有 id，靠响应体兜底取得 —— 否则日志永远挂不到这栋楼上）',
+      `targetIds=${JSON.stringify(bldLogRows.filter((l) => l.action === '新增办公楼').map((l) => l.targetId))} 期望含 ${bldAId}`,
+    );
+    assert(
+      bldLogRows.some((l) => l.action === '编辑楼群' && String(l.targetId) === String(grpBId)),
+      'D18 编辑楼群留痕（`targetId` = 楼群 id）',
+      `hit=${bldLogRows.filter((l) => l.action === '编辑楼群').length}`,
+    );
   }
 
   // ==========================================================================
@@ -4859,7 +4953,9 @@ async function main() {
       `centers=${JSON.stringify((wbData?.dishes?.[0]?.centers ?? []).map((c) => `${c.centerName}:${c.planQuantity}`))}`,
     );
     assert(
-      wbData?.deadline?.text === '09:30' && wbData?.deadline?.overdue === false && wbData?.deadline?.canConfirm === true,
+      wbData?.deadline?.text === '09:30' &&
+        wbData?.deadline?.overdue === false &&
+        wbData?.deadline?.canConfirm === true,
       'S1 下发确认截止（出餐日当天 09:30）与是否已过点 —— 明日未到点，`canConfirm=true`',
       `text=${wbData?.deadline?.text} overdue=${wbData?.deadline?.overdue} canConfirm=${wbData?.deadline?.canConfirm}`,
     );
@@ -4885,7 +4981,10 @@ async function main() {
       [TMR],
     );
     assert(
-      !!lazyDaily && !!lazyDetail && Number(lazyDetail.plan_quantity) === 45 && lazyDetail.status === 'pending',
+      !!lazyDaily &&
+        !!lazyDetail &&
+        Number(lazyDetail.plan_quantity) === 45 &&
+        lazyDetail.status === 'pending',
       'S1 首次访问**惰性生成**生产计划（父行 + 分中心明细）并落库 —— 计划是给供应商的承诺数，生成即冻结，不能每次实时重算',
       `daily=${lazyDaily?.plan_quantity} detail=${lazyDetail?.plan_quantity}/${lazyDetail?.status}`,
     );
@@ -5099,7 +5198,9 @@ async function main() {
       token: supToken,
       body: {
         date: TMR,
-        items: [{ dishId: 1, distributionCenterId: 1, actualQuantity: 40, remark: 'e2e 短送 5 份' }],
+        items: [
+          { dishId: 1, distributionCenterId: 1, actualQuantity: 40, remark: 'e2e 短送 5 份' },
+        ],
       },
     });
     const shortDb = readDb(
@@ -5263,12 +5364,18 @@ async function main() {
     );
 
     // ---------------------------------------------------------- E. 未出单异常清单
-    const exc = await call('GET', `/admin/supplier-shares/exceptions?date=${S9D}`, { token: adminToken });
+    const exc = await call('GET', `/admin/supplier-shares/exceptions?date=${S9D}`, {
+      token: adminToken,
+    });
     const excList = exc.body?.data?.list ?? [];
     assert(
       exc.body?.code === 0 &&
-        excList.some((e) => e.reason === 'incomplete' && e.supplierId === supBId && e.dishId === dish1) &&
-        excList.some((e) => e.reason === 'zero_quantity' && e.supplierId === supBId && e.dishId === dish2),
+        excList.some(
+          (e) => e.reason === 'incomplete' && e.supplierId === supBId && e.dishId === dish1,
+        ) &&
+        excList.some(
+          (e) => e.reason === 'zero_quantity' && e.supplierId === supBId && e.dishId === dish2,
+        ),
       'S9 未出单异常清单逐条给出**原因**（未确认完成 / 实收 0）—— 运营点完按钮最想知道的是「哪些单没出来、为什么」',
       `count=${excList.length} reasons=${JSON.stringify(excList.map((e) => `${e.supplierId}:${e.reason}`))}`,
     );
@@ -5296,7 +5403,9 @@ async function main() {
       "UPDATE ab_supplier_dish_daily SET status = 'done', actual_quantity = 80 WHERE supplier_id = ? AND dish_id = ? AND produce_date = ?",
       [supBId, dish1, S9D],
     );
-    const excLic = await call('GET', `/admin/supplier-shares/exceptions?date=${S9D}`, { token: adminToken });
+    const excLic = await call('GET', `/admin/supplier-shares/exceptions?date=${S9D}`, {
+      token: adminToken,
+    });
     assert(
       (excLic.body?.data?.list ?? []).some(
         (e) => e.reason === 'license_invalid' && e.supplierId === supBId && e.dishId === dish1,
@@ -5497,11 +5606,9 @@ async function main() {
       'S9 汇总给出**跨日期的待付合计**：补一条「另一出餐日」的待付行后合计 +¥50.00，而当日待付仍为 0 —— 供应商真正关心的是「平台还欠我多少」，不是「某一天多少钱」（写死金额的断言会被别处夹具牵连，故此处以**增量 + 库内对照**双口径验证）',
       `before=${selfD?.summary?.pendingTotalAmountFen} after=${selfSum?.pendingTotalAmountFen} 当日=${selfSum?.pendingAmountFen} 库内=${Math.round(Number(dbPending?.amount ?? 0) * 100)}(${dbPending?.cnt}行)`,
     );
-    const selfOther = await call(
-      'GET',
-      `/supplier/settlement?date=${addDaysStr(S9D, 1)}`,
-      { token: supS9.token },
-    );
+    const selfOther = await call('GET', `/supplier/settlement?date=${addDaysStr(S9D, 1)}`, {
+      token: supS9.token,
+    });
     assert(
       selfOther.body?.code === 0 && selfOther.body?.data?.summary?.empty === true,
       'S9 无单日 → `empty=true` + 空列表（HTTP 200）—— 「今天还没出单」是正常状态（应付 T+1 凌晨才出），端上给空态说明而非报错',
@@ -5669,7 +5776,12 @@ async function main() {
     assert(
       timelineItems.every((i) => !!i.consumedBy && i.consumedBy.includes('currentTimeline')),
       '⭐ 接线键的 `consumedBy` 必须指向**生效值的唯一读法** `currentTimeline()`（写 `DEFAULT_TIMELINE` 就是把「出厂值」当「正在生效的值」，等于再造一层漂移）',
-      `未指向 currentTimeline=${timelineItems.filter((i) => !i.consumedBy?.includes('currentTimeline')).map((i) => i.key).join(',') || '无'}`,
+      `未指向 currentTimeline=${
+        timelineItems
+          .filter((i) => !i.consumedBy?.includes('currentTimeline'))
+          .map((i) => i.key)
+          .join(',') || '无'
+      }`,
     );
 
     // ⭐⭐ 端到端证据：写新时刻 → **跑批时刻必须跟着变**。
@@ -6098,8 +6210,9 @@ async function main() {
       const beforeHeat = (
         await call('GET', '/admin/stats/dish-heat?range=7d&topN=50', { token: adminToken })
       ).body?.data;
-      const beforeRet = (await call('GET', '/admin/stats/retention?range=7d', { token: adminToken }))
-        .body?.data;
+      const beforeRet = (
+        await call('GET', '/admin/stats/retention?range=7d', { token: adminToken })
+      ).body?.data;
 
       assert(
         before?.range?.range === '7d' && before?.range?.days === 7,
@@ -6290,7 +6403,11 @@ async function main() {
         '退款率分母 = **全部**订单数（含未支付 / 已取消 / 已退款），增量 7 —— 分母只取有效单会让退款率翻倍虚高',
         `ΔtotalOrderCount=${d('totalOrderCount')}`,
       );
-      assert(d('pendingPayCount') === 1, '未支付单独计数（既不算进 GMV，也不从分母里藏掉）', `Δ=${d('pendingPayCount')}`);
+      assert(
+        d('pendingPayCount') === 1,
+        '未支付单独计数（既不算进 GMV，也不从分母里藏掉）',
+        `Δ=${d('pendingPayCount')}`,
+      );
       assert(
         d('refundCount') === 2,
         '退款订单数 = `refund_applying` + `refunded` = 2；**`cancelled` 不算退款**（截单前自助取消不是事故）',
@@ -6412,7 +6529,7 @@ async function main() {
         (g.gmvFen > 0 && !after.costRegistration.allRegistered) ||
         (g.quantity > 0 && !after.purchaseGenerated);
       assert(
-        (after.warnings.length > 0) === expectWarning,
+        after.warnings.length > 0 === expectWarning,
         '⚠️ 毛利可靠性提示与判据**同源**：履约成本未登记 / 采购单未出 → 必须出现「上限值」提示。任何一个减项缺失都会让经营毛利虚高，不给提示等于让运营拿虚高的数做决策',
         `warnings=${after.warnings.length} expect=${expectWarning}`,
       );
@@ -6432,9 +6549,8 @@ async function main() {
       );
 
       // ---------------------------------------------------------- I. D48 楼群 / 楼栋榜单
-      const rank = (
-        await call('GET', '/admin/stats/building-rank?range=7d', { token: adminToken })
-      ).body?.data;
+      const rank = (await call('GET', '/admin/stats/building-rank?range=7d', { token: adminToken }))
+        .body?.data;
       assert(
         rank.groups.reduce((s, r) => s + r.gmvFen, 0) === rank.totalGmvFen,
         '⭐ D48 楼群维度**分项之和 = 合计 GMV** —— 分项加起来对不上总额，运营从此不再信任任何一个数',
@@ -6464,15 +6580,18 @@ async function main() {
       );
 
       // ---------------------------------------------------------- J. D49 菜品热度
-      const heat = (await call('GET', '/admin/stats/dish-heat?range=7d&topN=5', { token: adminToken }))
-        .body?.data;
+      const heat = (
+        await call('GET', '/admin/stats/dish-heat?range=7d&topN=5', { token: adminToken })
+      ).body?.data;
       assert(
         heat.topN === 5 && heat.items.length === Math.min(5, heat.dishCount),
         'D49 `topN` 生效：`items` 条数 = min(topN, 菜品数)，不是「有多少给多少」',
         `items=${heat.items.length} dishCount=${heat.dishCount}`,
       );
       assert(
-        heat.items.every((it) => it.share === Number((it.quantity / heat.totalQuantity).toFixed(4))),
+        heat.items.every(
+          (it) => it.share === Number((it.quantity / heat.totalQuantity).toFixed(4)),
+        ),
         '⭐ D49 占比分母 = 区间内**全部**菜品份数，不是 topN 之和 —— 按 topN 之和算，排行末位的占比会凭空虚高',
         `totalQuantity=${heat.totalQuantity}`,
       );
@@ -6512,8 +6631,8 @@ async function main() {
       // ⭐ 这恰恰是 D49 必须**按菜品合并**而非按套餐展开的直接证据 —— 拆开就两行各 5。
       const dishSetOf = (mealId) =>
         new Set(
-          readRows('SELECT dish_id FROM ab_set_meal_item WHERE set_meal_id = ?', [mealId]).map((r) =>
-            Number(r.dish_id),
+          readRows('SELECT dish_id FROM ab_set_meal_item WHERE set_meal_id = ?', [mealId]).map(
+            (r) => Number(r.dish_id),
           ),
         );
       // 本节**有效**夹具订单（与 D47 计入 GMV 的 4 条同集合；未支付/已退款/已取消三单不计）
@@ -6580,7 +6699,11 @@ async function main() {
           .map(
             (c) =>
               `${c.cohortStart}:${c.newUserCount}人${
-                c.retentionRate1 === null ? (c.observable ? '/空群→null' : '/观察中') : `/${c.retentionRate1}`
+                c.retentionRate1 === null
+                  ? c.observable
+                    ? '/空群→null'
+                    : '/观察中'
+                  : `/${c.retentionRate1}`
               }`,
           )
           .join(' '),
@@ -6597,8 +6720,8 @@ async function main() {
       // u3 首单落在三周前的那一周（cohort 起点），次周再下一单 → 次周留存 1 人
       addOrder(`${PREFIX}O8`, u3, null, b1, m2, wkBack3, 1, 'completed');
       addOrder(`${PREFIX}O9`, u3, null, b1, m2, addDaysStr(wkBack3, 8), 1, 'completed');
-      const ret2 = (await call('GET', '/admin/stats/retention?range=7d', { token: adminToken })).body
-        ?.data;
+      const ret2 = (await call('GET', '/admin/stats/retention?range=7d', { token: adminToken }))
+        .body?.data;
       const c3 = ret2?.cohorts?.find((c) => c.cohortStart === wkBack3);
       assert(
         !!c3 &&
@@ -6607,7 +6730,9 @@ async function main() {
           c3.retainedWeek1 >= 1 &&
           c3.retentionRate1 === Number((c3.retainedWeek1 / c3.newUserCount).toFixed(4)),
         '⭐ 观察窗口**已走完且群非空**的 cohort 必须下发真实留存数字：`observable=true` + 两个字段非 null，且率 = 留存人数 ÷ 新客数（服务端算好，端上不做除法）',
-        c3 ? `observable=${c3.observable} 新客=${c3.newUserCount} 留存=${c3.retainedWeek1} 率=${c3.retentionRate1}` : '未找到该 cohort',
+        c3
+          ? `observable=${c3.observable} 新客=${c3.newUserCount} 留存=${c3.retainedWeek1} 率=${c3.retentionRate1}`
+          : '未找到该 cohort',
       );
       const curCohort = ret.cohorts[ret.cohorts.length - 1];
       assert(
@@ -6661,7 +6786,8 @@ async function main() {
       );
       const guest23 = await userLogin(`e2e_s23_${stamp}`);
       assert(
-        (await call('GET', '/admin/stats/dashboard', { token: guest23.token })).body?.code === 10003,
+        (await call('GET', '/admin/stats/dashboard', { token: guest23.token })).body?.code ===
+          10003,
         '双主体隔离：小程序 token 打 `/admin/stats/*` → 10003（C 端与后台 id 各自自增，不隔离即静默越权）',
         '',
       );
@@ -6679,9 +6805,8 @@ async function main() {
 
       // ---------------------------------------------------------- M. 夹具还原
       cleanFixtures();
-      const restored = (
-        await call('GET', '/admin/stats/dashboard?range=7d', { token: adminToken })
-      ).body?.data;
+      const restored = (await call('GET', '/admin/stats/dashboard?range=7d', { token: adminToken }))
+        .body?.data;
       assert(
         restored.metrics.orderCount === before.metrics.orderCount &&
           restored.metrics.gmvFen === before.metrics.gmvFen &&
@@ -6789,7 +6914,10 @@ async function main() {
     // ---------------------------------------------------------- B. 接线状态如实标注
     const liveTpl = (list0?.list ?? []).filter((t) => t.wiring === 'live');
     const pendingTpl = (list0?.list ?? []).filter((t) => t.wiring === 'pending');
-    const liveScenes = liveTpl.map((t) => t.scene).sort().join(',');
+    const liveScenes = liveTpl
+      .map((t) => t.scene)
+      .sort()
+      .join(',');
     assert(
       liveTpl.length === 3 &&
         liveScenes === 'commission_settled,leader_apply,refund_result' &&
@@ -6832,10 +6960,12 @@ async function main() {
         .filter((t) => t.scene !== 'leader_delivery')
         .every((t) => t.enabled === false),
       '⭐ 其余 5 个场景**均未启用** —— 一期没有微信订阅消息模板 ID，启用必然发不出去；如实显示「未启用」远好过假装已启用（M4-3 接线 `leader_apply` / `commission_settled` 后仍是 0，**接线与启用是两件事**：代码接好了，配置还没到）',
-      `已启用的其余场景=${(list0?.list ?? [])
-        .filter((t) => t.scene !== 'leader_delivery' && t.enabled)
-        .map((t) => t.scene)
-        .join(',') || '无'}`,
+      `已启用的其余场景=${
+        (list0?.list ?? [])
+          .filter((t) => t.scene !== 'leader_delivery' && t.enabled)
+          .map((t) => t.scene)
+          .join(',') || '无'
+      }`,
     );
     assert(
       (refundTpl?.blockers ?? []).some((b) => b.includes('微信订阅消息模板 ID')),
@@ -6915,7 +7045,8 @@ async function main() {
     const okVar = await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
       token: adminToken,
       body: {
-        groupContent: '【ABox 取餐提醒】{{mealDate}} 的午餐已于 {{arriveTime}} 送达 {{buildingName}} 楼下，共 {{quantity}} 份。',
+        groupContent:
+          '【ABox 取餐提醒】{{mealDate}} 的午餐已于 {{arriveTime}} 送达 {{buildingName}} 楼下，共 {{quantity}} 份。',
       },
     });
     assert(
@@ -6987,8 +7118,7 @@ async function main() {
       oneChange.body?.code === 0 &&
         (oneChange.body?.data?.changed ?? []).length === 1 &&
         oneChange.body?.data?.changed?.[0]?.field === 'groupContent' &&
-        oneChange.body?.data?.changed?.[0]?.before !==
-          oneChange.body?.data?.changed?.[0]?.after,
+        oneChange.body?.data?.changed?.[0]?.before !== oneChange.body?.data?.changed?.[0]?.after,
       '⭐ 变更回执**真的在逐字段比对**：提交不同内容 → 恰好 1 项变更、点名字段、且 before≠after（与上一条配对，否则「恒返回空」的实现也能骗过测试）',
       `changed=${JSON.stringify(oneChange.body?.data?.changed ?? []).slice(0, 120)}`,
     );
@@ -7166,10 +7296,12 @@ async function main() {
       '',
     );
     assert(
-      (await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
-        token: t24Op,
-        body: { enabled: 0 },
-      })).body?.code === 10003,
+      (
+        await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
+          token: t24Op,
+          body: { enabled: 0 },
+        })
+      ).body?.code === 10003,
       'D60 越权写 → 10003（守卫挡在业务层之前，不是「执行了再回滚」）',
       '',
     );
@@ -7185,11 +7317,7 @@ async function main() {
       '双主体隔离：小程序 token 打 `/admin/system/*` → 10003（C 端与后台 id 各自自增，不隔离即静默越权）',
       '',
     );
-    assert(
-      (await call('GET', TPL)).body?.code === 10002,
-      'D59 未登录 → 10002',
-      '',
-    );
+    assert((await call('GET', TPL)).body?.code === 10002, 'D59 未登录 → 10002', '');
 
     // ---------------------------------------------------------- K. 夹具还原（模板是全局的）
     const restoreFail = [];
@@ -7517,9 +7645,13 @@ async function main() {
       );
 
       const cmLeader = (
-        await call('GET', `${FIN25}/commissions?date=${D0}&leaderId=${Number(l25.id)}&pageSize=100`, {
-          token: adminToken,
-        })
+        await call(
+          'GET',
+          `${FIN25}/commissions?date=${D0}&leaderId=${Number(l25.id)}&pageSize=100`,
+          {
+            token: adminToken,
+          },
+        )
       ).body?.data;
       assert(
         (cmLeader?.list ?? []).length > 0 &&
@@ -7580,7 +7712,9 @@ async function main() {
       );
 
       const fenOf = (v) => Math.round(Number(v ?? 0) * 100);
-      const balAfter = readDb('SELECT balance, total_in FROM ab_balance WHERE user_id = ?', [uid25]);
+      const balAfter = readDb('SELECT balance, total_in FROM ab_balance WHERE user_id = ?', [
+        uid25,
+      ]);
       assert(
         fenOf(balAfter?.balance) - fenOf(balBefore?.balance) === Number(s1?.amountFen ?? -1),
         '⭐⭐ D35 **真入账**：`ab_balance.balance` 增量 === 出参 `amountFen`（不是「返回成功但钱没动」）',
@@ -8064,7 +8198,8 @@ async function main() {
       assert(
         logs26.length === 5 &&
           logs26.every((r) => r.type === 'adjust') &&
-          JSON.stringify(logs26.map((r) => Number(r.direction))) === JSON.stringify([1, -1, -1, 1, 1]) &&
+          JSON.stringify(logs26.map((r) => Number(r.direction))) ===
+            JSON.stringify([1, -1, -1, 1, 1]) &&
           logs26.every((r) => /^AJ\d{16}$/.test(String(r.related_id))) &&
           String(tail26?.remark ?? '').includes('操作人'),
         '⭐ D39 账本自洽：5 条流水**全部** `type=adjust` 且带 `AJ…` 单号；`direction` 依次为 +1/−1/−1/+1/+1（充 / 扣 / 冻 / 解 / 幂等那条首跑）—— **冻结记 `direction=-1`** 与 L12 提现同口径；`remark` 里带操作人（用户在自己的余额明细里能看到「谁动过我的钱」）',
@@ -8079,8 +8214,10 @@ async function main() {
       // ---------------------------------------------------- K. ⭐ 写后重读对账
       const ov26b = (await call('GET', `${FIN26}/overview`, { token: adminToken })).body?.data;
       const lb26b = (await call('GET', `${FIN26}/balances`, { token: adminToken })).body?.data;
-      const dBal26 = Number(lb26b?.liability?.balanceFen ?? 0) - Number(lb26a?.liability?.balanceFen ?? 0);
-      const dFrz26 = Number(lb26b?.liability?.frozenFen ?? 0) - Number(lb26a?.liability?.frozenFen ?? 0);
+      const dBal26 =
+        Number(lb26b?.liability?.balanceFen ?? 0) - Number(lb26a?.liability?.balanceFen ?? 0);
+      const dFrz26 =
+        Number(lb26b?.liability?.frozenFen ?? 0) - Number(lb26a?.liability?.frozenFen ?? 0);
       assert(
         lb26b?.liability?.balanceFen === ov26b?.liability?.balanceFen &&
           lb26b?.liability?.frozenFen === ov26b?.liability?.frozenFen &&
@@ -8132,8 +8269,8 @@ async function main() {
         '',
       );
       assert(
-        (await call('GET', `${FIN26}/balances?userId=99999999`, { token: adminToken })).body?.code ===
-          10004,
+        (await call('GET', `${FIN26}/balances?userId=99999999`, { token: adminToken })).body
+          ?.code === 10004,
         'D38 `userId` 不存在 → `10004`（不是「返回一行空账户」—— 查无此人要能被区分出来）',
         '',
       );
@@ -8218,7 +8355,6 @@ async function main() {
     }
   }
 
-
   // §27 M3-15 对账 D43 + 发票 D44（后台 P34 · 模块 M35-06 / M35-07）
   //
   // ⚠️ 本节不依赖下单窗口（同 §18–§26 纪律）：订单 / 支付流水 / 退款 / 应付单夹具**全部直插**。
@@ -8281,11 +8417,11 @@ async function main() {
       const INS_O27 =
         'INSERT INTO ab_order (order_no, user_id, team_leader_id, building_id, building_group_id, set_meal_id, assignment_id, meal_date, quantity, unit_price, total_amount, balance_used, discount_amount, pay_amount, status, version, paid_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 0, 0, ?, ?, 0, ?, ?, ?)';
       const INS_P27 =
-        'INSERT INTO ab_payment_log (order_id, order_no, transaction_id, pay_amount, pay_method, status, paid_at, created_at, updated_at) VALUES (?, ?, ?, ?, \'wxpay_jsapi\', ?, ?, ?, ?)';
+        "INSERT INTO ab_payment_log (order_id, order_no, transaction_id, pay_amount, pay_method, status, paid_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'wxpay_jsapi', ?, ?, ?, ?)";
       const INS_R27 =
-        'INSERT INTO ab_refund (refund_no, order_id, order_no, user_id, team_leader_id, apply_source, amount, reason_type, reason, status, reversed, version, refunded_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, \'leader\', ?, \'quality\', \'e2e 对账夹具\', \'refunded\', 0, 0, ?, ?, ?)';
+        "INSERT INTO ab_refund (refund_no, order_id, order_no, user_id, team_leader_id, apply_source, amount, reason_type, reason, status, reversed, version, refunded_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'leader', ?, 'quality', 'e2e 对账夹具', 'refunded', 0, 0, ?, ?, ?)";
       const INS_S27 =
-        'INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, quantity, unit_price, amount, type, channel, status, invoice_no, paid_at, created_at, updated_at) VALUES (?, ?, ?, \'supplier\', ?, 10, ?, ?, ?, \'manual\', ?, ?, ?, ?, ?)';
+        "INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, quantity, unit_price, amount, type, channel, status, invoice_no, paid_at, created_at, updated_at) VALUES (?, ?, ?, 'supplier', ?, 10, ?, ?, ?, 'manual', ?, ?, ?, ?, ?)";
 
       /** 造一张「已付款」订单并返回其 id */
       const mkOrder27 = (no, payAmount) => {
@@ -8387,7 +8523,7 @@ async function main() {
       ]);
 
       const fix27 = readDb(
-        "SELECT (SELECT COUNT(*) FROM ab_order WHERE order_no LIKE ?) AS o, (SELECT COUNT(*) FROM ab_payment_log WHERE order_no LIKE ?) AS p, (SELECT COUNT(*) FROM ab_supplier_share WHERE share_no LIKE ?) AS sh",
+        'SELECT (SELECT COUNT(*) FROM ab_order WHERE order_no LIKE ?) AS o, (SELECT COUNT(*) FROM ab_payment_log WHERE order_no LIKE ?) AS p, (SELECT COUNT(*) FROM ab_supplier_share WHERE share_no LIKE ?) AS sh',
         [`${PREFIX27}%`, `${PREFIX27}%`, `${PREFIX27}%`],
       );
       assert(
@@ -8412,8 +8548,9 @@ async function main() {
       const t27Fin = (await adminLogin('finance', 'finance123')).token;
 
       // ================================================== B. D43 汇总与恒等式
-      const rec27 = (await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: adminToken }))
-        .body;
+      const rec27 = (
+        await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: adminToken })
+      ).body;
       const r27 = rec27?.data;
       const sum27 = r27?.summary ?? {};
       /** 6 单 × ¥25.80 */
@@ -8426,7 +8563,7 @@ async function main() {
           r27?.date === D27 &&
           r27?.anchor === 'paidAt' &&
           r27?.anchorLabel === '支付日',
-        '⭐ D43 `date` 锚 = **支付日**（`anchor=\'paidAt\'` + `anchorLabel=\'支付日\'`）—— 对账对象是微信账单、微信按支付日切日。**这是财务域里唯一一个 `date` 不指出餐日的端点**，故必须显式回显，否则运营会拿它对 D33/D34/D36 的出餐日数字（两个时间轴，不是 bug）',
+        "⭐ D43 `date` 锚 = **支付日**（`anchor='paidAt'` + `anchorLabel='支付日'`）—— 对账对象是微信账单、微信按支付日切日。**这是财务域里唯一一个 `date` 不指出餐日的端点**，故必须显式回显，否则运营会拿它对 D33/D34/D36 的出餐日数字（两个时间轴，不是 bug）",
         `code=${rec27?.code} date=${r27?.date} anchor=${r27?.anchor}`,
       );
       assert(
@@ -8470,14 +8607,15 @@ async function main() {
           r27?.channel?.billAvailable === false &&
           /不等于已与微信侧对平/.test(String(r27?.channel?.note)) &&
           /微信支付账单下载/.test(String(r27?.channel?.note)),
-        '⭐⭐ D43 **不许假装已与微信对平**：`channel.source=\'local_only\'` + `billAvailable=false` + note **明写**「本页只对了本地三头、**不等于已与微信侧对平**」。一期无商户号 → 拿不到微信账单；若实现成「内部两表对平 → balanced=true」，运营会以为微信侧也平了，而真正的差异（微信收了钱、系统不知道）将**永远不可见**',
+        "⭐⭐ D43 **不许假装已与微信对平**：`channel.source='local_only'` + `billAvailable=false` + note **明写**「本页只对了本地三头、**不等于已与微信侧对平**」。一期无商户号 → 拿不到微信账单；若实现成「内部两表对平 → balanced=true」，运营会以为微信侧也平了，而真正的差异（微信收了钱、系统不知道）将**永远不可见**",
         `source=${r27?.channel?.source} billAvailable=${r27?.channel?.billAvailable}`,
       );
 
       // ================================================== D. 五类差异逐类命中
       const list27 = r27?.list ?? [];
       const hit27 = (no) => list27.filter((x) => x.orderNo === no);
-      const stat27 = (t) => Number((r27?.diffTypeStats ?? []).find((x) => x.type === t)?.count ?? -1);
+      const stat27 = (t) =>
+        Number((r27?.diffTypeStats ?? []).find((x) => x.type === t)?.count ?? -1);
 
       assert(
         hit27(`${PREFIX27}B`).length === 1 &&
@@ -8524,7 +8662,8 @@ async function main() {
         `hits=${hit27(`${PREFIX27}A`).length}`,
       );
       assert(
-        list27.length > 0 && list27.every((x) => typeof x.nextAction === 'string' && x.nextAction.length > 10),
+        list27.length > 0 &&
+          list27.every((x) => typeof x.nextAction === 'string' && x.nextAction.length > 10),
         '每条差异都带服务端下发的 `nextAction`（**人话的下一步**）—— 「对账不平」四个字无法执行，「去商户平台按订单号查该笔是否真实收款」可以',
         `list=${list27.length}`,
       );
@@ -8538,18 +8677,20 @@ async function main() {
 
       // ================================================== E. D43 权限与入参
       assert(
-        (await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: t27Fin })).body?.code === 0,
+        (await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: t27Fin })).body?.code ===
+          0,
         'D43 类级白名单含 `finance`（财务做对账是本职）',
         '',
       );
       assert(
-        (await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: t27Op })).body?.code === 0,
+        (await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: t27Op })).body?.code ===
+          0,
         'D43 类级白名单含 `operator`（运营要能跟进「今天哪几笔对不上」）—— 且它是**纯读**接口，不额外收窄（不改一分钱）',
         '',
       );
       assert(
-        (await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: t27View })).body?.code ===
-          10003,
+        (await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: t27View })).body
+          ?.code === 10003,
         'D43 `viewer` → 10003（`admin-role.ts` 里 viewer 的菜单只有 4 个看板页）',
         '',
       );
@@ -8572,7 +8713,8 @@ async function main() {
       );
 
       // ================================================== F. D44 发票三态
-      const inv27 = async (qs) => (await call('GET', `${FIN27}/invoices?${qs}`, { token: adminToken })).body;
+      const inv27 = async (qs) =>
+        (await call('GET', `${FIN27}/invoices?${qs}`, { token: adminToken })).body;
       const invA = await inv27(`supplierId=${supId27}&month=${MON27A}`);
       const rowA = invA?.data?.list?.[0];
       assert(
@@ -8626,22 +8768,26 @@ async function main() {
       );
       const invP1 = await inv27(`supplierId=${supId27}&month=${MON27C}&pageSize=1`);
       assert(
-        Number(invP1?.data?.summary?.uninvoicedFen) === Number(invC?.data?.summary?.uninvoicedFen) &&
-          Number(invP1?.data?.summary?.paidAmountFen) === Number(invC?.data?.summary?.paidAmountFen),
+        Number(invP1?.data?.summary?.uninvoicedFen) ===
+          Number(invC?.data?.summary?.uninvoicedFen) &&
+          Number(invP1?.data?.summary?.paidAmountFen) ===
+            Number(invC?.data?.summary?.paidAmountFen),
         'D44 `summary` 取**筛选后全量**、不受 `pageSize` 影响（与 D8/D34/D36/D40 同一约定）—— 否则运营翻到第 2 页会发现合计变小',
         `p1=${invP1?.data?.summary?.uninvoicedFen} 全量=${invC?.data?.summary?.uninvoicedFen}`,
       );
       assert(
-        (await inv27(`supplierId=${supId27}&month=${MON27C}&status=partial`)).data?.list?.length === 0 &&
-          (await inv27(`supplierId=${supId27}&month=${MON27B}&status=partial`)).data?.list?.length === 1,
+        (await inv27(`supplierId=${supId27}&month=${MON27C}&status=partial`)).data?.list?.length ===
+          0 &&
+          (await inv27(`supplierId=${supId27}&month=${MON27B}&status=partial`)).data?.list
+            ?.length === 1,
         'D44 `status` 是**派生值**（库里只有 pending/success），故**必须先聚合后筛**：C 月筛 `partial` → 0 行、B 月筛 `partial` → 1 行',
         '',
       );
       assert(
         (await call('GET', `${FIN27}/invoices?status=nope`, { token: adminToken })).body?.code ===
           10001 &&
-          (await call('GET', `${FIN27}/invoices?month=2026-13`, { token: adminToken })).body?.code ===
-            10001,
+          (await call('GET', `${FIN27}/invoices?month=2026-13`, { token: adminToken })).body
+            ?.code === 10001,
         'D44 非法枚举 / 非法月份 → 10001（**不静默回落成「全部」** —— 回落会让运营以为自己看的是「未开票」，实际是全部，从而漏催一批票）',
         '',
       );
@@ -8786,10 +8932,10 @@ async function main() {
       const mkAssign28 = (date, gid, status) => {
         writeDb(INS_A28, [date, gid, SM28, DC28, status, AT28, AT28]);
         return Number(
-          readDb('SELECT id FROM ab_meal_assignment WHERE meal_date = ? AND building_group_id = ?', [
-            date,
-            gid,
-          ])?.id ?? 0,
+          readDb(
+            'SELECT id FROM ab_meal_assignment WHERE meal_date = ? AND building_group_id = ?',
+            [date, gid],
+          )?.id ?? 0,
         );
       };
 
@@ -8907,9 +9053,7 @@ async function main() {
       });
       const run28d = run28.body?.data?.result;
       assert(
-        run28.body?.code === 0 &&
-          run28d?.confirmedCount === 0 &&
-          run28d?.notDelivered?.count === 0,
+        run28.body?.code === 0 && run28d?.confirmedCount === 0 && run28d?.notDelivered?.count === 0,
         '⭐ §28 已实装任务补跑 → `code=0` 且回显**真实结果**（隔离日无订单，`confirmedCount=0`）—— 空结果**不是故障**：静默报错会让运营以为跑批挂了，静默返回假「完成」会让运营以为已经跑过',
         `code=${run28.body?.code} confirmed=${run28d?.confirmedCount} msg=${String(run28.body?.message ?? '').slice(0, 30)}`,
       );
@@ -8943,9 +9087,10 @@ async function main() {
         '⭐ §28 截单三分支一次跑全：未支付 2 单 → 取消 / 已支付 2 单 → 锁定 **5 份** / 原本 `cancelled` 的 9 份**不计入锁定**',
         `取消=${cut28d?.autoCancelled?.count} 锁定=${cut28d?.locked?.count} 份=${cut28d?.locked?.totalQuantity}`,
       );
-      const st28 = readRows('SELECT order_no, status FROM ab_order WHERE order_no LIKE ? ORDER BY order_no', [
-        `${PREFIX28}P%`,
-      ]);
+      const st28 = readRows(
+        'SELECT order_no, status FROM ab_order WHERE order_no LIKE ? ORDER BY order_no',
+        [`${PREFIX28}P%`],
+      );
       const st28of = new Map(st28.map((r) => [String(r.order_no), String(r.status)]));
       assert(
         st28of.get(`${PREFIX28}P1`) === 'cancelled' &&
@@ -9061,9 +9206,7 @@ async function main() {
       });
       const pubd28b = pubs28b.body?.data?.result;
       assert(
-        pubs28b.body?.code === 0 &&
-          pubd28b?.published === 0 &&
-          pubd28b?.alreadyActive === 2,
+        pubs28b.body?.code === 0 && pubd28b?.published === 0 && pubd28b?.alreadyActive === 2,
         '⭐ §28 开团**幂等**：重跑 `published=0 / alreadyActive=2` —— 重复触发**不产生任何写入**',
         `published=${pubd28b?.published} alreadyActive=${pubd28b?.alreadyActive}`,
       );
@@ -9216,7 +9359,8 @@ async function main() {
 
       const left28 = {
         o: Number(
-          readDb('SELECT COUNT(*) AS c FROM ab_order WHERE order_no LIKE ?', [`${PREFIX28}%`])?.c ?? -1,
+          readDb('SELECT COUNT(*) AS c FROM ab_order WHERE order_no LIKE ?', [`${PREFIX28}%`])?.c ??
+            -1,
         ),
         a: Number(
           readDb('SELECT COUNT(*) AS c FROM ab_meal_assignment WHERE meal_date IN (?, ?, ?, ?)', [
@@ -9236,9 +9380,12 @@ async function main() {
           readDb('SELECT COUNT(*) AS c FROM ab_supplier_dish_daily WHERE produce_date = ?', [D28P])
             ?.c ?? -1,
         ),
-        b: Number(readDb('SELECT COUNT(*) AS c FROM ab_balance WHERE user_id = ?', [uid28])?.c ?? -1),
+        b: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_balance WHERE user_id = ?', [uid28])?.c ?? -1,
+        ),
         u: Number(
-          readDb('SELECT COUNT(*) AS c FROM ab_user WHERE openid LIKE ?', [`${PREFIX28}%`])?.c ?? -1,
+          readDb('SELECT COUNT(*) AS c FROM ab_user WHERE openid LIKE ?', [`${PREFIX28}%`])?.c ??
+            -1,
         ),
         g: Number(
           readDb('SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = ? AND target_id = ?', [
@@ -9390,9 +9537,10 @@ async function main() {
         "INSERT INTO ab_commission (order_id, order_no, team_leader_id, leader_level, rate, base_amount, quantity, amount, type, status, settled_at, meal_date, payout_channel, tax_withheld_amount, created_at, updated_at) VALUES (?, ?, ?, 'formal', '0.0900', ?, ?, ?, ?, ?, ?, ?, 'FLEX_MANUAL', '0.00', ?, ?)";
 
       const cm29 = (no) =>
-        readDb('SELECT status, settled_at, amount, quantity FROM ab_commission WHERE order_no = ?', [
-          no,
-        ]);
+        readDb(
+          'SELECT status, settled_at, amount, quantity FROM ab_commission WHERE order_no = ?',
+          [no],
+        );
       const leader29 = () =>
         readDb(
           'SELECT total_orders, total_commission, month_orders FROM ab_team_leader WHERE id = ?',
@@ -9468,7 +9616,9 @@ async function main() {
         Number(cm29(`${PREFIX29}N1`)?.amount ?? 0) === 0 &&
           Number(
             readDb('SELECT COUNT(*) AS c FROM ab_commission WHERE order_id = ?', [
-              Number(readDb('SELECT id FROM ab_order WHERE order_no = ?', [`${PREFIX29}N1`])?.id ?? 0),
+              Number(
+                readDb('SELECT id FROM ab_order WHERE order_no = ?', [`${PREFIX29}N1`])?.id ?? 0,
+              ),
             ])?.c ?? -1,
           ) === 0,
         '§29 无归属团长的单**不产生佣金行**（`ab_commission` 里查无此单）',
@@ -9506,7 +9656,8 @@ async function main() {
       });
       const c29b = conf29b.body?.data?.result;
       const cmCount29 = Number(
-        readDb('SELECT COUNT(*) AS c FROM ab_commission WHERE team_leader_id = ?', [lid29])?.c ?? -1,
+        readDb('SELECT COUNT(*) AS c FROM ab_commission WHERE team_leader_id = ?', [lid29])?.c ??
+          -1,
       );
       assert(
         conf29b.body?.code === 0 &&
@@ -9791,14 +9942,18 @@ async function main() {
           readDb('SELECT COUNT(*) AS c FROM ab_commission WHERE team_leader_id = ?', [lid29])?.c ??
             -1,
         ),
-        b: Number(readDb('SELECT COUNT(*) AS c FROM ab_balance WHERE user_id = ?', [uid29])?.c ?? -1),
+        b: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_balance WHERE user_id = ?', [uid29])?.c ?? -1,
+        ),
         l: Number(
           readDb('SELECT COUNT(*) AS c FROM ab_team_leader WHERE user_id = ?', [uid29])?.c ?? -1,
         ),
-        u: Number(readDb('SELECT COUNT(*) AS c FROM ab_user WHERE openid = ?', [L29OPENID])?.c ?? -1),
+        u: Number(
+          readDb('SELECT COUNT(*) AS c FROM ab_user WHERE openid = ?', [L29OPENID])?.c ?? -1,
+        ),
         r: Number(
-          readDb('SELECT COUNT(*) AS c FROM ab_refund WHERE order_no LIKE ?', [`${PREFIX29}%`])?.c ??
-            -1,
+          readDb('SELECT COUNT(*) AS c FROM ab_refund WHERE order_no LIKE ?', [`${PREFIX29}%`])
+            ?.c ?? -1,
         ),
       };
       assert(
@@ -9872,8 +10027,10 @@ async function main() {
     );
     assert(
       (q30d?.queues ?? []).length === 3 &&
-        (q30d?.queues ?? []).map((t) => t.queue).sort().join(',') ===
-          'order-paid,refund-apply,settle-orders',
+        (q30d?.queues ?? [])
+          .map((t) => t.queue)
+          .sort()
+          .join(',') === 'order-paid,refund-apply,settle-orders',
       '§30 三个队列（支付后续 / 退款后续 / 结算后续）**全部在册**，且空桶也出现 —— 早期调用（健康检查早于消费者注册）不会得到「队列不存在」的错觉',
       `queues=${(q30d?.queues ?? []).map((t) => t.queue).join(',')}`,
     );
@@ -9902,7 +10059,12 @@ async function main() {
     const op30Name = `e2e_op30_${stamp}`;
     const mkOp30 = await call('POST', '/admin/system/accounts', {
       token: adminToken,
-      body: { username: op30Name, password: PWD, role: 'operator', realName: 'e2e 运营（队列只读）' },
+      body: {
+        username: op30Name,
+        password: PWD,
+        role: 'operator',
+        realName: 'e2e 运营（队列只读）',
+      },
     });
     const op30 = await adminLogin(op30Name, PWD);
     const opOnQ30 = await call('GET', Q30, { token: op30.token });
@@ -9952,7 +10114,16 @@ async function main() {
       const uid30 = Number(readDb('SELECT id FROM ab_user WHERE openid = ?', [L30OPENID])?.id ?? 0);
       writeDb(
         'INSERT INTO ab_team_leader (user_id, building_id, phone, real_name, level, commission_rate, status, total_orders, total_commission, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0.00, 0, ?, ?)',
-        [uid30, B30, `139${String(stamp).slice(-8)}`, `${PREFIX30}队列团长`, 'formal', '0.0900', AT30, AT30],
+        [
+          uid30,
+          B30,
+          `139${String(stamp).slice(-8)}`,
+          `${PREFIX30}队列团长`,
+          'formal',
+          '0.0900',
+          AT30,
+          AT30,
+        ],
       );
       const lid30 = Number(
         readDb('SELECT id FROM ab_team_leader WHERE user_id = ?', [uid30])?.id ?? 0,
@@ -9991,17 +10162,7 @@ async function main() {
       const o30S1 = mkOrder30(`${PREFIX30}S1`, D30S, 'completed', 1);
       writeDb(
         "INSERT INTO ab_commission (order_id, order_no, team_leader_id, leader_level, rate, base_amount, quantity, amount, type, status, settled_at, meal_date, payout_channel, tax_withheld_amount, created_at, updated_at) VALUES (?, ?, ?, 'formal', '0.0900', ?, ?, ?, 'normal', 'pending', NULL, ?, 'FLEX_MANUAL', '0.00', ?, ?)",
-        [
-          o30S1,
-          `${PREFIX30}S1`,
-          lid30,
-          '25.80',
-          1,
-          '2.32',
-          D30S,
-          AT30,
-          AT30,
-        ],
+        [o30S1, `${PREFIX30}S1`, lid30, '25.80', 1, '2.32', D30S, AT30, AT30],
       );
 
       // 退款两单：R1 走失败注入、K1 走成功对照（各 2 份 = 51.60，微信全额实付）
@@ -10017,7 +10178,9 @@ async function main() {
         'INSERT INTO ab_user (openid, nickname, gender, status, version, created_at, updated_at) VALUES (?, ?, 0, 1, 0, ?, ?)',
         [A30OPENID, `${PREFIX30}申请者`, AT30, AT30],
       );
-      const uidA30 = Number(readDb('SELECT id FROM ab_user WHERE openid = ?', [A30OPENID])?.id ?? 0);
+      const uidA30 = Number(
+        readDb('SELECT id FROM ab_user WHERE openid = ?', [A30OPENID])?.id ?? 0,
+      );
       const uA30 = await userLogin(`dev:${A30CODE}`);
 
       // -------------------------------------------------------- C. settle-orders（真跑批）
@@ -10207,9 +10370,10 @@ async function main() {
         `code=${ap30.body?.code} isLeader=${ap30.body?.data?.isLeader}`,
       );
       const apMsg30 = readDb('SELECT COUNT(*) AS c FROM ab_message WHERE user_id = ?', [uidA30]);
-      const apTpl30 = readDb('SELECT enabled, wechat_template_id FROM ab_message_template WHERE scene = ?', [
-        'leader_apply',
-      ]);
+      const apTpl30 = readDb(
+        'SELECT enabled, wechat_template_id FROM ab_message_template WHERE scene = ?',
+        ['leader_apply'],
+      );
       assert(
         apTpl30?.enabled === 0 && Number(apMsg30?.c ?? -1) === 0,
         '⭐ §30 场景 `leader_apply` **已接线但未启用**（缺微信模板 ID）→ 不投递、不留日志、**也不算任务失败** —— 「接线（`wiring=live`）」与「启用（`enabled=1`）」是两件事，本批把两者都如实暴露：代码接好了，配置还没到',
@@ -10269,7 +10433,9 @@ async function main() {
         `包含 refund_result=${sub30bList.some((t) => t.scene === 'refund_result')}`,
       );
       assert(
-        (tpl30.body?.data?.list ?? []).every((t) => t.requestSubscribe !== true || t.wiring === 'live'),
+        (tpl30.body?.data?.list ?? []).every(
+          (t) => t.requestSubscribe !== true || t.wiring === 'live',
+        ),
         '⭐ §30 结构性不变式：`requestSubscribe=true` 的场景**必须已接线**（否则就是「索权不用」—— 向用户要一个我们根本不会用的授权，微信平台明确反对）',
         '',
       );
@@ -10300,7 +10466,8 @@ async function main() {
       const notifyPages30 = [...notifyBlock30.matchAll(/'([^']+)'/g)].map((m) => m[1]);
       const declaredPages30 = new Set(
         (
-          JSON.parse(readFileSync(join(ROOT, 'apps/miniprogram/src/pages.json'), 'utf8')).pages ?? []
+          JSON.parse(readFileSync(join(ROOT, 'apps/miniprogram/src/pages.json'), 'utf8')).pages ??
+          []
         ).map((p) => p.path),
       );
       const dangling30 = notifyPages30.filter((p) => !declaredPages30.has(p));
@@ -10338,12 +10505,14 @@ async function main() {
           readDb('SELECT COUNT(*) AS c FROM ab_balance WHERE user_id = ?', [uid30])?.c ?? -1,
         ),
         r: Number(
-          readDb('SELECT COUNT(*) AS c FROM ab_refund WHERE order_no LIKE ?', [`${PREFIX30}%`])?.c ??
-            -1,
+          readDb('SELECT COUNT(*) AS c FROM ab_refund WHERE order_no LIKE ?', [`${PREFIX30}%`])
+            ?.c ?? -1,
         ),
         l: Number(
-          readDb('SELECT COUNT(*) AS c FROM ab_team_leader WHERE user_id IN (?, ?)', [uid30, uidA30])
-            ?.c ?? -1,
+          readDb('SELECT COUNT(*) AS c FROM ab_team_leader WHERE user_id IN (?, ?)', [
+            uid30,
+            uidA30,
+          ])?.c ?? -1,
         ),
         u: Number(
           readDb('SELECT COUNT(*) AS c FROM ab_user WHERE openid IN (?, ?)', [L30OPENID, A30OPENID])
@@ -10465,9 +10634,7 @@ async function main() {
       const identity31 = () => {
         const r = acct31();
         if (!r) return false;
-        return (
-          fen31(r.total_in) - fen31(r.total_out) === fen31(r.balance) + fen31(r.frozen)
-        );
+        return fen31(r.total_in) - fen31(r.total_out) === fen31(r.balance) + fen31(r.frozen);
       };
       const logCount31 = () =>
         Number(
@@ -10480,8 +10647,7 @@ async function main() {
         );
       const list31 = async (qs = '') =>
         (await call('GET', `${WD31}${qs}`, { token: adminToken })).body;
-      const rowOf31 = (res, no) =>
-        (res?.data?.list ?? []).find((w) => w.withdrawNo === no) ?? null;
+      const rowOf31 = (res, no) => (res?.data?.list ?? []).find((w) => w.withdrawNo === no) ?? null;
       /**
        * L12 申请。
        *
@@ -10556,8 +10722,7 @@ async function main() {
         );
         assert(
           (l0?.data?.statusOptions ?? []).length === 6 &&
-            (l0?.data?.tabOptions ?? []).map((t) => t.value).join(',') ===
-              'review,payout,done,all',
+            (l0?.data?.tabOptions ?? []).map((t) => t.value).join(',') === 'review,payout,done,all',
           '§31 枚举映射由**服务端下发**（6 个状态 + 4 个 Tab）—— 端上不维护第二份，就不会出现「后台加了状态、下拉框里没有」的静默漂移',
           `statusOptions=${(l0?.data?.statusOptions ?? []).length} tabOptions=${(l0?.data?.tabOptions ?? []).map((t) => t.value).join(',')}`,
         );
@@ -10591,8 +10756,7 @@ async function main() {
 
         const s1 = (await list31()).data?.summary ?? {};
         assert(
-          Number(s1.frozenByWithdrawFen ?? 0) - f0 === 3000 &&
-            Number(s1.pendingCount ?? 0) >= 1,
+          Number(s1.frozenByWithdrawFen ?? 0) - f0 === 3000 && Number(s1.pendingCount ?? 0) >= 1,
           '⭐⭐ D45 `frozenByWithdrawFen` **恰好增加 3000 分**（Δ 口径 —— 全局量不能用绝对值）且它 = 三占用状态之和：这一项让运营能把「提现占用的冻结」与 `ab_balance.frozen` 的增量互相验算',
           `Δfrozen=${Number(s1.frozenByWithdrawFen ?? 0) - f0} pending=${s1.pendingCount}`,
         );
@@ -10816,7 +10980,9 @@ async function main() {
           `code=${fl31?.code} status=${fl31?.data?.status} balanceFen=${fl31?.data?.balanceFen}`,
         );
         assert(
-          fen31(acctE?.total_out) === 0 && fen31(acctE?.total_in) === fen31(acct0?.total_in) && identity31(),
+          fen31(acctE?.total_out) === 0 &&
+            fen31(acctE?.total_in) === fen31(acct0?.total_in) &&
+            identity31(),
           '⭐⭐ 失败解冻与驳回**同口径**：`total_in` / `total_out` 都不动（钱没出平台）。三路（驳回/到账/失败）走**同一个** `releaseFrozen()` —— 各写一份的后果不是重复代码，而是**其中一路漏掉某个字段**：例如「到账忘了减 frozen」，该用户的冻结额永久虚高，而其余提现看起来都正常',
           `in=${acctE?.total_in} out=${acctE?.total_out}`,
         );
@@ -10965,12 +11131,10 @@ async function main() {
         );
 
         // ---------------------------------------------------- O. 夹具还原
-        writeDb("DELETE FROM ab_operation_log WHERE module = 'finance' AND target_id IN (?, ?, ?, ?)", [
-          w1Id,
-          w2Id,
-          w3Id,
-          w4Id,
-        ]);
+        writeDb(
+          "DELETE FROM ab_operation_log WHERE module = 'finance' AND target_id IN (?, ?, ?, ?)",
+          [w1Id, w2Id, w3Id, w4Id],
+        );
         writeDb('DELETE FROM ab_admin_user WHERE username IN (?, ?)', [op31, view31]);
         writeDb('DELETE FROM ab_balance_log WHERE user_id = ?', [uid31]);
         writeDb('DELETE FROM ab_withdraw WHERE leader_id = ?', [lid31]);
@@ -10992,13 +11156,10 @@ async function main() {
           ),
           u: Number(readDb('SELECT COUNT(*) AS c FROM ab_user WHERE id = ?', [uid31])?.c ?? -1),
           o: Number(
-            readDb('SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = ? AND target_id IN (?, ?, ?, ?)', [
-              'finance',
-              w1Id,
-              w2Id,
-              w3Id,
-              w4Id,
-            ])?.c ?? -1,
+            readDb(
+              'SELECT COUNT(*) AS c FROM ab_operation_log WHERE module = ? AND target_id IN (?, ?, ?, ?)',
+              ['finance', w1Id, w2Id, w3Id, w4Id],
+            )?.c ?? -1,
           ),
         };
         assert(
@@ -11093,10 +11254,10 @@ async function main() {
         'INSERT INTO ab_meal_assignment (meal_date, building_group_id, set_meal_id, distribution_center_id, status, publish_at, cutoff_at, sold_count, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, NULL, 0, 0, ?, ?)';
       writeDb(INS_A32, [D32A, G32, SM32, DC32, 'active', AT32, AT32]);
       const a32 = Number(
-        readDb(
-          'SELECT id FROM ab_meal_assignment WHERE meal_date = ? AND building_group_id = ?',
-          [D32A, G32],
-        )?.id ?? 0,
+        readDb('SELECT id FROM ab_meal_assignment WHERE meal_date = ? AND building_group_id = ?', [
+          D32A,
+          G32,
+        ])?.id ?? 0,
       );
       writeDb(INS_A32, [D32B, G32, SM32, DC32, 'active', AT32, AT32]);
 
@@ -11277,9 +11438,10 @@ async function main() {
         body: { date: D32A },
       });
       const dgd32c = dg32c.body?.data?.result;
-      const dr32 = readDb('SELECT total_quantity, driver_name, plate_no FROM ab_delivery_record WHERE id = ?', [
-        id32,
-      ]);
+      const dr32 = readDb(
+        'SELECT total_quantity, driver_name, plate_no FROM ab_delivery_record WHERE id = ?',
+        [id32],
+      );
       assert(
         dgd32c?.created === 0 &&
           dgd32c?.skipped === 1 &&
@@ -11304,7 +11466,12 @@ async function main() {
 
       const p3 = await call('PUT', `${DEL32}/${id32}`, {
         token: adminToken,
-        body: { version: 1, reason: 'e2e §32 提交与原值相同的内容', totalQuantity: 3, driverName: '张三' },
+        body: {
+          version: 1,
+          reason: 'e2e §32 提交与原值相同的内容',
+          totalQuantity: 3,
+          driverName: '张三',
+        },
       });
       const p3d = p3.body?.data;
       const v3db = readDb('SELECT version FROM ab_delivery_record WHERE id = ?', [id32]);
@@ -11466,9 +11633,7 @@ async function main() {
         body: { version: 3, reason: 'e2e viewer 越权', totalQuantity: 1 },
       });
       assert(
-        mkVw32.body?.code === 0 &&
-          vwRead32.body?.code === 10003 &&
-          vwWrite32.body?.code === 10003,
+        mkVw32.body?.code === 0 && vwRead32.body?.code === 10003 && vwWrite32.body?.code === 10003,
         '⭐ §32 配送单页两级白名单**不含 viewer**（读与写都 `10003`）—— 只读观察者仅看板；配送单含运力安排与司机电话，与 D47–D50（看板刻意含 viewer）正好相反',
         `read=${vwRead32.body?.code} write=${vwWrite32.body?.code}`,
       );
@@ -11479,10 +11644,7 @@ async function main() {
         String(id32),
       ]);
       writeDb('DELETE FROM ab_admin_user WHERE username = ?', [vw32]);
-      writeDb('DELETE FROM ab_order WHERE order_no IN (?, ?)', [
-        `${PREFIX32}O1`,
-        `${PREFIX32}O2`,
-      ]);
+      writeDb('DELETE FROM ab_order WHERE order_no IN (?, ?)', [`${PREFIX32}O1`, `${PREFIX32}O2`]);
       writeDb('DELETE FROM ab_delivery_record WHERE meal_date IN (?, ?)', [D32A, D32B]);
       writeDb('DELETE FROM ab_meal_assignment WHERE meal_date IN (?, ?)', [D32A, D32B]);
       writeDb('DELETE FROM ab_user WHERE id = ?', [uid32]);
@@ -11519,6 +11681,251 @@ async function main() {
         `d=${left32.d} o=${left32.o} a=${left32.a} u=${left32.u} g=${left32.g}`,
       );
     }
+  }
+
+  // ==========================================================================
+  // §33 M5-6 退款执行闸门（同一订单**不得被退两次** —— 金额层面的不变量）
+  //
+  // ## 这一节要守住什么
+  // 退款是**唯一会让钱流出去**的流程，而它有**两道各自独立的闸门**：
+  //   ① 退款单闸门 `ab_refund.status === applying`（`approveByAdmin` 第一道）
+  //   ② 订单闸门   `ab_order.status === refund_applying`（`approveByAdmin` 第二道）
+  // 本节的夹具刻意造出「**同一张订单、两条 `applying` 退款单**」——这是两道闸门
+  // 之间唯一的缝隙：两条单各自通过自己的①，于是**只能靠②**把第二次拦住。
+  // 断言落在「**余额流水条数与合计金额**」上，而不是落在某个状态位上 ——
+  // 状态位只能证明"流程走完了"，流水才能证明"钱没有被退两次"。
+  //
+  // ## ⚠️ 本节**测不到**什么（如实标注，别把它当成并发验证）
+  // 它**不是**并发（interleaving）测试：sqlite 是单连接同步驱动，两次事务会被
+  // **串行化**，第二次一定读到第一次已提交的状态。故本节无法复现「两次请求都读到
+  // `applying`」的窗口，也就**不能**证明「真并发下也只退一次」。
+  // 真并发下的风险与已挂账项见《缺陷与陷阱》#77（`refundBalancePart` 目前是
+  // 无条件 `+=`，两道闸门都是「先读后写」）—— 那一条**只能**在真机 MySQL 上验。
+  // 本节的真实价值是**回归护栏**：谁把②拿掉、或让余额退回变成"每次调用都加一次"，
+  // 这里立刻红。**不要把它的绿当成并发安全的证据。**
+  // ==========================================================================
+  {
+    log('\n§33 M5-6 退款执行闸门（同一单双退款单 → 只执行一次 · 金额不变量）');
+
+    // 取一张历史订单改造成「纯余额实付」——`pay_amount = 0` 让流程**不碰微信通道**，
+    // 把断言完全聚焦在 DB 账务上（通道那段的幂等由 `refundNo` 作 `out_refund_no` 保证，
+    // 与本节的关注点不同；混在一起会让失败时无法判断是哪一层出的问题）。
+    const ord33 = readDb(
+      `SELECT id, order_no, user_id, total_amount, discount_amount, pay_amount, balance_used, status
+       FROM ab_order WHERE status IN ('refunded', 'cancelled') ORDER BY id DESC LIMIT 1`,
+    );
+
+    if (!ord33) {
+      fail('§33 前置：库里没有可作为夹具的历史订单', '先跑 `seed`；本节依赖一张已终态的订单');
+    } else {
+      const uid33 = Number(ord33.user_id);
+      const amt33 = Number(ord33.total_amount) - Number(ord33.discount_amount);
+
+      // ---- 快照（本节结束后原样还原；不还原会污染后续小节与重跑）----
+      const snap33 = {
+        order: ord33,
+        balance: readDb('SELECT balance, frozen FROM ab_balance WHERE user_id = ?', [uid33]),
+        maxLog: readDb('SELECT MAX(id) AS mx FROM ab_balance_log')?.mx ?? 0,
+        maxRefund: readDb('SELECT MAX(id) AS mx FROM ab_refund')?.mx ?? 0,
+      };
+
+      if (!snap33.balance) {
+        writeDb(
+          `INSERT INTO ab_balance (user_id, balance, frozen, total_in, total_out, version, created_at, updated_at)
+           VALUES (?, '0.00', '0.00', '0.00', '0.00', 1, datetime('now'), datetime('now'))`,
+          [uid33],
+        );
+      }
+
+      writeDb(
+        `UPDATE ab_order SET status = 'refund_applying', pay_amount = '0.00',
+           balance_used = ?, total_amount = ?, discount_amount = '0.00' WHERE id = ?`,
+        [String(amt33), String(amt33), ord33.id],
+      );
+      writeDb("UPDATE ab_balance SET balance = '0.00', frozen = '0.00' WHERE user_id = ?", [uid33]);
+
+      const st33 = String(Date.now()).slice(-6);
+      const mkRefund = (tag) =>
+        writeDb(
+          `INSERT INTO ab_refund (refund_no, order_id, order_no, user_id, amount, reason_type, reason,
+             status, order_status_before, reversed, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'missing', ?, 'applying', 'paid', 0, 0, datetime('now'), datetime('now'))`,
+          [`EB${tag}${st33}`, ord33.id, ord33.order_no, uid33, String(amt33), `e2e §33 ${tag}`],
+        );
+      mkRefund('A');
+      mkRefund('B');
+      const two33 = readRows(
+        'SELECT id FROM ab_refund WHERE refund_no LIKE ? OR refund_no LIKE ? ORDER BY id',
+        [`EB%A${st33}`, `EB%B${st33}`],
+      );
+
+      const [resA33, resB33] = await Promise.all([
+        call('POST', `/admin/finance/refunds/${two33[0]?.id}/approve`, {
+          token: adminToken,
+          body: { remark: 'e2e §33 双单 A' },
+        }),
+        call('POST', `/admin/finance/refunds/${two33[1]?.id}/approve`, {
+          token: adminToken,
+          body: { remark: 'e2e §33 双单 B' },
+        }),
+      ]);
+
+      const ok33 = [resA33, resB33].filter((r) => r.body?.code === 0).length;
+      assert(
+        two33.length === 2 && ok33 === 1,
+        '⭐⭐ §33 同一订单挂两条 `applying` 退款单 → **恰好一条执行成功**，另一条被订单闸门挡在 `40013`。' +
+          '两条都成功 = 同一张单被退两次（余额退回是无条件 `+=`，不会自己发现重复）——' +
+          '这是本流程**唯一**会把钱重复送出去的方式，必须在金额层面挡住',
+        `rows=${two33.length} ok=${ok33} A=${resA33.body?.code} B=${resB33.body?.code}`,
+      );
+
+      const after33 = readDb('SELECT balance FROM ab_balance WHERE user_id = ?', [uid33]);
+      const led33 = readDb(
+        `SELECT COUNT(*) AS c, COALESCE(SUM(amount), 0) AS s FROM ab_balance_log
+         WHERE user_id = ? AND type = 'refund' AND id > ?`,
+        [uid33, snap33.maxLog],
+      );
+      assert(
+        Math.abs(Number(after33?.balance) - amt33) < 0.001 && Number(led33?.c) === 1,
+        '⭐⭐ §33 断言落在**钱**上：余额恰好回到 ¥' +
+          `${amt33}、退款流水**恰好 1 条** —— 这两个数字合起来才等于「只退了一次」。` +
+          '只看状态位会漏掉「状态对、钱退了两遍」这种账实不符',
+        `balance=${after33?.balance} logs=${led33?.c} sum=${led33?.s}`,
+      );
+
+      const ord33After = readDb('SELECT status FROM ab_order WHERE id = ?', [ord33.id]);
+      assert(
+        ok33 === 1 && ord33After?.status === 'refunded',
+        '§33 订单最终收口 `refunded`（两次请求只推进一次状态）—— 订单闸门存在的意义：' +
+          '退款单可能有多张（驳回后重新申请），而**一张订单只应有终态一次**',
+        `status=${ord33After?.status}`,
+      );
+
+      // ---- 还原 ----
+      writeDb('DELETE FROM ab_refund WHERE id > ?', [snap33.maxRefund]);
+      writeDb('DELETE FROM ab_balance_log WHERE id > ?', [snap33.maxLog]);
+      writeDb(
+        `UPDATE ab_order SET status = ?, pay_amount = ?, balance_used = ?, total_amount = ?, discount_amount = ?
+         WHERE id = ?`,
+        [
+          ord33.status,
+          ord33.pay_amount,
+          ord33.balance_used,
+          ord33.total_amount,
+          ord33.discount_amount,
+          ord33.id,
+        ],
+      );
+      writeDb('UPDATE ab_balance SET balance = ?, frozen = ? WHERE user_id = ?', [
+        snap33.balance?.balance ?? '0.00',
+        snap33.balance?.frozen ?? '0.00',
+        uid33,
+      ]);
+      assert(
+        readDb('SELECT balance FROM ab_balance WHERE user_id = ?', [uid33])?.balance ===
+          (snap33.balance?.balance ?? 0) &&
+          readDb('SELECT status FROM ab_order WHERE id = ?', [ord33.id])?.status === ord33.status,
+        '§33 夹具还原：订单状态 / 余额 / 两条退款单与流水全部回到本节开始前 —— ' +
+          '不还原会让后续小节读到一张「本该是终态却是 refund_applying」的订单，制造无关的假红',
+        `balance=${readDb('SELECT balance FROM ab_balance WHERE user_id = ?', [uid33])?.balance} status=${readDb('SELECT status FROM ab_order WHERE id = ?', [ord33.id])?.status}`,
+      );
+    }
+  }
+
+  // ==========================================================================
+  // §34 M5-6 限流（收口报告 §二 P2-7：`10005` 从「有码无实现」到真生效）
+  //
+  // ⚠️ 本节**必须放在最后**，且**必须另起一台开启限流的实例**。两个理由：
+  //    ① 正文套件的服务是用 `ABOX_RATE_LIMIT=off` 起的（见 lib/e2e-server.mjs
+  //       `buildEnv` 的注释：一轮 54 次 `admin-login` 会撞上 10/分 的生产阈值）。
+  //       本节验的**就是防护本身**，所以必须真开 —— 关着测等于没测。
+  //    ② **必须走真实 HTTP，不能只调 `checkRateLimit()`**：本批真实踩到的坑是
+  //       「注册点选错 → 中间件一次都不执行」，而那种错**单元级调用完全测不出来**
+  //       （函数本身是对的，是它没被挂上请求链）。只有发请求才看得见。
+  //    先停主线实例再起新实例：避免两台进程同时持有同一个 sqlite，让可能在另一台上
+  //    触发的 `@Cron` 写操作制造 `SQLITE_BUSY` 这种与断言无关的偶发红。
+  //
+  //    打点一律用「必然不存在的账号」且只打 `/auth/admin-login`（计数键带 label，
+  //    不会波及其它端点/小节）。
+  // ==========================================================================
+  {
+    log('\n§34 M5-6 限流（P2-7 · IP + 账号双维度 · 10005 真生效）');
+
+    await stopApiServer(server, PORT);
+    const rlServer = startApiServer(PORT, { ABOX_RATE_LIMIT: 'on' });
+    const rlUp = await waitHealthy(BASE, { child: rlServer });
+    if (!rlUp) {
+      await stopApiServer(rlServer, PORT);
+      fail(
+        '§34 前置：开启限流的实例未能就绪 —— 本节其余断言全部跳过',
+        '见上方 [api:err] 输出（常见原因：端口未释放 / 编译报错）',
+      );
+    } else {
+      const ghost33 = `e2e33_${String(Date.now()).slice(-6)}_nobody`; // 必然不存在 → 不撞 auth 的失败锁定
+      const L33 = '/auth/admin-login';
+      const shots33 = [];
+      for (let i = 1; i <= 6; i += 1) {
+        shots33.push(
+          await call('POST', L33, { body: { username: ghost33, password: `bad-${i}` } }),
+        );
+      }
+      const sixth33 = shots33[5];
+
+      assert(
+        shots33.slice(0, 5).every((r) => r.status !== 429),
+        '§34 前 5 次**不是** 429 —— 不先证这一步，就无法区分「限流生效」与「登录本来就失败」，把 429 归因给错误的机制是本节最容易犯的错',
+        shots33
+          .slice(0, 5)
+          .map((r) => `${r.status}/${r.body?.code}`)
+          .join(' '),
+      );
+      assert(
+        sixth33.status === 429 && sixth33.body?.code === 10005,
+        '⭐⭐ §34 同一账号第 6 次 → **HTTP 429 + code 10005**（账号维度 `maxPerAccount=5`）。' +
+          'IP 维度上限是 10，故「**第 6 次就红**」本身就是账号维度在算的证据 ——' +
+          '若它静默失效（body 未解析 / 计数键写错），这里要等第 11 次才会红：那种「看起来也对」的绿最危险',
+        `status=${sixth33.status} code=${sixth33.body?.code}`,
+      );
+      assert(
+        sixth33.body?.data === null &&
+          typeof sixth33.body?.requestId === 'string' &&
+          sixth33.body.requestId.length > 0 &&
+          typeof sixth33.body?.timestamp === 'number' &&
+          sixth33.body?.message === '请求过于频繁，请稍后再试',
+        '⭐⭐ §34 429 响应体与 `AllExceptionsFilter` **形状逐字段一致**（`code`/`message`/`data=null`/`requestId` 非空/`timestamp`）—— ' +
+          '中间件是**复用同一个异常过滤器**产出它的（不是手写第二套，否则「同样是限流、两种响应形状」）；' +
+          '`requestId` 非空同时证明限流确实排在 `requestIdMiddleware` 之后',
+        JSON.stringify(sixth33.body),
+      );
+
+      const other33 = await call('POST', L33, {
+        body: { username: `${ghost33}_b`, password: 'bad' },
+      });
+      assert(
+        other33.status !== 429,
+        '⭐ §34 桶按**账号**分：换一个账号立刻放行 —— 实现若退化成「全局单桶」，这条会红（而全局限流会把正常用户一起挡住）',
+        `status=${other33.status} code=${other33.body?.code}`,
+      );
+
+      const health33 = await call('GET', '/health');
+      assert(
+        health33.status === 200,
+        '⭐ §34 探针 `/health` **不参与限流**（跳过名单）—— 探针被打成 429 = 编排系统误判服务已死并开始滚动重启，自伤远大于收益',
+        `status=${health33.status}`,
+      );
+
+      const read33 = await call('GET', '/admin/stats/retention?range=7d', { token: adminToken });
+      assert(
+        read33.status === 200 && read33.body?.code === 0,
+        '§34 限流只作用于被点名的端点：已登录的**读**接口不受影响 —— 本批刻意**去掉**了「全局写请求 IP 兜底」，' +
+          '因为本产品的用户共用办公楼 NAT 出口，一刀切会把整栋楼的写操作一起打掉（要更严就加**具体规则**，不是收紧兜底）',
+        `status=${read33.status} code=${read33.body?.code}`,
+      );
+    }
+
+    // 收尾：把本节的实例也停掉（上面的 `stopApiServer(server, PORT)` 收尾调用对
+    // 「已停的进程」是幂等的，故正常与异常两条路径都不会留孤儿进程占端口）
+    await stopApiServer(rlServer, PORT);
   }
 
   // ==========================================================================

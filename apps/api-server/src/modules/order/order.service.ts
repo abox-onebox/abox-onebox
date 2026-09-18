@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Not, Repository } from 'typeorm';
+import type { QueryDeepPartialEntity } from 'typeorm';
 
 import type {
   CancelOrderResult,
@@ -560,6 +561,28 @@ export class OrderService {
    * 以 `meal_date` 为键：第二次执行时已无 `pending_pay` / `paid` 的订单，
    * 两个分支各自自然为空 —— **不需要额外幂等占位表**（与 4.11 一致）。
    *
+   * ## ⚡ 批量化与并发（M5-6 · 收口报告 §二 P1-2）
+   * 改前每个分支是「逐单 `findOne` 复核 + 逐单 `update` + 逐单 `insert` 审计」，
+   * N 单 ≈ 3N 条 SQL，而且**每一对「复核 + 改写」之间都有一个窗口**。本批两件事一起做：
+   *
+   *  ① **读与审计批量化**（语义不变，纯省往返）
+   *     · `findOne` ×N → 一条 `id IN (…)`。分支 ① 要的是事务内**当下**的 `balance_used`
+   *       —— 运营改抵扣额走 `order-admin.service.ts#syncFrozenBalance` 会动这一列，
+   *       故**不能**复用事务外 `find()` 的快照（拿旧值解冻 = 少退/多退，都是钱）。
+   *     · `ab_operation_log` 逐条 `insert` → 事务末尾**一条多值 INSERT**。
+   *  ② **把「复核 + 改写」合成原子占位**（顺带修掉一个同族并发缺陷）
+   *     改前是「先 `findOne` 看状态、再**无条件** `update`」，两条语句之间任何并发迁移
+   *     都会被**覆盖**回去：分支 ① 会**重复解冻余额**（平台多退一份钱）；
+   *     分支 ② 会把一笔正在退款流程里的单**硬拉回** `cut_off`（`REFUNDABLE_STATUS`
+   *     明确含 `paid`）。改后以条件更新的 `affected` 判定归属 —— **占位失败的绝不往下走**，
+   *     与 P1-1（退款冲销）同一收口方式。
+   *
+   * ⚠️ 剩下的 **N 条条件更新是刻意保留的，不是漏改**：集合更新只回总数、不回「哪几行归我」，
+   *    而每张订单都要落**独立**审计行、`balance_used` 也因人而异。替代方案三条都比它风险大：
+   *    MySQL 8 无 `UPDATE … RETURNING`；`SELECT … FOR UPDATE` 在 sqlite 上不受支持
+   *    （本地/生产会分叉）；基于时间戳的归因在「两次并发补跑」下会重复认领。
+   *    故本批把往返数从 ~3N+1 降到 ~N+3，**没有**把 O(N) 洗成 O(1)。
+   *
    * @param date 出餐日（由 `ScheduleService.targetDate('today')` 得出，即 T 日）
    */
   async cutoffByDate(date: string, operatorId?: number | null): Promise<CutoffByDateResult> {
@@ -576,27 +599,60 @@ export class OrderService {
 
     if (pendings.length) {
       await this.dataSource.transaction(async (m: EntityManager) => {
+        // ⚡ 批量重读（**1 条 SQL 取代 N 条 `findOne`**）：要的是事务内「当下」的值。
+        //    ⚠️ 不能复用事务外那次 `find()` 的快照 —— `balance_used` 在 `pending_pay`
+        //    期间**并非只读**：运营改抵扣额走 `order-admin.service.ts#syncFrozenBalance`，
+        //    它改的正是这一列。拿旧值解冻 = 少退 / 多退，都是钱。
+        const freshById = new Map(
+          (await m.find(Order, { where: { id: In(pendings.map((o) => o.id)) } })).map((r) => [
+            r.id,
+            r,
+          ]),
+        );
+
+        // 审计行先攒起来，事务末尾**一次多值 INSERT** 落库（N 条 INSERT → 1 条）
+        const logs: QueryDeepPartialEntity<OperationLog>[] = [];
+
         for (const o of pendings) {
-          // 重读 + 状态复核：并发的用户自助取消可能已把它处理掉（T4）
-          const fresh = await m.findOne(Order, { where: { id: o.id } });
-          if (!fresh || fresh.status !== OrderStatus.PENDING_PAY) continue;
+          const fresh = freshById.get(o.id);
+          if (!fresh) continue; // 行已不存在（理论不可达：刚查出来过）
+
+          /**
+           * ⭐ 原子占位（本批修正 ①）
+           *
+           * 改前是「先 `findOne` 复核状态、再**无条件** `update`」——
+           * 两条语句之间并发的用户自助取消（T4）可以插进来，后果是**重复解冻余额**：
+           *   本跑批 `findOne` 读到 `pending_pay` → 用户取消（解冻一次）→ 本跑批再解冻
+           *   第二次 = 平台**多退一份钱**；同时把对方的 `cancelledAt` / `version` 覆盖掉。
+           * 与 P1-1（退款冲销「先查后写」）是**同一族**缺陷。
+           *
+           * 收口方式同族：把「状态复核」与「状态改写」合成**一条**条件更新，以 `affected`
+           * 判定归属 —— **占位失败的绝不往下走**（钱一动不动）。
+           * 这也是**批量化不能被压成一条集合更新**的原因：集合更新只给总数、不给
+           * 「哪几行归我」，而下面每一行都要落一条独立审计、且`balanceUsed` 因人而异。
+           */
+          const claim = await m
+            .createQueryBuilder()
+            .update(Order)
+            .set({
+              status: OrderStatus.CANCELLED,
+              cancelledAt: now,
+              version: () => 'version + 1',
+            })
+            .where('id = :id', { id: o.id })
+            .andWhere('status = :st', { st: OrderStatus.PENDING_PAY })
+            .execute();
+          if ((claim.affected ?? 0) === 0) continue; // 已被 T4 自助取消处理 → 不重复退钱
 
           const fen = toFen(fresh.balanceUsed);
           if (fen > 0) {
             await this.releaseBalance(m, fresh.userId, fen, fresh.orderNo);
             releasedBalanceFen += fen;
           }
-          await m.getRepository(Order).update(
-            { id: fresh.id },
-            {
-              status: OrderStatus.CANCELLED,
-              cancelledAt: now,
-              version: (fresh.version ?? 0) + 1,
-            },
-          );
+
           // 状态机 §2.1.5：每次迁移落 `ab_operation_log`。跑批没有 HTTP 请求，
           // 全局拦截器不生效，故在此**显式写入**（来源标 system）。
-          await logRepoOf(m).insert({
+          logs.push({
             adminUserId: operatorId ?? null,
             module: 'order',
             action: '截单取消',
@@ -611,6 +667,8 @@ export class OrderService {
           });
           cancelledNos.push(fresh.orderNo);
         }
+
+        if (logs.length) await logRepoOf(m).insert(logs);
       });
     }
 
@@ -624,23 +682,36 @@ export class OrderService {
 
     if (paids.length) {
       await this.dataSource.transaction(async (m: EntityManager) => {
-        for (const o of paids) {
-          const fresh = await m.findOne(Order, { where: { id: o.id } });
-          if (!fresh || fresh.status !== OrderStatus.PAID) continue;
+        const logs: QueryDeepPartialEntity<OperationLog>[] = [];
 
-          await m.getRepository(Order).update(
-            { id: fresh.id },
-            {
-              status: OrderStatus.CUT_OFF,
-              version: (fresh.version ?? 0) + 1,
-            },
-          );
-          await logRepoOf(m).insert({
+        for (const o of paids) {
+          /**
+           * ⭐ 原子占位（本批修正 ②）：同 ①，但**后果更重** —— `cut_off` 是
+           * 状态机里**不可逆**的节点（`cut_off → 退款` 只能走 C6 三段式）。
+           *
+           * 改前是「先 `findOne` 复核、再**无条件** `update`」。并发的团长代退
+           * （`REFUNDABLE_STATUS` 明确包含 `paid`，见 `refund.service.ts`）会把订单
+           * 移出 `paid`，而随后的无条件 update 把它**硬拉回** `cut_off`：
+           * 一笔正在退款流程里的单被重新锁死，退款链路的 `order_status_before`
+           * 与真实状态就此错位。条件更新让这种行 `affected=0`，**放过而不是覆盖**。
+           */
+          const claim = await m
+            .createQueryBuilder()
+            .update(Order)
+            .set({ status: OrderStatus.CUT_OFF, version: () => 'version + 1' })
+            .where('id = :id', { id: o.id })
+            .andWhere('status = :st', { st: OrderStatus.PAID })
+            .execute();
+          if ((claim.affected ?? 0) === 0) continue;
+
+          // 状态机 §2.1.5：每次迁移落 `ab_operation_log`。跑批没有 HTTP 请求，
+          // 全局拦截器不生效，故在此**显式写入**（来源标 system）。
+          logs.push({
             adminUserId: operatorId ?? null,
             module: 'order',
             action: '截单锁定',
-            targetId: String(fresh.id),
-            requestData: { orderNo: fresh.orderNo, mealDate: date },
+            targetId: String(o.id),
+            requestData: { orderNo: o.orderNo, mealDate: date },
             snapshot: {
               fromStatus: OrderStatus.PAID,
               toStatus: OrderStatus.CUT_OFF,
@@ -648,9 +719,11 @@ export class OrderService {
               reason: 'T-1 24:00 截单：锁定并不可逆',
             },
           });
-          lockedNos.push(fresh.orderNo);
-          lockedQuantity += Number(fresh.quantity ?? 0);
+          lockedNos.push(o.orderNo);
+          lockedQuantity += Number(o.quantity ?? 0);
         }
+
+        if (logs.length) await logRepoOf(m).insert(logs);
       });
     }
 
@@ -710,6 +783,10 @@ export class OrderService {
    * 并发下已被 L9 或上一次跑批确认过的单 `affected=0`，跳过、且**不计佣**
    * （计佣本身还有 `uk_commission_order_type` 兜底，双层保险）。
    * 故**重跑与手动补跑都安全**，且能补上「上次因故没跑到的单」。
+   *
+   * ⚡ M5-6 批量化：审计行改为**每个事务末尾一次多值 `INSERT`**（N 条 → 1 条）。
+   *    判定归属的条件更新**保留逐条**，理由见 `cutoffByDate` 的「批量化与并发」小节
+   *    （集合更新不回「哪几行归我」，而每张单都要落独立审计行）。
    *
    * ## 事务边界：**按团长分批**
    * 每个团长一个事务（而不是全量一个大事务）：某个团长的数据异常不会把其他团长的
@@ -771,6 +848,7 @@ export class OrderService {
 
       const outcome = await this.dataSource.transaction(async (m: EntityManager) => {
         const transitioned: Order[] = [];
+        const logs: QueryDeepPartialEntity<OperationLog>[] = [];
         for (const o of orders) {
           // 条件更新：仅当仍是 `delivered` 才推进（防与 L9 / 重复跑批并发）
           const upd = await m
@@ -785,7 +863,9 @@ export class OrderService {
           transitioned.push(o);
           // 状态机 §2.1.5：每次迁移落 `ab_operation_log`。跑批没有 HTTP 请求，
           // 全局拦截器不生效，故在此**显式写入**（来源标 system）。
-          await logRepoOf(m).insert({
+          // ⚡ 攒到事务末尾**一次多值 INSERT**（N 条 INSERT → 1 条）——
+          //    `affected` 已经把「哪些真的迁移了」判死，故归因不受批量化影响。
+          logs.push({
             adminUserId: operatorId ?? null,
             module: 'order',
             action: '自动确认收货',
@@ -799,6 +879,7 @@ export class OrderService {
             },
           });
         }
+        if (logs.length) await logRepoOf(m).insert(logs);
 
         // 计佣：只对**本次真正推进**的单计（口径与 L9 共用 `accrueForOrders`，写 pending）
         const acc = await this.commission.accrueForOrders(leader, transitioned, 'FLEX_MANUAL', m);
@@ -843,6 +924,7 @@ export class OrderService {
     let orphanConfirmed = 0;
     if (orphans.length) {
       await this.dataSource.transaction(async (m: EntityManager) => {
+        const logs: QueryDeepPartialEntity<OperationLog>[] = [];
         for (const o of orphans) {
           const upd = await m
             .createQueryBuilder()
@@ -854,7 +936,7 @@ export class OrderService {
           if ((upd.affected ?? 0) === 0) continue;
 
           orphanConfirmed += 1;
-          await logRepoOf(m).insert({
+          logs.push({
             adminUserId: operatorId ?? null,
             module: 'order',
             action: '自动确认收货',
@@ -868,6 +950,7 @@ export class OrderService {
             },
           });
         }
+        if (logs.length) await logRepoOf(m).insert(logs);
       });
     }
 

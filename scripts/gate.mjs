@@ -96,6 +96,30 @@ const GATES = {
     cmd: 'ts-node -r tsconfig-paths/register src/database/schema-parity.ts',
   },
   /**
+   * M5-6：**迁移 ↔ 实体 索引机械对账**（`schema:parity` 的已知边界补位）
+   *
+   * `schema:parity` 只比「表 + 列 + 列类型族」，它自己在注释里明写**不比索引**。
+   * 于是「实体加了索引、迁移忘了加」与 #76 是**同一族**缺口，却不在任何失败路径上：
+   *   · 本地 sqlite 由**实体** synchronize 建表 → 索引按实体声明建；
+   *   · 生产由**迁移**建表 → 索引按迁移 DDL 建。
+   * **两边都「成功」，两边的索引集却可以完全不同。**
+   *
+   * ⚠️ 索引不一致比列不一致**更隐蔽**：缺列会 `Unknown column` 直接炸出来，
+   * 索引不一致**一句报错都没有**，只表现为「本地很快、生产很慢」（或反过来）。
+   * 该门禁首跑实测出 **25 处列不一致 + 1 处实体缺失** —— 全都是同一个形状：
+   * 实体写**属性级单列** `@Index('n')`，迁移写**类级复合** `(a,b)`。
+   * 其中就包含报告 §二 P1-3 的误判来源（审阅者读实体文件得出「缺 mealDate 索引」，
+   * 而迁移里其实有 `(team_leader_id, meal_date)`）—— **两套表述会误导审计**。
+   *
+   * 判据：索引名 + **列（有序）** + 唯一性，三者全等。比名不比列是**不够**的
+   * （那样恰好放走「复合索引被写成单列」这一档）。
+   * 自带三重自证：人为删索引 / 翻转唯一性 / 删一列，**每一种都必须报出**。
+   */
+  'index:parity': {
+    cwd: 'apps/api-server',
+    cmd: 'ts-node -r tsconfig-paths/register src/database/index-parity.ts',
+  },
+  /**
    * M5-3 安全自检（一）· 路由权限审计 —— 防「忘了写 @Roles」
    *
    * `AdminGuard` 的判据是 `roles && roles.length > 0`，于是**没写 `@Roles` 的运营端点
@@ -154,6 +178,7 @@ const ALIASES = {
     'format',
     'typecheck',
     'schema:parity',
+    'index:parity',
     'route:audit',
     'security:scan',
     'jest',

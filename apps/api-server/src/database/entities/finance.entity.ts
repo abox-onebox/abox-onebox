@@ -8,7 +8,25 @@ import { bigintTransformer, moneyTransformer, rateTransformer, PkColumn } from '
  *   C11 —— 出款走灵活用工平台，补 payout_channel / payout_batch_no / tax_withheld_amount
  * 依据：《表结构评审意见 v1.0》P0-6 + P2-5
  */
+/**
+ * ⚠️ `idx_commission_meal`（`meal_date` 单列）是 **M5-6 补的**，不是冗余 ——
+ *   已有两个索引都以**别的列**打头，**没有一个能服务以 `meal_date` 打头的谓词**：
+ *     · `idx_commission_leader_date (team_leader_id, meal_date)` → 团长 × 日期（`monthOrdersOf`）
+ *     · `idx_commission_status      (status, meal_date)`       → 状态 × 日期（`settlePending`）
+ *   而代码里有三处**按日期打头**的查询，只能全表扫（`ab_commission` 是永续增长表）：
+ *     · `listCommissionsForAdmin` 运营后台「某日佣金列表」（`meal_date = ?`，status 可不给）
+ *     · `finance.loadCommissionRows` / `stats.loadCommissionFen` 看板区间净额（`BETWEEN`）
+ *   ⚠️ 复合索引的第二列**无法**接住「第一列缺席」的谓词 —— 这是 P1-3 的实质
+ *   （报告原句写作「缺 mealDate 索引」，方向对；但迁移里其实**有**含 `meal_date`
+ *   的索引，缺的是**以它打头**的那一个）。
+ *
+ * 索引权威在**迁移**（`1700000000002-index-commission-meal.ts`）：生产结构只由迁移决定。
+ * 本类所有索引声明必须与迁移逐名逐列一致，否则本地与生产是两套索引 —— 由 `index:parity` 看住。
+ */
 @Entity('ab_commission')
+@Index('idx_commission_leader_date', ['teamLeaderId', 'mealDate'])
+@Index('idx_commission_status', ['status', 'mealDate'])
+@Index('idx_commission_meal', ['mealDate'])
 @Index('uk_commission_order_type', ['orderId', 'type'], { unique: true })
 export class Commission {
   @PkColumn()
@@ -20,7 +38,6 @@ export class Commission {
   @Column({ name: 'order_no', type: 'varchar', length: 32 })
   orderNo!: string;
 
-  @Index('idx_commission_leader_date')
   @Column({ name: 'team_leader_id', type: 'bigint', transformer: bigintTransformer })
   teamLeaderId!: number;
 
@@ -66,7 +83,6 @@ export class Commission {
   })
   type!: string;
 
-  @Index('idx_commission_status')
   @Column({
     type: 'varchar',
     length: 16,
@@ -142,6 +158,8 @@ export class Commission {
  *     （M3-9 前置项）。
  */
 @Entity('ab_supplier_share')
+@Index('idx_share_status', ['status', 'shareDate'])
+@Index('idx_share_payee', ['payeeType', 'payeeId', 'mealDate'])
 export class SupplierShare {
   @PkColumn()
   id!: number;
@@ -150,11 +168,9 @@ export class SupplierShare {
   @Column({ name: 'share_no', type: 'varchar', length: 32, comment: '应付单号' })
   shareNo!: string;
 
-  @Index('idx_share_status')
   @Column({ name: 'share_date', type: 'date', comment: '应付生成日（T+1）' })
   shareDate!: string;
 
-  @Index('idx_share_payee')
   @Column({ name: 'meal_date', type: 'date', comment: '对应出餐日' })
   mealDate!: string;
 
@@ -342,11 +358,11 @@ export class Balance {
 
 /** ab_balance_log 余额变动流水（ER v2.1 §3.4 + P2-5 出款字段） */
 @Entity('ab_balance_log')
+@Index('idx_balance_log_user_time', ['userId', 'createdAt'])
 export class BalanceLog {
   @PkColumn()
   id!: number;
 
-  @Index('idx_balance_log_user_time')
   @Column({ name: 'user_id', type: 'bigint', transformer: bigintTransformer })
   userId!: number;
 

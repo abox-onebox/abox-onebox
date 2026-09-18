@@ -68,6 +68,17 @@ async function bootstrap() {
     .build();
   SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, config));
 
+  /**
+   * ⚠️ 限流中间件**不在这里注册**（M5-6）
+   *
+   * 曾在此处写 `await app.init(); app.use(createRateLimitMiddleware(...))`，结果是
+   * **中间件一次都没执行**：`app.use()` 只能往 Express 栈尾追加，而 `init()` 已经把
+   * 路由挂完了 → 限流排到路由之后 → 请求早在控制器里被处理掉。它「看起来对」
+   * （编译过、启动无警告、日志无异常），只有真发请求才会暴露。
+   * 现改为 `AppModule.configure()` 注册（那里夹在 body-parser 与路由之间）。
+   * 完整原因与验证方式见 `app.module.ts` 的 `configure()` 注释。
+   */
+
   const port = cfg.get<number>('app.port') ?? 3000;
   await app.listen(port);
 

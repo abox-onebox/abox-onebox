@@ -11,6 +11,7 @@ import { bigintTransformer, moneyTransformer, rateTransformer, PkColumn } from '
  * invited_formal_count / last_order_at，费率默认改 0.0800）
  */
 @Entity('ab_team_leader')
+@Index('idx_team_leader_level_status', ['level', 'status'])
 export class TeamLeader {
   @PkColumn()
   id!: number;
@@ -45,7 +46,6 @@ export class TeamLeader {
   floor?: string | null;
 
   /** 等级：trainee 见习 / formal 正式 / gold 金牌 / chief 首席（C2） */
-  @Index('idx_team_leader_level_status')
   @Column({ type: 'varchar', length: 16, default: 'trainee' })
   level!: string;
 
@@ -264,11 +264,11 @@ export class TeamLeader {
  *   is_formal 为冗余位，避免高频 JOIN ab_team_leader 判等级。
  */
 @Entity('ab_leader_invite')
+@Index('idx_invite_inviter', ['inviterLeaderId', 'isFormal'])
 export class LeaderInvite {
   @PkColumn()
   id!: number;
 
-  @Index('idx_invite_inviter')
   @Column({
     name: 'inviter_leader_id',
     type: 'bigint',

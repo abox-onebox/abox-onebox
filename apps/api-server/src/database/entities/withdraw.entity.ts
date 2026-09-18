@@ -19,6 +19,8 @@ import { bigintTransformer, moneyTransformer, PkColumn } from './transformers';
  *     只用 `ab_supplier_share` 记应付 + 回单号，不接支付通道
  */
 @Entity('ab_withdraw')
+@Index('idx_withdraw_leader_time', ['leaderId', 'createdAt'])
+@Index('idx_withdraw_status', ['status', 'createdAt'])
 export class Withdraw {
   @PkColumn()
   id!: number;
@@ -27,7 +29,6 @@ export class Withdraw {
   @Column({ name: 'withdraw_no', type: 'varchar', length: 32, comment: '提现单号 WD+yyyyMMdd+8位' })
   withdrawNo!: string;
 
-  @Index('idx_withdraw_leader_time')
   @Column({ name: 'leader_id', type: 'bigint', transformer: bigintTransformer })
   leaderId!: number;
 
@@ -104,7 +105,6 @@ export class Withdraw {
   @Column({ name: 'receive_name', type: 'varchar', length: 32, comment: '收款人姓名' })
   receiveName!: string;
 
-  @Index('idx_withdraw_status')
   @Column({
     type: 'varchar',
     length: 16,

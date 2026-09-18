@@ -8,6 +8,7 @@ import { bigintTransformer, coordTransformer, PkColumn } from './transformers';
  * （见《ER v2.1》§5.6）。
  */
 @Entity('ab_building')
+@Index('idx_building_city_district', ['city', 'district'])
 export class Building {
   @PkColumn()
   id!: number;
@@ -18,7 +19,6 @@ export class Building {
   @Column({ type: 'varchar', length: 256 })
   address!: string;
 
-  @Index('idx_building_city_district')
   @Column({ type: 'varchar', length: 32, default: '北京' })
   city!: string;
 
@@ -96,6 +96,7 @@ export class Building {
  * 依据：《ER v2.1》§3.1
  */
 @Entity('ab_building_group')
+@Index('idx_building_group_city', ['city', 'district'])
 export class BuildingGroup {
   @PkColumn()
   id!: number;
@@ -106,7 +107,6 @@ export class BuildingGroup {
   @Column({ type: 'varchar', length: 256, nullable: true })
   description?: string | null;
 
-  @Index('idx_building_group_city')
   @Column({ type: 'varchar', length: 32, default: '北京' })
   city!: string;
 

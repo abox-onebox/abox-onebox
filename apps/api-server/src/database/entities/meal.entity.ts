@@ -8,6 +8,7 @@ import { bigintTransformer, moneyTransformer, PkColumn } from './transformers';
  *      ab_meal_assignment 承担，避免两处状态打架。
  */
 @Entity('ab_set_meal')
+@Index('idx_set_meal_status_date', ['status', 'mealDate'])
 export class SetMeal {
   @PkColumn()
   id!: number;
@@ -15,7 +16,6 @@ export class SetMeal {
   @Column({ type: 'varchar', length: 128, nullable: true, comment: '套餐名（运营填写）' })
   name?: string | null;
 
-  @Index('idx_set_meal_status_date')
   @Column({ name: 'meal_date', type: 'date', nullable: true, comment: '模板日期（冗余，可空）' })
   mealDate?: string | null;
 

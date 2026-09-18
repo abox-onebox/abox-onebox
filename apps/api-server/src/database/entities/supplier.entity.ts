@@ -8,6 +8,7 @@ import { bigintTransformer, moneyTransformer, rateTransformer, PkColumn } from '
  * "巡礼之年"是主体公司品牌（北京巡礼之年科技有限公司），不得用作供应商名。
  */
 @Entity('ab_supplier')
+@Index('idx_supplier_type_status', ['type', 'status'])
 export class Supplier {
   @PkColumn()
   id!: number;
@@ -27,7 +28,6 @@ export class Supplier {
    * `SUPPLIER_TYPE_CONFLICT`(50008) 三处闸门**已删除**。本列保留仅为兼容历史行与索引，
    * **任何逻辑不得再读**（同 `share_rate` / `ab_distribution_center.supplier_id` 的处理）。
    */
-  @Index('idx_supplier_type_status')
   @Column({
     type: 'varchar',
     length: 16,
@@ -171,6 +171,7 @@ export class Supplier {
 
 /** ab_dish 菜品库（沿用 v1.0） */
 @Entity('ab_dish')
+@Index('idx_dish_category', ['category', 'status'])
 export class Dish {
   @PkColumn()
   id!: number;
@@ -186,7 +187,6 @@ export class Dish {
   imageUrl?: string | null;
 
   /** 档位：main 主荤 / half 半荤 / veg 素菜 / soup 汤 / staple 主食 */
-  @Index('idx_dish_category')
   @Column({ type: 'varchar', length: 32, nullable: true })
   category?: string | null;
 
@@ -234,6 +234,7 @@ export class Dish {
 
 /** ab_supplier_dish_daily 供应商每日生产哪道菜（ER v2.1 §3.5） */
 @Entity('ab_supplier_dish_daily')
+@Index('idx_supplier_dish_date', ['produceDate', 'status'])
 @Index('uk_supplier_dish_date', ['supplierId', 'dishId', 'produceDate'], { unique: true })
 export class SupplierDishDaily {
   @PkColumn()
@@ -245,7 +246,6 @@ export class SupplierDishDaily {
   @Column({ name: 'dish_id', type: 'bigint', transformer: bigintTransformer })
   dishId!: number;
 
-  @Index('idx_supplier_dish_date')
   @Column({ name: 'produce_date', type: 'date' })
   produceDate!: string;
 
@@ -297,6 +297,7 @@ export class SupplierDishDaily {
  *    父表 `status` 由本表派生驱动 —— 全部分中心 confirmed 时，父表才置 `done`。
  */
 @Entity('ab_supplier_dish_center_daily')
+@Index('idx_sddc_date_center', ['produceDate', 'distributionCenterId'])
 @Index('uk_sddc', ['supplierId', 'dishId', 'produceDate', 'distributionCenterId'], { unique: true })
 export class SupplierDishCenterDaily {
   @PkColumn()
@@ -309,7 +310,6 @@ export class SupplierDishCenterDaily {
   @Column({ name: 'dish_id', type: 'bigint', transformer: bigintTransformer })
   dishId!: number;
 
-  @Index('idx_sddc_date_center')
   @Column({ name: 'produce_date', type: 'date', comment: '出餐日（= 套餐日 T，非确认操作日）' })
   produceDate!: string;
 

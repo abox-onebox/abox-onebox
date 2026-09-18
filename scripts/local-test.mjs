@@ -213,6 +213,11 @@ async function main() {
       if (clock !== 'off') process.env.ABOX_SHIFT_TO_HOUR = clock;
       process.env.QUEUE_DRIVER = 'memory';
       process.env.QUEUE_BACKOFF_BASE_MS = '20';
+      // ⭐ 限流**保持开启**（与生产一致）：本环境是「给人手动点」的，越像生产越有价值。
+      //    `lib/e2e-server.mjs` 的默认值是 `off`（自动套件会被自己的防护打成 429），
+      //    这里是**有意覆盖**回 `on` —— 若哪天想临时关掉方便调试，改成 'off' 即可。
+      //    会撞到 429 的只有「1 分钟内对同一后台账号失败登录 5 次」这种极端操作（见启动横幅提示）。
+      process.env.ABOX_RATE_LIMIT = 'on';
       apiChild = startApiServer(apiPort);
       const base = `http://127.0.0.1:${apiPort}/api/v1`;
       if (!(await waitHealthy(base, { child: apiChild, timeoutMs: 120_000 }))) {
@@ -296,6 +301,13 @@ async function main() {
   say('    dev:newbie / 任意新 code → **拿不到团**（未绑楼栋，/home/daily 回 10004，属预期）');
   say('  运营后台账号');
   say('    admin / admin123（超管）  finance / finance123  sanweiwu / supplier123');
+  line();
+  say(
+    '  ⚠️ 限流已**开启**（与生产一致）：同一账号 1 分钟内**失败**登录 5 次 → 429「请求过于频繁」，',
+  );
+  say(
+    '     等 1 分钟自动恢复 —— 属**预期行为**，不是 bug（同一个出口 IP 1 分钟超 10 次后台登录同样会触发）。',
+  );
   line();
   say('  ⚠️ 手机打不开？九成是 Windows 防火墙拦了 node.exe：');
   say('     控制面板 → Windows Defender 防火墙 → 允许应用通过防火墙 → 勾上 node.exe');

@@ -605,36 +605,100 @@ export class StatsService {
    * D50 · 留存分析
    * ------------------------------------------------------------------ */
 
+  /**
+   * D50 · 留存分析
+   *
+   * ## 取数策略（本批修正 —— 原实现是全表扫描，见《全面检查与测试报告 v1.0》§二 P0-1）
+   *
+   * 「留存必须看全历史」这件事**不等于**「必须把全部订单行读进内存」。全历史只在
+   * 两个地方被用到，而这两处**都能让 SQL 直接回答**：
+   *
+   *   ① **首单出餐日**（判新客 / 老客，以及按「首单所在周」分群）
+   *      → `GROUP BY user_id` 求 `MIN(meal_date)`：**一用户一行**。
+   *   ② **cohort 观察窗内是否再次下单**
+   *      → 只需要 `[第 1 个分群 + 7 天, 最后一个分群的 windowEnd]` 这一段，**天然有界**
+   *        （最长 ≈ N 周 + 13 天）。
+   *
+   * 而「区间内活跃」本来就有界（`[startDate, endDate]`），聚合成「一人一行」即可。
+   *
+   * ⚠️ 修正前的写法是 `select(['o.userId', 'o.mealDate']).getMany()` —— 把**每一张有效订单**
+   *    都实例化成一个对象读进 Node 内存，再在 JS 里建 Map、三次遍历去重。种子数据下
+   *    完全无感（几十单），但单请求的**内存与耗时都随订单总量线性增长**：首屏看板在
+   *    10 万单量级即明显劣化。**「看全历史」是业务口径，不是取数方式。**
+   *
+   * ⚠️ 三处口径与修正前**逐字保持一致**（本批只换取数方式，不改任何口径）：
+   *    · 有效订单仍走 `validOrderQb()` 单点判定；
+   *    · `repeatUserCount` 数的是「区间内**不同出餐日**出现次数 ≥ 2」，不是订单数；
+   *    · `retainedWeek1` / `retentionRate1` 仍**成对下发**（窗口未走完 or 分群为空 → 双 null）。
+   */
   async retention(q: StatsQueryDto): Promise<StatsRetentionView> {
     const range = this.resolveRange(q.range, q.date);
 
-    // 留存必须看**全历史**的订单日期：只看区间内，所有用户都会显得像「新客」
-    const rows = await this.validOrderQb().select(['o.userId', 'o.mealDate']).getMany();
-
-    const datesOf = new Map<number, Set<string>>();
-    for (const r of rows) {
-      const uid = Number(r.userId);
-      const set = datesOf.get(uid) ?? new Set<string>();
-      set.add(String(r.mealDate));
-      datesOf.set(uid, set);
+    // cohort 的分群边界先算出来：下面的查询要拿它当**上界**，才能把「全历史」收敛成有界区间
+    const today = shiftBizDate(range.endDate, 0);
+    const lastWeekStart = weekStartBizDate(today);
+    const cohortStarts: string[] = [];
+    for (let i = RETENTION_DEFAULT_COHORT_WEEKS - 1; i >= 0; i -= 1) {
+      cohortStarts.push(shiftBizDate(lastWeekStart, -7 * i));
     }
+    /** 观察窗下界 = 最早那个分群的「次周第一天」（再早的日期对任何分群都无用） */
+    const observeFrom = shiftBizDate(cohortStarts[0], 7);
+    /** 观察窗上界 = 最后一个分群的 windowEnd */
+    const observeTo = shiftBizDate(cohortStarts[cohortStarts.length - 1], 13);
 
-    /** 首单出餐日（有效订单口径 · 超时未支付的单不能把用户判成老客） */
-    const firstDateOf = (uid: number): string => {
-      const set = datesOf.get(uid);
-      if (!set || set.size === 0) return '';
-      return [...set].sort()[0];
-    };
+    // ── ① 区间内活跃（**聚合到人**：一人一行，不出订单明细）────────────────
+    const activityRows = await this.validOrderQb()
+      .select('o.user_id', 'userId')
+      .addSelect('COUNT(DISTINCT o.meal_date)', 'dayCnt')
+      .andWhere('o.meal_date BETWEEN :start AND :end', {
+        start: range.startDate,
+        end: range.endDate,
+      })
+      .groupBy('o.user_id')
+      .getRawMany<{ userId: number | string; dayCnt: number | string }>();
 
     const activeInRange = new Set<number>();
     const countInRange = new Map<number, number>();
-    for (const uid of datesOf.keys()) {
-      const inRange = [...(datesOf.get(uid) ?? [])].filter(
-        (d) => d >= range.startDate && d <= range.endDate,
-      );
-      if (inRange.length === 0) continue;
+    for (const r of activityRows) {
+      const uid = Number(r.userId);
       activeInRange.add(uid);
-      countInRange.set(uid, inRange.length);
+      countInRange.set(uid, Number(r.dayCnt ?? 0));
+    }
+
+    // ── ② 首单出餐日（**聚合到人** · 一用户一行）──────────────────────────
+    // ⚠️ 这一条**不能**按日期收窄：`MIN(meal_date)` 必须是**全表**范围内的最小值。
+    //    若在这里加 `WHERE meal_date >= X`，那些「更早还有单」的用户会被算成
+    //    「首单在 X 之后」= **假新客**（且新客数虚高、老客数虚低，两边都错）。
+    //    代价是全表聚合，但**返回的是一用户一行**（订单数 ≫ 用户数），配合
+    //    `idx_order_user (user_id, meal_date)` 可走松散索引扫描（loose index scan，
+    //    MySQL 8 的 `GROUP BY user_id` + `MIN(meal_date)` 正命中该形状）。
+    const firstRows = await this.validOrderQb()
+      .select('o.user_id', 'userId')
+      .addSelect('MIN(o.meal_date)', 'firstDate')
+      .groupBy('o.user_id')
+      .getRawMany<{ userId: number | string; firstDate: string }>();
+
+    const firstDateByUser = new Map<number, string>();
+    for (const r of firstRows) firstDateByUser.set(Number(r.userId), String(r.firstDate));
+
+    /** 首单出餐日（有效订单口径 · 超时未支付的单不能把用户判成老客） */
+    const firstDateOf = (uid: number): string => firstDateByUser.get(uid) ?? '';
+
+    // ── ③ 分群复查用的日期明细（**有界**：只取各分群观察窗那一段）──────────
+    const revisitRows = await this.validOrderQb()
+      .select('o.user_id', 'userId')
+      .addSelect('o.meal_date', 'mealDate')
+      .andWhere('o.meal_date BETWEEN :from AND :to', { from: observeFrom, to: observeTo })
+      .groupBy('o.user_id')
+      .addGroupBy('o.meal_date')
+      .getRawMany<{ userId: number | string; mealDate: string }>();
+
+    const revisitDates = new Map<number, Set<string>>();
+    for (const r of revisitRows) {
+      const uid = Number(r.userId);
+      const set = revisitDates.get(uid) ?? new Set<string>();
+      set.add(String(r.mealDate));
+      revisitDates.set(uid, set);
     }
 
     let newUserCount = 0;
@@ -647,16 +711,8 @@ export class StatsService {
 
     // cohort：按「首单所在自然周（周一为始）」分群，观察其后 7 天内是否再次下单。
     // 取最近 N 周 —— 以区间末日所在周为最后一群。
-    const today = shiftBizDate(range.endDate, 0);
-    const lastWeekStart = weekStartBizDate(today);
-    const cohortStarts: string[] = [];
-    for (let i = RETENTION_DEFAULT_COHORT_WEEKS - 1; i >= 0; i -= 1) {
-      cohortStarts.push(shiftBizDate(lastWeekStart, -7 * i));
-    }
-
     const byFirstWeek = new Map<string, number[]>();
-    for (const uid of datesOf.keys()) {
-      const first = firstDateOf(uid);
+    for (const [uid, first] of firstDateByUser) {
       if (!first) continue;
       const wk = weekStartBizDate(first);
       const arr = byFirstWeek.get(wk) ?? [];
@@ -677,7 +733,7 @@ export class StatsService {
       const rateAvailable = observable && users.length > 0;
       const retainedWeek1 = rateAvailable
         ? users.filter((uid) =>
-            [...(datesOf.get(uid) ?? [])].some(
+            [...(revisitDates.get(uid) ?? [])].some(
               (d) => d >= shiftBizDate(cohortStart, 7) && d <= windowEnd,
             ),
           ).length

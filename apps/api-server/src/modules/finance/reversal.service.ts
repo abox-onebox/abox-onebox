@@ -137,10 +137,12 @@ export class ReversalService {
   /**
    * 佣金反向冲销
    *
-   * 四种「无需扣余额」的情形，各自有明确原因（都不算错误）：
+   * 五种「无需扣余额」的情形，各自有明确原因（都不算错误）：
    *   · 该单**从未计佣**（截单前取消 / 未走到 `completed`）→ 无原行
    *   · 已有冲销行（重复退款 / 重放）→ `uk_commission_order_type` 唯一索引兜底
    *   · **原佣金仍为 `pending`（已计佣、尚未入账）→ 直接作废原行，见下** ⭐ M4-2 新增
+   *   · **原行状态不是 `settled` / `pending`（如已 `cancelled`）→ 本次是重复或并发退款** ⭐ 本批新增
+   *   · **并发占位失败（`affected = 0`）→ 另一次冲销已推进该行** ⭐ 本批新增
    *   · 找不到团长（数据异常）→ 仍写冲销行，但不动余额，`notes` 里留痕
    *
    * ⚠️ 余额允许被扣成负数：团长可能已经把佣金提现走了。这不是 bug ——
@@ -152,6 +154,11 @@ export class ReversalService {
    *    会从余额里扣一笔**从未入账**的钱 —— 团长余额被凭空扣减、甚至扣成负数形成
    *    **假欠款**，而且**没有任何地方会报错**（余额本来就可以为负，见上）。
    *    故 `pending` 必须单独走「只作废、不动钱」的路径。
+   *
+   * ⭐⭐ **并发安全（本批修正）**：判定「原行可否冲销」**只由一次条件更新决定**
+   *    （`WHERE id = ? AND status = ?`，以 `affected` 判定归属），不再依赖
+   *    「先 `findOne` 看一眼再写」—— 后者在两次并发退款下会让同一单被冲销两次。
+   *    详见方法体内「原子占位」注释。
    */
   private async reverseCommission(
     m: EntityManager,
@@ -166,6 +173,27 @@ export class ReversalService {
       notes.push('该单未计佣（未走到 completed 或截单前已取消），无佣金需冲销');
       return { reversedFen: 0, quantity: 0 };
     }
+
+    /**
+     * ⭐ **可冲销的状态只有两个**：`pending`（钱未入账）与 `settled`（钱已入账）。
+     *
+     * ⚠️ 这里刻意写成**白名单**，而不是「`pending` 走特殊分支、其余一律按 `settled` 处理」——
+     *    后者的隐含前提是「不是 `pending` 就一定是 `settled`」，而这个前提**不成立**：
+     *    本方法第一次被调用时若原行是 `pending`，会把它推进到 `cancelled`（见下），
+     *    于是**第二次**调用就落进 `settled` 分支 —— 凭空写一条 −X 的冲销行，
+     *    并从团长余额里扣掉一笔**从未入账**的钱，形成**假欠款**。
+     *    该路径既不报错也无告警（余额本来就可以为负，见上方方法注释），
+     *    只在团长自己核对时表现为「少钱了」。
+     *    同族的坑见《缺陷与陷阱》#63（一张表里行本身带符号 → 漏一个状态判断就静默算错）。
+     */
+    const status = String(origin.status);
+    if (status !== 'settled' && status !== 'pending') {
+      notes.push(`该单佣金已是「${status}」，本次无需冲销（重复或并发退款，未动余额）`);
+      return { reversedFen: 0, quantity: 0 };
+    }
+    /** 只有 `settled`（钱真的进过余额）才允许反向扣减；`pending` 只作废、不碰钱 */
+    const payFromBalance = status === 'settled';
+
     const existed = await m.findOne(Commission, { where: { orderId, type: 'reversal' } });
     if (existed) {
       notes.push(`佣金冲销已存在（${existed.id}），跳过`);
@@ -173,18 +201,48 @@ export class ReversalService {
     }
 
     /**
+     * ⭐⭐ **原子占位（并发下的唯一真相）**
+     *
+     * 「先查后写」在并发下是错的：两次退款可能**都**读到 `settled`、都判定「可冲销」，
+     * 各自写一条冲销负行、各扣一次团长余额 —— 对外表现为**同一单被冲销两次**。
+     * 唯一索引 `uk_commission_order_type` 拦得住第二条负行，但那是**数据库报错**、
+     * 不是幂等：调用方拿到的是一个未分类的驱动异常，能不能兜住还取决于
+     * 「负行写入」与「余额扣减」的先后顺序。**靠报错兜底 = 把正确性寄托在错误发生的时机上。**
+     *
+     * 故把「原行是否仍可冲销」交给**数据库判定**：`WHERE id = ? AND status = ?` 的条件更新，
+     * 以 `affected` 判定归属 —— 只有一个调用者能把行推进到 `cancelled`，
+     * 另一个拿到 0 → 直接返回且**一分钱都不动**。
+     *
+     * ⭐ 这与同模块 `settlePending` 的 `UPDATE … WHERE id = ? AND status = 'pending'` 是
+     *   **同一族做法**（同一模块内不允许出现两种幂等范式）。
+     * ⭐ 本表**无 `version` 列**，故不写 `version + 1`：`pending|settled → cancelled`
+     *   是**值一定改变**的更新，MySQL 的 changed-rows 与 sqlite 的 `changes` 都返回 1，
+     *   不存在「值没变 → affected=0 被误判成冲突」的陷阱（M5-1 D62 踩过的那个）。
+     */
+    const claim = await m
+      .createQueryBuilder()
+      .update(Commission)
+      .set({ status: 'cancelled' })
+      .where('id = :id', { id: origin.id })
+      .andWhere('status = :expected', { expected: status })
+      .execute();
+    if ((claim.affected ?? 0) === 0) {
+      notes.push('并发退款：该笔佣金已被另一次冲销处理，本次跳过（未动余额）');
+      return { reversedFen: 0, quantity: 0 };
+    }
+
+    /**
      * ⭐ 关键分支：原佣金仍为 `pending` —— 钱还在「待入账」，从未进过余额。
      *
      * 处理：**只把原行作废（`pending → cancelled`），不写冲销行、不写余额流水**。
+     *   · 作废本身已由上面的「原子占位」完成，此处**不再写库**（重复写会多一次空更新）。
      *   · 净效果与 `settled` 路径**一致**（这笔佣金不再支付），故出参仍如实报
      *     「冲销了多少」（`reversedFen` = 原行金额）—— 端上「本次冲掉佣金 ¥X」
      *     的展示与已入账情形无差别，不需要分叉。
      *   · 但**账目形态不同**：不写冲销行，是因为钱没有发生过，没有可反向的账；
      *     写一条 -X 的冲销行反而会凭空多出一笔「支出」。
      */
-    if (origin.status === 'pending') {
-      origin.status = 'cancelled';
-      await m.save(origin);
+    if (!payFromBalance) {
       notes.push(
         `该单佣金尚未入账（pending），已直接作废、**未动余额** —— ` +
           `退款发生在「T 日确认计佣」与「T+1 02:00 入账」之间`,
@@ -217,9 +275,8 @@ export class ReversalService {
       }),
     );
 
-    // 原行标记「已冲销」—— 金额保持原值，发生额历史不可改写（C9）
-    origin.status = 'cancelled';
-    await m.save(origin);
+    // 原行**已由上面的「原子占位」置为 `cancelled`**，此处不再重复写库。
+    // 金额保持原值 —— 发生额历史不可改写（C9）；唯一的字段改写就是那个 `status`。
 
     const leader = await m.findOne(TeamLeader, { where: { id: Number(origin.teamLeaderId) } });
     if (!leader) {

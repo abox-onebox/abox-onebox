@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABox 一盒 · 内部测试操作清单 v1.0</title>
+<style>
+  :root {
+    --bg-cream: #F6F0E5;
+    --bg-cream-light: #FBF7EF;
+    --bg-cream-dark: #EDE3D0;
+    --text-brown: #6E5435;
+    --text-brown-light: #A08A6A;
+    --accent-gold: #C9A876;
+    --accent-gold-dark: #9A7B4F;
+    --border-brown: #E6D9C0;
+    --hero-a: #6E5435;
+    --hero-b: #9A7B4F;
+    --ok: #5B7C3A;
+    --bg-blank: #FCFAF5;
+    --bg-hi: #FDF6E8;
+    --warn-bg: #FBF3E6;
+    --warn-border: #E3C79A;
+    --warn-accent: #B8862F;
+    --warn-text: #8A6318;
+    --lv-b: #C98A2F;
+    --lv-c: #8C9A6B;
+    --severe: #C44536;
+    --font-kai: "KaiTi", "STKaiti", "楷体", "Kaiti SC", serif;
+    --mono: "Consolas", "Menlo", "Courier New", monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font-kai);
+    background: var(--bg-cream);
+    color: var(--text-brown);
+    line-height: 1.72;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 0 40px;
+  }
+  .sheet { max-width: 820px; margin: 0 auto; background: #fff; box-shadow: 0 2px 18px rgba(110,84,53,.10); }
+  .wrap { padding: 0 30px 26px; }
+
+  .hero { background: linear-gradient(135deg, var(--hero-a) 0%, var(--hero-b) 100%); color: var(--bg-cream); padding: 28px 30px 22px; }
+  .hero .brand { font-size: 12px; letter-spacing: 4px; opacity: .82; }
+  .hero h1 { font-size: 25px; letter-spacing: 2px; font-weight: bold; margin-top: 6px; }
+  .hero .sub { font-size: 12.5px; opacity: .9; margin-top: 8px; letter-spacing: .5px; }
+  .hero .fields { margin-top: 16px; display: flex; gap: 22px; flex-wrap: wrap; font-size: 12.5px; }
+  .hero .fields span { opacity: .92; }
+  .hero .fields i { display: inline-block; width: 92px; border-bottom: 1px solid rgba(246,240,229,.55); font-style: normal; }
+
+  h2 { font-size: 15px; letter-spacing: 1.5px; margin: 22px 0 12px; padding-left: 10px; border-left: 3px solid var(--accent-gold); }
+  h2:first-of-type { margin-top: 20px; }
+  h2 .n { display: inline-block; min-width: 19px; height: 19px; line-height: 19px; text-align: center; background: var(--text-brown); color: var(--bg-cream); border-radius: 50%; font-size: 11px; letter-spacing: 0; margin-right: 7px; vertical-align: 2px; }
+  .note { font-size: 12.5px; color: var(--text-brown-light); margin-top: 8px; }
+
+  .acts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .act { background: var(--bg-cream-light); border: 1px solid var(--border-brown); border-radius: 8px; padding: 13px 14px; }
+  .act .h { font-size: 13.5px; font-weight: bold; padding-bottom: 7px; margin-bottom: 8px; border-bottom: 1px solid var(--border-brown); }
+  .act .h span { font-family: var(--mono); font-size: 11px; color: var(--accent-gold-dark); font-weight: normal; }
+  .act ol { margin-left: 16px; font-size: 12.5px; line-height: 1.68; }
+  .act li { margin-bottom: 3px; }
+  .cmd { display: block; margin-top: 8px; font-family: var(--mono); font-size: 11px; color: var(--accent-gold-dark); background: rgba(201,168,118,.14); padding: 5px 8px; border-radius: 4px; line-height: 1.6; word-break: break-all; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { border: 1px solid var(--border-brown); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-cream-dark); font-weight: bold; letter-spacing: .5px; }
+  td.no { font-family: var(--mono); color: var(--accent-gold-dark); font-weight: bold; white-space: nowrap; width: 46px; text-align: center; }
+  td.num { font-family: var(--mono); color: var(--accent-gold-dark); }
+  td.exp { color: var(--text-brown); }
+  td.exp b { color: var(--ok); }
+  td.blank { background: var(--bg-blank); height: 26px; }
+  tr.hi td { background: var(--bg-hi); }
+
+  .warn { background: var(--warn-bg); border: 1px solid var(--warn-border); border-left: 3px solid var(--warn-accent); border-radius: 6px; padding: 11px 14px; font-size: 12.5px; margin-top: 10px; }
+  .warn .t { font-weight: bold; color: var(--warn-text); letter-spacing: .5px; }
+  .warn ul { margin: 6px 0 0 16px; }
+  .warn li { margin-bottom: 4px; }
+
+  .rules { list-style: none; }
+  .rules li { position: relative; padding-left: 20px; margin-bottom: 7px; font-size: 13px; }
+  .rules li::before { content: ""; position: absolute; left: 4px; top: 10px; width: 6px; height: 6px; border-radius: 50%; background: var(--severe); }
+  .rules li b { color: var(--severe); }
+
+  .lv { display: inline-block; font-family: var(--mono); font-size: 10.5px; padding: 0 5px; border-radius: 3px; color: #fff; vertical-align: 1px; }
+  .lv.a { background: var(--severe); }
+  .lv.b { background: var(--lv-b); }
+  .lv.c { background: var(--lv-c); }
+
+  .foot { margin-top: 22px; padding: 14px 30px; background: var(--bg-cream-dark); font-size: 12.5px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .foot b { font-family: var(--mono); color: var(--accent-gold-dark); }
+  .ver { font-size: 11.5px; color: var(--text-brown-light); text-align: center; padding: 12px 30px 0; }
+
+  @media print {
+    @page { size: A4; margin: 10mm; }
+    body { background: #fff; padding: 0; font-size: 11.5px; }
+    .sheet { max-width: none; box-shadow: none; }
+    .wrap { padding: 0 0 10px; }
+    .hero { padding: 16px 0 14px; }
+    h2 { margin: 14px 0 8px; }
+    .acts { gap: 8px; }
+    .act { padding: 9px 10px; }
+    .ver { padding: 8px 0 0; }
+    .foot { padding: 10px 0; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="hero">
+    <div class="brand">ABox 一盒 · 内部测试</div>
+    <h1>内部测试操作清单</h1>
+    <div class="sub">工程把环境起好，测试人只管照着点 —— 每步都有「应该看到」，不符就记在最后那张表里</div>
+    <div class="fields">
+      <span>测试人：<i></i></span>
+      <span>日期：<i></i></span>
+      <span>我的身份：<i></i></span>
+      <span>设备：<i></i></span>
+    </div>
+  </div>
+
+  <div class="wrap">
+
+    <h2><span class="n">一</span>开工前：谁做什么</h2>
+    <div class="acts">
+      <div class="act">
+        <div class="h">工程 <span>开工前 5 分钟</span></div>
+        <ol>
+          <li>在本机执行下面这条命令</li>
+          <li>等终端打出<b>二维码与地址</b></li>
+          <li>把二维码/地址与<b>身份分配</b>发给测试人</li>
+        </ol>
+        <span class="cmd">cd abox-onebox<br>node scripts/local-test.mjs --seed --build</span>
+      </div>
+      <div class="act">
+        <div class="h">测试人 <span>拿到地址后</span></div>
+        <ol>
+          <li>手机连<b>与电脑同一个 WiFi</b></li>
+          <li>扫二维码，或手输终端给的地址</li>
+          <li>登录时填<b>分给自己的身份</b>（见第二节）</li>
+        </ol>
+        <span class="cmd">http://&lt;本机IP&gt;:5180/　用户端<br>http://&lt;本机IP&gt;:5173/　运营后台</span>
+      </div>
+      <div class="act">
+        <div class="h">共同 <span>开始前先对齐</span></div>
+        <ol>
+          <li>这是<b>内部环境</b>，链接不外发、不拉外部用户</li>
+          <li>支付走的是<b>模拟通道</b>，不产生真实资金</li>
+          <li>今天的目标是<b>攒问题</b>，不是「全部跑绿」</li>
+        </ol>
+        <span class="cmd">发现问题 = 本清单最有价值的产出</span>
+      </div>
+    </div>
+
+    <h2><span class="n">二</span>环境入口与身份</h2>
+    <table>
+      <tr>
+        <th style="width:22%">入口</th>
+        <th style="width:38%">地址</th>
+        <th>账号 / 身份</th>
+      </tr>
+      <tr class="hi">
+        <td>用户端 · 团长端</td>
+        <td class="num">http://&lt;本机IP&gt;:5180/</td>
+        <td>登录框填 <b>dev:1001</b> 这类标识，不需要真实微信</td>
+      </tr>
+      <tr>
+        <td>运营后台</td>
+        <td class="num">http://&lt;本机IP&gt;:5173/</td>
+        <td><b>admin / admin123</b>（超管）　finance / finance123　sanweiwu / supplier123</td>
+      </tr>
+      <tr>
+        <td>接口文档</td>
+        <td class="num">http://&lt;本机IP&gt;:3000/docs</td>
+        <td>给工程看；测试人一般不用</td>
+      </tr>
+      <tr>
+        <td>健康检查</td>
+        <td class="num">http://&lt;本机IP&gt;:3000/api/v1/health</td>
+        <td>页面打不开时先看这里</td>
+      </tr>
+    </table>
+
+    <div class="warn">
+      <div class="t">身份要一人一个，别共用</div>
+      <ul>
+        <li>同一个身份<b>在同一天只能下一单</b>（这是设计，不是故障）。两人共用 <b>dev:1001</b>，第二个人一定会被拦，然后被写成 bug。</li>
+        <li>多人同时测：A 用 <b>dev:1001</b>（李明·首席 12%）· B 用 <b>dev:1002</b>（王芳·金牌 10%）· C 用 <b>dev:1003</b>（张磊·正式 9%）· D 用 <b>dev:1004</b>（赵静·正式 9%）· E 用 <b>dev:1005</b>（陈强·见习 8%）。</li>
+        <li>如果你被提示「已提交过该日出餐的订单」——<b>先确认是不是别人用了你的身份</b>，再决定要不要记。</li>
+      </ul>
+    </div>
+
+    <h2><span class="n">三</span>用户端 / 团长端（手机，按顺序做完）</h2>
+    <table>
+      <tr>
+        <th style="width:46px">步骤</th>
+        <th style="width:26%">做什么</th>
+        <th>应该看到</th>
+        <th style="width:20%">不符时记什么</th>
+      </tr>
+      <tr>
+        <td class="no">U1</td>
+        <td>打开首页</td>
+        <td class="exp">「明日」套餐卡片：售价 <span class="num">¥25.80</span>、<b>一饭四菜</b>、截单倒计时</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">U2</td>
+        <td>点进套餐详情</td>
+        <td class="exp">四个菜名与图片齐全；有送达信息（次日 <b>11:30</b> 送达本楼）</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">U3</td>
+        <td>下单：选份数 → 提交</td>
+        <td class="exp">提交后进入支付环节，金额 = <span class="num">¥25.80</span> × 份数</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">U4</td>
+        <td>走完支付</td>
+        <td class="exp">模拟通道<b>约 1 秒自动成功</b>；订单状态变为<b>已支付</b></td>
+        <td class="blank"></td>
+      </tr>
+      <tr class="hi">
+        <td class="no">U5</td>
+        <td>我的 → 订单列表</td>
+        <td class="exp">能找到这一单，状态<b>已支付</b>，出餐日为明日</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">U6</td>
+        <td>打开订单详情</td>
+        <td class="exp">金额、份数、出餐日、下单时间都在，且与 U3 一致</td>
+        <td class="blank"></td>
+      </tr>
+      <tr class="hi">
+        <td class="no">U7</td>
+        <td>同一天<b>再下一单</b></td>
+        <td class="exp">应<b>被拦下</b>，提示已提交过该日出餐的订单 —— <b>拦住了才是对的</b></td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">U8</td>
+        <td>回到订单详情 → 取消订单</td>
+        <td class="exp">受理成功、状态变为已取消/已退款；金额与 U3 一致</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">U9</td>
+        <td>溯源</td>
+        <td class="exp">能看到食材来源与<b>加工场所</b>信息</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">U10</td>
+        <td>切到团长 tab</td>
+        <td class="exp">有邀请入口、我的佣金、余额明细三个入口，都能打开</td>
+        <td class="blank"></td>
+      </tr>
+      <tr class="hi">
+        <td class="no">U11</td>
+        <td><b>把两个地方的余额对一遍</b><br><span class="note">（历史踩过的坑，重点看）</span></td>
+        <td class="exp">「我的」页显示的余额，与「余额明细」里的数字 <b>必须一致</b>（同一时刻不该出现两个数）</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">U12</td>
+        <td>我的佣金</td>
+        <td class="exp">有佣金记录；U8 取消的那单<b>不应</b>变成可提现的佣金</td>
+        <td class="blank"></td>
+      </tr>
+      <tr class="hi">
+        <td class="no">U13</td>
+        <td>申请提现</td>
+        <td class="exp">提交成功，状态为<b>待审批</b>（下一步到后台第四节的 A15 去审它）</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">U14</td>
+        <td>观察项：取消之后再下一单</td>
+        <td class="exp">能不能下？<b>两种结果都可能是对的</b> —— 照实记下，交给工程判</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">U15</td>
+        <td>随手翻一遍各页（我的 / 客服 / 设置）</td>
+        <td class="exp">没有白屏、没有「加载中」卡死、没有看不懂的报错弹窗</td>
+        <td class="blank"></td>
+      </tr>
+    </table>
+
+    <h2><span class="n">四</span>运营后台（电脑，admin 账号）</h2>
+    <table>
+      <tr>
+        <th style="width:46px">步骤</th>
+        <th style="width:26%">做什么</th>
+        <th>应该看到</th>
+        <th style="width:20%">不符时记什么</th>
+      </tr>
+      <tr>
+        <td class="no">A1</td>
+        <td>登录 admin / admin123</td>
+        <td class="exp">进入后台，左侧菜单完整，右上角有当前账号</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A2</td>
+        <td>看板</td>
+        <td class="exp">核心指标有数（不是 0、也不是空白）；注意 GMV <b>含在途退款</b>、成本取<b>净额</b></td>
+        <td class="blank"></td>
+      </tr>
+      <tr class="hi">
+        <td class="no">A3</td>
+        <td><b>看板 与 财务概览 对一遍数</b></td>
+        <td class="exp">两处的收入/成本/毛利 <b>必须是同一组数字</b>（同一次计算的两次展示）</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A4</td>
+        <td>菜品矩阵</td>
+        <td class="exp">能看到明日套餐与档位；套餐构成确为<b>一饭四菜</b></td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A5</td>
+        <td>订单 → 列表</td>
+        <td class="exp">能看到测试人下的那一单；金额、状态与端上一致</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A6</td>
+        <td>订单 → 详情</td>
+        <td class="exp">金额与端上完全一致（金额一律以「分」为单位显示，不应出现 100 倍误差）</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A7</td>
+        <td>订单 → 配送：改份数 / 司机 / 车牌</td>
+        <td class="exp">能改，保存后刷新仍在；界面对「份数与订单数不符」有提示</td>
+        <td class="blank"></td>
+      </tr>
+      <tr class="hi">
+        <td class="no">A8</td>
+        <td>开两个浏览器窗口，<b>同时</b>改同一张配送单</td>
+        <td class="exp">必须有一方被提示<b>「已被他人修改，请刷新」</b> —— 都显示「成功」才是问题</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A9</td>
+        <td>团长 → 列表 / 详情</td>
+        <td class="exp">能看到等级与佣金费率（这是<b>当时的快照</b>，不随后续改等级而变）</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A10</td>
+        <td>团长 → 申请审批</td>
+        <td class="exp">待审批列表可打开；审批后状态随之变化</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A11</td>
+        <td>加工场所 → 打包任务</td>
+        <td class="exp">能打开列表、看到到货明细（这个页<b>只在后台</b>，供应商端没有）</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A12</td>
+        <td>财务 → 概览</td>
+        <td class="exp">有数，且与 A3 的看板一致；余额/冻结这类<b>当下存量</b>不随日期筛选变化</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A13</td>
+        <td>财务 → 佣金</td>
+        <td class="exp">能看到刚那单对应的佣金记录，状态为<b>待入账</b>（还没进余额）</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A14</td>
+        <td>财务 → 余额</td>
+        <td class="exp">余额/冻结有数；可操作动作里包含<b>解冻</b>一项</td>
+        <td class="blank"></td>
+      </tr>
+      <tr class="hi">
+        <td class="no">A15</td>
+        <td>财务 → 提现审批：审 U13 那笔</td>
+        <td class="exp">能看到待审记录；通过/驳回/已打款/失败四个动作都在，点完状态随之变化</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A16</td>
+        <td>财务 → 对账</td>
+        <td class="exp">页面明确标注<b>「尚未与微信账务对平」</b> —— 这是<b>如实标注</b>，不是缺陷</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A17</td>
+        <td>财务 → 发票</td>
+        <td class="exp">按 <b>供应商 × 月份</b> 展示，且区分「未开 / 部分 / 已开」三种状态</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A18</td>
+        <td>统计</td>
+        <td class="exp">楼栋排行 / 菜品热度 / 留存都有内容；留存那几个数字<b>要么成对出现、要么同时为空</b></td>
+        <td class="blank"></td>
+      </tr>
+      <tr class="hi">
+        <td class="no">A19</td>
+        <td>系统 → 配置：把截单时刻改一个值 → 再看「时刻表」→ <b>改回原值</b></td>
+        <td class="exp">时刻表里该任务的执行时刻<b>应当跟着变</b>（这验证「改了配置真的生效」，不是只存不进）</td>
+        <td class="blank"></td>
+      </tr>
+      <tr>
+        <td class="no">A20</td>
+        <td>系统 → 操作日志</td>
+        <td class="exp">能看到刚才 A7/A15/A19 这些改动都被记下来了（谁、什么时候、改了什么）</td>
+        <td class="blank"></td>
+      </tr>
+    </table>
+
+    <h2><span class="n">五</span>故意做错的三件事（最能试出问题）</h2>
+    <table>
+      <tr>
+        <th style="width:46px">编号</th>
+        <th style="width:32%">故意怎么做</th>
+        <th>必须出现的结果</th>
+        <th style="width:16%">谁做</th>
+      </tr>
+      <tr>
+        <td class="no">N1</td>
+        <td>一天之内，同一个身份<b>下两次单</b></td>
+        <td>第二次必须被拦，并说清「哪个出餐日已经下过」；<b>放过去才是 bug</b></td>
+        <td>用户端测试人</td>
+      </tr>
+      <tr>
+        <td class="no">N2</td>
+        <td>两个窗口<b>同时改同一张配送单</b></td>
+        <td>后提交的那次必须提示冲突并要求刷新；<b>静默覆盖掉别人的填写才是 bug</b></td>
+        <td>后台测试人</td>
+      </tr>
+      <tr>
+        <td class="no">N3</td>
+        <td>提现时填一个<b>大于可用余额</b>的金额</td>
+        <td>应被拒绝并说明原因（余额不足 / 冻结额不足），不应「提交成功」后没有下文</td>
+        <td>用户端测试人</td>
+      </tr>
+    </table>
+    <p class="note">
+      另外两条更有杀伤力的越权用例（换低权限账号去访问资金接口、服务端数据收窄）由<b>工程用接口直接验</b>，
+      不在本清单内 —— 让业务测试人手工点，反而测不准。
+    </p>
+
+    <h2><span class="n">六</span>问题记录表（照着填，一条一行）</h2>
+    <table>
+      <tr>
+        <th style="width:40px">#</th>
+        <th style="width:58px">步骤</th>
+        <th style="width:27%">他实际显示了什么</th>
+        <th style="width:27%">你认为应该是什么</th>
+        <th style="width:56px">严重度</th>
+        <th>截图文件名</th>
+      </tr>
+      <tr><td class="no">1</td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td></tr>
+      <tr><td class="no">2</td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td></tr>
+      <tr><td class="no">3</td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td></tr>
+      <tr><td class="no">4</td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td></tr>
+      <tr><td class="no">5</td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td></tr>
+      <tr><td class="no">6</td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td></tr>
+      <tr><td class="no">7</td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td></tr>
+      <tr><td class="no">8</td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td></tr>
+      <tr><td class="no">9</td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td></tr>
+      <tr><td class="no">10</td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td><td class="blank"></td></tr>
+    </table>
+    <p class="note">
+      严重度只分三档，别纠结：<br>
+      <span class="lv a">P0</span> <b>卡死</b> —— 这一步过不去，后面的步骤全做不了（例：首页打不开、登录不进去）。<br>
+      <span class="lv b">P1</span> <b>结果不对</b> —— 能继续，但结果与预期不符（例：金额算错、状态不对、该拦的没拦）。<br>
+      <span class="lv c">P2</span> <b>不好用</b> —— 功能对，但字太小/位置难找/提示看不懂。<br>
+      拿不准就写 P1，不要空着。
+    </p>
+
+    <h2><span class="n">七</span>收工与复原</h2>
+    <table>
+      <tr>
+        <th style="width:26%">什么时候</th>
+        <th>怎么做</th>
+      </tr>
+      <tr>
+        <td>测完关环境</td>
+        <td>在工程的终端窗口按 <b>Ctrl+C</b>（本次起的服务会一并停掉，不留后台进程）</td>
+      </tr>
+      <tr>
+        <td>下次想要一套干净数据</td>
+        <td>重起时加 <b>--seed</b>：<span class="num">node scripts/local-test.mjs --seed</span>（约 10 秒）</td>
+      </tr>
+      <tr>
+        <td>页面打不开 / 白屏</td>
+        <td>先让工程看 <span class="num">http://&lt;本机IP&gt;:3000/api/v1/health</span>。<b>先排除环境问题，再记为缺陷</b></td>
+      </tr>
+      <tr>
+        <td>手机连不上</td>
+        <td>九成是 Windows 防火墙拦了 node.exe —— 控制面板 → Windows Defender 防火墙 → 允许应用通过防火墙 → 勾上 node.exe</td>
+      </tr>
+      <tr>
+        <td>把结果交回</td>
+        <td>把第六节那张表（含截图）发给工程。<b>「没发现问题」也要交</b> —— 那说明这一轮是绿灯，同样是有用的结论</td>
+      </tr>
+    </table>
+
+    <h2><span class="n">八</span>三条须知（记住就不会误报）</h2>
+    <ul class="rules">
+      <li><b>支付是「自动成功」的模拟通道。</b> 看到「已支付」不等于钱到了 —— 别拿它当财务依据，也别惊讶它为什么不用输密码。</li>
+      <li><b>系统内部的时间被拨快过。</b> 为了让「任何时间都能下单」，环境把北京小时平移到了 20:00。所以<b>不要拿这个环境验真实时间行为</b>（要按真实时间跑，让工程加 <span class="num">--clock=off</span> 重起）。</li>
+      <li><b>数据随手改没关系，但别当权威。</b> 这个环境里的数据是试验场；权威永远是种子脚本与正式库。测完想还原，加 <span class="num">--seed</span> 重起即可。</li>
+    </ul>
+
+  </div>
+
+  <div class="foot">
+    <span>环境由工程起，问题由测试人攒 —— <b>不要为了「跑通」而绕过一步</b></span>
+    <span>ABox 一盒 · 北京巡礼之年科技有限公司</span>
+  </div>
+  <div class="ver">内部测试操作清单 v1.0 · 2026-09-17 · 配套《本地开发手册》§9.3 · 只用于内网，请勿外发链接</div>
+
+</div>
+</body>
+</html>
