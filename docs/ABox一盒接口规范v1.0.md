@@ -22,8 +22,7 @@
 | 最近修订（M5-0） | 2026-09-17 · ㉑ **M5-0 部署运维基座（M5 前置子批次 · 零 DDL · 零新增错误码）**：① ⭐⭐ **§七 探针拆分并纠偏（真缺陷 #75）** —— 原 W4 `/health` 描述为「健康检查（DB / Redis / 微信连通性）」，而**实现从不检任何依赖**（「文档说检、代码不检」正是该缺陷的成因），且微信侧无商户号与证书、一期也无法检通；现 §七 拆为 **W4 `/health`（存活 · 刻意不检依赖 · 出参契约不可改）** + **W5 `/health/ready`（就绪 · 检 DB `SELECT 1` + 3 个队列消费者齐备 · 未就绪 → HTTP 503 + `code 90002`）**，并写明「两条探针必须分开」的理由（混用 → 重启风暴 或 摘不掉流量）与「readiness 为何检消费者而不检 Redis 连通性」（连通性启动期已 fail-closed 验过；消费者未注册是**启动期验不到、失败后完全静默**的一类故障）；② ⭐ **§1.1 访问控制表**把「回调」与「探针」拆成两行 —— 探针**免 JWT**（`@Public()`）且**公网可达**，故出参按「会被人看见」设计、失败原因只进服务端日志；原文把 `/health` 与 `/api/v1/pay` 并列并声称「走 `wx-signature.guard`」与实现不符，已纠正；③ ⚠️ **本批无新增端点以外无契约变更** —— `90002 SERVICE_UNAVAILABLE` **早已存在**（无需新增错误码），本批只是把它**显式接到 HTTP 503**（该码不在 `HTTP_STATUS_OVERRIDE` 表里，不显式传就退化成 200，**编排器只看状态码 → 「不可用」会被判成健康**）；④ 同批修真缺陷 **#71**（`enableShutdownHooks` 缺失 → 两处 `onModuleDestroy` 从未执行）· **#72**（迁移 glob 只匹配 `*.ts` → 生产 `dist/*.js` 零命中且 TypeORM **不报错、退出码 0**）· **#73**（`deploy.sh` 空壳）· **#74**（骨架 Dockerfile 五处生产硬伤）—— 详见《缺陷与陷阱》；⑤ `gate.mjs all verify` **15/15 全绿** · e2e **m1 38 → 45**（探针契约 7 条并入）/ m2 126 / m3 925。 |
 | 最近修订（M5-1） | 2026-09-17 · ㉒ **M5-1 配送单人工修正（M5 前置子批次 · 收口挂账 #61 · 零 DDL）**：① ⭐⭐ **§6.5 补 D61/D62 实现口径（16 项）** —— 收口挂账 **#61**：跑批对已存在的配送单**跳过不覆盖**（保护人工录入的司机 / 车牌），代价是份数**被一起冻住**、**没有任何页面能改**（`DeliveryController` 此前是空壳，口子只在 DBA 手里）；现补 D61 `GET /admin/deliveries`（按出餐日列表 + **份数差异标记**）与 D62 `PUT /admin/deliveries/{id}`（修正份数 / 司机 / 电话 / 车牌 / 备注）；② ⭐⭐ **`version` 乐观锁**（`ab_delivery_record.version` 列早已存在、此前**零使用**）—— 两个运营先后改同一张单，后写者用旧快照会**静默覆盖**前者的修改且双方都不报错，直到装错货；冲突 → **新码 `30016`** + `data.current`（当前值与版本，端上刷新后重提）；目标 id 非法 → **新码 `30017`**；③ ⭐⭐ **份数不符 ≠ 被人改过** —— `quantityMismatch` 的成因有两种（有人修正过 / **截单后订单侧退款取消**，而配送单份数在截单时已定格、不跟着降），系统**无法从数字本身区分**，故只如实标差异 + 给排查入口（`ab_operation_log` 按 `module='delivery'` 查）、**不假装知道**（同 #55）；另设一个**可靠**标记 `hasManualInput`（司机 / 电话 / 车牌 / 备注四列**跑批从不写**，有值 ⇔ 有人手工填过）；④ ⭐⭐ **审计 diff 不需要新表** —— D62 出参带 `{before, after, changed}`，随响应体被 `OperationLogInterceptor` **整体落库**（该拦截器的 `snapshot` 列只写 `{operator, role, at}`、**不含 diff**，真正的 diff 载体是 `response_data`）；`reason` **必填且不写进 `remark`**（后者是给配送员看的，混入审计原因会污染）；⑤ ⭐ **只改五项 · 不动 `status`**（状态是履约流转，有它自己的时点与责任，混进来审计分不清）+ **无 `POST` / 无 `DELETE`**（不手工建单以免绕过截单定格的份数口径；不删单以免当日配送链缺一个楼群且无痕迹 —— 份数改 `0` 才是「今天不送」）；⑥ ⭐ **份数聚合单一口径** —— 跑批生成（4.3）与 D61 对比**共用** `aggregateOrderQuantity()`（两处各写一遍 SQL，改口径只改一处就会出现「生成的份数」与「页面显示的应送份数」不一致而**两边都不报错**），且对比一律取**全量**聚合（不受筛选影响）；⑦ ⭐ **状态枚举由服务端下发**（`statusText` + `statusOptions` 按**履约顺序**而非字典序），并**收敛**原先在两处逐字重复的 `DELIVERY_STATUS_TEXT`（`order/leader-order.service.ts` 与 `team-leader/workbench.service.ts`）到**新增契约载体** `packages/shared-types/src/enums/delivery-status.ts`（#67 家族「同一枚举多处字面量」；不收敛则本次新建的后台页就是**第三份**）；⑧ 两级白名单**含 `operator`**（配送是运营日常作业）、**不含 `viewer`**（含运力安排与司机电话，与 D47–D50 刻意含 viewer 正相反）与 `finance`；`@OperationLog` **写操作才记** + **失败的请求也记**；`/order/delivery` 同时进 `ADMIN_MENU_KEYS` + `ADMIN_NAV` + `routes.ts`（授权了就必须有入口）；⑨ ⚠️ **顺手修掉 #49 的过时解释** —— 5 项 `wiring='unwired'` 的原因原写「硬编码在 `@Cron(...)`」，在 M4-1 建立 `TASK_SCHEDULES` 声明表之后**已不准确**，改为如实指向声明表，并写明「本键 / 声明表 / 下单窗口**三者无机械对账**」这一仍存在的缺口（#49 的**接线部分维持独立验收项** —— 会动用户可下单窗口，e2e 全量依赖 14:00–23:00）；⑩ e2e **§32 · 25 条断言**（**不依赖下单窗口**：隔离日 −216 / −217；`§28` 的「人工录入」同步从**直写库**改为**走 D62 接口** —— 直写只能验证「跑批不覆盖」，走接口才能同时验证「修正真的落到了库里」）；⑪ **零 DDL** · **表数仍 27** · 新增错误码 `30016` / `30017`（已回写 §九 + 扩展码登记）；`SCAFFOLD_KEY` 增 **4 项**；`gate.mjs all verify` **15/15 全绿**（m1 45 · m2 126 · **m3 925 → 951**，较上批 +26）。 |
 | 最近修订（M5-3） | 2026-09-17 · ㉓ **M5-3 试运营交付 + 安全自检 + #49 时间类配置接调度（零 DDL · 零新增错误码 · 表数仍 27）**：① ⭐⭐ **§6.7 的「接线状态」翻转 —— 5 项时间类配置由 `unwired` 升为 `live`**（`set_meal.publish_time` / `cutoff_time` / `delivery_arrival_time`、`commission.auto_confirm_time` / `settle_hour`）：时刻的唯一真相收敛到新增 `common/utils/order-timeline.ts` 的 `DEFAULT_TIMELINE`，而「跑批 cron」与「下单窗口锚点」都是它的**派生值** —— 于是改配置 = **下单窗口与触发时刻一起改**，不再是「写了不生效」；余下 **4 项仍为 `unwired`**（`supplier.settle_cycle` / `distribution_center.*` 3 项），另 2 项为策略标识；② ⭐⭐ **D57 出参新增分组与两列**：分组 **6 → 7**（新增「业务时刻」组），每行新增 `effectiveAt`（生效时刻）与更精确的 `consumedBy`（指向 `currentTimeline()`）；③ ⭐⭐ **D58 的 `time` 类型接受 `24:00`**（= 次日 0 点，**截单口径的原生表达**）—— 旧正则只收 `00:00`–`23:59`，数据模型**根本表达不出 24:00**，于是种子只能写 `23:59` 近似值，与实际按 `00:00` 跑的 cron **差 1 分钟**且不会有任何一处报错（**这不是笔误，是模型缺一个值**）；校验改为复用 `parseTimeOfDay`，**判据与消费方同源**，并归一为 `HH:mm`（`9:00` → `09:00`）；④ ⭐⭐ **§6.8 S1 出参扩充**：`summary` 增 `registered`，每行增 **`registeredCron`（实际注册进调度器的 cron）** 与 `effectiveAt` —— 前者是「任务真的会被触发吗」的**唯一外部可观测证据**（`cron` 是出厂口径、两者不同即说明配置覆写了时刻）；⑤ ⭐⭐ **§6.8 补一节「跑批时刻由运行时注册器决定」**：`@Cron()` 是装饰器参数、模块加载即静态元数据 → 后台改配置**永远影响不到它**（「配了不生效」的机制性根因）；8 个任务类**已移除 `@Cron`**，改由 `ScheduleRegistrar` 按**生效时间轴**生成 cron 并 `SchedulerRegistry.addCronJob()`，且**订阅时间轴变更做热重载**（避免「用户已不能下单、截单跑批仍按旧时刻跑」的半生效状态）；⚠️ 该机制最危险的失败形态是**任务静默不跑**（e2e 全走补跑接口，发现不了）→ 三道防线：逐名 `doesExist` 核对（缺则**拒绝启动**）· 启动横幅 · S1 下发 `registeredCron`；⑥ ⭐ **安全自检两支并入门禁**（`route:audit` 越权全量机械对账 + `security:scan` 密钥/日志扫描），`gate.mjs` **16 → 18 道**；⚠️ 两者**均在「请求形状/自身逻辑」层面**，**不覆盖**「服务层数据收窄」（如按 `supplier_id` 过滤做到没有）与 `npm audit`，边界已如实登记（《安全自检报告 v1.0》）；⑦ ⭐ **`POST /pay/mock/paid` 加固为显式 fail-closed**（`!isMock` 即 `10004`，不暴露端点存在）—— 原仅靠「real provider 未实现该方法」隐式兜底，属**偶然成立**而非契约；⑧ **零新增错误码**（`10001` / `10004` 足够）· **零 DDL** · `SCAFFOLD_KEY` 增 **5 项** M5-3 契约载体；`gate.mjs all verify` **18/18 全绿**。 |
-| 最近修订（M5-8） | 2026-09-18 · **履约链 T7/T8/T9 补实现（收口缺陷 #79 · 零 DDL）**：① ⭐⭐ **新增 §6.5 D63 `PATCH /admin/deliveries/{id}/status`** —— `ab_order` 的 `cooked`/`delivering`/`delivered` 三态**全仓零写入点**（订单支付后永远停在 `cut_off`、团长「确认取餐」永远返回零值**且不报错**、**佣金永不产生**、自动确认跑批每天把全部订单报成「履约异常」），而当时 **19 道门禁 + 969 条 e2e 全绿**（夹具直接 `UPDATE ab_order SET status='delivered'` 造数据 → 测试永远从链路**中间**开始）；现补上 T7（`SupplierService.advanceOrdersToCooked`，出餐确认**同事务**联动）与 T8/T9（D63）；② ⭐⭐ **「改数字」（D62 `PUT`）与「推进履约」（D63 `PATCH :id/status`）刻意分成两个端点** —— 合成一个会让「份数 5→3 顺便把状态也推了」变成一条记录两件事，审计上分不清责任；③ ⭐ **订单联动是「尽力而为 + 如实报告」**：不做「订单必须都在 `cooked`」的前置校验（会把运营卡在门口、然后绕过系统打电话），能推的推、推不动的计入 `orderTransition.remaining` 并给可照着排查的 `note`；④ ⭐ **`called`（已叫车）不动订单**（货还在加工场所），出参 `orderTransition=null` 且 `note` 写明「这不是漏了联动」；⑤ ⭐ **D61 列表每行新增 `orderStatusBreakdown`**（该楼群当日订单状态分布，口径与 `orderQuantity` 同源）—— 让「有几单没跟上」从**一个看不见的洞**变成**列表里的一行**；⑥ ⭐ **T9 的取餐通知不装样子**：场景 `leader_delivery` 一期渠道就是**微信群**（`wiring='pending'`），往 `wechat_group` 调 `notify()` 会被判「无程序投递点」跳过 —— 加一个必然跳过的调用点只会让接线状态变成**假的 `live`**，故出参明确写「需运营人工发群」；⑦ **新增错误码 `30018` `DELIVERY_STATUS_ILLEGAL`**（带 `data.allowed` · **刻意不复用 30016** —— 排查入口不同）；⑧ ⭐⭐ **门禁 `state:audit` 收紧至豁免 0** 并新增**规则④「不可达态必须显式登记」**（`ORDER_RESERVED_STATUSES` 登记 `refunding`），同时**删掉那条躺了三个批次的不可达边** `refund_applying → refunding`（M4-3 起订单审批通过一步到 `refunded`，通道进度交 `ab_refund.status`）；⚠️ 该门禁经 **5/5 反证探针**打红过（删写入点 / 恢复旧边 / 取消保留态 / 塞孤儿态 / 把判定函数改恒空）；⑨ e2e **新增 §35 · 27 条断言 · 全链路**（U6 下单 → 支付 → 截单 → 配送单生成 → 出餐确认 T7 → 已叫车 → 配送中 T8 → 已送达 T9 → 自动确认 T11 → 佣金入账 4.5，**除一处夹具外订单每次状态变化都来自真实 HTTP**）；⑩ ⭐⭐ **闸门③ 由「只能向前」收紧为「一次只能一步」**（`allowed` 只含紧邻下一态）—— 跳级（`called → arrived`）会**跳过 T8**，而 T9 的条件更新是 `delivering → delivered`，订单还在 `cooked` ⇒ **一单不动且不报错**（正是 #79 的形状）；⚠️ 这是实现自查出的**第二处「两份表述」漂移**（注释/文档写「跳级一律拒」而 `slice(fromIdx+1)` 实际放行），已补 e2e 断言 `allowed === ["en_route"]`；⑪ ⭐ **后台入口补齐**（`admin-web` 配送页「推进到 X」按钮 + 确认弹窗 + 「订单进度」列）—— **只有接口没有入口 = 能力存在但无人能到达**（与 #79 同族）；**零 DDL** · 表数仍 **27**。 |
-
+| 最近修订（M5-8） | 2026-09-18 · **履约链 T7/T8/T9 补实现（收口缺陷 #79 · 零 DDL）**：① ⭐⭐ **新增 §6.5 D63 `PATCH /admin/deliveries/{id}/status`** —— `ab_order` 的 `cooked`/`delivering`/`delivered` 三态**全仓零写入点**（订单支付后永远停在 `cut_off`、团长「确认取餐」永远返回零值**且不报错**、**佣金永不产生**、自动确认跑批每天把全部订单报成「履约异常」），而当时 **19 道门禁 + 969 条 e2e 全绿**（夹具直接 `UPDATE ab_order SET status='delivered'` 造数据 → 测试永远从链路**中间**开始）；现补上 T7（`SupplierService.advanceOrdersToCooked`，出餐确认**同事务**联动）与 T8/T9（D63）；② ⭐⭐ **「改数字」（D62 `PUT`）与「推进履约」（D63 `PATCH :id/status`）刻意分成两个端点** —— 合成一个会让「份数 5→3 顺便把状态也推了」变成一条记录两件事，审计上分不清责任；③ ⭐ **订单联动是「尽力而为 + 如实报告」**：不做「订单必须都在 `cooked`」的前置校验（会把运营卡在门口、然后绕过系统打电话），能推的推、推不动的计入 `orderTransition.remaining` 并给可照着排查的 `note`；④ ⭐ **`called`（已叫车）不动订单**（货还在加工场所），出参 `orderTransition=null` 且 `note` 写明「这不是漏了联动」；⑤ ⭐ **D61 列表每行新增 `orderStatusBreakdown`**（该楼群当日订单状态分布，口径与 `orderQuantity` 同源）—— 让「有几单没跟上」从**一个看不见的洞**变成**列表里的一行**；⑥ ⭐ **T9 的取餐通知不装样子**：场景 `leader_delivery` 一期渠道就是**微信群**（`wiring='pending'`），往 `wechat_group` 调 `notify()` 会被判「无程序投递点」跳过 —— 加一个必然跳过的调用点只会让接线状态变成**假的 `live`**，故出参明确写「需运营人工发群」；⑦ **新增错误码 `30018` `DELIVERY_STATUS_ILLEGAL`**（带 `data.allowed` · **刻意不复用 30016** —— 排查入口不同）；⑧ ⭐⭐ **门禁 `state:audit` 收紧至豁免 0** 并新增**规则④「不可达态必须显式登记」**（`ORDER_RESERVED_STATUSES` 登记 `refunding`），同时**删掉那条躺了三个批次的不可达边** `refund_applying → refunding`（M4-3 起订单审批通过一步到 `refunded`，通道进度交 `ab_refund.status`）；⚠️ 该门禁经 **5/5 反证探针**打红过（删写入点 / 恢复旧边 / 取消保留态 / 塞孤儿态 / 把判定函数改恒空）；⑨ e2e **新增 §35 · 27 条断言 · 全链路**（U6 下单 → 支付 → 截单 → 配送单生成 → 出餐确认 T7 → 已叫车 → 配送中 T8 → 已送达 T9 → 自动确认 T11 → 佣金入账 4.5，**除一处夹具外订单每次状态变化都来自真实 HTTP**）；⑩ ⭐⭐ **闸门③ 由「只能向前」收紧为「一次只能一步」**（`allowed` 只含紧邻下一态）—— 跳级（`called → arrived`）会**跳过 T8**，而 T9 的条件更新是 `delivering → delivered`，订单还在 `cooked` ⇒ **一单不动且不报错**（正是 #79 的形状）；⚠️ 这是实现自查出的**第二处「两份表述」漂移**（注释/文档写「跳级一律拒」而 `slice(fromIdx+1)` 实际放行），已补 e2e 断言 `allowed === ["en_route"]`；⑪ ⭐ **后台入口补齐**（`admin-web` 配送页「推进到 X」按钮 + 确认弹窗 + 「订单进度」列）—— **只有接口没有入口 = 能力存在但无人能到达**（与 #79 同族）；| 最近修订（M5-14） | 2026-09-19 · **U5「今日这盒 · 商家溯源」由空壳补实装（零 DDL · 零新增错误码 · 表数仍 27）**：① ⭐⭐ **§3.2 整节重写为实装契约**（原节是**未实现时的设计稿**，与实装有三处不一致，逐条纠正 —— 均属「同一件事两份表述」缺陷族）：⚠️ **ⓐ 资质项由三项改两项**（删除 `health_cert`）—— 自营裁定后健康证的主体是 **ABox 自有持证场所**（热加工 / 打包）而非半成品供货方，且 `ab_supplier` **无对应列**，照抄原型三分项会构成**食品安全叙事上的虚报资质**；⚠️ **ⓑ `takeoutLinks` 由顶层字段改为挂在 `dish.supplier` 下**（跳转入口是「这家店」的，不是「这一餐」的 —— 顶层摆放会让端上被迫把「哪家供应商配哪个链接」重新推一遍，而它拿不到 `supplierId`）；⚠️ **ⓒ 补 `setName` / `recommended` / `configured` 三字段**（`recommended` 决定「推荐」角标、`configured` 决定置灰 —— 二者缺失则「缺京东」这件事在端上**不可表达**）；② ⭐⭐ **资质判据收紧为「在册且已核验」** —— 判据是 `ab_supplier.audit_status='approved'`，**不是「证照字段非空」**：「上传了文件」与「平台核验过」是两件事，未过审 ⇒ **空数组**（端上不显示核验行）；③ ⭐⭐ **`traceNote` 由「本次真实资质并集」生成**（服务端下发、端上不拼）—— 刻意不硬编码「三重核验」文案，否则数据一变声明就继续说着旧话；④ ⭐ **三平台入口恒返回 3 条**（顺序固定），`url=null` + `configured=false` = 该平台未入驻，是**合法状态**：端上**置灰而不隐藏**（缺平台是要去谈的，不是不存在的）；⑤ ⭐ **悬空推荐读侧兜底** —— 写侧（D33）已挡「推荐了但没配链接」，但直接改库 / 改种子 / 历史数据都能绕过写侧，故**读侧再校验一次**，保证端上永远拿不到点了没反应的入口；⑥ ⭐ **未开团不报错**，回 `dishes: []` + 说明文案（与 U1 的 `MEAL_NOT_PUBLISHED` 选择**相反**：U1 是交易页、报错能说清「为什么不能下单」；U5 是信任页、无团可溯时用户无从 action，红色 toast 只会让人以为坏了）；⑦ ⭐ **`buildingId` 必传**（`@Public()` 下守卫不注入 `req.user`、无从推楼群，且**不做「回落到任一楼群」的猜测**）；⑧ ⭐ **§八 映射表 P38 行纠正** —— 「主要表」原写 `ab_supplier_dish_daily`（该表是**出餐确认**用的），实装读的是套餐侧（`ab_meal_assignment` / `ab_set_meal` / `ab_set_meal_item` / `ab_dish` / `ab_supplier.takeout_links` / `ab_distribution_center`），又是一处文档↔代码漂移；⑨ ⚠️ **早期承诺的 Redis 缓存如实改标「一期未实装」**（本仓库 Redis 仅作队列驱动、无缓存层；溯源低频只读且查询已收敛为**常数 4 次**，与菜数无关）；⑩ 抽取 **`common/utils/takeout.ts`** 作 `takeout_links` 的**唯一读取口**（D33 后台配置页与 U5 共用），避免同一列 JSON 被两处各解析一遍 —— 那正是「后台显示已入驻、端上却是灰的」且**两边都不报错**的成因。 |
 
 ---
 
@@ -224,28 +223,60 @@
 
 | # | 方法 | 路径 | 说明 |
 | --- | --- | --- | --- |
-| U5 | GET | `/traceability/today?buildingId=&mealDate=` | 本餐实际出品方聚合（**只读**） |
+| U5 | GET | `/traceability/today?buildingId=&mealDate=` | 本餐实际出品方聚合（**只读 · 免登录**） |
+
+**入参**
+
+| 参数 | 必填 | 口径 |
+| --- | --- | --- |
+| `buildingId` | ✅ | **必传**。免登录下守卫**不注入 `req.user`**（《§1.1》「首页、溯源可匿名只读」），服务端无从从身份推楼群 —— 故显式传入，且**不做「回落到任一楼群」的猜测**（猜错就是把 A 楼的出品方给 B 楼看）。缺失 → `10001` |
+| `mealDate` | — | 出餐日；缺省 = **T+1（明日）** |
 
 **出参**
 
 ```json
 {
-  "mealDate": "2026-09-15",
+  "mealDate": "2026-09-16",
+  "setName": "红烧肉套餐",
   "dishes": [
     {
-      "dishName": "红烧肉", "category": "主菜", "imageUrl": "...",
-      "supplier": { "name": "三味屋", "qualifications": ["food_business_license","business_license","health_cert"] }
+      "dishName": "红烧肉",
+      "category": "主菜",
+      "imageUrl": "/uploads/2026/09/xxx.jpg",
+      "supplier": {
+        "name": "三味屋",
+        "qualifications": ["food_business_license", "business_license"],
+        "recommended": "meituan",
+        "takeoutLinks": [
+          { "platform": "meituan", "label": "美团外卖", "url": "pages/shop/index?shop_id=…", "configured": true },
+          { "platform": "taobao",  "label": "淘宝闪购", "url": "pages/shop/index?shop_id=…", "configured": true },
+          { "platform": "jd",      "label": "京东外卖", "url": "pages/shop/index?shop_id=…", "configured": true }
+        ]
+      }
     }
   ],
   "distributionCenter": { "name": "集散中心 1（国贸片）", "address": "北京市朝阳区…" },
-  "takeoutLinks": [
-    { "platform": "meituan", "label": "美团", "url": "https://..." }
-  ],
-  "traceNote": "本餐 4 道菜由 4 家供应商分别出品，均通过食品经营许可、营业执照、从业人员健康证三重核验。"
+  "traceNote": "这一盒由 4 家菜品供应商 + 1 个集散中心（集散中心 1（国贸片））联合出品。所列出品方均已通过 食品经营许可证 · 营业执照 核验。如果今日套餐不合口味，也可以点进下方店铺，直接点他们的外卖；用餐有任何问题都可以联系我们协助处理。"
 }
 ```
 
-> **硬约束（C8）**：出参**严禁**包含 `status`（合作中/备选）、`commission`、`shareRate`、备选商家清单、供应商联系方式。数据由后台「套餐编排 + 供应商管理」驱动；缓存 TTL ≤ 5 分钟（Redis `trace:{buildingId}:{mealDate}`）。
+**出参口径（逐条为**实装契约**，不是示意图）**
+
+| 字段 | 口径 |
+| --- | --- |
+| `dishes[]` | **一行一菜一供应商**（源自 `ab_set_meal_item`）。**未开团不报错** —— 回 `dishes: []` + `traceNote` 说明并保留 `mealDate`，端上走空态（**信任页不该弹红**：无团可溯的日子用户无从 action，一个红色 toast 只会让人以为坏了；与 U1 交易页的 `MEAL_NOT_PUBLISHED` 选择相反，因两侧语义不同） |
+| `dishName` / `category` / `imageUrl` | 取自 `ab_dish`；菜品或供应商行缺失时**不隐藏这道菜**，以 `菜品 #id` / `供应商 #id` 占位 —— 「有一道菜的出品方查不到」是必须被看见的异常，静默丢弃只会让运营永远不知道 |
+| `supplier.qualifications[]` | **只含「在册且已核验」的项**：`food_business_license`（食品经营许可证）/ `business_license`（营业执照）。判据是 `ab_supplier.audit_status = 'approved'`，**不是**「证照字段非空」——「上传了文件」与「平台核验过」是两件事。**未通过审核 ⇒ 空数组**（端上不显示核验行） |
+| `supplier.recommended` | 默认推荐跳哪个平台；**为 `null` 时不显示「推荐」角标**。读侧**同时**校验合法性：推荐了但该平台未配置（**悬空推荐**）⇒ 归 `null` —— 保证用户端永远拿不到一个点了没反应的入口（写侧已挡，读侧兜底，因直接改库 / 改种子 / 历史数据都能绕过写侧） |
+| `supplier.takeoutLinks[]` | **恒为 3 条**（美团 / 淘宝 / 京东，顺序固定）。`configured=false` + `url=null` = **该平台未入驻**，是**合法状态**：三条入口**恒返回**、端上**置灰而不隐藏** ——「缺京东」这件事必须看得见，否则运营不知道要去谈哪家 |
+| `distributionCenter` | **= ABox 自有加工 / 出餐场所**（主食与打包），**不参与外卖跳转**；当日无分配时为 `null` |
+| `traceNote` | 由**本次真实资质并集**生成（服务端下发，端上不拼）。**刻意不硬编码**「三重核验」文案：硬编码的合规声明与真实资质是**两份表述**，数据一变（某供应商被驳回 / 只上传了一个证）声明就会继续说着旧话 |
+
+> **硬约束（C8）**：出参**严禁**包含 `status`（合作中 / 备选）、`commission`、`shareRate`、备选商家清单、供应商联系方式、**平台店铺号 `shopId`**、供价。理由：**能跳转 ≠ 是合作伙伴** —— 一旦下发「哪些是备选商家」，就等于在替尚未合作的主体背书；跳转只是**告知「这家店在平台上也存在」**。数据由后台「套餐编排（P30）+ 供应商管理（P25 · P33 外卖平台配置）」驱动。
+>
+> ⚠️ **原型 P38 卡片上的第三项「健康证」刻意不输出**：自营裁定（2026-09-16）后主体关系变了 —— 健康证管辖的是**食品加工操作人员**，其主体是 **ABox 自有持证场所**（热加工与打包）而非半成品供货方，且 `ab_supplier` **无对应列**。照抄会构成**食品安全叙事上的虚报资质**（比少显示一项严重得多）。待自有加工人员健康证有落库载体后，由 `distributionCenter` 一侧另行表达（届时扩展枚举，不复用供应商侧）。
+>
+> ⚠️ **一期未实装缓存**：本节早期曾提「Redis `trace:{buildingId}:{mealDate}` TTL ≤ 5 分钟」—— 本仓库 Redis **仅作队列驱动、尚无缓存层**，而溯源是**低频只读**且查询已收敛为**常数 4 次**（与菜数无关）。**如实标注为未实装**，待真有缓存基础设施时再补（连带处理失效与一致性）。
 
 ### 3.3 下单与支付（M02）
 
@@ -1535,7 +1566,7 @@ approve
 | 原型页 | 功能 | PRD | 主要接口 | 主要表 |
 | --- | --- | --- | --- | --- |
 | P1 | 首页 | M01-01 | U1 | `ab_meal_assignment`、`ab_set_meal`、`ab_set_meal_item`、`ab_dish` |
-| P38 | 今日这盒溯源 | M01-04 | U5 | `ab_supplier_dish_daily`、`ab_dish`、`ab_supplier`、`ab_distribution_center` |
+| P38 | 今日这盒溯源 | M01-04 | U5 | `ab_meal_assignment`、`ab_set_meal`、`ab_set_meal_item`、`ab_dish`、`ab_supplier`（`takeout_links`）、`ab_distribution_center` |
 | P3/P4 | 下单/支付 | M02 | U6/U7/U8 | `ab_order`、`ab_payment_log`、`ab_balance` |
 | P5/P6/P7 | 订单详情/列表/取消 | M03 | U9/U10/U11 | `ab_order`、`ab_refund` |
 | P8/P9 | 个人中心/余额明细 | M04 | U12/U13/U14 | `ab_user`、`ab_balance`、`ab_balance_log` |
