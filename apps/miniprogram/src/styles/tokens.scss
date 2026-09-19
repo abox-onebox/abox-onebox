@@ -22,6 +22,16 @@ $c-level-formal: #c9a876;
 $c-level-gold: #d9bf8e;
 $c-level-chief: #b8892f;
 
+// ---- 第三方平台品牌色（用户端 P38 溯源页的外卖平台角标）----
+// ⚠️ 这是**第三方平台的品牌识别色**，不属于本产品主题色系，因此**不能**换成金棕 ——
+//    用户靠颜色认平台（黄=美团 / 橙=淘宝 / 红=京东），改色只会降低识别度。
+//    集中登记在此，避免散落在页面里硬编码（P0-3 禁止硬编码色值的例外情形要留痕）。
+$c-brand-meituan: #ffd400;
+$c-brand-meituan-text: #000000; // 黄底必须配黑字，白字在 #ffd400 上不可读
+$c-brand-taobao: #ff6a00;
+$c-brand-jd: #e1251b;
+$c-brand-on-color: #ffffff; // 淘宝 / 京东 深色底上的白字
+
 // ---- 字阶（精简层级）----
 $fs-display: 44rpx;
 $fs-h1: 34rpx;
@@ -44,6 +54,12 @@ $radius-pill: 999rpx;
 
 // ---- 阴影 ----
 $shadow-card: 0 2rpx 8rpx rgba(110, 84, 53, 0.06);
+
+// ---- 溯源说明卡（P38 · 米金浅底 + 金棕描边）----
+// 原型 P38 顶部说明卡用的是金色系渐变；此处把两端色值登记为 token，
+// 避免在页面 scss 里裸写十六进制（P0-3）。
+$c-trace-card-from: #fff6e0;
+$c-trace-card-to: #ffeed5;
 
 // ---- 字体 ----
 // 手机上没有 KaiTi/楷体（那是 Windows 字体）→ 整条字体栈落空、回退系统黑体，页面观感「失真」。

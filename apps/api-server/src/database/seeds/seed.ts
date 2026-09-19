@@ -192,6 +192,45 @@ async function main(): Promise<void> {
   // ⚠️ **自营口径（M4-0）**：不再写 `type` —— 自营下不存在「承担集散的供应商」，
   //    「出餐型 / 集散型 / 混合型」三分法失效，供应商只有一种角色：半成品供货方。
   const supRepo = dataSource.getRepository(Supplier);
+
+  /**
+   * 外卖平台店铺链接构造（原型 P33「外卖平台店铺链接配置」· M5-14 起被用户端 P38 消费）
+   *
+   * ⚠️ 三处形状必须与 `takeoutLinksOut()` / `readTakeoutLinks()` 的**读写口径**一致：
+   *    · 三个平台键（`meituan` / `taobao` / `jd`），**未入驻的平台直接不写键**
+   *      （不是写 `{url: null}` —— 读侧把「键不存在」与「值为空」同样当未入驻，
+   *        但库里保持最小形状，免得两种「空」在数据里各存一半）；
+   *    · `__recommended.url` 里存的是**平台 key**，不是链接（该格复用了 `{url, shopId}`
+   *      的形状，命名有误导性 —— 见 `common/utils/takeout.ts` 头注）。
+   *
+   * ⚠️ 链接是**演示占位**（对齐原型 P33 表格的 `shop_id=100xxx` / `shopId=200xxx` /
+   *    `shopId=300xxx` 号段），不代表任何真实店铺。真实链接由运营在
+   *    `/supplier/takeout-links` 逐家配置，**不得靠改种子来"上线"**。
+   */
+  const takeout = (
+    shopIds: { meituan?: string; taobao?: string; jd?: string },
+    recommended: 'meituan' | 'taobao' | 'jd',
+  ): Record<string, { url: string | null; shopId?: string | null }> => {
+    const links: Record<string, { url: string | null; shopId?: string | null }> = {};
+    if (shopIds.meituan) {
+      links.meituan = {
+        url: `pages/shop/index?shop_id=${shopIds.meituan}`,
+        shopId: shopIds.meituan,
+      };
+    }
+    if (shopIds.taobao) {
+      links.taobao = {
+        url: `m.taobao.com/page/shop?shopId=${shopIds.taobao}`,
+        shopId: shopIds.taobao,
+      };
+    }
+    if (shopIds.jd) {
+      links.jd = { url: `pages/shop/index?shopId=${shopIds.jd}`, shopId: shopIds.jd };
+    }
+    links.__recommended = { url: recommended, shopId: null };
+    return links;
+  };
+
   await supRepo.clear();
   await supRepo.save([
     // 出餐型（演示占位名 · C5：不得使用「巡礼之年」）
@@ -208,6 +247,12 @@ async function main(): Promise<void> {
       auditedBy: 1,
       status: 1,
       payeeType: 'corporate',
+      // 证照（M5-14）：用户端 P38 溯源卡的「已通过 X 核验」读这两列**且**要求
+      // `audit_status=approved`（有文件 ≠ 核验过）。值均为**演示占位**，非真实证照号。
+      businessLicense: '91110105DEMO000001',
+      foodLicense: 'JY1110105DEMO000001',
+      // 美团 + 淘宝 + 京东（原型 P33：三平台齐全，推荐美团）
+      takeoutLinks: takeout({ meituan: '100001', taobao: '200001', jd: '300001' }, 'meituan'),
     },
     {
       id: 2,
@@ -220,6 +265,11 @@ async function main(): Promise<void> {
       auditedBy: 1,
       status: 1,
       payeeType: 'corporate',
+      businessLicense: '91110105DEMO000002',
+      foodLicense: 'JY1110105DEMO000002',
+      // 美团 + 淘宝（**缺京东** —— 原型 P33 特意留一个「⚠️ 缺京东」样本，
+      // 用来验证「未入驻是合法状态、端上置灰而不是整行消失」）
+      takeoutLinks: takeout({ meituan: '100002', taobao: '200002' }, 'taobao'),
     },
     {
       id: 3,
@@ -232,6 +282,10 @@ async function main(): Promise<void> {
       auditedBy: 1,
       status: 1,
       payeeType: 'corporate',
+      businessLicense: '91110105DEMO000003',
+      foodLicense: 'JY1110105DEMO000003',
+      // 美团 + 京东（**缺淘宝** —— 原型 P33 的另一个缺项样本）
+      takeoutLinks: takeout({ meituan: '100003', jd: '300003' }, 'meituan'),
     },
     {
       id: 4,
@@ -244,6 +298,10 @@ async function main(): Promise<void> {
       auditedBy: 1,
       status: 1,
       payeeType: 'corporate',
+      businessLicense: '91110105DEMO000004',
+      foodLicense: 'JY1110105DEMO000004',
+      // 美团 + 淘宝（**缺京东**）
+      takeoutLinks: takeout({ meituan: '100004', taobao: '200004' }, 'meituan'),
     },
     // 备选（仅外卖平台跳转，不出餐不分账 · C8：不在用户端溯源页展示）
     {

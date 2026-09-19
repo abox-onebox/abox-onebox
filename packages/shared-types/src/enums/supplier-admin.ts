@@ -110,6 +110,19 @@ export const TAKEOUT_PLATFORM_LABEL: Record<TakeoutPlatform, string> = {
   [TakeoutPlatform.JD]: '京东外卖',
 };
 
+/**
+ * 平台**短名**（角标用）—— 与 `TAKEOUT_PLATFORM_LABEL`（全名）**同源登记**
+ *
+ * 用户端 P38 溯源卡的出品方卡片只有 1 行位置放三个平台的角标，写全名会挤成两行；
+ * 原型卡片上用的也是短名（美团 / 淘宝 / 京东）。故把短名一并设在此处，
+ * 端上**不得**另写一份 `{meituan:'美团'}` —— 否则平台改名时两份必然漂移。
+ */
+export const TAKEOUT_PLATFORM_SHORT: Record<TakeoutPlatform, string> = {
+  [TakeoutPlatform.MEITUAN]: '美团',
+  [TakeoutPlatform.TAOBAO]: '淘宝',
+  [TakeoutPlatform.JD]: '京东',
+};
+
 /** 外卖链接（可选：商家可能只在部分平台入驻，未入驻的置 null） */
 export interface TakeoutLink {
   /** 小程序路径（`pages/shop/index?shop_id=xxx`）或 H5 地址 */

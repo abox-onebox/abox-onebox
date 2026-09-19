@@ -4,6 +4,7 @@
  * ⚠️ 金额口径（《接口规范》§1.6）：**接口层一律整数分**，仅在展示时换算成元。
  *    端上不做任何「元 → 分」以外的运算，避免浮点误差进入业务判断。
  */
+import { DishCategory } from '@abox/shared-types';
 
 /** 分 → 元（两位小数字符串，如 2580 → "25.80"） */
 export function fenToYuan(fen: number): string {
@@ -30,6 +31,27 @@ export const SLOT_LABEL: Record<number, string> = {
   4: '汤',
   5: '主食',
 };
+
+/**
+ * 菜品品类 → 图示字符
+ *
+ * ⚠️ **唯一来源**（M5-14 抽出）：该映射此前只写在 `pages/index/index.vue` 里。
+ *    溯源页（P38）要显示同一批菜品的图示，若再抄一份，就会出现
+ *    「首页显示 🍛、溯源页显示 🍱」这种同一道菜两个样子的漂移 ——
+ *    即本项目反复踩的「同一件事两份表述」。故收敛到此处，两页共用。
+ */
+const DISH_EMOJI: Record<string, string> = {
+  [DishCategory.MAIN]: '🍛',
+  [DishCategory.HALF]: '🍳',
+  [DishCategory.VEG]: '🥦',
+  [DishCategory.SOUP]: '🍲',
+  [DishCategory.STAPLE]: '🍚',
+};
+
+/** 品类 → 图示字符；未知 / 空值回落通用餐盒图（不抛错，页面不因脏数据开天窗） */
+export function dishEmoji(category: string | null | undefined): string {
+  return (category && DISH_EMOJI[category]) || '🍱';
+}
 
 /**
  * 出餐日 → 展示文案

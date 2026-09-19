@@ -123,3 +123,30 @@ export const TIME_ANCHOR = {
   settleBatchAt: '02:00', // T+1 02:00 跑批
   payTimeoutMinutes: 30,
 } as const;
+
+/**
+ * 外卖平台小程序的 AppID（用户端 P38 溯源页「直接点他们的外卖」）
+ *
+ * ## 为什么需要它
+ * `wx.navigateToMiniProgram` **不是给个路径就能跳** —— 目标小程序的 appid 必须先进
+ * 本小程序后台的**「可跳转小程序名单」**，而进名单需要**对方同意**或与对方在
+ * **同一开放平台主体**下绑定。原型 P38 的实现注释也写明了这一点
+ * （`prototype/index.html` 第 4307 行）。所以 appid 属**准入配置**，不是代码常量 ——
+ * 拿不到就只有降级，没有绕过办法。
+ *
+ * ## ⚠️ 现状：三个平台**均未配置**（空串）
+ * 一期尚无任何外卖平台的跳转准入关系，故此处留空。留空**不是占位**，是**如实**：
+ * 端上检测到空值即走**降级路径**（复制店名 + 引导用户在对应平台内搜索该店），
+ * 用户仍能找到这家店，只是不经由小程序直跳。
+ * **不要**为了「看起来能跳」而填入猜测的 appid —— 跳错主体是安全事故。
+ *
+ * ## 配置后会发生什么
+ * 填上 appid 且 `ab_supplier.takeout_links` 里存的是小程序路径（非 http 链接）时，
+ * 端上自动改走 `wx.navigateToMiniProgram` 直跳，降级路径不再触发。
+ * 追踪项见 `docs/decisions/OPEN-DECISIONS.md`。
+ */
+export const TAKEOUT_MINI_PROGRAM_APPID: Record<'meituan' | 'taobao' | 'jd', string> = {
+  meituan: '',
+  taobao: '',
+  jd: '',
+};

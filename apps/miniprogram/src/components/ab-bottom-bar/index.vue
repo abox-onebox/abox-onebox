@@ -48,7 +48,12 @@ const leaderStore = useLeaderStore();
 const items = computed<TabItem[]>(() => {
   const base: TabItem[] = [
     { key: 'index', label: '首页', path: '/pages/index/index' },
-    { key: 'traceability', label: '溯源', path: '/pages/traceability/traceability' },
+    // ⚠️ label = 「供应商」而非「溯源」：与原型 P38 的底部项一致（`prototype/index.html`
+    //    第 1919 行 `{id:'P38', ico:'🏪', n:'供应商'}`）。「溯源」是这一页的**动作**，
+    //    「供应商」才是用户想找的**东西** —— 用户不合口味时的念头是「找那家店」，
+    //    不是「做溯源」（该页原本叫「溯源」但落点是占位页，M5-14 一并修正）。
+    //    页面标题仍为「今日这盒 · 溯源」，页内则完整交代溯源信息。
+    { key: 'traceability', label: '供应商', path: '/pages/traceability/traceability' },
   ];
 
   // L10 · 团长入口仅对团长可见（插入在「订单」之前）

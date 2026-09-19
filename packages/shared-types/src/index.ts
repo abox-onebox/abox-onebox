@@ -14,4 +14,5 @@ export * from './api/common';
 export * from './dto/create-order.dto';
 export * from './dto/order.dto';
 export * from './dto/home.dto';
+export * from './dto/traceability.dto';
 export * from './dto/payment.dto';

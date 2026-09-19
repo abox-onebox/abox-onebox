@@ -224,6 +224,82 @@ async function main() {
 
   const mealDate = d.mealDate;
 
+  // ---------- 2b. U5 今日这盒 · 商家溯源（M5-14 · 原型 P38） ----------
+  //
+  // 三条独立价值：
+  //   ① **免登录**确实可读（《接口规范》§1.1「首页、溯源可匿名只读」）—— 不传 token 调；
+  //   ② 出参**真的带上了外卖跳转**（M5-14 之前 U5 是零路由空类、页面是占位页，
+  //      「文档说有、代码没有」那一档已被报告 §二 P1-5 记录）；
+  //   ③ **C8 反证**：这条接口最容易顺手把供应商状态 / 供价 / 联系方式带出去，
+  //      故用正则扫整包出参，不只看单个字段。
+  const u5 = await call('GET', `/traceability/today?buildingId=1&mealDate=${mealDate}`);
+  const t = u5.body?.data;
+  assert(
+    u5.body?.code === 0 && !!t,
+    'U5 溯源可**免登录**只读（信任页不该要人先登录）',
+    `code=${u5.body?.code} dishes=${t?.dishes?.length ?? 0}`,
+  );
+  assert(
+    (t?.dishes?.length ?? 0) >= 4,
+    'U5 出品方逐菜列出（一饭四菜 · 原型 P38 的 4 张出品方卡）',
+    `dishes=${t?.dishes?.length}`,
+  );
+
+  const supOf = (name) => (t?.dishes ?? []).find((x) => x.supplier?.name === name);
+
+  const sanwei = supOf('三味屋');
+  assert(
+    sanwei?.supplier?.qualifications?.includes('food_business_license') &&
+      sanwei?.supplier?.qualifications?.includes('business_license'),
+    'U5 资质行取自**在册证照**（且要求 audit_status=approved —— 上传了≠核验过）',
+    `quals=${JSON.stringify(sanwei?.supplier?.qualifications)}`,
+  );
+  assert(
+    sanwei?.supplier?.takeoutLinks?.length === 3 &&
+      sanwei.supplier.takeoutLinks.filter((l) => l.configured).length === 3 &&
+      sanwei?.supplier?.recommended === 'meituan',
+    'U5 三味屋三平台齐全 + 推荐美团（对齐原型 P33 配置表）',
+    `configured=${sanwei?.supplier?.takeoutLinks?.filter((l) => l.configured).length} rec=${sanwei?.supplier?.recommended}`,
+  );
+
+  const sijiJd = (supOf('四季鲜蔬')?.supplier?.takeoutLinks ?? []).find((l) => l.platform === 'jd');
+  assert(
+    (supOf('四季鲜蔬')?.supplier?.takeoutLinks ?? []).length === 3 &&
+      sijiJd?.configured === false &&
+      sijiJd?.url === null,
+    'U5 「缺京东」**看得见**：三平台恒返回，未入驻的 configured=false 且 url=null（端上置灰，不是整行消失）',
+    `jd=${JSON.stringify(sijiJd)}`,
+  );
+  assert(
+    (t?.dishes ?? []).every(
+      (x) =>
+        !x.supplier?.recommended ||
+        x.supplier.takeoutLinks.some((l) => l.platform === x.supplier.recommended && l.configured),
+    ),
+    'U5 推荐平台必为**已配置**的平台（悬空推荐 = 用户点到一个没反应的入口）',
+  );
+
+  const u5Raw = JSON.stringify(t ?? {});
+  assert(
+    !/"(status|commission|shareRate|contactPhone|auditStatus|unitPrice|costPrice|shareAmount)"/.test(
+      u5Raw,
+    ),
+    'C8 反证：U5 出参不含供应商状态 / 佣金 / 供价 / 联系方式（跳转 ≠ 合作背书）',
+    u5Raw.slice(0, 120),
+  );
+  assert(
+    !!t?.distributionCenter?.address && /核验/.test(t?.traceNote ?? ''),
+    'U5 集散中心带地址，且溯源文案由**本次真实资质并集**生成（不硬编码合规声明）',
+    `note=${(t?.traceNote ?? '').slice(0, 48)}…`,
+  );
+
+  const u5NoBuilding = await call('GET', `/traceability/today?mealDate=${mealDate}`);
+  assert(
+    u5NoBuilding.body?.code === 10001,
+    'U5 缺 buildingId → 10001（免登录下服务端**不猜**楼群：猜错就把 A 楼的出品方给 B 楼看）',
+    `code=${u5NoBuilding.body?.code}`,
+  );
+
   // ---------- 3. U6 下单（幂等） ----------
   const K1 = 'e2e-order-key-0001';
   const created = await call('POST', '/orders', {

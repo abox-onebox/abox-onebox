@@ -28,8 +28,8 @@ export interface LeaderInfo {
  *
  * 口径：L10 · 团长是**叠加身份**，与普通用户共用同一小程序身份（不是独立端）。
  *      登录后用 `abox_is_leader` 持久化，据此动态决定是否展示团长入口：
- *        false → 底部 4 项（首页 / 溯源 / 订单 / 我的）
- *        true  → 底部 5 项（首页 / 溯源 / 团长 / 订单 / 我的）
+ *        false → 底部 4 项（首页 / 供应商 / 订单 / 我的）
+ *        true  → 底部 5 项（首页 / 供应商 / 团长 / 订单 / 我的）
  *
  * 契约：POST /auth/login 返回 `isLeader` + `leader`；后续增量走 GET /leader/profile（M2）
  */

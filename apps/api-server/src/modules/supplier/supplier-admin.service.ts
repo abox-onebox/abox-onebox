@@ -10,7 +10,6 @@ import {
   SUPPLIER_STATUS_LABEL,
   SupplierAuditStatus,
   SupplierStatus,
-  TAKEOUT_PLATFORM_LABEL,
   TakeoutPlatform,
 } from '@abox/shared-types';
 
@@ -19,6 +18,7 @@ import { BizException } from '../../common/exceptions/biz.exception';
 import { maskPhone } from '../../common/utils/crypto';
 import { toFen } from '../../common/utils/money';
 import { normalizePage, paginate, PageResult } from '../../common/utils/response';
+import { readTakeoutLinks } from '../../common/utils/takeout';
 import { addDays, monthRangeOf, toBjIso, todayBj } from '../../common/utils/time';
 import { SupplierShare } from '../../database/entities/finance.entity';
 import { AdminUser, OperationLog } from '../../database/entities/system.entity';
@@ -627,24 +627,27 @@ export class SupplierAdminService {
     return `**** **** **** ${account.slice(-4)}`;
   }
 
+  /**
+   * 外卖链接出参（D33 · 原型 P33「外卖平台店铺链接配置」）
+   *
+   * ⚠️ M5-14：解析逻辑**已收敛到 `readTakeoutLinks()`**（`common/utils/takeout.ts`）——
+   *    用户端 U5 溯源要读**同一列**，两处各解析一遍就是本项目的招牌缺陷形状
+   *    （同一件事两份表述，不被执行的那一份必然悄悄错掉）。此处只做
+   *    「归一化结构 → 后台 DTO 字段名」的改名（`label` → `platformLabel`），不再持有规则。
+   *    「三个平台一律返回、未配置 configured=false」那条纪律现在住在 util 里。
+   */
   private takeoutLinksOut(s: Supplier) {
-    const raw = (s.takeoutLinks ?? {}) as Record<
-      string,
-      { url: string | null; shopId?: string | null }
-    >;
-    // ⚠️ 三个平台**一律返回**（未配置的 configured=false）——
-    //    前端要显示灰色「未入驻」而不是整行消失；筛掉未配置项会让「缺京东」这件事看不见。
-    const links = Object.values(TakeoutPlatform).map((p) => ({
-      platform: p,
-      platformLabel: TAKEOUT_PLATFORM_LABEL[p],
-      url: raw[p]?.url ?? null,
-      shopId: raw[p]?.shopId ?? null,
-      configured: !!raw[p]?.url,
-    }));
+    const read = readTakeoutLinks(s.takeoutLinks);
     return {
-      links,
-      recommended: (raw.__recommended?.url as string | undefined) ?? null,
-      configuredCount: links.filter((l) => l.configured).length,
+      links: read.links.map((l) => ({
+        platform: l.platform,
+        platformLabel: l.label,
+        url: l.url,
+        shopId: l.shopId,
+        configured: l.configured,
+      })),
+      recommended: read.recommended,
+      configuredCount: read.configuredCount,
     };
   }
 

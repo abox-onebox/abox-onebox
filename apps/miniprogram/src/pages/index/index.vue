@@ -188,7 +188,7 @@ import { ApiError } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
 import { buildUrl, navigateTo } from '@/utils/router';
-import { formatMealDateShort } from '@/utils/format';
+import { formatMealDateShort, dishEmoji } from '@/utils/format';
 import { ORDER_MAX_QUANTITY } from '@/constants';
 import { useLeaderStore } from '@/stores/leader';
 
@@ -246,12 +246,6 @@ const totalText = computed(() =>
 const canPickQuantity = computed(
   () => Boolean(daily.value?.canOrder) && !daily.value?.existingOrderNo,
 );
-
-/** 菜品分类 → 原型图标（main 荤 / half 半荤 / veg 素 / soup 汤）；category 可空 → 兜底 🍱 */
-function dishEmoji(category: string | null): string {
-  const map: Record<string, string> = { main: '🍛', half: '🍳', veg: '🥦', soup: '🍲' };
-  return (category && map[category]) ?? '🍱';
-}
 
 function decQty(): void {
   if (quantity.value > 1) quantity.value -= 1;
