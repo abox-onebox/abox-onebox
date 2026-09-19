@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { LEADER_LEVEL_META, LeaderLevel, resolveLevel } from '@abox/shared-types';
 
+import { BizConfigService } from '../../common/services/biz-config.service';
+
 /** L16 出参的单级规则 */
 export interface LevelRuleItem {
   key: LeaderLevel;
@@ -27,27 +29,48 @@ export const LEADER_LEVEL_LADDER: readonly LeaderLevel[] = [
  * 团长等级服务（C2）
  *
  * ⚠️ 口径唯一来源 = `@abox/shared-types` 的 `LEADER_LEVEL_META` 与 `resolveLevel`。
- *    服务端**不重复定义**费率与门槛 —— 端上也要展示同一套规则，双份定义必然漂移。
- *    费率最终以 `ab_config.commission.rate.*` 为准（运营可调），本服务只做**规则呈现与判定**。
+ *    服务端**不重复定义**门槛 —— 端上也要展示同一套规则，双份定义必然漂移。
+ *
+ * ## ⭐ 费率：真源是 `ab_config.commission.rate.*`，常量只作**出厂兜底**（M5-13 收口）
+ *
+ * 本文件原先把「门槛」与「费率」当成同一种东西（都取自 `LEADER_LEVEL_META`），
+ * 而注释里又写着「费率最终以 `ab_config` 为准（运营可调）」—— **注释与实现不一致**，
+ * 且是**只在钱上体现**的那种不一致。收口后两类值各走各的路：
+ *   · **门槛**（月单 / 介绍人数）→ `LEADER_LEVEL_META`（不可运营配置，C2 锁定）
+ *   · **费率** → `BizConfigService.commissionRate(level)`（读配置，常量兜底）
+ *
+ * ⚠️ 与写入侧必须**同源**：`ab_team_leader.commission_rate` 的 4 个写点
+ * （L17 建档 / D20 任命 / D21 改等级 / 晋级审计）也都走 `commissionRate(level)`。
+ * 任何一处改回常量，都会让「改配置只影响一半路径」——**两边都不报错**的那种分叉。
  */
 @Injectable()
 export class LeaderLevelService {
   private readonly logger = new Logger(LeaderLevelService.name);
 
-  /** L16 · 4 级佣金规则 + C2 双条件门槛 */
-  rules(): LevelRuleItem[] {
-    return LEADER_LEVEL_LADDER.map((key) => {
-      const meta = LEADER_LEVEL_META[key];
-      return {
-        key,
-        name: `${meta.label}团长`,
-        rate: meta.rate,
-        condition:
-          key === LeaderLevel.TRAINEE
-            ? '提交申请即生效'
-            : `月单 > ${meta.monthlyOrders} 且 介绍 ${meta.referrals} 名转正团长`,
-      };
-    });
+  constructor(private readonly bizConfig: BizConfigService) {}
+
+  /**
+   * L16 · 4 级佣金规则 + C2 双条件门槛
+   *
+   * ⚠️ `rate` 走配置（真源），**不是** `LEADER_LEVEL_META.rate`（出厂兜底）。
+   * 故本方法必须是 async —— 同步版本无法读配置，只能退回常量，
+   * 那正是「改了配置、页面显示不变」的来源。
+   */
+  async rules(): Promise<LevelRuleItem[]> {
+    return Promise.all(
+      LEADER_LEVEL_LADDER.map(async (key) => {
+        const meta = LEADER_LEVEL_META[key];
+        return {
+          key,
+          name: `${meta.label}团长`,
+          rate: await this.bizConfig.commissionRate(key),
+          condition:
+            key === LeaderLevel.TRAINEE
+              ? '提交申请即生效'
+              : `月单 > ${meta.monthlyOrders} 且 介绍 ${meta.referrals} 名转正团长`,
+        };
+      }),
+    );
   }
 
   /**

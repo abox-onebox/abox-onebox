@@ -185,11 +185,16 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     type: 'percent',
     impact: 'commission',
     wiring: 'live',
-    description: 'C2 四级佣金之一。⚠️ 仅在**团长晋级 / 建档**时写入其 `commission_rate` 快照。',
+    description:
+      'C2 四级佣金之一。⚠️ 只在**写入团长费率快照的时刻**被读取（建档 / 后台任命 / 后台改等级 / 晋级审计），' +
+      '**不追溯**已存在的团长 —— 改它等于「此后新建/变更的团长按新费率」，不是「改历史账」。',
     unit: '%',
     min: 0,
     max: 100,
-    consumedBy: '`promotion.service` 晋级时写入团长费率快照',
+    consumedBy:
+      '`BizConfigService.commissionRate()` —— **等级→费率的唯一口**，消费点 4 处：' +
+      '`team-leader.service`（L17 建档/复职）· `leader-admin.service.rateOf()`（D20 任命 / D21 改等级）' +
+      '· `promotion.service`（晋级审计）· `LeaderLevelService.rules()`（L16 出参）',
   },
   {
     key: 'commission.rate.formal',
@@ -202,7 +207,10 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     unit: '%',
     min: 0,
     max: 100,
-    consumedBy: '`promotion.service` 晋级时写入团长费率快照',
+    consumedBy:
+      '`BizConfigService.commissionRate()` —— **等级→费率的唯一口**，消费点 4 处：' +
+      '`team-leader.service`（L17 建档/复职）· `leader-admin.service.rateOf()`（D20 任命 / D21 改等级）' +
+      '· `promotion.service`（晋级审计）· `LeaderLevelService.rules()`（L16 出参）',
   },
   {
     key: 'commission.rate.gold',
@@ -215,7 +223,10 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     unit: '%',
     min: 0,
     max: 100,
-    consumedBy: '`promotion.service` 晋级时写入团长费率快照',
+    consumedBy:
+      '`BizConfigService.commissionRate()` —— **等级→费率的唯一口**，消费点 4 处：' +
+      '`team-leader.service`（L17 建档/复职）· `leader-admin.service.rateOf()`（D20 任命 / D21 改等级）' +
+      '· `promotion.service`（晋级审计）· `LeaderLevelService.rules()`（L16 出参）',
   },
   {
     key: 'commission.rate.chief',
@@ -228,7 +239,10 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     unit: '%',
     min: 0,
     max: 100,
-    consumedBy: '`promotion.service` 晋级时写入团长费率快照',
+    consumedBy:
+      '`BizConfigService.commissionRate()` —— **等级→费率的唯一口**，消费点 4 处：' +
+      '`team-leader.service`（L17 建档/复职）· `leader-admin.service.rateOf()`（D20 任命 / D21 改等级）' +
+      '· `promotion.service`（晋级审计）· `LeaderLevelService.rules()`（L16 出参）',
   },
   {
     key: 'commission.min_withdraw',

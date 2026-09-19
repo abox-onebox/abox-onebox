@@ -11,6 +11,7 @@ import {
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
+import { BizConfigService } from '../../common/services/biz-config.service';
 import { LeaderMoneyService } from '../../common/services/leader-money.service';
 import { maskAccount } from '../../common/utils/crypto';
 import { money, toYuan } from '../../common/utils/money';
@@ -65,6 +66,13 @@ export class TeamLeaderService {
     private readonly message: MessageService,
     // M4-4：团长「余额 / 冻结 / 待入账佣金 / 累计已提现」的唯一真源读取口（#69）
     private readonly leaderMoney: LeaderMoneyService,
+    /**
+     * M5-13：**等级 → 费率** 的唯一真源口（`ab_config.commission.rate.*` · 常量兜底）。
+     * ⚠️ 建档/复职的费率必须与晋级审计、后台任命走**同一个口** ——
+     * 任何一处回退到 `LEADER_LEVEL_META[level].rate`，都会让「运营改了费率、
+     * 只有一部分路径生效」，而两边都不会报错。
+     */
+    private readonly bizConfig: BizConfigService,
   ) {}
 
   /**
@@ -90,7 +98,9 @@ export class TeamLeaderService {
     const invite = await this.inviteService.findByInvitee(userId);
     const inviterLeaderId = invite?.inviterLeaderId ?? null;
     const now = new Date();
-    const traineeRate = LEADER_LEVEL_META[LeaderLevel.TRAINEE].rate.toFixed(4);
+    // ⭐ M5-13：见习费率同样走配置真源（原本是 `LEADER_LEVEL_META[TRAINEE].rate` 常量）——
+    // 「建档」是费率快照的第一个写点，它读常量就意味着「运营改配置对新建档无效」。
+    const traineeRate = (await this.bizConfig.commissionRate(LeaderLevel.TRAINEE)).toFixed(4);
 
     const leader = await this.dataSource.transaction(async (manager) => {
       const leaderRepo = manager.getRepository(TeamLeader);
@@ -245,7 +255,7 @@ export class TeamLeaderService {
     );
 
     return {
-      levels: this.levelService.rules(),
+      levels: await this.levelService.rules(),
       mine: {
         effectiveLevel: leader.level,
         derivedLevel,

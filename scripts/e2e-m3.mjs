@@ -12833,6 +12833,168 @@ async function main() {
   }
 
   // ==========================================================================
+  // §37 M5-13「等级 → 费率」单一真相（真缺陷 · #63「两个真相」同族）
+  // ==========================================================================
+  //
+  // ## 收口前的事实（本批实测，不是推测）
+  // 「等级 → 费率」这个量在收口前有 **2 个来源、4 个消费点**：
+  //   · 读 `ab_config.commission.rate.*` —— 只有「自动晋级审计」一条路（`promotion.service`）
+  //   · 读常量 `LEADER_LEVEL_META[level].rate` —— 另外三条路（L17 建档 / D20·D21 后台改等级 /
+  //     L16 出参 `rules()`）
+  // 而 `config.specs.ts` 把四条费率键声明为 `wiring: 'live'`、`level.service` 的类注释还写着
+  // 「费率最终以 `ab_config` 为准（运营可调）」—— **声明与实现不一致**，
+  // 表现是「运营改了费率，只有 1/4 条路径生效」，而**两边都不报错**。
+  //
+  // ## 本节锁住的不变量
+  // 费率真源 = `ab_config.commission.rate.*`；`LEADER_LEVEL_META[level].rate` 只作**出厂兜底**。
+  // 判据**双向**（单向过不了下面第 3 组）：
+  //   ① 改配置 → **读取侧与写入侧都必须跟着变**（少了 = 那一条没接上）
+  //   ② 改回配置 → **必须都回到原值**（若实现是「读一次就缓存成常量」，①会过、②会红；
+  //      ② 的绿同时就是**本节夹具的复原证据**）
+  //   ③ 只改 gold → 其它三级**必须纹丝不动**（防「一个口返回同一个值」这种看似通过）
+  //
+  // ## 覆盖边界（如实标注）
+  // `team-leader.service`（L17 建档）与 `leader-admin` 的 D20 任命走的是**同一个 accessor /
+  // 同一个 `rateOf`**，本节不另造「新团长」夹具去逐一打点（造了要清理，且打的是同一段代码）。
+  // ⚠️ 费率**不追溯**已存在的团长快照是**设计**（与「涨价不追改历史订单」同口径）——
+  // 故本节只断言「变更时刻写入的值」，不断言历史团长被改写。
+  // ⚠️ 本节**必须排在 §34 之前**：§34 会停主线实例另起一台开启限流的服务。
+  // ==========================================================================
+  {
+    log('\n§37 M5-13「等级→费率」单一真相（配置为真源 · 常量仅作兜底）');
+
+    const putRate = (value) =>
+      call('PUT', '/admin/system/configs', {
+        token: adminToken,
+        body: { items: [{ key: 'commission.rate.gold', value }] },
+      });
+
+    // ---------------------------------------------------------- A. 夹具前态
+    const rateRows = readRows(
+      "SELECT config_key, config_value FROM ab_config WHERE config_key LIKE 'commission.rate.%' ORDER BY config_key",
+    );
+    const victim = readDb(
+      'SELECT id, level, commission_rate FROM ab_team_leader WHERE user_id = 1003 AND deleted_at IS NULL',
+    );
+    const lvTok = await userLogin('dev:1003');
+    assert(
+      rateRows.length === 4 && !!victim && victim.level !== 'gold' && !!lvTok.token,
+      '§37 夹具：4 条费率配置齐备 · 靶子团长（`dev:1003` 张磊）在职且等级不是 gold（改完能改回去）',
+      `配置=${rateRows.length} level=${victim?.level} token=${!!lvTok.token}`,
+    );
+
+    // ---------------------------------------------------------- B. 改配置（gold → 11%）
+    const w1 = await putRate('11');
+    const goldRow = readDb(
+      "SELECT config_value FROM ab_config WHERE config_key = 'commission.rate.gold'",
+    );
+    assert(
+      w1.body?.code === 0 && goldRow?.config_value === '0.1100',
+      '§37(B) 配置写入：百分数 `11` → 库内比率 `0.1100`（唯一换算点在 `config.service`）',
+      `code=${w1.body?.code} db=${goldRow?.config_value}`,
+    );
+
+    // ---------------------------------------------------------- C. 三条消费点都必须跟着变
+    const l16 = await call('GET', '/leader/level-rules', { token: lvTok.token });
+    const l16Gold = (l16.body?.data?.levels ?? []).find((x) => x.key === 'gold');
+    const l16Others = (l16.body?.data?.levels ?? [])
+      .filter((x) => x.key !== 'gold')
+      .map((x) => `${x.key}=${x.rate}`)
+      .join(',');
+    assert(
+      l16.body?.code === 0 && l16Gold?.rate === 0.11,
+      '⭐⭐ §37(C1) **L16 出参读配置**（`LeaderLevelService.rules()`）—— 收口前它读常量，' +
+        '于是「运营改了费率、端上等级表纹丝不动」；它是 `wiring: live` 声明里被漏掉的那条路径之一',
+      `code=${l16.body?.code} gold=${l16Gold?.rate}`,
+    );
+    assert(
+      l16Others === 'trainee=0.08,formal=0.09,chief=0.12',
+      '⭐ §37(C1b) **只改 gold，其它三级纹丝不动** —— 防「取费率的口退化成一个值」这种看起来通过的实现；' +
+        '同时也证明映射是**按等级**取的，不是「读到第一条配置就用」',
+      l16Others,
+    );
+
+    const d19 = await call('GET', '/admin/leaders?pageSize=1', { token: adminToken });
+    const optGold = (d19.body?.data?.levelOptions ?? []).find((x) => x.key === 'gold');
+    assert(
+      d19.body?.code === 0 &&
+        Number(optGold?.rate) === 0.11 &&
+        optGold?.rateText === '11%',
+      '⭐⭐ §37(C2) **D19 等级下拉读配置**（`leader-admin.levelOptions()`）—— 这一列是运营"看到"的费率：' +
+        '若它读常量，就会出现「写进去的费率变了、下拉里显示的没变」，而页面上看不出谁对',
+      `rate=${optGold?.rate} text=${optGold?.rateText}`,
+    );
+
+    const up = await call('PUT', `/admin/leaders/${Number(victim.id)}`, {
+      token: adminToken,
+      body: { level: 'gold', reason: '费率真源对账（e2e §37）' },
+    });
+    const victimGold = readDb('SELECT commission_rate FROM ab_team_leader WHERE id = ?', [
+      Number(victim.id),
+    ]);
+    // ⚠️ 口径：`ab_team_leader.commission_rate` 是 DECIMAL，sqlite 读回是 **number**（`0.11`），
+    // 不是 `ab_config.config_value` 那种 VARCHAR（`'0.1100'`）。这里必须按数值比、再 `toFixed(4)`
+    // 对齐四位小数（与本节 3107/3245 两处既有断言同口径）——否则会拿「字符串形状」当缺陷，
+    // 而真正的判据（0.11 ≠ 常量 0.10 ⇒ 确实读了配置）反倒被埋掉。
+    assert(
+      up.body?.code === 0 && Number(victimGold?.commission_rate).toFixed(4) === '0.1100',
+      '⭐⭐ §37(C3) **D21 改等级写入的费率读配置**（`leader-admin.rateOf()`）—— 这是「钱」的那条路：' +
+        '收口前它写常量，同一批里 `promotion.service` 写配置 ⇒ 同一次改等级，' +
+        '后台点出来的费率与自动晋级算出来的费率**可以不一样**，而两边都不报错',
+      `code=${up.body?.code} db=${victimGold?.commission_rate}`,
+    );
+
+    // ---------------------------------------------------------- D. 反证 + 复原（改回 10%）
+    const w2 = await putRate('10');
+    const goldRow2 = readDb(
+      "SELECT config_value FROM ab_config WHERE config_key = 'commission.rate.gold'",
+    );
+    const l16b = await call('GET', '/leader/level-rules', { token: lvTok.token });
+    const l16GoldB = (l16b.body?.data?.levels ?? []).find((x) => x.key === 'gold');
+    const d19b = await call('GET', '/admin/leaders?pageSize=1', { token: adminToken });
+    const optGoldB = (d19b.body?.data?.levelOptions ?? []).find((x) => x.key === 'gold');
+    assert(
+      w2.body?.code === 0 &&
+        goldRow2?.config_value === '0.1000' &&
+        l16GoldB?.rate === 0.1 &&
+        Number(optGoldB?.rate) === 0.1,
+      '⭐⭐ §37(D) **改回 10% 后两条读路径都回到 0.1** —— 这一条是「单向断言抓不到」的那一半：' +
+        '若实现把「第一次读到的费率」缓存成了常量，第 C 组会过、这里必红',
+      `db=${goldRow2?.config_value} l16=${l16GoldB?.rate} d19=${optGoldB?.rate}`,
+    );
+
+    const upBack = await call('PUT', `/admin/leaders/${Number(victim.id)}`, {
+      token: adminToken,
+      body: { level: String(victim.level), reason: '本节夹具复原（e2e §37）' },
+    });
+    const victimBack = readDb(
+      'SELECT level, commission_rate FROM ab_team_leader WHERE id = ?',
+      [Number(victim.id)],
+    );
+    assert(
+      upBack.body?.code === 0 &&
+        victimBack?.level === victim.level &&
+        Number(victimBack?.commission_rate) === Number(victim.commission_rate),
+      '⭐ §37(D2) **夹具复原并断言复原**：靶子团长的等级与费率回到本节前态 —— ' +
+        '不还原会把「被改过的等级/费率」留给后续重跑（费率直接决定后续节的佣金金额）',
+      `level=${victimBack?.level}/${victim.level} rate=${victimBack?.commission_rate}/${victim.commission_rate}`,
+    );
+
+    // 配置复原必须**逐键**核（只断言 gold 会漏掉「顺手改了别的键」）
+    const rateAfter = readRows(
+      "SELECT config_key, config_value FROM ab_config WHERE config_key LIKE 'commission.rate.%' ORDER BY config_key",
+    );
+    const sameRates =
+      JSON.stringify(rateAfter) === JSON.stringify(rateRows);
+    assert(
+      sameRates,
+      '⭐ §37(D3) **四条费率配置逐键回到本节前态**（双向断言：偏离集合必须**恰好**等于被改动的键）—— ' +
+        '少了 = 没改回来；多了 = 还有第二个写入点在动费率',
+      `before=${JSON.stringify(rateRows)} after=${JSON.stringify(rateAfter)}`,
+    );
+  }
+
+  // ==========================================================================
   // §34 M5-6 限流（收口报告 §二 P2-7：`10005` 从「有码无实现」到真生效）
   //
   // ⚠️ 本节**必须放在最后**，且**必须另起一台开启限流的实例**。两个理由：

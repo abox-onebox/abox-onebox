@@ -13,6 +13,7 @@ import {
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { LeaderMoneyService } from '../../common/services/leader-money.service';
+import { BizConfigService } from '../../common/services/biz-config.service';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { maskPhone } from '../../common/utils/crypto';
 import { toFen } from '../../common/utils/money';
@@ -83,6 +84,8 @@ export class LeaderAdminService {
     private readonly dataSource: DataSource,
     /** M4-4：已提现 / 待入账佣金 / 余额的唯一真源读取口（#69） */
     private readonly leaderMoney: LeaderMoneyService,
+    /** M5-13：**等级 → 费率** 的唯一真源口（`ab_config.commission.rate.*` · 常量兜底） */
+    private readonly bizConfig: BizConfigService,
   ) {}
 
   // ==========================================================================
@@ -148,7 +151,7 @@ export class LeaderAdminService {
       ...paginate(await this.decorateRoster(rows, actions), total, page, pageSize),
       view: 'roster',
       summary,
-      levelOptions: this.levelOptions(),
+      levelOptions: await this.levelOptions(),
       statusOptions: this.statusOptions(),
       actions,
     };
@@ -208,7 +211,7 @@ export class LeaderAdminService {
         days,
         byBuilding: this.countBy(listAll, 'buildingName'),
       },
-      levelOptions: this.levelOptions(),
+      levelOptions: await this.levelOptions(),
       statusOptions: this.statusOptions(),
       actions,
       notes: {
@@ -239,7 +242,7 @@ export class LeaderAdminService {
           groupId: b.buildingGroupId ?? null,
           status: b.status,
         })),
-      levels: this.levelOptions(),
+      levels: await this.levelOptions(),
       statuses: this.statusOptions(),
     };
   }
@@ -484,13 +487,15 @@ export class LeaderAdminService {
       }
 
       // 2) 被任命者建档 / 复职
+      // ⭐ M5-13：费率走配置真源（`rateOf` 已改为 async）—— 它是「费率快照」的第二个写点。
+      const appointedRate = await this.rateOf(level);
       const payload = {
         buildingId: dto.buildingId,
         phone: dto.phone,
         realName: dto.realName,
         floor: dto.floor ?? null,
         level,
-        commissionRate: this.rateOf(level),
+        commissionRate: appointedRate,
         levelUpdatedAt: now,
         status: LeaderStatus.ACTIVE,
         agreedAt: now,
@@ -554,7 +559,8 @@ export class LeaderAdminService {
     if (dto.level && dto.level !== leader.level) {
       const level = dto.level as LeaderLevel;
       leader.level = level;
-      leader.commissionRate = this.rateOf(level);
+      // ⭐ M5-13：同一入口（`rateOf` → 配置真源），不再是常量
+      leader.commissionRate = await this.rateOf(level);
       leader.levelUpdatedAt = new Date();
       changes.push(
         `等级 ${this.levelLabel(before.level)} → ${this.levelLabel(level)}` +
@@ -904,8 +910,24 @@ export class LeaderAdminService {
     return d >= from && d <= to;
   }
 
-  private rateOf(level: LeaderLevel): string {
-    return LEADER_LEVEL_META[level].rate.toFixed(4);
+  /**
+   * 等级 → 费率快照（**唯一入口** · M5-13 收口）
+   *
+   * ⚠️ 真源是 `ab_config.commission.rate.*`（运营在后台可调），
+   *    `LEADER_LEVEL_META[level].rate` 只作**出厂兜底**。
+   *
+   * 收口前这里是同步的常量版 —— 于是「后台手动改等级」（本文件）
+   * 与「自动晋级审计」（`promotion.service`）写入的费率**来自两个地方**：
+   * 运营改了配置，只有自动晋级那条路生效、后台改等级那条不变，而**两边都不报错**。
+   * 同族于 #63「两个真相」与 #79「声明 ↔ 实现无对账」。
+   *
+   * ⚠️ 返回**字符串**（`ab_team_leader.commission_rate` 是 DECIMAL(5,4) 的快照值）。
+   * ⚠️ **不追溯**：配置只影响此后写入的快照，已存在的团长费率保持不变 ——
+   *    「改配置」不是「改历史账」，与「涨价不追改历史订单」同一条口径。
+   */
+  private async rateOf(level: LeaderLevel): Promise<string> {
+    const rate = await this.bizConfig.commissionRate(level);
+    return (Number.isFinite(rate) ? rate : LEADER_LEVEL_META[level].rate).toFixed(4);
   }
 
   private levelLabel(level?: string | null): string {
@@ -917,16 +939,28 @@ export class LeaderAdminService {
     return LEADER_STATUS_LABEL[status as LeaderStatus] ?? String(status);
   }
 
-  private levelOptions(): Array<Record<string, unknown>> {
-    return Object.values(LeaderLevel).map((k) => ({
-      key: k,
-      label: LEADER_LEVEL_META[k].label,
-      rate: LEADER_LEVEL_META[k].rate,
-      rateText: `${(LEADER_LEVEL_META[k].rate * 100).toFixed(0)}%`,
-      /** C2 双条件（月单 + 介绍转正数）—— 前端只读展示，**不可编辑** */
-      monthlyOrders: LEADER_LEVEL_META[k].monthlyOrders,
-      referrals: LEADER_LEVEL_META[k].referrals,
-    }));
+  /**
+   * 等级下拉（D19 名录 / 申请流水 / D19 筛选器共用）
+   *
+   * ⚠️ `rate` **同样走配置真源**（M5-13）：这一列是运营在下拉里"看到"的费率，
+   *    若它读常量，就会出现「改了配置 → 写进去的费率变了、下拉里显示的没变」——
+   *    与写入侧同源才叫真的收口（另一半见 `rateOf`）。
+   */
+  private async levelOptions(): Promise<Array<Record<string, unknown>>> {
+    return Promise.all(
+      Object.values(LeaderLevel).map(async (k) => {
+        const rate = await this.bizConfig.commissionRate(k);
+        return {
+          key: k,
+          label: LEADER_LEVEL_META[k].label,
+          rate,
+          rateText: `${(rate * 100).toFixed(0)}%`,
+          /** C2 双条件（月单 + 介绍转正数）—— 前端只读展示，**不可编辑** */
+          monthlyOrders: LEADER_LEVEL_META[k].monthlyOrders,
+          referrals: LEADER_LEVEL_META[k].referrals,
+        };
+      }),
+    );
   }
 
   private statusOptions(): Array<Record<string, unknown>> {
