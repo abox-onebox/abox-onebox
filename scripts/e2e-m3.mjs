@@ -103,6 +103,19 @@
  *    避免与 §15/§16 以及 `e2e-m1` / `e2e-m2` 的写入互相污染 —— 那正是
  *    「单跑绿、串跑红」的典型来源（m2 的 L20/L22 会改 `ab_team_leader`）。
  *
+ * ## M5-16 工作台待办聚合新增（§38 · D66）
+ *   · D66 `GET /admin/dashboard/todos` —— 登录落点的四类待办计数 + 今日作业数字（`brief`）。
+ *                                          本节的判据是**逐条对外域端点对账**，不是「能返回 200」：
+ *                                          ① 退款待审 ↔ D40 `refunds?tab=pending`
+ *                                          ② 提现待审 ↔ D45 `withdrawals?status=pending`
+ *                                          ③ 明日漏排楼群 ↔ D1 `meal/matrix` 逐格数
+ *                                             （专盯 `status != 'cancelled'`：把停团算成「已排」会让
+ *                                              工作台显示已清空、而矩阵那格是空的，两边都不报错）
+ *                                          ④ 今日逾期 ↔ 送达时刻闸门：**自造夹具 + 翻转配置**双向验
+ *                                             （闸门关必须恒 0，闸门开必须等于未送达条数；用完清理）
+ *   · 角色矩阵：operator / finance / viewer 三者在 `/dashboard` 是共同菜单项 ⇒ 一律 code 0；
+ *               供应商 10003 · 小程序 token 10003 · 未登录 10002
+ *
  * ## 三类安全断言（这是本批次的核心价值）
  *   1. **主体隔离**：小程序 token 打 `/admin/*` → 10003；后台 token 打 `/orders` → 10002
  *      （两套账号表的 id 各自自增，不做隔离就是**静默越权**，见 jwt-auth.guard.ts）
@@ -13124,6 +13137,285 @@ async function main() {
       '⭐ §37(D3) **四条费率配置逐键回到本节前态**（双向断言：偏离集合必须**恰好**等于被改动的键）—— ' +
         '少了 = 没改回来；多了 = 还有第二个写入点在动费率',
       `before=${JSON.stringify(rateRows)} after=${JSON.stringify(rateAfter)}`,
+    );
+  }
+
+  // ==========================================================================
+  // §38 M5-16 工作台待办聚合（D66 · `GET /admin/dashboard/todos` · 登录落点）
+  //
+  // 本节的判据是**对账**，不是「能返回 200」。
+  // D66 存在的唯一理由，就是消灭「同一件事在前端再算一遍」—— 若它自己的数字
+  // 与各域列表页对不上，那它只是把漂移搬了个地方，而且**更隐蔽**：
+  // 卡片上永远只有一个数，没有第二处可比。故每条计数都要拿**另一个端点**验回来：
+  //   ① 退款待审     ↔ D40 `GET /admin/finance/refunds?tab=pending`（服务端同一状态集合：`applying`）
+  //   ② 提现待审     ↔ D45 `GET /admin/finance/withdrawals?status=pending`
+  //   ③ 明日漏排楼群 ↔ D1  `GET /admin/meal/matrix`（启用楼群数 − 明日有「未取消分配」的楼群数）
+  //   ④ 今日逾期     ↔ 送达时刻闸门（**自造夹具 + 翻转配置**双向验，见该段注释）
+  //
+  // ⚠️ 本节**必须排在 §34 之前**：§34 会停掉主线实例、另起一台开启了限流的服务。
+  // ==========================================================================
+  {
+    log('\n§38 M5-16 工作台待办聚合（D66 · 四个计数逐一对外域端点对账）');
+
+    const today38 = bjToday();
+    const tomorrow38 = addDaysStr(today38, 1);
+    const EXP38 = ['refundApplying', 'withdrawPending', 'tomorrowGroupsUnassigned', 'deliveriesLate'];
+    const read38 = async () => {
+      const r = await call('GET', '/admin/dashboard/todos', { token: adminToken });
+      const d = r.body?.data ?? {};
+      return { r, d, byKey: Object.fromEntries((d.items ?? []).map((i) => [i.key, i])) };
+    };
+
+    const t38 = await read38();
+
+    assert(
+      t38.r.body?.code === 0 && t38.d.items?.length === 4,
+      '§38(A) D66 返回 4 条待办 —— **count=0 也返回**：端上据此渲染「已清空」，' +
+        '少一条就再也分不清「今天确实没事」与「这一项忘了查」（后者正是静默失效的典型形态）',
+      `code=${t38.r.body?.code} n=${t38.d.items?.length}`,
+    );
+    assert(
+      JSON.stringify((t38.d.items ?? []).map((i) => i.key)) === JSON.stringify(EXP38),
+      '§38(A) 四条待办的 key 与**顺序**稳定（顺序即界面顺序，端上不再排序）',
+      (t38.d.items ?? []).map((i) => i.key).join(','),
+    );
+    assert(
+      (t38.d.items ?? []).every(
+        (i) =>
+          Number.isInteger(i.count) &&
+          i.count >= 0 &&
+          typeof i.path === 'string' &&
+          i.path.startsWith('/') &&
+          typeof i.hint === 'string' &&
+          i.hint.length > 0,
+      ),
+      '§38(A) 每条都带 `count`（非负整数）/ `path`（处理页）/ `hint`（口径说明）—— ' +
+        '`hint` 由服务端下发，端上不复制第二份口径文案（文案写两处，改一处必然漏一处）',
+      JSON.stringify(t38.d.items?.[0] ?? {}),
+    );
+    assert(
+      t38.d.businessDate === today38 && t38.d.tomorrowDate === tomorrow38,
+      '§38(A) `businessDate` / `tomorrowDate` 与北京时间同日口径一致 —— 用 UTC 日会让「明日漏排」在早上 8 点前后**跨日错位**（北京 09-16 07:00 的 UTC 日还是 09-15）',
+      `${t38.d.businessDate}/${t38.d.tomorrowDate} vs ${today38}/${tomorrow38}`,
+    );
+    assert(
+      t38.d.brief?.deliveryArrived <= t38.d.brief?.deliveryTotal,
+      '§38(A) `brief` 自洽：已送达 ≤ 今日配送单总数',
+      `${t38.d.brief?.deliveryArrived}/${t38.d.brief?.deliveryTotal}`,
+    );
+
+    // ---------------------------------------------------------- ① 退款待审 ↔ D40
+    const r40_38 = (
+      await call('GET', '/admin/finance/refunds?tab=pending&pageSize=1', { token: adminToken })
+    ).body?.data;
+    assert(
+      t38.byKey.refundApplying?.count === r40_38?.total,
+      '⭐ §38(①) **退款待审 ↔ D40 列表**：`tab=pending` 在服务端的状态集合就是 `[applying]`，' +
+        '两处必须是**同一个数**。这一条就是 D66 立项的全部理由 —— 卡片上的数必须能被点进去的那张列表验回来',
+      `d66=${t38.byKey.refundApplying?.count} d40.total=${r40_38?.total}`,
+    );
+
+    // ---------------------------------------------------------- ② 提现待审 ↔ D45
+    const w45_38 = (
+      await call('GET', '/admin/finance/withdrawals?status=pending&pageSize=1', {
+        token: adminToken,
+      })
+    ).body?.data;
+    assert(
+      t38.byKey.withdrawPending?.count === w45_38?.total,
+      '⭐ §38(②) **提现待审 ↔ D45 列表**（`status=pending`）—— 同上：同一件事两份表述必须相等',
+      `d66=${t38.byKey.withdrawPending?.count} d45.total=${w45_38?.total}`,
+    );
+
+    // ---------------------------------------------------------- ③ 明日漏排 ↔ D1 矩阵
+    const m1_38 = (
+      await call('GET', `/admin/meal/matrix?startDate=${tomorrow38}&endDate=${tomorrow38}`, {
+        token: adminToken,
+      })
+    ).body?.data;
+    const assigned38 = (m1_38?.cells ?? []).filter((c) => c.status && c.status !== 'cancelled')
+      .length;
+    const expectUnassigned38 = Math.max(0, (m1_38?.stats?.groupCount ?? 0) - assigned38);
+    assert(
+      t38.d.brief?.tomorrowGroupsTotal === m1_38?.stats?.groupCount,
+      '⭐ §38(③) **明日启用楼群数 ↔ D1 矩阵 `stats.groupCount`**（同一个「启用楼群」定义）',
+      `d66=${t38.d.brief?.tomorrowGroupsTotal} d1=${m1_38?.stats?.groupCount}`,
+    );
+    assert(
+      t38.byKey.tomorrowGroupsUnassigned?.count === expectUnassigned38,
+      "⭐⭐ §38(③b) **明日未排套餐的楼群数 ↔ D1 矩阵逐格数**（矩阵里「明日有未取消分配」的格子一减）。" +
+        "⚠️ 这一条专门盯 `status != 'cancelled'`：把停团（cancelled）的楼群算成「已排」是最容易写错的一处 —— " +
+        '写错的表现是「工作台显示已清空、而矩阵里那格是空的」，两份口径打架且**两边都不报错**',
+      `d66=${t38.byKey.tomorrowGroupsUnassigned?.count} 期望=${expectUnassigned38}（启用 ${m1_38?.stats?.groupCount} · 已排 ${assigned38}）`,
+    );
+
+    // ---------------------------------------------------------- ④ 送达时刻闸门（自造夹具）
+    /**
+     * ⭐ ④ 的做法：先让「今日至少有一条未送达的配送单」成立，再**翻转送达时刻配置**，
+     *    看卡片是否跟着闸门开合。
+     *
+     * 为什么不直接断言 `count === deliveryTotal − deliveryArrived`：那是**复述实现**
+     * （实现就是这么算的），必然恒绿、毫无鉴别力。要让这条有鉴别力，必须让**两侧都能变**：
+     *   · 闸门**关**（送达时刻改成 `23:59`，晚于注入的 `20:00`）⇒ 必须恒 0；
+     *   · 闸门**开**（改回 `11:30`）⇒ 必须等于「未送达条数」。
+     * 而基础种子是**零订单**（今日未送达条数 = 0）⇒ 两个分支都是 0，
+     * 测试看起来绿、实际什么都没验（恒绿的检查比没有检查更糟），故必须先造夹具。
+     */
+    const ARRIVAL_KEY = 'set_meal.delivery_arrival_time';
+    const cfg38 = async () => {
+      const r = await call('GET', '/admin/system/configs', { token: adminToken });
+      const items = (r.body?.data?.groups ?? []).flatMap((g) => g.items ?? []);
+      return Object.fromEntries(items.map((i) => [i.key, i]));
+    };
+    const arrivalBefore38 = (await cfg38())[ARRIVAL_KEY]?.value;
+
+    // 夹具（一）：优先**自造** —— 挑一个今日还没有配送单的启用楼群
+    const freeGroup38 =
+      readDb(
+        'SELECT g.id AS id FROM ab_building_group g WHERE g.status = 1 AND g.deleted_at IS NULL ' +
+          'AND NOT EXISTS (SELECT 1 FROM ab_delivery_record d WHERE d.meal_date = ? AND d.building_group_id = g.id) ' +
+          'ORDER BY g.id LIMIT 1',
+        [today38],
+      )?.id ?? null;
+    let created38 = null;
+    let borrowed38 = null;
+    if (freeGroup38) {
+      writeDb(
+        'INSERT INTO ab_delivery_record (meal_date, building_group_id, expected_at, total_quantity, status, version, created_at, updated_at) ' +
+          'VALUES (?, ?, ?, 1, ?, 0, ?, ?)',
+        [
+          today38,
+          freeGroup38,
+          `${today38} 11:30:00.000`,
+          'pending',
+          `${today38} 07:00:00.000`,
+          `${today38} 07:00:00.000`,
+        ],
+      );
+      created38 =
+        readDb('SELECT id FROM ab_delivery_record WHERE meal_date = ? AND building_group_id = ?', [
+          today38,
+          freeGroup38,
+        ])?.id ?? null;
+    } else {
+      // 夹具（二）：今日配送单已铺满（前面的节跑过补跑）⇒ **借用**一条并记住原状态
+      const row38 =
+        readDb(
+          "SELECT id, status FROM ab_delivery_record WHERE meal_date = ? AND status != 'arrived' ORDER BY id LIMIT 1",
+          [today38],
+        ) ??
+        readDb('SELECT id, status FROM ab_delivery_record WHERE meal_date = ? ORDER BY id LIMIT 1', [
+          today38,
+        ]);
+      if (row38) {
+        borrowed38 = row38;
+        if (row38.status === 'arrived') {
+          writeDb("UPDATE ab_delivery_record SET status = 'pending' WHERE id = ?", [row38.id]);
+        }
+      }
+    }
+
+    const open38 = await read38();
+    const rawLate38 = open38.d.brief.deliveryTotal - open38.d.brief.deliveryArrived;
+    assert(
+      rawLate38 > 0,
+      '§38(④·前提) 库里确有「今日未送达」的配送单（本节自造/借用夹具）—— 这一步不成立，下面的闸门断言就没有鉴别力',
+      `未送达=${rawLate38}（今日共 ${open38.d.brief.deliveryTotal} · 已送达 ${open38.d.brief.deliveryArrived}）`,
+    );
+    assert(
+      open38.byKey.deliveriesLate?.count === rawLate38,
+      '⭐⭐ §38(④·闸门开) 送达时刻**已过**时的口径：e2e 注入 `ABOX_SHIFT_TO_HOUR=20`（⇒ 已过 11:30），' +
+        '「今日逾期未送达」必须**恰好等于** `deliveryTotal − deliveryArrived`',
+      `late=${open38.byKey.deliveriesLate?.count} 期望=${rawLate38}`,
+    );
+
+    // 翻转：送达时刻推到注入时刻（20:00）之后 ⇒ 闸门关闭
+    await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: ARRIVAL_KEY, value: '23:59' }] },
+    });
+    const closed38 = await read38();
+    assert(
+      closed38.byKey.deliveriesLate?.count === 0,
+      '⭐⭐ §38(④·闸门关) 把送达时刻改到 **23:59**（晚于注入的 20:00）后，「逾期」必须**恒为 0** —— ' +
+        '这一条是「闸门真的接了时间轴」与「恒定返回 0」之间**唯一**的分界：' +
+        '上午就报红的待办卡一周内会被学会无视（同 `ops-daily.sh` 的「恒红的检查等于没有检查」），' +
+        '而永远为 0 则是另一头（真逾期那天也没人看）',
+      `late=${closed38.byKey.deliveriesLate?.count}（库内未送达=${rawLate38}）`,
+    );
+
+    // 复原：送达时刻 + 夹具（复原**必须有断言**）
+    await call('PUT', '/admin/system/configs', {
+      token: adminToken,
+      body: { items: [{ key: ARRIVAL_KEY, value: arrivalBefore38 ?? '11:30' }] },
+    });
+    const arrivalAfter38 = (await cfg38())[ARRIVAL_KEY]?.value;
+    const restored38 = await read38();
+    assert(
+      restored38.byKey.deliveriesLate?.count === rawLate38 &&
+        arrivalAfter38 === (arrivalBefore38 ?? '11:30'),
+      '§38(④·复原) 送达时刻配置与卡片值都回到本节前态 —— 不还原会把「23:59」留给后续重跑：' +
+        '送达时刻不只喂这一张卡，它还写配送单 `expected_at`，污染面比「一张卡显示错」大得多',
+      `late=${restored38.byKey.deliveriesLate?.count}/${rawLate38} arrival=${arrivalAfter38}/${arrivalBefore38}`,
+    );
+
+    if (created38) writeDb('DELETE FROM ab_delivery_record WHERE id = ?', [created38]);
+    if (borrowed38 && borrowed38.status === 'arrived') {
+      writeDb("UPDATE ab_delivery_record SET status = 'arrived' WHERE id = ?", [borrowed38.id]);
+    }
+    assert(
+      created38 === null ||
+        readDb('SELECT id FROM ab_delivery_record WHERE id = ?', [created38]) === null,
+      '§38(④·夹具清理) 自造的配送单已删除 —— `uk_delivery_date_group` 是**唯一索引**，' +
+        '留着会让下一次重跑选不中那个楼群（症状是「本节偶发红」而因果关系极难建立）',
+      `自造 id=${created38} · 借用 id=${borrowed38?.id ?? '无'}`,
+    );
+
+    // ---------------------------------------------------------- 角色矩阵（菜单授权 ↔ 接口授权同源）
+    const s38Op = `e2e_s38op_${stamp}`;
+    const s38View = `e2e_s38view_${stamp}`;
+    await call('POST', '/admin/system/accounts', {
+      token: adminToken,
+      body: { username: s38Op, password: PWD, role: 'operator', realName: 'e2e 工作台运营' },
+    });
+    await call('POST', '/admin/system/accounts', {
+      token: adminToken,
+      body: { username: s38View, password: PWD, role: 'viewer', realName: 'e2e 工作台只读' },
+    });
+    const op38 = (await adminLogin(s38Op, PWD)).token;
+    const view38 = (await adminLogin(s38View, PWD)).token;
+    const fin38 = (await adminLogin('finance', 'finance123')).token;
+    const sup38 = await adminLogin('sanweiwu', 'supplier123');
+    const guest38 = await userLogin(`e2e_s38_${stamp}`);
+
+    for (const [role38, token38] of [
+      ['operator', op38],
+      ['finance', fin38],
+      ['viewer', view38],
+    ]) {
+      assert(
+        (await call('GET', '/admin/dashboard/todos', { token: token38 })).body?.code === 0,
+        `§38(角色) D66 对 \`${role38}\` **必须**开放 —— \`/dashboard\` 是五个运营角色的**共同菜单项**（登录落点），` +
+          '把哪个角色漏在白名单外，他登录后的**第一屏**就全是 10003（「菜单能点、点了报无权限」，' +
+          '最容易被当成 bug 的一类不一致）。端上仍按可见菜单过滤卡片，但那是**渲染纪律**，不是安全边界',
+        '',
+      );
+    }
+    assert(
+      (await call('GET', '/admin/dashboard/todos', { token: sup38.token })).body?.code === 10003,
+      '§38(角色) 供应商 token 打 `/admin/dashboard/*` → 10003 —— `/dashboard` 这个 key 在 `SUPPLIER_MENU_KEYS` 里**也有**，' +
+        '但那是**供应商侧的概览**（另一个页面、另一套菜单），不是「同一个页面开了两个角色」',
+      '',
+    );
+    assert(
+      (await call('GET', '/admin/dashboard/todos', { token: guest38.token })).body?.code === 10003,
+      '§38(角色) 小程序 token 打 `/admin/dashboard/*` → 10003（双主体隔离）',
+      '',
+    );
+    assert(
+      (await call('GET', '/admin/dashboard/todos')).body?.code === 10002,
+      '§38(角色) 未登录 → 10002',
+      '',
     );
   }
 

@@ -23,6 +23,9 @@ import { FinanceModule } from './modules/finance/finance.module';
 import { MessageModule } from './modules/message/message.module';
 import { StatsModule } from './modules/stats/stats.module';
 import { AdminModule } from './modules/admin/admin.module';
+// M5-16：登录落点 `/dashboard` 的待办聚合（D66）—— 跨域只读聚合，故单起一模块
+// （不是系统管理域、也不属于任何单一业务域；理由见 `dashboard.module.ts` 头注释）
+import { DashboardModule } from './modules/admin/dashboard/dashboard.module';
 import { TasksModule } from './tasks/tasks.module';
 import { QueuesModule } from './queues/queues.module';
 import { HealthController } from './health/health.controller';
@@ -53,6 +56,9 @@ import { HealthController } from './health/health.controller';
     MessageModule,
     StatsModule,
     AdminModule,
+    // 工作台聚合（D66 · M5-16）：放最后 —— 它是纯读、无副作用，
+    // 且注册顺序不参与任何 DI 解析（模块间无相互依赖）。
+    DashboardModule,
 
     // 定时任务（8 个）与队列消费者（3 个）
     TasksModule,

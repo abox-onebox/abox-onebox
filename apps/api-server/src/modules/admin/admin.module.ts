@@ -30,6 +30,10 @@ import { OperationLogService } from './operation-log/operation-log.service';
  *   · `modules/finance/refund-admin.controller.ts`    → D40–D42 退款审批（C6 收口）
  *   · `modules/finance/supplier-share-admin.controller.ts` → D36–D37 应付结算（M3-9）
  *   · `modules/stats/stats-admin.controller.ts`       → D47–D50 数据统计（**已落点** · M3-11）
+ *   · `modules/admin/dashboard/dashboard.controller.ts` → D66 工作台待办聚合（**已落点** · M5-16）
+ *     ⚠️ 它**不在本模块**（本模块只管系统管理域）：D66 是跨域只读聚合，按 `StatsModule` 先例
+ *        单起 `DashboardModule`，注册在 `app.module.ts`。此行列出来是为了让「落点清单」完整 ——
+ *        清单漏一行，下一个人就会在这里再建一份。
  *   · 财务其余端点（D33–D35 / D38–D39 / D43–D44）    → **待落点**（P34 资金总览 / 佣金 / 对账）
  *   · 通知模板（D59–D60）                            → **已落点**（P36 · M3-12，本文件内 AdminController）
  *
