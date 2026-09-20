@@ -148,6 +148,25 @@ export interface CreateTemplatePayload {
   sourceSetMealId?: number;
 }
 
+/**
+ * D7b 编辑模板（M5-15 新增）
+ *
+ * ⚠️ 字段语义：**不传 = 不改**；传 `null` = **清空**（仅 `oneLiner` / `description` / `coverUrl`）。
+ * ⚠️ `price` 与 `items` 在「该模板已被未取消的分配引用」时会被服务端拒（`30019`）——
+ *    界面应按 `usedCount` 先禁用这两个入口，别让运营白填一遍。
+ */
+export interface UpdateTemplatePayload {
+  name?: string;
+  price?: number;
+  oneLiner?: string | null;
+  description?: string | null;
+  coverUrl?: string | null;
+  /** 1 启用 / 0 停用 */
+  status?: number;
+  /** **整组替换**（不是增量）；须满足「一饭四菜」 */
+  items?: Array<{ dishId: number; slot: number }>;
+}
+
 /** 菜品选择器（D7 编排页候选菜品） */
 export interface DishOption {
   id: number;
@@ -163,7 +182,16 @@ export interface DishOption {
 
 export interface DishOptions {
   /** 档位选项由服务端给出 —— 端上不维护第二份「1=主荤…」映射 */
-  slots: Array<{ value: number; label: string }>;
+  slots: Array<{
+    value: number;
+    label: string;
+    /** 属于「一饭四菜」的四个菜位（必选） */
+    required: boolean;
+    /** 主食档 —— **不作为菜品项**，界面只做只读说明 */
+    isStaple: boolean;
+  }>;
+  /** 「一饭四菜」构成判据（提示文案与提交前自检共用同一句） */
+  composition: { requiredSlots: number[]; stapleSlot: number; rule: string };
   list: DishOption[];
   total: number;
 }
@@ -218,6 +246,20 @@ export function fetchMealTemplates(
 /** D7 存为模板（入参不含 supplierId / costPrice —— 由菜品反查与求和） */
 export function createMealTemplate(payload: CreateTemplatePayload): Promise<SetMealTemplateRow> {
   return http.post<SetMealTemplateRow>('/admin/meal/templates', payload);
+}
+
+/**
+ * D7b 编辑模板（M5-15 新增）
+ *
+ * 此前模板库**只增不改** —— 建错了只能"再建一条"，模板库只涨不消。
+ * 服务端会对「已排期」的模板冻结 `items` / `price`（`30019`，回带
+ * `data.usedCount` / `data.assignmentDates`）；名称与上下架状态不受限。
+ */
+export function updateMealTemplate(
+  id: number,
+  payload: UpdateTemplatePayload,
+): Promise<SetMealTemplateRow> {
+  return http.put<SetMealTemplateRow>(`/admin/meal/templates/${id}`, payload);
 }
 
 /** 菜品选择器 */

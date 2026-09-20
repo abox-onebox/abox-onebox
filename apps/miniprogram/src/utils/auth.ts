@@ -11,17 +11,22 @@ import { login } from '@/api/auth';
 import type { LoginResult } from '@/api/auth';
 import { useUserStore } from '@/stores/user';
 import { useLeaderStore } from '@/stores/leader';
+import { currentDevCode } from '@/utils/dev-identity';
 
 /**
  * 取微信登录 code
  *
- * ⚠️ demo（非 production）模式直接返回固定 `dev:<userId>`：
+ * ⚠️ demo（非 production）模式直接返回 `currentDevCode()`：
  *    `PROVIDER_MODE=mock` 时服务端据此后定 openid，
  *    从而「反复登录同一账号」成为可能 —— 否则每次 `uni.login` 都是新用户，
  *    本地根本无法验证「同一天重复下单」这类业务规则。
+ *
+ * ⭐ M5-15：`currentDevCode()` = 本地身份记录 ?? `ENV.wxDevLoginCode`（默认 `dev:1001`）。
+ *    于是 `?devCode=1002` 可以**在同一台设备上换成另一个人**（见 `utils/dev-identity.ts`
+ *    —— 此前写死 `ENV.wxDevLoginCode`，导致"怎么退出重注册都还是李明"）。
  */
 export function fetchWxCode(): Promise<string> {
-  if (ENV.demoMode) return Promise.resolve(ENV.wxDevLoginCode);
+  if (ENV.demoMode) return Promise.resolve(currentDevCode());
 
   return new Promise<string>((resolve, reject) => {
     uni.login({

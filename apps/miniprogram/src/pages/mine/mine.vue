@@ -184,7 +184,17 @@ const monthCommissionFen = ref<number | null>(null);
 const monthQuantity = ref<number | null>(null);
 const pendingDeliverQty = ref<number | null>(null);
 
-const nickname = computed(() => userStore.info?.nickname || me.value?.nickname || '微信用户');
+/**
+ * ⭐ M5-15 修复（**身份不一致第二条**）：**服务端快照优先**。
+ *
+ * 原写法 `userStore.info?.nickname || me.value?.nickname` 让**本地缓存**排在前面，
+ * 而本地缓存是上一次登录时写下的（`abox_user`），可能已经过期：
+ *   · 退出团长 / 后台改过昵称 → 服务端已变、本地还是旧值；
+ *   · 换身份重新登录（`?devCode=`）→ 上一帧渲染的仍是上一个人的缓存。
+ * `me` 是本次 A2（`GET /auth/me`）的**刚刚取回**的结果，权威性更高。
+ * 本地缓存只在 A2 未返回（首帧 / 请求失败）时兜底。
+ */
+const nickname = computed(() => me.value?.nickname || userStore.info?.nickname || '微信用户');
 const initials = computed(() => nickname.value.slice(0, 1));
 
 /** 「跟随团长：李明 · 国贸三期 A 座」（任一缺失就退化成已有信息，不显示 null） */

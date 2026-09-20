@@ -51,6 +51,16 @@ export const ADMIN_MENU_KEYS = [
   '/supplier/takeout-links',
   '/supplier/edit',
   '/supplier/dishes',
+  // ⚠️⚠️ M5-15 修复（**方向②：有入口但没授权**）：`/supplier/packing-center`（P39 加工场所
+  //    打包）自 M4-0 起就在前端 `ADMIN_NAV` 里有顶级入口、路由也在（`routes.ts:106`）、
+  //    后端控制器也在（`PackingAdminController` @ `admin/packing-tasks`），
+  //    **却从来没进过本清单** —— 于是该菜单项对**任何角色**都不显示
+  //    （`ADMIN_NAV` 才是渲染源，super_admin 的 `*` 也救不了），谁点了都进不去。
+  //    本文件 `:96` 的注释**早已把它写作菜单 key**（"菜单 key `/supplier/packing-center`"），
+  //    即「注释是对的、数组是漏的」—— 这正是"两份表述必有一份会错"的第四次实例。
+  //    `operator` 必须能看：控制器 `@Roles('super_admin','admin','operator')` 本来就有它，
+  //    菜单矩阵与 API 白名单必须同向，否则会变成"能调但进不去"（或反之）的诡异状态。
+  '/supplier/packing-center',
   '/finance/overview',
   '/finance/commission',
   '/finance/balance',

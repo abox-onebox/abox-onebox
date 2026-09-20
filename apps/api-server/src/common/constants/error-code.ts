@@ -154,6 +154,24 @@ export enum ErrorCode {
    * ⚠️ **也不复用 `30003`（订单状态机拒绝）**：那是订单域的话术，配送单没有「订单状态」。
    */
   DELIVERY_STATUS_ILLEGAL = 30018,
+  /**
+   * 扩展（M5-15）：套餐模板**已进入排期**，菜品与售价不能再改（D7b 编辑模板）
+   *
+   * 判据：该模板被**至少一个未取消的分配**（`ab_meal_assignment.status != 'cancelled'`）引用。
+   * 此时它已经是「某天某个楼群卖的那份饭」——
+   *   · 改 `items`：当天已上架的菜品构成会**追溯变化**（用户端看到的菜变了，
+   *     而供应商那边的备料量是照**旧构成**推的）→ 备料与菜单对不上；
+   *   · 改 `price`：`ab_set_meal.price` 是用户端「明日套餐」的**展示价**，
+   *     改一下就是同一份饭在同一天两个价。
+   *
+   * ⚠️ **刻意不复用 `30003`（订单状态机拒绝）**：那是订单域的话术；
+   *    也不复用 `30011`（分配已存在）—— 两者排查入口完全不同。
+   *    本码回带 `data.usedCount` 与 `data.assignmentDates`，运营据此知道
+   *    「被哪几天占着」，要么先取消那些分配，要么另存一条新模板。
+   * ⚠️ 名称 / 一句话介绍 / 描述 / 封面 / **上下架状态** 不受本闸门限制
+   *    （改名不影响任何人的备料与价格）。
+   */
+  MEAL_TEMPLATE_IN_USE = 30019,
 
   /** ---- 4xxxx 支付 / 退款 / 出款 ---- */
   PAY_CREATE_FAILED = 40001,
@@ -335,6 +353,8 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.DUPLICATE_ORDER]: '请勿重复下单',
   [ErrorCode.MEAL_NOT_PUBLISHED]: '该办公楼今日未开团',
   [ErrorCode.DELIVERY_STATUS_ILLEGAL]: '配送单当前状态不支持该推进（履约流只能向前）',
+  [ErrorCode.MEAL_TEMPLATE_IN_USE]:
+    '该套餐已排进某天的出餐计划，菜品与售价不能再改（可改名称，或另存为新模板）',
   [ErrorCode.BALANCE_AMOUNT_INVALID]: '余额抵扣金额不合法',
   [ErrorCode.LEADER_NOT_FOUND]: '团长不存在或已停用',
   [ErrorCode.MEAL_NOT_FOUND]: '套餐不存在',

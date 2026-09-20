@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { SET_MEAL_COMPOSITION } from '@abox/shared-utils';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
@@ -24,8 +25,12 @@ import {
   CreateSetMealTemplateDto,
   MATRIX_MAX_DAYS,
   MealMatrixQueryDto,
+  SET_MEAL_COMPOSITION_RULE,
+  SET_MEAL_REQUIRED_SLOTS,
+  SetMealItemInputDto,
   SetMealTemplateQueryDto,
   UpdateAssignmentDto,
+  UpdateSetMealTemplateDto,
 } from './dto/meal-admin.dto';
 import { SLOT_LABEL } from './dto/meal.dto';
 
@@ -678,43 +683,9 @@ export class MealAdminService {
    * `supplierId` 由菜品反查、`costPrice` 由菜品供价求和 —— 见 DTO 注释里的理由。
    */
   async createTemplate(dto: CreateSetMealTemplateDto, operatorId?: number) {
-    let plan: Array<{ dishId: number; slot: number }>;
-
-    if (dto.items?.length) {
-      plan = dto.items.map((i) => ({ dishId: i.dishId, slot: i.slot }));
-    } else if (dto.sourceSetMealId) {
-      const src = await this.setMealRepo.findOne({ where: { id: dto.sourceSetMealId } });
-      if (!src) throw new BizException(ErrorCode.MEAL_NOT_FOUND);
-      const srcItems = await this.itemRepo.find({ where: { setMealId: src.id } });
-      if (srcItems.length === 0) {
-        throw new BizException(ErrorCode.MEAL_NOT_FOUND, '被复制的套餐没有菜品明细');
-      }
-      plan = srcItems.map((i) => ({ dishId: i.dishId, slot: i.slot }));
-    } else {
-      throw new BizException(ErrorCode.PARAM_INVALID, 'items 与 sourceSetMealId 至少给一个');
-    }
-
-    // 同一道菜不允许重复出现（「两道素菜」可以是两道**不同**的素菜）
-    const dishIds = plan.map((p) => p.dishId);
-    if (new Set(dishIds).size !== dishIds.length) {
-      throw new BizException(ErrorCode.PARAM_INVALID, '同一道菜不能重复出现');
-    }
-
-    const dishes = await this.dishRepo.find({ where: { id: In(dishIds) } });
-    const dishMap = new Map(dishes.map((d) => [d.id, d]));
-    const missing = dishIds.filter((id) => !dishMap.has(id));
-    if (missing.length) {
-      throw new BizException(ErrorCode.MEAL_NOT_FOUND, `菜品不存在：${missing.join(', ')}`);
-    }
-    const offShelf = dishIds.filter((id) => dishMap.get(id)?.status !== 1);
-    if (offShelf.length) {
-      throw new BizException(ErrorCode.MEAL_NOT_FOUND, `菜品已下架：${offShelf.join(', ')}`);
-    }
-
+    const { plan, dishMap } = await this.resolvePlanAndDishes(dto.items, dto.sourceSetMealId);
     const price = dto.price ?? (await this.bizConfig.unitPriceYuan());
-    const costPrice = plan
-      .reduce((sum, p) => sum + Number(dishMap.get(p.dishId)?.costPrice ?? 0), 0)
-      .toFixed(2);
+    const costPrice = this.sumCost(plan, dishMap);
 
     const saved = await this.dataSource.transaction(async (m) => {
       const sm = await m.save(
@@ -729,18 +700,7 @@ export class MealAdminService {
           createdBy: operatorId ?? null,
         }),
       );
-      await m.save(
-        plan.map((p) =>
-          m.create(SetMealItem, {
-            setMealId: sm.id,
-            dishId: p.dishId,
-            supplierId: dishMap.get(p.dishId)!.supplierId,
-            // 分账单价 = 该菜品供价（C9：逐菜协商价，不再用供应商整体分成比例）
-            shareAmount: dishMap.get(p.dishId)!.costPrice,
-            slot: p.slot,
-          }),
-        ),
-      );
+      await m.save(this.buildItems(m, sm.id, plan, dishMap));
       return sm;
     });
 
@@ -748,6 +708,243 @@ export class MealAdminService {
       `新建套餐模板 #${saved.id}「${dto.name}」· ${plan.length} 项 · 成本 ¥${costPrice}`,
     );
     return this.templateView(saved, plan, dishMap);
+  }
+
+  // ==========================================================================
+  // D7b · 编辑模板（M5-15 新增）
+  // ==========================================================================
+
+  /**
+   * 编辑套餐模板 —— 展示类字段随时可改，**构成与售价在「已排期」时冻结**
+   *
+   * 「已排期」判据 = 该模板被**至少一个未取消的分配**引用
+   * （`ab_meal_assignment.status != 'cancelled'`）。理由与回带字段见 `30019` 的注释。
+   *
+   * ⚠️ 先查用度、再决定是否允许改构成 —— 顺序不能反：
+   *    否则「改成功了但当天菜单被追溯改掉」这件事不会报错。
+   */
+  async updateTemplate(id: number, dto: UpdateSetMealTemplateDto) {
+    const sm = await this.setMealRepo.findOne({ where: { id } });
+    if (!sm) throw new BizException(ErrorCode.MEAL_NOT_FOUND);
+
+    const touchesComposition = dto.items !== undefined || dto.price !== undefined;
+    const usage = touchesComposition ? await this.templateUsage(id) : null;
+    if (usage && usage.usedCount > 0) {
+      // 回带"被哪几天占着"，运营据此决定：先取消那些分配，或另存一条新模板。
+      // （BizException 第 4 参才是 payload；第 3 参是 httpStatus，故显式占位。）
+      throw new BizException(ErrorCode.MEAL_TEMPLATE_IN_USE, undefined, undefined, {
+        usedCount: usage.usedCount,
+        assignmentDates: usage.dates,
+      });
+    }
+
+    // ---- 展示类字段：不传 = 不改；传 null = 清空（仅限可空字段） ----
+    const patch: Partial<SetMeal> = {};
+    if (dto.name !== undefined) patch.name = dto.name;
+    if (dto.oneLiner !== undefined) patch.oneLiner = dto.oneLiner;
+    if (dto.description !== undefined) patch.description = dto.description;
+    if (dto.coverUrl !== undefined) patch.coverUrl = dto.coverUrl;
+    if (dto.status !== undefined) patch.status = dto.status;
+
+    // ---- 构成类字段：整组替换（不是增量），并重算成本 ----
+    let plan: Array<{ dishId: number; slot: number }> | null = null;
+    let dishMap: Map<number, Dish> | null = null;
+    if (dto.items !== undefined) {
+      const resolved = await this.resolvePlanAndDishes(dto.items, undefined);
+      plan = resolved.plan;
+      dishMap = resolved.dishMap;
+      patch.costPrice = this.sumCost(plan, dishMap);
+    }
+    if (dto.price !== undefined) patch.price = dto.price.toFixed(2);
+
+    if (Object.keys(patch).length === 0 && !plan) {
+      throw new BizException(ErrorCode.PARAM_INVALID, '没有需要修改的字段');
+    }
+
+    // 闭包里 narrowing 对 `let` 不成立 → 先固定成 const 再进事务
+    const nextPlan = plan;
+    const nextDishMap = dishMap;
+
+    const saved = await this.dataSource.transaction(async (m) => {
+      await m.update(SetMeal, id, patch);
+      if (nextPlan && nextDishMap) {
+        // 整组替换：先删后插（同一事务内，不会出现"一半新一半旧"的中间态）
+        await m.delete(SetMealItem, { setMealId: id });
+        await m.save(this.buildItems(m, id, nextPlan, nextDishMap));
+      }
+      return m.findOne(SetMeal, { where: { id } });
+    });
+    if (!saved) throw new BizException(ErrorCode.MEAL_NOT_FOUND);
+
+    // 未改构成时，明细要按**库里现存**的那一组回显（不能拿请求里的部分数据凑）
+    let viewPlan: Array<{ dishId: number; slot: number }> = plan ?? [];
+    if (!plan) {
+      const rows = await this.itemRepo.find({ where: { setMealId: id }, order: { slot: 'ASC' } });
+      viewPlan = rows.map((r) => ({ dishId: r.dishId, slot: r.slot }));
+    }
+    let viewDishMap: Map<number, Dish> = dishMap ?? new Map<number, Dish>();
+    if (!dishMap) {
+      const ids = [...new Set(viewPlan.map((p) => p.dishId))];
+      const dishes = ids.length ? await this.dishRepo.find({ where: { id: In(ids) } }) : [];
+      viewDishMap = new Map(dishes.map((d) => [d.id, d]));
+    }
+
+    this.logger.log(
+      `编辑套餐模板 #${id}「${saved.name}」· 改字段 [${[
+        ...Object.keys(patch),
+        ...(plan ? ['items'] : []),
+      ].join(', ')}]`,
+    );
+    return this.templateView(saved, viewPlan, viewDishMap);
+  }
+
+  /**
+   * 该模板被多少个**未取消的分配**引用，以及是哪些出餐日。
+   *
+   * ⚠️ 与 D6 模板库 `usedCount` 用**同一判据**（`status != 'cancelled'`）：
+   *    两处若各写一套，"列表显示 0 在用、编辑却报已被占用"这种矛盾迟早出现。
+   */
+  private async templateUsage(setMealId: number): Promise<{ usedCount: number; dates: string[] }> {
+    const rows = await this.assignmentRepo
+      .createQueryBuilder('a')
+      .select('a.meal_date', 'mealDate')
+      .where('a.set_meal_id = :id', { id: setMealId })
+      .andWhere('a.status != :c', { c: 'cancelled' })
+      .orderBy('a.meal_date', 'ASC')
+      .getRawMany<{ mealDate: string }>();
+    return { usedCount: rows.length, dates: rows.map((r) => r.mealDate) };
+  }
+
+  // ==========================================================================
+  // 私有 · 模板构成（新建 / 编辑**共用**，杜绝两处规则漂移）
+  // ==========================================================================
+
+  /**
+   * 归一化「菜品项从哪来」+ 三道校验，**一次性**返回 `plan` 与 `dishMap`。
+   *
+   * ⚠️ 两个调用点（D7 新建 / D7b 编辑）必须走同一份实现 ——
+   *    否则"新建时强制一饭四菜、编辑时却放行"这种漏洞迟早出现。
+   *
+   * ⚠️ **校验顺序是契约的一部分**（e2e 逐条断言它）：
+   *     ① 同一道菜重复       → `10001`（「两道素菜」得是两道**不同**的素菜）
+   *     ② 菜品不存在 / 已下架 → `30008`
+   *     ③ 一饭四菜构成       → `10001`
+   *    ① → ② → ③ 不能调换：请求里若有「不存在的菜」，
+   *    运营要看到的是"菜品不存在"，而不是被一句"缺了半荤"盖过去。
+   */
+  private async resolvePlanAndDishes(
+    items: SetMealItemInputDto[] | undefined,
+    sourceSetMealId: number | undefined,
+  ): Promise<{ plan: Array<{ dishId: number; slot: number }>; dishMap: Map<number, Dish> }> {
+    let plan: Array<{ dishId: number; slot: number }>;
+
+    if (items?.length) {
+      plan = items.map((i) => ({ dishId: i.dishId, slot: i.slot }));
+    } else if (sourceSetMealId) {
+      const src = await this.setMealRepo.findOne({ where: { id: sourceSetMealId } });
+      if (!src) throw new BizException(ErrorCode.MEAL_NOT_FOUND);
+      const srcItems = await this.itemRepo.find({ where: { setMealId: src.id } });
+      if (srcItems.length === 0) {
+        throw new BizException(ErrorCode.MEAL_NOT_FOUND, '被复制的套餐没有菜品明细');
+      }
+      plan = srcItems.map((i) => ({ dishId: i.dishId, slot: i.slot }));
+    } else {
+      throw new BizException(ErrorCode.PARAM_INVALID, 'items 与 sourceSetMealId 至少给一个');
+    }
+
+    // ① 同一道菜不允许重复出现
+    const dishIds = plan.map((p) => p.dishId);
+    if (new Set(dishIds).size !== dishIds.length) {
+      throw new BizException(ErrorCode.PARAM_INVALID, '同一道菜不能重复出现');
+    }
+
+    // ② 菜品必须存在且上架
+    const dishMap = await this.assertDishesUsable(plan);
+
+    // ③ 一饭四菜
+    this.assertComposition(plan);
+
+    return { plan, dishMap };
+  }
+
+  /**
+   * 「一饭四菜」机械判据（M5-15 · 此前**只写在文案与种子数据里**）
+   *
+   * 需求：恰好覆盖 `SET_MEAL_REQUIRED_SLOTS`（主荤 / 半荤 / 素菜 / 汤）**各一道**，
+   * 且**不得**出现 `slot=5`（主食米饭由集散中心统一供米，不建菜品项 ——
+   * 建了会把 ¥2 重复计进成本）。
+   *
+   * ⚠️ 本方法必须排在「重复菜」与「菜品存在性」**之后**调用
+   *    （顺序契约写在 `resolvePlanAndDishes` 的注释里）。
+   */
+  private assertComposition(plan: Array<{ dishId: number; slot: number }>): void {
+    const slots = plan.map((p) => p.slot);
+    const missing = SET_MEAL_REQUIRED_SLOTS.filter((s) => !slots.includes(s));
+    const extra = slots.filter((s) => !SET_MEAL_REQUIRED_SLOTS.includes(s));
+    if (missing.length || extra.length) {
+      const parts: string[] = [];
+      if (missing.length) {
+        parts.push(`缺少档位 ${missing.map((s) => SLOT_LABEL[s] ?? s).join(' / ')}`);
+      }
+      if (extra.length) {
+        parts.push(
+          `多了不允许的档位 ${[...new Set(extra)]
+            .map((s) => SLOT_LABEL[s] ?? s)
+            .join(' / ')}（主食米饭由集散中心统一供，不建菜品项）`,
+        );
+      }
+      throw new BizException(
+        ErrorCode.PARAM_INVALID,
+        `${SET_MEAL_COMPOSITION_RULE}。${parts.join('；')}。`,
+      );
+    }
+  }
+
+  /** 菜品存在性 + 上架状态校验，返回 id → 菜品 映射（新建 / 编辑共用） */
+  private async assertDishesUsable(
+    plan: Array<{ dishId: number; slot: number }>,
+  ): Promise<Map<number, Dish>> {
+    const dishIds = plan.map((p) => p.dishId);
+    const dishes = await this.dishRepo.find({ where: { id: In(dishIds) } });
+    const dishMap = new Map(dishes.map((d) => [d.id, d]));
+    const missing = dishIds.filter((id) => !dishMap.has(id));
+    if (missing.length) {
+      throw new BizException(ErrorCode.MEAL_NOT_FOUND, `菜品不存在：${missing.join(', ')}`);
+    }
+    const offShelf = dishIds.filter((id) => dishMap.get(id)?.status !== 1);
+    if (offShelf.length) {
+      throw new BizException(ErrorCode.MEAL_NOT_FOUND, `菜品已下架：${offShelf.join(', ')}`);
+    }
+    return dishMap;
+  }
+
+  /** 成本 = 各菜品供价求和（C9：逐菜协商价，不用供应商整体分成比例） */
+  private sumCost(
+    plan: Array<{ dishId: number; slot: number }>,
+    dishMap: Map<number, Dish>,
+  ): string {
+    return plan
+      .reduce((sum, p) => sum + Number(dishMap.get(p.dishId)?.costPrice ?? 0), 0)
+      .toFixed(2);
+  }
+
+  /** 构造待落库的明细行（`supplierId` / 分账单价均由菜品反查，不由前端提交） */
+  private buildItems(
+    m: EntityManager,
+    setMealId: number,
+    plan: Array<{ dishId: number; slot: number }>,
+    dishMap: Map<number, Dish>,
+  ): SetMealItem[] {
+    return plan.map((p) =>
+      m.create(SetMealItem, {
+        setMealId,
+        dishId: p.dishId,
+        supplierId: dishMap.get(p.dishId)!.supplierId,
+        // 分账单价 = 该菜品供价（C9：逐菜协商价）
+        shareAmount: dishMap.get(p.dishId)!.costPrice,
+        slot: p.slot,
+      }),
+    );
   }
 
   // ==========================================================================
@@ -781,7 +978,19 @@ export class MealAdminService {
 
     return {
       // 档位选项由服务端给出：端上不需要维护一份「1=主荤…」的映射（口径唯一）
-      slots: Object.entries(SLOT_LABEL).map(([value, label]) => ({ value: Number(value), label })),
+      // ⭐ M5-15：每项带上「是否必选 / 是否主食档」，后台据此把主食渲染成**只读说明**
+      //    而不是一个可选的菜品槽（主食由集散中心统一供，不建菜品项）。
+      slots: Object.entries(SLOT_LABEL).map(([value, label]) => {
+        const v = Number(value);
+        return {
+          value: v,
+          label,
+          required: (SET_MEAL_COMPOSITION.requiredSlots as readonly number[]).includes(v),
+          isStaple: v === SET_MEAL_COMPOSITION.stapleSlot,
+        };
+      }),
+      /** 「一饭四菜」构成判据（端上提示文案与提交前自检共用同一句） */
+      composition: SET_MEAL_COMPOSITION,
       list: dishes.map((d) => ({
         id: d.id,
         name: d.name,

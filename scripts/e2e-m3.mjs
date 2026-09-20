@@ -23,7 +23,11 @@
  *   · D5 `POST /admin/meal/assignments/copy` —— 不覆盖（skipped）；一律 pending；已截单跳过
  *   · D6 `/admin/meal/templates`           —— usedCount = 未取消分配数
  *   · D7 `POST /admin/meal/templates`      —— 成本 = 供价求和；supplierId 由菜品反查；重复菜 10001
- *   · 选择器 `/admin/meal/dishes` `/admin/meal/distribution-centers`
+ *   · D7 `一饭四菜`（M5-15 收紧）            —— 必须恰好覆盖档位 1/2/3/4 各一道；含 slot 5（主食）→ 10001；
+ *                                            校验优先级：重复菜 → 菜品不存在/下架 → 构成
+ *   · D7b `PUT /admin/meal/templates/:id`（M5-15 新增）—— 未排期可改全部；已排期改构成/售价 → 30019
+ *                                            （回带 usedCount / assignmentDates）；名称与 status 不受限
+ *   · 选择器 `/admin/meal/dishes` `/admin/meal/distribution-centers`（dishes 另回带 composition 与档位角色）
  *
  * ## M3-3 订单中心批次新增（§15）
  *   · D8 `GET  /admin/orders`              —— 全平台流 / 异常 Tab / 11 态过滤 / 关键词（号 + 昵称）/
@@ -1245,6 +1249,8 @@ async function main() {
   );
 
   // ---------------------------------------------------------- D7 存为模板
+  // ⚠️ M5-15：「一饭四菜」由**建议**变成**强制**（此前接口没有下界，2 项也能存）。
+  //    故本用例的入参从「2 项」改为「四个档位各一道」（红烧肉/半荤/时蔬/汤）。
   const newTpl = await call('POST', '/admin/meal/templates', {
     token: adminToken,
     body: {
@@ -1252,30 +1258,62 @@ async function main() {
       oneLiner: 'e2e 自动生成',
       items: [
         { dishId: 1, slot: 1 },
+        { dishId: 6, slot: 2 },
         { dishId: 4, slot: 3 },
+        { dishId: 7, slot: 4 },
       ],
     },
   });
   assert(
     newTpl.body?.code === 0 && !!newTpl.body?.data?.id,
-    'D7 存为模板成功',
-    `id=${newTpl.body?.data?.id} code=${newTpl.body?.code}`,
+    'D7 存为模板成功（一饭四菜）',
+    `id=${newTpl.body?.data?.id} code=${newTpl.body?.code} msg=${newTpl.body?.message}`,
   );
   assert(
-    newTpl.body?.data?.costPriceFen === 1050,
-    'D7 成本 = 各菜品**供价求和**（红烧肉 7.50 + 清炒时蔬 3.00 = 10.50）',
+    newTpl.body?.data?.costPriceFen === 1400,
+    'D7 成本 = 各菜品**供价求和**（红烧肉 7.50 + 半荤 1.50 + 清炒时蔬 3.00 + 汤 2.00 = 14.00）',
     `costPriceFen=${newTpl.body?.data?.costPriceFen}`,
   );
   assert(
-    newTpl.body?.data?.items?.[0]?.supplierId === 1 &&
-      newTpl.body?.data?.items?.[1]?.supplierId === 2,
-    'D7 supplierId 由菜品**反查**（红烧肉→供应商1 / 时蔬→供应商2），不由前端提交',
+    JSON.stringify((newTpl.body?.data?.items ?? []).map((i) => i.supplierId)) ===
+      JSON.stringify([1, 3, 2, 4]),
+    'D7 supplierId 由菜品**反查**（不由前端提交），且档位顺序与入参一致',
     `suppliers=${JSON.stringify(newTpl.body?.data?.items?.map((i) => i.supplierId))}`,
   );
   assert(
     newTpl.body?.data?.priceFen === 2580,
     'D7 未传 price → 回落系统配置售价（C1 锁定 ¥25.80）',
     `priceFen=${newTpl.body?.data?.priceFen}`,
+  );
+
+  // ---- 一饭四菜：缺档位 / 多出主食档 都要被拦 ----
+  const missingSlot = await call('POST', '/admin/meal/templates', {
+    token: adminToken,
+    body: { name: `E2E 缺档 ${stamp}`, items: [{ dishId: 1, slot: 1 }] },
+  });
+  assert(
+    missingSlot.body?.code === 10001 && /一饭四菜|缺少档位/.test(String(missingSlot.body?.message)),
+    'D7 「一饭四菜」强制：只给 1 道 → 10001 且说明缺哪个档位',
+    `code=${missingSlot.body?.code} msg=${missingSlot.body?.message}`,
+  );
+
+  const extraSlot = await call('POST', '/admin/meal/templates', {
+    token: adminToken,
+    body: {
+      name: `E2E 多档 ${stamp}`,
+      items: [
+        { dishId: 1, slot: 1 },
+        { dishId: 6, slot: 2 },
+        { dishId: 4, slot: 3 },
+        { dishId: 7, slot: 4 },
+        { dishId: 5, slot: 5 },
+      ],
+    },
+  });
+  assert(
+    extraSlot.body?.code === 10001 && /主食/.test(String(extraSlot.body?.message)),
+    'D7 「一饭四菜」强制：把米饭也建成一道菜 → 10001（主食由集散中心统一供，不建菜品项）',
+    `code=${extraSlot.body?.code} msg=${extraSlot.body?.message}`,
   );
 
   const dupDish = await call('POST', '/admin/meal/templates', {
@@ -1300,8 +1338,8 @@ async function main() {
   });
   assert(
     offShelfDish.body?.code === 30008,
-    'D7 菜品不存在 → 30008',
-    `code=${offShelfDish.body?.code}`,
+    'D7 菜品不存在 → 30008（**优先于**构成校验：不能拿"缺了半荤"盖住"菜都不存在"）',
+    `code=${offShelfDish.body?.code} msg=${offShelfDish.body?.message}`,
   );
 
   const cloneTpl = await call('POST', '/admin/meal/templates', {
@@ -1312,6 +1350,101 @@ async function main() {
     cloneTpl.body?.code === 0 && cloneTpl.body?.data?.dishCount === 4,
     'D7 用 sourceSetMealId 另存（复制其菜品明细）',
     `dishCount=${cloneTpl.body?.data?.dishCount}`,
+  );
+
+  // ---------------------------------------------------------- D7b 编辑模板（M5-15 新增）
+  // ① 未被排期引用的模板：构成 / 售价 / 展示类**全可改**
+  const editId = newTpl.body?.data?.id;
+  const edited = await call('PUT', `/admin/meal/templates/${editId}`, {
+    token: adminToken,
+    body: {
+      name: `E2E 套餐改 ${stamp}`,
+      price: 26.8,
+      oneLiner: null,
+      items: [
+        { dishId: 2, slot: 1 },
+        { dishId: 6, slot: 2 },
+        { dishId: 4, slot: 3 },
+        { dishId: 7, slot: 4 },
+      ],
+    },
+  });
+  assert(
+    edited.body?.code === 0 &&
+      edited.body?.data?.name === `E2E 套餐改 ${stamp}` &&
+      edited.body?.data?.priceFen === 2680 &&
+      edited.body?.data?.oneLiner === null,
+    'D7b 未被排期引用 → 可改名称 / 售价 / 构成（oneLiner 传 null = 清空）',
+    `code=${edited.body?.code} name=${edited.body?.data?.name} priceFen=${edited.body?.data?.priceFen} oneLiner=${edited.body?.data?.oneLiner}`,
+  );
+  assert(
+    edited.body?.data?.dishCount === 4 &&
+      edited.body?.data?.costPriceFen === 1500 &&
+      JSON.stringify((edited.body?.data?.items ?? []).map((i) => i.dishId)) ===
+        JSON.stringify([2, 6, 4, 7]),
+    'D7b items 是**整组替换**（不是增量）：4 项、成本按新菜重算（8.50+1.50+3.00+2.00=15.00）',
+    `dishCount=${edited.body?.data?.dishCount} cost=${edited.body?.data?.costPriceFen} dishes=${JSON.stringify(edited.body?.data?.items?.map((i) => i.dishId))}`,
+  );
+
+  // ② 已被排期引用的模板（种子模板 1 被 2 条未取消分配引用）：构成 / 售价冻结
+  const frozenItems = await call('PUT', '/admin/meal/templates/1', {
+    token: adminToken,
+    body: {
+      items: [
+        { dishId: 1, slot: 1 },
+        { dishId: 6, slot: 2 },
+        { dishId: 4, slot: 3 },
+        { dishId: 7, slot: 4 },
+      ],
+    },
+  });
+  assert(
+    frozenItems.body?.code === 30019 &&
+      Number(frozenItems.body?.data?.usedCount) >= 2 &&
+      Array.isArray(frozenItems.body?.data?.assignmentDates),
+    'D7b 已排期的模板改构成 → 30019，并回带 usedCount / assignmentDates（运营据此知道被哪几天占着）',
+    `code=${frozenItems.body?.code} data=${JSON.stringify(frozenItems.body?.data)}`,
+  );
+
+  const frozenPrice = await call('PUT', '/admin/meal/templates/1', {
+    token: adminToken,
+    body: { price: 9.9 },
+  });
+  assert(
+    frozenPrice.body?.code === 30019,
+    'D7b 已排期的模板改售价 → 30019（同一天同一份饭不能出现两个展示价）',
+    `code=${frozenPrice.body?.code}`,
+  );
+
+  // ③ 闸门**不过度**：展示类字段与上下架状态在已排期时仍可改
+  const metaOnly = await call('PUT', '/admin/meal/templates/1', {
+    token: adminToken,
+    body: { name: '红烧肉套餐', status: 1 },
+  });
+  assert(
+    metaOnly.body?.code === 0 && metaOnly.body?.data?.name === '红烧肉套餐',
+    'D7b 闸门只锁「构成 / 售价」：名称与 status 在已排期时仍可改（原值回写，不污染后续断言）',
+    `code=${metaOnly.body?.code} name=${metaOnly.body?.data?.name}`,
+  );
+
+  const editTemplateMissing = await call('PUT', '/admin/meal/templates/999999', {
+    token: adminToken,
+    body: { name: 'E2E 不存在' },
+  });
+  assert(
+    editTemplateMissing.body?.code === 30008,
+    'D7b 目标模板不存在 → 30008',
+    `code=${editTemplateMissing.body?.code}`,
+  );
+
+  const editNoField = await call('PUT', `/admin/meal/templates/${editId}`, {
+    token: adminToken,
+    body: {},
+  });
+  assert(
+    editNoField.body?.code === 10001,
+    'D7b 空请求体（没有任何要改的字段）→ 10001，而不是"成功但什么也没发生"',
+    `code=${editNoField.body?.code} msg=${editNoField.body?.message}`,
   );
 
   // ---------------------------------------------------------- 权限边界

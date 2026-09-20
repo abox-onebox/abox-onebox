@@ -192,18 +192,27 @@ export class AuthService {
     const account = leader ? await this.leaderMoney.accountOf(userId) : null;
 
     /**
-     * 楼栋名与团长名的取数口径：
-     *   · 绑定团长（`user.teamLeaderId`）优先 —— 用户「跟随」的是它；
-     *   · 没有绑定团长但自己是团长 → 退回「自己的办公楼」（`leader.buildingId`），
-     *     否则团长本人在 P8 上会看到「未绑定办公楼」。
-     * ⚠️ 两次查询合并成一次 `In([...])`：两个 id 常常相同，去重后再查，
-     *    `In` 列表长度恒 ≤ 2（SQLite 绑定变量上限 999 与本处无关，但保持习惯）。
+     * 「跟随团长」的取数口径（**M5-15 修订 · 原写法是一处身份错乱缺陷**）
+     *
+     * 判据**只认** `user.teamLeaderId` —— 它是「跟随谁」这件事唯一的存储。
+     *
+     * ⚠️ 原写法：`user.teamLeaderId ?? leader?.id ?? null`（"自己是团长就退回自己"）。
+     *    这条回退制造了**身份错乱**：团长退出后 `user.teamLeaderId` 已被置 null
+     *    （`team-leader.service.ts` 的退出分支），但 `ab_team_leader` 记录仍在
+     *    （status=2，**刻意留痕**、复职可复用）⇒ `leader` 非空 ⇒ 回退命中自己
+     *    ⇒ P8 显示「跟随团长：<自己的名字>」。
+     *    端上表现为：「退出团长 / 换号重新注册后，我的页面仍显示旧身份」。
+     *
+     * ⚠️ 办公楼名**不受影响**：`buildingId` 在下一行有**自己的**回退
+     *    （`user.buildingId ?? leader?.buildingId`），当初加这条回退所声称的理由
+     *    （"否则团长本人在 P8 上看到未绑定办公楼"）由 `buildingId` 那一路独立满足，
+     *    借团长名这条路是**不必要的**。故直接删除，不是"换个地方回退"。
      */
-    const effectiveLeaderId = user.teamLeaderId ?? leader?.id ?? null;
-    const followedLeader = effectiveLeaderId
-      ? effectiveLeaderId === leader?.id
-        ? leader
-        : await this.leaderRepo.findOne({ where: { id: effectiveLeaderId } })
+    const followedLeader = user.teamLeaderId
+      ? Number(user.teamLeaderId) === Number(leader?.id)
+        ? // 数据上确实"跟随自己"（自荐码自绑）—— 复用已查到的对象，避免重复查询
+          leader
+        : await this.leaderRepo.findOne({ where: { id: Number(user.teamLeaderId) } })
       : null;
 
     const buildingId = user.buildingId ?? leader?.buildingId ?? null;

@@ -13,6 +13,13 @@ export const STORAGE_KEYS = {
   isLeader: 'abox_is_leader',
   /** 团长档案 */
   leader: 'abox_leader',
+  /**
+   * ⭐ **本地联调身份切换**（仅 demo 模式读取，见 `utils/dev-identity.ts`）
+   *   —— 记「当前用的是哪个 `dev:<标识>`」，用于判断这次启动是否**换人了**
+   *   （换人必须清掉上一个人的登录态，否则 token 还是旧用户的）。
+   *   生产（`MODE=production`）下**永不写入、永不读取**。
+   */
+  devIdentity: 'abox_dev_identity',
 } as const;
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];

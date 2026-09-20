@@ -61,7 +61,15 @@ export function calcSettlement(
 export const ADMIN_NAV = [
   {
     group: '概览',
-    items: [{ path: '/dashboard', title: '工作台', page: '—', module: '概览' }],
+    // ⚠️ M5-15：`/dashboard` 是**所有角色的登录落点**（根路由与 404 兜底都指向它，
+    //    `permission.landingPath` 取的就是本组第一项），而它此前是一个**脚手架占位页** ——
+    //    于是任何人登录后的第一屏都是空白页（人工测试里「后台缺某某模块」的印象，
+    //    有一部分就来自"第一屏没东西"）。现改为**运营概览**（导航入口 + 锁定口径，
+    //    见 `views/dashboard/index.vue`）。
+    //    ⚠️ 标题从「工作台」改名为「运营概览」：它**不是**待办工作台
+    //    （待办聚合需一个聚合接口，已登记《悬而未决登记册》），
+    //    叫「工作台」会让人以为那里有活可干。数字看板仍在 `/stats/core-metrics`。
+    items: [{ path: '/dashboard', title: '运营概览', page: '—', module: '概览' }],
   },
   {
     group: '套餐',
@@ -86,12 +94,43 @@ export const ADMIN_NAV = [
     items: [
       { path: '/leader/list', title: '团长管理', page: 'P32', module: 'M33-03/04/05' },
       { path: '/supplier/list', title: '供应商管理', page: 'P33', module: 'M34' },
+      // ⚠️ M5-15 补登：`/supplier/dish-library`（平台端菜品库）自 M3-x 就已在服务端
+      //    `ADMIN_MENU_KEYS` 里授权、路由也在（`routes.ts:96`）、后端 CRUD 也齐
+      //    （`POST/PUT /admin/dishes` + `batch-status`），**却从来没进过本表** ——
+      //    原先只能从「供应商管理 → 菜品库」按钮下钻（`supplier/list.vue:487`）。
+      //    但菜品是**套餐 → 模板 → 分配**的上游：找不到入口 = 后面三层都进不去，
+      //    人工测试中表现为「后台缺少餐品创建模块」。判据仍是那句：
+      //    **授权了就必须有入口**，否则等价于那些页面不存在。
+      { path: '/supplier/dish-library', title: '菜品库', page: 'P33', module: 'M34' },
       // ⚠️ M4-0：打包任务从供应商端迁到运营后台（原 `GET /supplier/packing-tasks` 已下线）。
       //    闸门要看到**所有**供应商的到位情况，这份信息跨供应商，不能开给供应商端。
-      //    它是**运营的日常作业页**（每天都要开包），故给一个**顶级菜单入口**，
-      //    而不是像 `distribution-center` / `dish-library` 那样挂在供应商管理页里下钻。
+      //    它是**运营的日常作业页**（每天都要开包），故给一个**顶级菜单入口**。
       { path: '/supplier/packing-center', title: '加工场所打包', page: 'P39', module: 'M21-03' },
-      { path: '/building/overview', title: '办公楼管理', page: 'P37', module: 'M33-01/02' },
+      // ⚠️⚠️ M5-15 补登（**同类缺陷第三次复发**）：`/building/*` 共 5 条在服务端
+      //    `ADMIN_MENU_KEYS`（`admin-role.ts:39-43`）**全部早已授权**、路由也全在
+      //    （`routes.ts:158-176`）、后端新建/编辑接口也全实现（`POST admin/buildings`
+      //    · `assertBuildingNameFree` 重名校验），**而前端此前只挂了 `/building/overview`
+      //    一条** —— 于是「新建办公楼」按钮所在的 `/building/list`
+      //    （`views/building/list.vue:118-119`）**从菜单点不到，只能手输 URL**，
+      //    人工测试中表现为「后台缺少办公楼建立模块」。
+      //    同族历史：M3-14（财务五页）→ M5-12（通知模板）→ 本次（楼宇五页）。
+      //    ⭐ 防复发门禁见 `scripts/check-nav-consistency.mjs`（已接入 `gate.mjs all`）。
+      //    模块号取自《PRD v2.1》M33 与《项目目录结构 v2.0》「P37 · 5 视图 · M33-01/02」。
+      { path: '/building/list', title: '办公楼台账', page: 'P37', module: 'M33-01' },
+      { path: '/building/groups', title: '楼群管理', page: 'P37', module: 'M33-02' },
+      { path: '/building/overview', title: '办公楼总览', page: 'P37', module: 'M33-01/02' },
+      {
+        path: '/building/leader-binding',
+        title: '团长-楼栋绑定',
+        page: 'P37',
+        module: 'M33-01/02',
+      },
+      {
+        path: '/building/delivery-map',
+        title: '楼栋-集散中心映射',
+        page: 'P37',
+        module: 'M33-01/02',
+      },
       // ⚠️ M3-14 修复：原先财务域**只挂了 `/finance/overview` 一个入口**，其余子页
       //    （佣金 / 余额 / 应付 / 退款 / 对账）在服务端 `ADMIN_MENU_KEYS` 里**早已授权**，
       //    前端却没有任何菜单指向它们 —— 运营只能手输 URL 才能打开。
@@ -108,7 +147,25 @@ export const ADMIN_NAV = [
       { path: '/finance/reconciliation', title: '微信对账', page: 'P34', module: 'M35-06' },
       // M3-15：发票管理（进项票台账）—— 与 `admin-role.ts` 的 `ADMIN_MENU_KEYS` 同源
       { path: '/finance/invoices', title: '发票管理', page: 'P34', module: 'M35-07' },
-      { path: '/stats/core-metrics', title: '数据看板', page: 'P35', module: 'M36' },
+    ],
+  },
+  {
+    // ⚠️ M5-15 修复（**方向①：授权了但没有入口**）：P35 数据看板共**四页** ——
+    //    `/stats/core-metrics`（M36-01）· `/stats/building-rank`（M36-02）·
+    //    `/stats/dish-heat`（M36-03）· `/stats/retention`（M36-04）。
+    //    四页自 M3 起就**全部**在服务端 `ADMIN_MENU_KEYS` 里授权、路由也全在
+    //    （`routes.ts:225-242`）、视图文件也全在，**而本表只挂了 `core-metrics` 一条** ——
+    //    另三页对 admin / operator / finance / viewer 四个角色都是
+    //    「路由能进、侧边栏点不到」（`finance` / `viewer` 的菜单矩阵里甚至都明文列了它们，
+    //    见 `admin-role.ts:133-136` / `:141-144`）⇒ 人工测试表现为「看板里少了几页」。
+    //    借本次修复把 P35 四页收拢成**独立分组**，不再寄生在「业务」大组尾部。
+    //    ⭐ 防复发门禁：`scripts/check-nav-consistency.mjs`（已接入 `gate.mjs all`）。
+    group: '数据',
+    items: [
+      { path: '/stats/core-metrics', title: '数据看板', page: 'P35', module: 'M36-01' },
+      { path: '/stats/building-rank', title: '楼宇排行', page: 'P35', module: 'M36-02' },
+      { path: '/stats/dish-heat', title: '菜品热度', page: 'P35', module: 'M36-03' },
+      { path: '/stats/retention', title: '留存分析', page: 'P35', module: 'M36-04' },
     ],
   },
   {

@@ -21,8 +21,10 @@ import {
   DishOptionQueryDto,
   MealMatrixQueryDto,
   PublishAssignmentDto,
+  SET_MEAL_COMPOSITION_RULE,
   SetMealTemplateQueryDto,
   UpdateAssignmentDto,
+  UpdateSetMealTemplateDto,
 } from './dto/meal-admin.dto';
 import { MealAdminService } from './meal-admin.service';
 
@@ -140,9 +142,31 @@ export class MealAdminController {
   @ApiOperation({
     summary: 'D7 存为模板',
     description:
-      '入参**不含** supplierId / costPrice：供应商由菜品反查、成本由菜品供价求和，避免手填口径漂移。',
+      '入参**不含** supplierId / costPrice：供应商由菜品反查、成本由菜品供价求和，避免手填口径漂移。' +
+      `\n\n菜品项须满足「一饭四菜」：${SET_MEAL_COMPOSITION_RULE}。`,
   })
   createTemplate(@Body() dto: CreateSetMealTemplateDto, @CurrentAdmin('sub') operatorId: number) {
     return this.mealAdmin.createTemplate(dto, operatorId);
+  }
+
+  /**
+   * D7b 编辑模板（M5-15 新增）
+   *
+   * 此前模板库**只增不改** —— 建错了只能"再建一条"，模板库只涨不消。
+   * 三类字段的可变性不同：展示类随时可改；**构成（items）与售价（price）
+   * 在该模板已被未取消的分配引用时冻结** → `30019`（回带 `data.usedCount` /
+   * `data.assignmentDates`，见 `ErrorCode.MEAL_TEMPLATE_IN_USE` 的注释）。
+   */
+  @Put('templates/:id')
+  @OperationLog({ module: 'meal', action: '编辑套餐模板' })
+  @ApiOperation({
+    summary: 'D7b 编辑套餐模板（改构成 → 先查有没有被排期引用）',
+    description:
+      '不传的字段 = 不改；传 `null` = 清空（仅 oneLiner / description / coverUrl）。' +
+      '`items` 是**整组替换**（不是增量），仍须满足「一饭四菜」。' +
+      '`status` 上下架不受闸门限制；`items` / `price` 在已排期时 → 30019。',
+  })
+  updateTemplate(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateSetMealTemplateDto) {
+    return this.mealAdmin.updateTemplate(id, dto);
   }
 }

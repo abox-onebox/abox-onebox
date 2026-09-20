@@ -19,6 +19,7 @@ import { toBjIso } from '../../common/utils/time';
 import { Building } from '../../database/entities/building.entity';
 import { Balance, Commission } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
+import { OperationLog } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
 import { NOTIFY_PAGES } from '../admin/template/message-template.specs';
@@ -130,6 +131,64 @@ export class TeamLeaderService {
 
       // 推荐关系与身份**同事务**落库 —— 半成功会让 C2 晋级审计永久缺一条
       await this.inviteService.bindOnApply(userId, saved.id, LeaderLevel.TRAINEE, manager);
+
+      /**
+       * ⭐ M5-15 · **复职留痕**（裁定 ②：「允许复用停职档案，但必须留痕」）
+       *
+       * ## 为什么必须有
+       * 停职者重新申请时走的是**复用同一条 `ab_team_leader`** 的路径
+       * （`status` 2 → 1 + 重置见习），于是：
+       *   · **姓名会被直接覆盖**（`realName: dto.realName`）；
+       *   · 而历史订单 / 佣金 / 推荐关系展示的团长名是**按 id 实时 JOIN** 出来的
+       *     ⇒ 改名会把**历史记录的展示名一起改掉**，且**任何地方都不会报错**。
+       * 两份表述（「档案是同一个」与「名字是新的」）没有第三处记录去对账 ——
+       * 同族教训见 `schema:parity` / `state:audit` / `nav:consistency`。
+       *
+       * ## 为什么写进 `ab_operation_log`
+       * 该表的 `snapshot` 列注释就是「**变更前后值快照（P2-1，审计回放）**」——
+       * 正是本场景需要的形状；且它已在后台「系统 → 操作日志」有查询界面，
+       * 不需要为一条留痕再造一张表和一套页面。
+       *
+       * ⚠️ `adminUserId` 刻意留 `null`：这是**用户自助**动作，没有后台操作人。
+       *    端上会显示「操作人 —」，参数列里另有 `source: 'user:apply'`
+       *    —— 是**如实**表达，不是伪装成管理员操作。
+       * ⚠️ 写在**事务内**：留痕与改名同生共死。写在事务外就可能出现
+       *    「名字改了、无痕」（事务回滚前的窗口）或反之。
+       */
+      if (existed) {
+        const logRepo = manager.getRepository(OperationLog);
+        await logRepo.save(
+          logRepo.create({
+            adminUserId: null,
+            module: 'leader',
+            action: '复职团长',
+            targetId: String(saved.id),
+            requestData: {
+              source: 'user:apply',
+              userId,
+              buildingId: dto.buildingId,
+              /** 与上一次是否同名 —— 一眼看出这条留痕是否伴随改名 */
+              renamed: existed.realName !== payload.realName,
+            },
+            snapshot: {
+              before: {
+                status: existed.status,
+                realName: existed.realName,
+                level: existed.level,
+                commissionRate: existed.commissionRate,
+                buildingId: existed.buildingId,
+              },
+              after: {
+                status: LeaderStatus.ACTIVE,
+                realName: payload.realName,
+                level: LeaderLevel.TRAINEE,
+                commissionRate: traineeRate,
+                buildingId: dto.buildingId,
+              },
+            },
+          }),
+        );
+      }
 
       return saved;
     });

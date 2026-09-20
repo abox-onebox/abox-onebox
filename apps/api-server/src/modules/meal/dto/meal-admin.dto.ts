@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { SET_MEAL_COMPOSITION } from '@abox/shared-utils';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -34,6 +35,24 @@ export const COPY_MAX_DATES = 14;
 
 /** 一饭四菜 + 主食，8 项已是宽松上限 */
 export const TEMPLATE_MAX_ITEMS = 8;
+
+/**
+ * ⭐ **「一饭四菜」的机械判据** —— 真源 = `@abox/shared-utils` 的 `SET_MEAL_COMPOSITION`
+ *
+ * 业务口径（品牌物料与《里程碑计划》的同一句话）：**¥25.80/份 · 一饭四菜**。
+ * 四个菜位 = 主荤 / 半荤 / 素菜 / 汤，**各一份，不缺不重**；
+ * 主食（米饭）由集散中心统一供米，**不作为菜品项**（见共享常量的注释）。
+ *
+ * ⚠️ 为什么必须**机械强制**而不是只写文案：此前接口没有任何下界 ——
+ *    一个只有 1–2 项的套餐也能建成、能上架，而用户端横幅照旧写「一饭四菜」。
+ *    这正是项目里反复出现的形态：**同一条口径有两份表述，不被执行的那份必然会错**。
+ *    7 个种子模板全部恰好是 `[1,2,3,4]`，e2e 也是照 `dishCount===4` 断言的 ——
+ *    规则一直都在，只是没落在代码上。
+ */
+export const SET_MEAL_REQUIRED_SLOTS: readonly number[] = SET_MEAL_COMPOSITION.requiredSlots;
+
+/** 构成判据的**单一人话表述**（错误提示与后台提示条共用，避免两处措辞漂移） */
+export const SET_MEAL_COMPOSITION_RULE: string = SET_MEAL_COMPOSITION.rule;
 
 /** D1 矩阵查询 */
 export class MealMatrixQueryDto {
@@ -237,6 +256,83 @@ export class CreateSetMealTemplateDto {
   @IsInt()
   @Min(1)
   sourceSetMealId?: number;
+}
+
+/**
+ * D7b 编辑套餐模板（M5-15 新增）
+ *
+ * ## 为什么必须有
+ * 此前模板库**只增不改**：建错的模板（菜选错、名字打错、想下架）无法修正，
+ * 唯一出路是「再建一条新的」—— 模板库因此只涨不消，`usedCount` 也只增不减，
+ * 运营面对一堆几乎同名的套餐无从选择。
+ *
+ * ## 字段分三类，可变性不同（服务端分别把关）
+ * | 类别 | 字段 | 约束 |
+ * |---|---|---|
+ * | 展示 | `name` / `oneLiner` / `description` / `coverUrl` | 随时可改 |
+ * | 状态 | `status` | 随时可改（下架只是从编排页选择器里消失） |
+ * | **构成 / 售价** | `items` / `price` | **已被未取消的分配引用时冻结** → `30019` |
+ *
+ * 冻结的理由见 `MEAL_TEMPLATE_IN_USE` 的注释：那时它已经是「某天某个楼群卖的那份饭」，
+ * 改构成会让供应商按**旧构成**推出来的备料量与菜单对不上。
+ *
+ * ⚠️ 字段语义：**不传 = 不改**；传 `null` = **清空**（仅限可空字段 `oneLiner` /
+ *    `description` / `coverUrl`）。`@IsOptional()` 在 class-validator 里对 `null` 直接
+ *    跳过校验，故服务端用 `did` 判断（`!== undefined`）而不是 `!== null`。
+ */
+export class UpdateSetMealTemplateDto {
+  @ApiPropertyOptional({ description: '套餐名' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: '套餐名不能为空' })
+  @MaxLength(64)
+  name?: string;
+
+  @ApiPropertyOptional({ description: '售价（元）· 已排期时不可改' })
+  @IsOptional()
+  @Type(() => Number)
+  @Min(0.01)
+  @Max(9999)
+  price?: number;
+
+  @ApiPropertyOptional({ description: '一句话介绍 · 传 null 清空' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  oneLiner?: string | null;
+
+  @ApiPropertyOptional({ description: '详情描述 · 传 null 清空' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  description?: string | null;
+
+  @ApiPropertyOptional({ description: '封面图 URL · 传 null 清空' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  coverUrl?: string | null;
+
+  @ApiPropertyOptional({ description: '状态：1 启用 / 0 停用（下架即从编排页选择器消失）' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsIn([0, 1])
+  status?: number;
+
+  @ApiPropertyOptional({
+    description:
+      '菜品项 —— **整组替换**（不是增量）。必须满足「一饭四菜」：' +
+      SET_MEAL_COMPOSITION_RULE +
+      '；已排期时不可改。',
+    type: [SetMealItemInputDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(TEMPLATE_MAX_ITEMS, { message: `最多 ${TEMPLATE_MAX_ITEMS} 项` })
+  @ValidateNested({ each: true })
+  @Type(() => SetMealItemInputDto)
+  items?: SetMealItemInputDto[];
 }
 
 /**

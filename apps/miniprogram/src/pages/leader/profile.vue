@@ -296,9 +296,11 @@ import {
   updateLeaderProfile,
 } from '@/api/leader';
 import type { LevelRulesResult, LeaderProfile, PayoutType, QuitBlocker } from '@/api/leader';
+import { fetchMe } from '@/api/auth';
 import { ApiError } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useLeaderStore } from '@/stores/leader';
+import { useUserStore } from '@/stores/user';
 import { displayOr, formatDateTime, maskPhone, uuid } from '@/utils/format';
 import { navigateTo, switchTab } from '@/utils/router';
 
@@ -309,6 +311,7 @@ const payoutTypes: Array<{ label: string; value: PayoutType }> = [
 
 const { run, loading } = useRequest();
 const leaderStore = useLeaderStore();
+const userStore = useUserStore();
 
 const profile = ref<LeaderProfile | null>(null);
 const rules = ref<LevelRulesResult | null>(null);
@@ -511,6 +514,38 @@ async function doQuit(): Promise<void> {
     await run(() => quitLeader({ reason: '用户端主动退出' }, quitKey));
     quitKey = ''; // 成功即作废，避免下一次操作被回放成同一结果
     leaderStore.clear(); // isLeader=false → 底栏重渲染回 4 项
+
+    /*
+     * ⭐ M5-15 修复（**身份不一致第三条**）：只清团长档案**不够**。
+     *
+     * 用户侧的 `userStore.info` 里还留着**退出前**的快照（`teamLeaderId` 指向
+     * 那个已停职的团长、昵称是旧值），而 token 里也仍带着 `isLeader: true`
+     * （JWT 无状态，签发时是什么就是什么）。于是：
+     *   · 底栏立刻回到 4 项（读的是 leaderStore）；
+     *   · 但「我的」页第一帧读的是 `userStore.info` 的旧快照 → **短暂显示旧身份**；
+     *   · 若此时 A2 请求失败 / 离线，这份旧快照会一直留着。
+     *
+     * 处理：就地重拉一次 A2，把服务端**退出之后**的真相写回两端 store。
+     *   ⚠️ 失败**不阻断**退出流程 —— 退出的真实凭据是服务端已落库的状态
+     *   （`ab_user.team_leader_id` 已清、`ab_team_leader.status=2`），
+     *   且服务端**从不采信 token 里的 `isLeader`**（`team-leader.controller` /
+     *   `leader.guard` 每次都回查 `ab_team_leader`）⇒ 越权窗口为 0。
+     *   故这里只是"把界面刷新对"，刷不上也不构成安全问题。
+     */
+    try {
+      const res = await fetchMe();
+      userStore.setLogin(userStore.token, {
+        id: res.id,
+        nickname: res.nickname,
+        avatarUrl: res.avatarUrl,
+        phone: res.phone,
+        buildingId: res.buildingId,
+        teamLeaderId: res.teamLeaderId,
+      });
+    } catch (e) {
+      console.warn('[leader] 退出后刷新用户资料失败（不影响退出结果，下次进入「我的」会重拉）', e);
+    }
+
     uni.showToast({ title: '已退出团长身份', icon: 'none', duration: 2000 });
     setTimeout(() => switchTab('/pages/index/index'), 900);
   } catch (e) {
