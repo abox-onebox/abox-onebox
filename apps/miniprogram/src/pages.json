@@ -95,8 +95,8 @@
       "style": { "navigationBarTitleText": "联系客服（U17 · 客服微信号）" }
     },
     {
-      "path": "pages/webview/webview",
-      "style": { "navigationBarTitleText": "H5 容器（协议 / 隐私政策）" }
+      "path": "pages/agreement/agreement",
+      "style": { "navigationBarTitleText": "用户协议" }
     }
   ],
   "globalStyle": {

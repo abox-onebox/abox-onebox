@@ -105,7 +105,7 @@
         <text class="menu__label">📞 客服微信号</text>
         <text class="menu__arrow">›</text>
       </view>
-      <view class="menu__item" hover-class="menu__item--hover" @tap="showAbout">
+      <view class="menu__item" hover-class="menu__item--hover" @tap="showSettings">
         <text class="menu__label">⚙️ 设置</text>
         <text class="menu__arrow">›</text>
       </view>
@@ -171,6 +171,7 @@ import { fenToYuanText } from '@/utils/format';
 import { useUserStore } from '@/stores/user';
 import { clearAuthStorage } from '@/utils/storage';
 import { navigateTo, switchTab } from '@/utils/router';
+import { AGREEMENT_OPERATOR } from '@/constants/agreements';
 
 const { run } = useRequest();
 const userStore = useUserStore();
@@ -349,15 +350,44 @@ function tapSwitchLeader(): void {
 }
 
 /**
- * 设置（原型为弹窗）
+ * 设置（原型 P8 `showSettings` 弹窗）
  *
- * ⚠️ 用户协议 / 隐私政策正文（U16 `GET /me/agreements`）**尚未实装**，
- *    故这里**不放出点不动的条目**，只给已能跑的项 + 如实说明。
+ * ⚠️ 原型里「设置」是**含可点条目的弹窗**，而 `uni.showModal` 只有两个按钮、装不下条目
+ *    ⇒ 改用 `uni.showActionSheet` 承载同样四条（不在 S6 组件规格之前新增弹出层组件）。
+ *
+ * ⭐ **M5-18：用户协议 / 隐私政策从此可点** —— 走**原生页**
+ *    `pages/agreement/agreement?type=user|privacy`，正文唯一真源在 `@/constants/agreements`。
+ *    在此之前这两条**刻意不给可点入口**（正文没落地，点开就是假页面）；正文落地后该约束解除。
+ *    一期**不设** `GET /me/agreements` 端点（见《接口规范》§1.8）。
+ */
+const SETTINGS_ACTIONS = ['平台客服微信号', '用户协议', '隐私政策', '关于 ABox 一盒'];
+
+function showSettings(): void {
+  uni.showActionSheet({
+    itemList: SETTINGS_ACTIONS,
+    success: ({ tapIndex }) => {
+      if (tapIndex === 0) goSupport();
+      else if (tapIndex === 1) goAgreement('user');
+      else if (tapIndex === 2) goAgreement('privacy');
+      else if (tapIndex === 3) showAbout();
+    },
+  });
+}
+
+/** 协议页（原生）。`type` 非法时由 `toAgreementType` 回退，端上不会白屏 */
+function goAgreement(type: 'user' | 'privacy'): void {
+  navigateTo(`/pages/agreement/agreement?type=${type}`);
+}
+
+/**
+ * 关于
+ * ⚠️ **不显示 App 版本号**：此前手写的 `v1.0.0` 与 `manifest.json` 的 `versionName: 0.1.0`
+ *    **互相矛盾**（手写数字漂移）。端上取不到唯一真源时先不显示，不再制造第二处真相。
  */
 function showAbout(): void {
   uni.showModal({
     title: '关于 ABox 一盒',
-    content: 'v1.0.0\n用户协议与隐私政策正文接入后在此展示',
+    content: `${AGREEMENT_OPERATOR}\n办公楼预定制团餐 · 一饭四菜自提`,
     showCancel: false,
     confirmText: '知道了',
   });

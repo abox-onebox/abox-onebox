@@ -5,6 +5,8 @@
  * 运行期以服务端下发的 ab_config 为准，本文件仅作默认值与类型约束。
  */
 export * from './env';
+// ⚠️ 协议**正文**在 `./agreements`（唯一真源）；此处在桶文件里再导出一次，便于统一从 `@/constants` 取用。
+export * from './agreements';
 
 /** C1 · 套餐统一价（元） */
 export const UNIT_PRICE = 25.8;
