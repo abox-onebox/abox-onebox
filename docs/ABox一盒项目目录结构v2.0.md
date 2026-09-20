@@ -148,7 +148,7 @@ apps/miniprogram/
 │   │   │   ├── withdraw.vue            ← P18 提现申请
 │   │   │   ├── share.vue               ← P19 分享中心（微信群 / 海报二维码）
 │   │   │   └── profile.vue             ← P20 团长资料（含退出团长身份）
-│   │   └── webview/                    ← H5 容器（协议页 / 隐私政策）
+│   │   └── agreement/                  ← 协议阅读页（用户协议 / 隐私政策 · **原生页，非 web-view**）【**M5-18** 由占位页 `webview/` 改名改造；入口 = 我的 → 设置】
 │   ├── components/                     ← 通用组件（⚠️ 实际目录名**一律带 `ab-` 前缀**；旧文档漏写前缀，M5-14 一并更正）
 │   │   ├── ab-meal-card/
 │   │   ├── ab-dish-card/
