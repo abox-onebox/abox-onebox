@@ -25,7 +25,7 @@
         <!-- 出品方卡（一菜一卡 · 原型 5 张 = 4 家供应商 + 1 个集散中心） -->
         <ab-supplier-card
           v-for="(d, i) in data.dishes"
-          :key="`${d.supplier.name}-${d.dishName}-${i}`"
+          :key="`${d.supplier.id}-${d.dishName}-${i}`"
           :avatar="dishEmoji(d.category)"
           :name="d.supplier.name"
           :category="categoryLabel(d.category)"
@@ -33,6 +33,7 @@
           :verified="verifiedText(d.supplier.qualifications)"
           :links="d.supplier.takeoutLinks"
           :clickable="hasShop(d.supplier.takeoutLinks)"
+          :highlight="focusId === d.supplier.id"
           @tap="openSheet(d.supplier)"
         />
 
@@ -120,9 +121,15 @@
  *
  * ⚠️ 降级**不是**「功能没做完」的托词 —— 它是唯一诚实的实现：没有准入关系时，
  *    任何「看起来跳过去了」的假象都比做不了更糟。
+ *
+ * ## 入参（M5-17）
+ * `?supplierId=<ab_supplier.id>` —— 首页「来自：X」点进来时带入。页面会**定位到那家**：
+ * 卡片描金圈 + 直接弹出它的平台层。缺省（从底部「供应商」tab 进入）即正常展示全部出品方。
+ * 按 **id** 而非名字定位：`ab_supplier.name` 无唯一约束，同名两家会弹错店 ——
+ * 而用户在溯源页照着弹出来的店去平台点单，弹错店是这一页最坏的一类错误。
  */
 import { computed, ref } from 'vue';
-import { onShow } from '@dcloudio/uni-app';
+import { onLoad, onShow } from '@dcloudio/uni-app';
 import type {
   TraceabilityQualification,
   TraceabilitySupplierView,
@@ -148,6 +155,25 @@ const { run, loading } = useRequest();
 
 const data = ref<TraceabilityTodayResult | null>(null);
 const loadError = ref<ApiError | null>(null);
+
+/**
+ * 被「定位」的出品方 id（M5-17）—— 由首页「来自：X」跳过来时带 `supplierId`
+ *
+ * 命中的那张卡会描金圈（`ab-supplier-card` 的 `highlight`），并**直接弹出它的平台层**。
+ * 用户在 4~5 张同版式的卡里不该自己找哪张是刚点的那家。
+ */
+const focusId = ref<number | null>(null);
+
+/**
+ * 尚未消费的定位请求（`onLoad` 写入 → 首次取数成功后消费并清空）
+ *
+ * ⚠️ 为什么不直接让 `onLoad` 去打开弹层：那一刻 U5 还没回来，`dishes` 是空的，
+ *    既定位不到卡、也拿不到链接。故 `onLoad` 只**记下意图**，由 `load()` 兑现。
+ *
+ * ⚠️ 为什么消费后必须清空：`onShow` 在「从外卖小程序跳回」「切前台」时也会触发，
+ *    若定位意图留着不清，弹层会自己再弹一次 —— 用户没点任何东西却跳出个浮层。
+ */
+const pendingSupplierId = ref<number | null>(null);
 
 /** 弹层当前展示的出品方（null = 关闭） */
 interface SheetState {
@@ -273,11 +299,49 @@ async function load(): Promise<void> {
   try {
     data.value = await run(() => fetchTraceabilityToday(buildingId));
     loadError.value = null;
+    consumePendingSupplier();
   } catch (e) {
     loadError.value = e instanceof ApiError ? e : null;
     toastApiError(e);
   }
 }
+
+/**
+ * 兑现「定位某家出品方」的意图（M5-17）
+ *
+ * 按 `supplier.id` 匹配，**不按名字**：`ab_supplier.name` 无唯一约束
+ * （同名两家是合法数据），按名字定位会弹错店 —— 而「弹错店」在溯源页是
+ * 最坏的一类错误：用户会照着它去平台点单。
+ *
+ * 找不到时**明说**，不静默：跳过来却什么都不发生，用户只会以为页面坏了。
+ * 真会发生的场景是「首页取的是 T+1 套餐，跳转途中跨过 24:00 截单换日」——
+ * 一句话解释掉，比让人对着首屏发愣强。
+ */
+function consumePendingSupplier(): void {
+  const target = pendingSupplierId.value;
+  if (target === null) return;
+  pendingSupplierId.value = null;
+
+  const hit = data.value?.dishes.find((d) => d.supplier.id === target);
+  if (hit) {
+    focusId.value = target;
+    openSheet(hit.supplier);
+    return;
+  }
+  uni.showToast({ title: '该出品方今日不在名单中', icon: 'none' });
+}
+
+/**
+ * 入参 `supplierId`（首页「来自：X」带入）
+ *
+ * ⚠️ 只解析、不取数：`buildingId` 要从登录态取，而登录态在冷启动下由 `onShow` 处
+ *    的既有链路保证就绪；这里抢跑反而会在「token 还没就位」时白跑一次请求。
+ */
+onLoad((query) => {
+  const raw = query?.supplierId;
+  const id = Number(raw);
+  pendingSupplierId.value = Number.isFinite(id) && id > 0 ? id : null;
+});
 
 onShow(() => {
   void load();

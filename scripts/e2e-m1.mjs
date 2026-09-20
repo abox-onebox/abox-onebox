@@ -293,6 +293,31 @@ async function main() {
     `note=${(t?.traceNote ?? '').slice(0, 48)}…`,
   );
 
+  // ---------- 2c. M5-17 · U1/U5 的供应商编号必须同源 ----------
+  //
+  // 端上的整条链路是「首页某道菜的『来自：X』→ 带 supplierId 跳溯源页 → 按 id 找到那家
+  // 并弹出平台层」。只要两侧的编号不是同一件事，用户就会被弹到**另一家店**——
+  // 而溯源页是用户拿着店名去平台点单的依据，跳错家是这一页最坏的一类错误。
+  //
+  // 故不只断言「字段存在」，而是逐菜对账：同菜名 ⇒ 同 id、同展示名。
+  const u1SupIds = [...new Set((d?.dishes ?? []).map((x) => x.supplierId))].sort((a, b) => a - b);
+  const u5SupIds = [...new Set((t?.dishes ?? []).map((x) => x.supplier?.id))].sort((a, b) => a - b);
+  assert(
+    u1SupIds.length > 0 &&
+      u1SupIds.every((x) => Number.isInteger(x) && x > 0) &&
+      JSON.stringify(u1SupIds) === JSON.stringify(u5SupIds),
+    'M5-17 U1 `dishes[].supplierId` 与 U5 `supplier.id` 同源（端上按 id 定位才可能跳对家）',
+    `U1=${u1SupIds.join(',')} U5=${u5SupIds.join(',')}`,
+  );
+  assert(
+    (d?.dishes ?? []).every((x) => {
+      const m = (t?.dishes ?? []).find((y) => y.dishName === x.name);
+      return !!m && m.supplier?.id === x.supplierId && m.supplier?.name === x.supplierName;
+    }),
+    'M5-17 逐菜对账：同名菜品在 U1 / U5 指向同一个出品方 id（不只看字段存在）',
+    `dishes=${(d?.dishes ?? []).length}`,
+  );
+
   const u5NoBuilding = await call('GET', `/traceability/today?mealDate=${mealDate}`);
   assert(
     u5NoBuilding.body?.code === 10001,
@@ -459,6 +484,83 @@ async function main() {
     fail('构造「已截单」样本', `找不到数据库文件 ${DB_PATH}`);
   }
 
+  // ---------- 8. M5-17 · 团长归属（`leader.source` + 缺陷⑫ 回归） ----------
+  //
+  // ## 这条为什么值得单列一段
+  // U1 的 `leader` 只决定**界面显示什么**，`OrderService.resolveLeader` 决定**钱归谁**。
+  // 两者本是同一个问题的两份实现 —— 而它们此前判据不同：
+  //   · U6（钱）：`team_leader_id` 指向的团长必须**在职**才用，否则回落到本楼在任团长；
+  //   · U1（显示）：只取 `team_leader_id` 指向的行，**不看在职与否**。
+  // 于是「团长停职 + 用户未重绑」时，首页写着 A，佣金却记给 B —— 缺陷⑫。
+  // 根因是 D22「停职」只改 `ab_team_leader.status`、不清 `ab_user.team_leader_id`
+  // （这是**对的**，复职后绑定该还在），所以「绑定行」与「有效归属」本来就可以不是同一个。
+  //
+  // ## 怎么测才不作弊
+  // 从库里**独立复算**一遍 U6 的判据（同一段 SQL，不调服务端、不复用 U1 的结果），
+  // 再与 U1 的显示值对账。若拿 U1 自己算出来的值当期望，这条断言就只能证明
+  // 「U1 等于它自己」，对分歧无感 —— 正是本项目反复踩的假绿形状。
+  //
+  // 停职样本用完**必须复位**：断言成败都要复位，否则后续用例（乃至下次跑种子）
+  // 会落在一个被改脏的库上。
+  if (existsSync(DB_PATH)) {
+    const login1002 = await call('POST', '/auth/login', { body: { code: 'dev:1002' } });
+    const token1002 = login1002.body?.data?.token;
+
+    // 用户 1002：`team_leader_id = 1`（李明，building 1）→ 属「经邀请链接绑定」
+    const before = (await call('GET', '/home/daily', { token: token1002 })).body?.data;
+    assert(
+      before?.leader?.source === 'bound' && before?.leader?.id === 1,
+      'M5-17 U1 `leader.source=bound`：经邀请链接绑定的用户（1002 ← 团长#1）',
+      `source=${before?.leader?.source} id=${before?.leader?.id}`,
+    );
+
+    // 用户 1001：`team_leader_id = null` → 属「未走邀请流程、被自动挂靠」
+    const d1001 = (await call('GET', '/home/daily', { token })).body?.data;
+    assert(
+      d1001?.leader?.source === 'building_default' && !!d1001?.leader?.id,
+      'M5-17 U1 `leader.source=building_default`：未绑定用户（1001）被明示自动挂靠（而非静默替他决定）',
+      `source=${d1001?.leader?.source} id=${d1001?.leader?.id} name=${d1001?.leader?.name}`,
+    );
+    assert(
+      (d1001?.dishes ?? []).every((x) => Number.isInteger(x.supplierId) && x.supplierId > 0),
+      'M5-17 U1 `dishes[].supplierId` 恒为正整数（端上按 id 定位，不按无唯一约束的名字）',
+      `ids=${(d1001?.dishes ?? []).map((x) => x.supplierId).join(',')}`,
+    );
+
+    // ---- 缺陷⑫ 回归：把 1002 绑定的团长（#1）改成停职，逼出分歧点 ----
+    const db = new DatabaseSync(DB_PATH);
+    try {
+      const suspend = db.prepare('UPDATE ab_team_leader SET status = 2 WHERE id = 1').run();
+      assert(suspend.changes === 1, '构造「团长停职」样本', 'ab_team_leader#1 status 1 → 2');
+
+      const after = (await call('GET', '/home/daily', { token: token1002 })).body?.data;
+      const oracle = resolveLeaderByU6Rule(1002);
+
+      assert(
+        after?.leader?.id !== 1,
+        '缺陷⑫ U1 不再把**已停职**的绑定团长当作归属（「显示 A / 钱记 B」的旧形状已修）',
+        `leader.id=${after?.leader?.id} source=${after?.leader?.source}`,
+      );
+      assert(
+        (after?.leader?.id ?? null) === oracle,
+        '缺陷⑫ 显示即归属：U1 的 `leader.id` 与**独立复算**的 U6 判据结果一致',
+        `U1=${after?.leader?.id} U6判据=${oracle}`,
+      );
+      assert(
+        after?.leader?.id === 2 && after?.leader?.source === 'building_default',
+        '缺陷⑫ 回落到**本楼（4 号楼）在任团长**（王芳 #2），并如实标注为自动挂靠',
+        `id=${after?.leader?.id} name=${after?.leader?.name} source=${after?.leader?.source}`,
+      );
+    } finally {
+      // 复位（断言失败也必须执行）
+      const back = db.prepare('UPDATE ab_team_leader SET status = 1 WHERE id = 1').run();
+      db.close();
+      assert(back.changes === 1, '停职样本已复位', 'ab_team_leader#1 status 2 → 1');
+    }
+  } else {
+    fail('M5-17 团长归属断言', `找不到数据库文件 ${DB_PATH}`);
+  }
+
   // ---------- 汇总 ----------
   // 连根回收（Windows 下 shell:true 只起一层 cmd.exe，必须 taskkill /T 才能收掉 ts-node）
   await stopApiServer(server, PORT);
@@ -473,6 +575,49 @@ async function main() {
 function mealDateYMD(dateStr, days) {
   const [y, m, d] = dateStr.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d) + days * 86400000).toISOString().slice(0, 10);
+}
+
+/**
+ * 独立复刻 `OrderService.resolveLeader` 的归属判据（只读 · 供缺陷⑫对账用）
+ *
+ * ⚠️ 故意**不调服务端、不复用 U1 的出参** —— 这个函数是「U6 会怎么判」的第二份表述，
+ *    拿它当期望值，U1 与 U6 一旦分歧才会红。若把 U1 自己算的结果当期望，
+ *    这条断言只能证明「U1 等于它自己」，对分歧完全无感（本项目反复踩的假绿形状）。
+ *
+ * ⚠️ 判据必须与 `apps/api-server/src/modules/order/order.service.ts` 的 `resolveLeader`
+ *    同步：那边改规则，这里要一起改，否则会造出**第三份**判据。
+ *
+ * ⚠️ 排序刻意定死 `ORDER BY id ASC`，对齐服务端的 `order: { id: 'ASC' }` ——
+ *    随机取一位在任团长会让「显示 == 归属」在有多位团长的楼上偶发假红。
+ */
+function resolveLeaderByU6Rule(userId) {
+  const db = new DatabaseSync(DB_PATH);
+  try {
+    const u = db
+      .prepare('SELECT building_id, team_leader_id FROM ab_user WHERE id = ?')
+      .get(userId);
+    if (!u) return null;
+
+    // ① 绑定的团长**在职**才用（这正是 U1 此前漏掉的那一步）
+    if (u.team_leader_id) {
+      const own = db
+        .prepare('SELECT id, status FROM ab_team_leader WHERE id = ?')
+        .get(u.team_leader_id);
+      if (own && Number(own.status) === 1) return Number(own.id);
+    }
+    // ② 否则回落到本楼 id 最小的在任团长
+    if (u.building_id) {
+      const fb = db
+        .prepare(
+          'SELECT id FROM ab_team_leader WHERE building_id = ? AND status = 1 ORDER BY id ASC LIMIT 1',
+        )
+        .get(u.building_id);
+      if (fb) return Number(fb.id);
+    }
+    return null;
+  } finally {
+    db.close();
+  }
 }
 
 main().catch((e) => {

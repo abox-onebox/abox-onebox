@@ -1,7 +1,7 @@
 <template>
   <view
     class="supplier-card"
-    :class="{ 'is-clickable': clickable }"
+    :class="{ 'is-clickable': clickable, 'is-highlight': highlight }"
     :hover-class="clickable ? 'supplier-card--hover' : 'none'"
     @tap="onTap"
   >
@@ -79,8 +79,28 @@ const props = withDefaults(
     links?: TraceabilityTakeoutLink[];
     /** 是否可点开跳转弹层（无任何已入驻平台时为 false，不显示 › ） */
     clickable?: boolean;
+    /**
+     * 高亮这张卡（M5-17 · 「定位到某一家」）
+     *
+     * 首页「来自：X」跳过来会带 `supplierId`，本页据此把对应的卡描金圈出来 ——
+     * 否则用户在 4~5 张同版式的卡里不知道哪张是自己点的那家。
+     *
+     * ⚠️ 为什么是**显式 prop** 而不是让页面给组件挂 `class`：
+     *    组件有自己的根节点与 scoped 样式，外部 class 是否落到根节点上，
+     *    在小程序各端的表现并不一致（`class` 挂在自定义组件标签上时，
+     *    多数端是落在宿主节点、而非组件内部根节点）。「看起来生效、真机不生效」
+     *    正是本项目最想避免的缺陷形状，故用 prop 把这件事变成确定的行为。
+     */
+    highlight?: boolean;
   }>(),
-  { category: null, extra: null, verified: null, links: () => [], clickable: false },
+  {
+    category: null,
+    extra: null,
+    verified: null,
+    links: () => [],
+    clickable: false,
+    highlight: false,
+  },
 );
 
 const emit = defineEmits<{ tap: [] }>();
@@ -113,6 +133,13 @@ function onTap(): void {
 
   &--hover {
     background: #fbf7ee;
+  }
+
+  // 被「定位」的那一张（M5-17）：描金圈 + 浅金底，与平台弹层的「推荐」同一种强调语言。
+  // 底色用已登记的金色浅底 token（`$c-trace-card-from`）而非再写一个 rgba —— 请勿新增裸色值。
+  &.is-highlight {
+    background: $c-trace-card-from;
+    border: 2px solid $c-gold;
   }
 
   &__avatar {

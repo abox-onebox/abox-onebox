@@ -39,13 +39,16 @@
         <text class="leader-banner__chip">进入工作台 ›</text>
       </view>
 
-      <!-- 跟随团长卡 -->
+      <!-- 跟随团长卡（M5-17：明示「佣金归谁」—— 见 leaderSourceText 头注） -->
       <view v-if="daily.leader" class="card" @tap="tapSwitchLeader">
         <view class="leader-row">
           <view class="leader-row__left">
-            <text class="leader-row__label">跟随团长</text>
+            <text class="leader-row__label">{{ leaderLabel }}</text>
             <text class="leader-row__name">{{ daily.leader.name || '本楼团长' }}</text>
             <text class="leader-row__building">{{ daily.leader.building }}</text>
+            <text class="leader-row__source" :class="`leader-row__source--${daily.leader.source}`">
+              {{ leaderSourceText }}
+            </text>
           </view>
           <text class="leader-row__switch">点此切换 ›</text>
         </view>
@@ -63,7 +66,7 @@
         <text class="guide__text">{{ daily.reason ?? '当前不可下单' }}</text>
       </view>
 
-      <!-- 一饭四菜（主食并入同一卡） -->
+      <!-- 一饭四菜（主食并入同一卡）· 「来自：X」可点 → 溯源页并定位该出品方（M5-17） -->
       <view class="card">
         <text class="card__title">🍴 一饭四菜</text>
         <view v-for="(d, i) in daily.dishes" :key="i" class="dish-row">
@@ -72,8 +75,15 @@
           </view>
           <view class="dish-row__info">
             <text class="dish-row__name">{{ d.supplierName }}{{ d.name }}</text>
-            <view class="dish-row__from-wrap">
-              <text class="dish-row__from">来自：{{ d.supplierName }} ›</text>
+            <view
+              class="dish-row__from-wrap"
+              :class="{ 'is-link': !!d.supplierId }"
+              :hover-class="d.supplierId ? 'dish-row__from-wrap--hover' : 'none'"
+              @tap="openSupplier(d)"
+            >
+              <text class="dish-row__from">
+                来自：{{ d.supplierName }}{{ d.supplierId ? ' ›' : '' }}
+              </text>
             </view>
           </view>
         </view>
@@ -135,20 +145,6 @@
         查看订单（{{ daily.existingOrderNo }}）
       </button>
       <button v-else class="btn-primary btn-primary--disabled" disabled>本场已截单</button>
-
-      <!-- U2 · 往日这盒（原型 P1 之外的既有验收点，保留在页尾） -->
-      <view v-if="history.length" class="section">
-        <view class="section__hd">
-          <text class="section__title">往日这盒</text>
-        </view>
-        <view class="history">
-          <view v-for="item in history" :key="item.mealDate" class="history__item">
-            <text class="history__date">{{ formatMealDateShort(item.mealDate) }}</text>
-            <text class="history__dishes">{{ item.dishNames.join(' · ') || '—' }}</text>
-            <text class="history__count">{{ item.ordersCount }} 份</text>
-          </view>
-        </view>
-      </view>
     </template>
 
     <ab-empty-state
@@ -175,20 +171,31 @@
  *   · 微信授权后**直接进首页**，不索要手机号与地址（C3 / L9）
  *   · 倒计时显示距 T-1 24:00 的真实剩余时间（以服务端 `countdownSec` 起表）
  *
- * 数据来源：U1 明日套餐（含 `canOrder` 权威判定、已有订单、跟随团长）+ U2 历史归档。
- * 「往日这盒」是原型之外的既有验收点（U2），保留在页尾。
+ * 数据来源：U1 明日套餐（含 `canOrder` 权威判定、已有订单、跟随团长）。
+ *
+ * ## M5-17 三处调整（本页）
+ * ① **移除「往日这盒」**：首页只保留「今天订不订」这一件事。U2 接口与端上封装
+ *    `fetchHistory` **均保留**（M1 既有验收点，且日后做「历史」入口可直接复用），
+ *    只是不再占首页版位 —— 首页每多一块，主按钮就往下掉一屏。
+ * ② **「来自：X」可点** → `navigateTo` 溯源页并带 `supplierId`，由溯源页**按 id 定位**
+ *    到那家并直接弹出平台选择层。按 id 不按名字：`ab_supplier.name` 无唯一约束。
+ * ③ **明示佣金归属**（`leader.source`）：未走邀请链接的用户会被**自动挂靠**本楼在任团长，
+ *    下单佣金也归那位 —— 这件事必须写在脸上，而不是让用户以为「我没跟谁」。
+ *    ⭐ 与之配套的后端修正：U1 的团长判据此前**不看在职**，与真正决定钱的
+ *    `OrderService.resolveLeader` 不一致（停职团长会被显示却收不到佣金）——
+ *    已在 M5-17 对齐（缺陷 ⑫）。
  */
 import { computed, ref } from 'vue';
 import { onShow } from '@dcloudio/uni-app';
-import type { HomeDailyResult, HomeHistoryItem } from '@abox/shared-types';
+import type { HomeDailyResult, MealDishView } from '@abox/shared-types';
 import { LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
 
-import { fetchDaily, fetchHistory } from '@/api/meal';
+import { fetchDaily } from '@/api/meal';
 import { ApiError } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
 import { buildUrl, navigateTo } from '@/utils/router';
-import { formatMealDateShort, dishEmoji } from '@/utils/format';
+import { dishEmoji } from '@/utils/format';
 import { ORDER_MAX_QUANTITY } from '@/constants';
 import { useLeaderStore } from '@/stores/leader';
 
@@ -197,7 +204,6 @@ const { run, loading } = useRequest();
 const { remainSec, start } = useCountdown();
 
 const daily = ref<HomeDailyResult | null>(null);
-const history = ref<HomeHistoryItem[]>([]);
 const loadError = ref<ApiError | null>(null);
 /** 份数（原型 P1 的 stepper；带入 P3 下单确认） */
 const quantity = ref(1);
@@ -237,6 +243,32 @@ const leaderLevelLabel = computed(() => {
   return level ? (LEADER_LEVEL_META[level as LeaderLevel]?.label ?? '团长') : '';
 });
 
+/**
+ * 团长卡的标题行
+ *
+ * `bound` = 用户自己扫了某位团长的邀请码进来 → 「跟随团长」是准确描述；
+ * `building_default` = 用户没走过邀请流程，系统按本楼自动挂靠 → 此时写「跟随」
+ * 会让人以为是自己选的，故直说「本楼团长」。
+ */
+const leaderLabel = computed(() =>
+  daily.value?.leader?.source === 'bound' ? '跟随团长' : '本楼团长',
+);
+
+/**
+ * 佣金归属的明示文案
+ *
+ * ⚠️ 为什么必须显示这件事：佣金是**从这单里分出去的**。一个没跟任何人的用户
+ *    被自动挂靠到本楼团长后，如果界面只写「跟随团长 张某」，他无从知道
+ *    「我没选过人」与「张某在收我的单的佣金」是同一件事。说清楚不会有损失，
+ *    不说则一旦被用户发现，损的是对整个平台账目的信任。
+ */
+const leaderSourceText = computed(() => {
+  const src = daily.value?.leader?.source;
+  if (src === 'bound') return '你通过 TA 的邀请链接进入 · 本单佣金归 TA';
+  if (src === 'building_default') return '你未绑定团长，本单自动挂靠本楼团长';
+  return '';
+});
+
 const unitPriceText = computed(() => ((daily.value?.priceFen ?? 0) / 100).toFixed(2));
 const totalText = computed(() =>
   (((daily.value?.priceFen ?? 0) * quantity.value) / 100).toFixed(2),
@@ -255,7 +287,7 @@ function incQty(): void {
   if (quantity.value < ORDER_MAX_QUANTITY) quantity.value += 1;
 }
 
-/** 拉取首页数据；历史归档失败不拖垮首页 */
+/** 拉取首页数据（U1 明日套餐） */
 async function load(): Promise<void> {
   try {
     const d = await run(() => fetchDaily());
@@ -265,13 +297,6 @@ async function load(): Promise<void> {
     quantity.value = 1;
     // 以服务端剩余秒数起表，规避设备时钟偏差
     start(d.countdownSec);
-
-    try {
-      const h = await run(() => fetchHistory(1, 3));
-      history.value = h.list;
-    } catch {
-      history.value = [];
-    }
   } catch (e) {
     if (daily.value === null) loadError.value = e instanceof ApiError ? e : null;
     toastApiError(e);
@@ -294,6 +319,20 @@ function goDetail(): void {
 
 function goWorkbench(): void {
   navigateTo('/pages/leader/workbench');
+}
+
+/**
+ * 「来自：X」→ 溯源页，并定位到这家出品方
+ *
+ * 只带 `supplierId`，**不带整份 supplier 对象**：跳过去的是另一个页面实例，
+ * 它的数据由 U5 现取（可能与本页 U1 的快照有几秒差），把上一页的陈旧对象塞过去
+ * 会造出「页面显示 A、实际数据是 B」的第二种真相。传 id、让对方自己查，才是单一真相。
+ *
+ * `supplierId` 缺失时（异常数据）静默不跳 —— 此时 `›` 也不会渲染，用户看不出可点。
+ */
+function openSupplier(d: MealDishView): void {
+  if (!d.supplierId) return;
+  navigateTo(buildUrl('/pages/traceability/traceability', { supplierId: d.supplierId }));
 }
 
 function goLeaderApply(): void {
@@ -484,6 +523,20 @@ onShow(() => {
     color: $c-text-weak;
   }
 
+  // 佣金归属明示（M5-17）
+  // · 邀请绑定 = 用户自己选的，一句弱灰即可；
+  // · 自动挂靠 = 用户没选过却有人在分他的单 ⇒ 用主文字色说清，不用弱灰一笔带过。
+  &__source {
+    margin-top: $space-1;
+    font-size: $fs-caption;
+    line-height: 1.6;
+    color: $c-text-weak;
+
+    &--building_default {
+      color: $c-text;
+    }
+  }
+
   &__switch {
     font-size: $fs-caption;
     color: $c-text-weak;
@@ -550,13 +603,24 @@ onShow(() => {
     color: $c-text;
   }
 
+  // 「来自：X」现在承载跳转（M5-17）。可点时右侧留出内边距，把点击靶区做大 ——
+  // 这一行文字很矮，只包住字形的话在手机上很难点准。
   &__from-wrap {
     margin-top: $space-1;
     text-align: right;
+
+    &.is-link {
+      padding: 4rpx 0 4rpx $space-3;
+    }
+
+    &--hover {
+      opacity: 0.6;
+    }
   }
 
   &__from {
     font-size: $fs-caption;
+    // 既有裸色值（端上裸色值基线之一），收归 token 由 S4「裸色值归零」统一处理，本批不动
     color: #b8915c;
   }
 }
@@ -669,62 +733,6 @@ onShow(() => {
   &--disabled {
     background: rgba(154, 139, 114, 0.2);
     color: $c-text-weak;
-  }
-}
-
-// ---- 往日这盒（U2 · 原型外保留项） ----
-.section {
-  margin: $space-4 $space-4 0;
-
-  &__hd {
-    display: flex;
-    align-items: center;
-    margin-bottom: $space-3;
-  }
-
-  &__title {
-    font-size: $fs-h2;
-    font-weight: 600;
-    color: $c-text;
-  }
-}
-
-.history {
-  background: $c-surface;
-  border: 1px solid $c-border;
-  border-radius: $radius-md;
-
-  &__item {
-    display: flex;
-    align-items: baseline;
-    padding: $space-3 $space-4;
-
-    & + & {
-      border-top: 1px solid $c-border;
-    }
-  }
-
-  &__date {
-    flex: none;
-    width: 90rpx;
-    font-size: $fs-caption;
-    color: $c-text-weak;
-  }
-
-  &__dishes {
-    flex: 1;
-    overflow: hidden;
-    font-size: $fs-caption;
-    color: $c-text;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-
-  &__count {
-    flex: none;
-    margin-left: $space-2;
-    font-size: $fs-caption;
-    color: $c-gold;
   }
 }
 </style>

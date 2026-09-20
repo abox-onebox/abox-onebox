@@ -61,6 +61,17 @@ export interface TraceabilityTakeoutLink {
 
 /** 出品方（一家供应商）视图 */
 export interface TraceabilitySupplierView {
+  /**
+   * 出品方 id（`ab_supplier.id`）
+   *
+   * ⭐ 用途单一：首页「来自：X」跳本页时带 `supplierId`，本页**按 id 定位**到这张卡
+   * 并直接弹出它的平台选择层。按 id 而不是按 `name` 定位 —— `ab_supplier.name`
+   * 无唯一约束，同名两家会让用户弹错店。
+   *
+   * ⚠️ C8 不受影响：id 不是合作状态、不是供价 / 分账、不是联系方式。
+   *    「能拿到 id」与「知道谁是合作伙伴」是两件事。
+   */
+  id: number;
   name: string;
   /** **只含实际在册的项**（见 `TraceabilityQualification`），不补默认值 */
   qualifications: TraceabilityQualification[];

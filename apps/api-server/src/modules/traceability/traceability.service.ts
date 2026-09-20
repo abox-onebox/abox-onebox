@@ -122,6 +122,7 @@ export class TraceabilityService {
           : {
               // 数据不一致（套餐引用了不存在的供应商）时不隐藏这道菜 ——
               // 「有一道菜的出品方查不到」是必须被看见的异常，静默丢弃只会让运营永远不知道
+              id: supplierId,
               name: `供应商 #${supplierId}`,
               qualifications: [],
               recommended: null,
@@ -177,13 +178,17 @@ export class TraceabilityService {
   /**
    * 供应商视图（**C8 收口点**）
    *
-   * 出参只有四项：名称 / 资质 / 推荐平台 / 三平台跳转。
+   * 出参只有五项：id / 名称 / 资质 / 推荐平台 / 三平台跳转。
    * 状态、联系方式、供价、分账比例一律**不出现** —— 不是「忘了带」，
    * 而是这里就是唯一的组装点，谁想加字段都得先过这一关。
+   *
+   * ⭐ M5-17 新增 `id`：首页「来自：X」跳本页时按 id 定位到具体这张卡
+   *    （`name` 无唯一约束，按名定位会弹错店）。id 不属于 C8 的任一项禁忌。
    */
   private supplierView(s: Supplier): TraceabilitySupplierView {
     const read = readTakeoutLinks(s.takeoutLinks);
     return {
+      id: Number(s.id),
       name: s.name,
       qualifications: this.qualificationsOf(s),
       recommended: read.recommended,

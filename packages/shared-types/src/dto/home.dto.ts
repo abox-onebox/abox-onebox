@@ -10,7 +10,32 @@ export interface MealDishView {
   category: string | null;
   imageUrl: string | null;
   supplierName: string | null;
+  /**
+   * 出品方 id（`ab_supplier.id`）
+   *
+   * ⭐ 存在的唯一理由：让端上「来自：X」这一行**可点**，跳溯源页并定位到这家。
+   * 「定位」按 id 而不按 `supplierName` —— `ab_supplier.name` **没有唯一约束**
+   * （同名两家是合法数据），按名字定位会跳错家。
+   *
+   * ⚠️ 与 C8 不冲突：id 是**内部主键**，既不是合作状态、也不是供价 / 分账。
+   *    但它确实是「可枚举的供应商编号」—— 故本字段只在**已能看见该供应商展示名**
+   *    的接口里出现（U1 菜品行 / U5 溯源卡），不下发到任何无名场景。
+   */
+  supplierId: number;
 }
+
+/**
+ * 团长归属的**来源**（U1 出参 `leader.source`）
+ *
+ * 用户可能从未走过邀请链接 —— 此时系统按「本楼在任团长」自动挂靠，
+ * 下单佣金也归那位团长。**这件事必须说出来**：佣金归属是钱的事，
+ * 让用户以为「我没跟谁」而实际上有人在收他的佣金，是比不显示更糟的沉默。
+ */
+export type HomeLeaderSource =
+  /** 经团长邀请链接绑定（`ab_user.team_leader_id` 指向的在任团长） */
+  | 'bound'
+  /** 未绑定 → 自动挂靠本楼在任团长（`ab_team_leader` 中该楼 id 最小且在职者） */
+  | 'building_default';
 
 /** 跟随团长信息（U1 出参 leader） */
 export interface HomeLeaderInfo {
@@ -19,6 +44,8 @@ export interface HomeLeaderInfo {
   building: string | null;
   /** 取餐点（楼名 + 楼层说明由后台配置） */
   floor: string | null;
+  /** 归属来源：端上据此区分「你的邀请团长」与「本楼自动挂靠」 */
+  source: HomeLeaderSource;
 }
 
 /** U1 明日套餐 */

@@ -2,7 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Not, Repository } from 'typeorm';
 
-import type { HomeDailyResult, HomeHistoryItem, MealDishView } from '@abox/shared-types';
+import type {
+  HomeDailyResult,
+  HomeHistoryItem,
+  HomeLeaderInfo,
+  HomeLeaderSource,
+  MealDishView,
+} from '@abox/shared-types';
 import { OrderStatus } from '@abox/shared-types';
 import { LeaderStatus } from '@abox/shared-types';
 
@@ -34,7 +40,10 @@ import { SLOT_LABEL } from './dto/meal.dto';
  * 覆盖《接口规范 v1.0》§3.1：U1 明日套餐、U2 历史套餐归档
  *
  * ⚠️ C8 硬约束：发给用户端的菜品视图**严禁**包含供应商状态、供价、分账比例、
- *    备选商家清单与供应商联系方式。本服务只输出菜名 / 档位 / 图片 / 供应商**展示名**。
+ *    备选商家清单与供应商联系方式。本服务只输出菜名 / 档位 / 图片 / 供应商**展示名与 id**。
+ *
+ * ⭐ M5-17：`dishes[].supplierId` 与 `leader.source` 为本批新增（见各自字段头注）；
+ *    `resolveLeader` 的在职判据与 `OrderService.resolveLeader` 对齐（缺陷 ⑫ 收口）。
  */
 @Injectable()
 export class MealService {
@@ -127,7 +136,14 @@ export class MealService {
     };
   }
 
-  /** U2 · 历史套餐归档（出餐日 ≤ 今日，按日期倒序） */
+  /**
+   * U2 · 历史套餐归档（出餐日 ≤ 今日，按日期倒序）
+   *
+   * ⚠️ M5-17：**端上首页已不再展示本接口**（用户要求首页保持简单，砍掉「往日这盒」）。
+   *    接口与端上 `api/meal.ts fetchHistory` **均保留**：它是 M1 的既有验收点，
+   *    且「历史归档」这件事本身仍然成立 —— 只是当前不占首页版位。
+   *    保留而非删除，是为了下一次要做「订单/历史」入口时**直接可用**，不必重写聚合。
+   */
   async history(userId: number, page = 1, pageSize = 20): Promise<PageResult<HomeHistoryItem>> {
     const buildingGroupId = await this.resolveUserGroup(userId);
     const today = todayBj();
@@ -217,20 +233,45 @@ export class MealService {
     return building.buildingGroupId;
   }
 
-  /** 当前用户跟随的团长；未绑定则回落到其所在办公楼的在任团长 */
-  private async resolveLeader(userId: number) {
+  /**
+   * 当前用户跟随的团长（U1 `leader` 出参）+ **归属来源**
+   *
+   * ## ⚠️ 本方法必须与 `OrderService.resolveLeader` 同判据（缺陷 ⑫ · M5-17 收口）
+   *
+   * 两处都回答「这一单佣金归谁」，但此前判据不同：
+   *   · `OrderService.resolveLeader`（**真的决定钱**）：`user.team_leader_id` 指向的团长
+   *     必须 `status === ACTIVE` 才用，否则回落到本楼在任团长；
+   *   · 本方法（**只决定显示**）：只取 `team_leader_id` 指向的行 —— **不看在职与否**。
+   *
+   * 于是「总监停职 → 用户未重绑」这个组合下，首页显示停职的 A，下单却记 B 的佣金。
+   * 根因是 D22「停职」只改 `ab_team_leader.status`，**不清 `ab_user.team_leader_id`**
+   * （正确 —— 复职后绑定关系应当还在），所以「绑定行」与「有效归属」本来就可能不是同一个。
+   *
+   * 收口方式不是让两边各写一遍同样的三行，而是**让显示侧照抄交易侧的顺序**：
+   * ① 绑定且在职 → 用；② 否则本楼 id 最小且在职 → 用；③ 都没有 → null。
+   * 并额外下发 `source` 让端上把「你的邀请团长」与「本楼自动挂靠」说清楚。
+   */
+  private async resolveLeader(userId: number): Promise<HomeLeaderInfo | null> {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) return null;
 
-    let leader = user.teamLeaderId
-      ? await this.leaderRepo.findOne({ where: { id: user.teamLeaderId } })
-      : null;
+    let leader: TeamLeader | null = null;
+    let source: HomeLeaderSource = 'building_default';
+
+    if (user.teamLeaderId) {
+      const own = await this.leaderRepo.findOne({ where: { id: user.teamLeaderId } });
+      if (own && own.status === LeaderStatus.ACTIVE) {
+        leader = own;
+        source = 'bound';
+      }
+    }
 
     if (!leader && user.buildingId) {
       leader = await this.leaderRepo.findOne({
-        where: { buildingId: user.buildingId, status: 1 },
+        where: { buildingId: user.buildingId, status: LeaderStatus.ACTIVE },
         order: { id: 'ASC' },
       });
+      source = 'building_default';
     }
     if (!leader) return null;
 
@@ -240,10 +281,11 @@ export class MealService {
       name: leader.realName ?? null,
       building: building?.name ?? null,
       floor: null,
+      source,
     };
   }
 
-  /** 套餐菜品视图（含供应商展示名，不含任何价格/分账字段 —— C8） */
+  /** 套餐菜品视图（含供应商展示名与 id，不含任何价格/分账字段 —— C8） */
   private async dishesOfSetMeal(setMealId: number): Promise<MealDishView[]> {
     const items = await this.itemRepo.find({ where: { setMealId }, order: { slot: 'ASC' } });
     if (items.length === 0) return [];
@@ -264,6 +306,8 @@ export class MealService {
         category: dish?.category ?? SLOT_LABEL[i.slot] ?? null,
         imageUrl: dish?.imageUrl ?? null,
         supplierName: supMap.get(i.supplierId)?.name ?? null,
+        // 端上「来自：X」点击后跳溯源页并**按 id 定位**（name 无唯一约束，不按名定位）
+        supplierId: i.supplierId,
       };
     });
   }

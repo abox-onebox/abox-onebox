@@ -57,14 +57,21 @@
       </view>
 
       <template v-else>
-        <!-- 取餐信息 -->
+        <!-- 取餐信息（M5-17：把「这一单的团长是谁 / 佣金归谁」写清楚） -->
         <view class="card">
-          <text class="card__title">📍 取餐信息（跟随团长）</text>
+          <text class="card__title">
+            📍 取餐信息（{{ daily.leader?.source === 'bound' ? '跟随团长' : '本楼团长' }}）
+          </text>
           <view class="pickup-row">
             <text class="pickup-row__leader">
               {{ daily.leader?.name ?? '本楼团长' }}（团长）· {{ daily.leader?.building ?? '' }}
             </text>
           </view>
+          <!-- 自动挂靠必须在这里说：这是用户最后一次「付款前」能看见归属的机会 -->
+          <text v-if="daily.leader?.source === 'building_default'" class="pickup-row__attr">
+            你未绑定团长，本单已自动挂靠本楼团长，佣金归
+            TA；如需更换，请通过该楼团长的邀请链接进入。
+          </text>
           <text class="pickup-row__hint">明天 11:30 由团长统一取餐并分发</text>
           <view class="pickup-row__tip">
             <text>💡 有问题？微信直接联系团长沟通</text>
@@ -412,6 +419,20 @@ onLoad((options) => {
   &__leader {
     font-size: $fs-body;
     font-weight: bold;
+    color: $c-text;
+  }
+
+  // 佣金归属明示（M5-17）：用主文字色而非弱灰 —— 这是一条与钱有关的告知，
+  // 不该以「可略过」的视觉权重呈现。左侧金边沿用页面既有的提示条语言。
+  &__attr {
+    display: block;
+    margin-top: $space-2;
+    padding: $space-2 $space-3;
+    border-left: 6rpx solid $c-gold;
+    border-radius: $radius-sm;
+    background: $c-bg;
+    font-size: $fs-caption;
+    line-height: 1.7;
     color: $c-text;
   }
 
