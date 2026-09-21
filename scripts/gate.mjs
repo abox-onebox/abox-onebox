@@ -40,6 +40,23 @@ const IS_WIN = process.platform === 'win32';
 const PATH_SEP = IS_WIN ? ';' : ':';
 
 /**
+ * 设计红线门禁用 Python 实现（判据含**有序状态机**与括号配平，已有成熟实现；
+ * 移植成 JS 的风险大于收益，见 `scripts/check-design-spec.py` 顶部说明）。
+ *
+ * ⚠️ 解释器名在 CI 与本地**不同**：CI（ubuntu-latest）只有 `python3`，本机托管环境是 `python`
+ *    ⇒ **运行时探测**，不写死任何一个名字。
+ * ⚠️ 探测不到时给出一条**必红**的命令（而不是跳过）——「跑不起来」绝不允许被当作「通过」，
+ *    那正是本项目反复踩的恒绿（`gate.mjs` 顶部与多处注释都在治这个病）。
+ */
+const PY = ['python3', 'python'].find(
+  (c) => spawnSync(c, ['-c', 'pass'], { shell: true, stdio: 'ignore' }).status === 0,
+);
+const pyCmd = (file) =>
+  PY
+    ? `${PY} ${file}`
+    : `node -e "console.error('no python3/python on PATH - this gate cannot run, counted as FAILED');process.exit(1)"`;
+
+/**
  * ── e2e 时钟注入（2026-09-17）─────────────────────────────────────────────
  * `isOrderable(T)` = `[T-1 14:00, T-1 23:00)` —— 窗口外**任何**出餐日都下不了单
  * （该不等式对整数日无解），于是 m1/m2 每天只有 9 小时能跑，00:00–14:00 恒红：
@@ -264,6 +281,38 @@ const GATES = {
    */
   'icons:lock': { cwd: '.', cmd: 'node scripts/check-icon-lock.mjs' },
   /**
+   * S9：**设计红线落点**（原 `_tmp/icons/ui-gate.py`，手工脚本）纳入常驻门禁。
+   *
+   * 为什么必须常驻：它当时**不在任何门禁内**，`all verify` 覆盖不到 ⇒ S8 把后台侧栏
+   * 菜单抽成共享组件 `ab-nav-menu.vue` 后，其中一条断言仍去 `default-layout.vue` 里找
+   * 旧字面量 `class="ab-layout__ico"` ⇒ **转红**，而**红了三轮无人发现**。
+   * ⇒ 手工脚本的断言会悄悄过期，而「恒红」与「恒绿」同罪：都等于没有检查。
+   *
+   * 内容：6 道扫描闸门（渲染区 emoji / 裸色值 / 状态原色当文字 / 图标三档 / 档位定义 /
+   * 紫粉渐变与弹跳缓动）+ 落点存在性事实。**计数一律自算**（如「菜单 icon 全覆盖 40/40」），
+   * 不写死数字。**只读仓库内源码**（`apps/<app>/src` + `vite.config.ts`）⇒ CI 里同样有效。
+   * 自带自证（`--selftest`；主流程每次先跑一遍，判据自身坏了就先红）。
+   * ⚠️ 无样本的判据记 `N/A` 且**不计入分母** —— 0 样本记 OK 就是恒绿。
+   */
+  'design:spec': { cwd: '.', cmd: pyCmd('scripts/check-design-spec.py'), group: 'design' },
+  /**
+   * S9：**设计文档链**（规格稿 / 执行清单 / 登记册 + 手册「源 ↔ docs/ 镜像」）。
+   *
+   * ⚠️ **刻意不进 `all` 别名**：设计文档带 `_` 前缀 = 工作区内部物料，`sync-docs.mjs`
+   *    刻意不镜像（例：`_ABox一盒人工测试入口卡v1.0.html` 含内网 IP）⇒ **CI checkout
+   *    里没有语料**。挂进 `all` 就成了一次「CI 装作绿」—— 正是 `ci.yml` 注释里点名要治的病。
+   *    本地一键：`node scripts/gate.mjs design`。
+   *
+   * 与一次性脚本 `_tmp/dsg/verify-regen.py` 的分工：那边是 S6/S7 那一次重生成的**批次验收**，
+   * 含 6 处**冻死的数字**（39 个菜单入口 / 22 处 8 文件 / 登记册 24,610 字节）。把冻死数字
+   * 挂成常驻门禁 ⇒ **一有合理变更就恒红**，与恒绿同罪。本门禁只留**不随批次漂移**的判据；
+   * 登记册亦不冻字节数，改判**结构**（表头 + 状态列取值域，且**不允许有行被静默跳过**）。
+   *
+   * 新增判据：手册「工作区根 ↔ docs/ 镜像」**逐字节（sha256）一致** —— S9 实测出 1 字节
+   * 分歧（源 `all=20` / 镜像 `all=21`；两侧**字节数相同**，`diff` 只看行看不出、`sha256` 一眼看出）。
+   */
+  'design:docs': { cwd: '.', cmd: pyCmd('scripts/check-design-docs.py'), group: 'design' },
+  /**
    * M5-7：**订单状态机「声明 ↔ 生产写入点」机械对账**（缺陷 #79 的防复发门禁）
    *
    * #79 是一条 **P0**，而当时 **19 道门禁全绿、e2e 969 条全绿** —— 一条都没红。
@@ -338,6 +387,12 @@ const ALIASES = {
   build: ['build:api', 'build:admin', 'build:mp'],
   /** 端到端验收一键跑：重置种子 → 起服务跑真实 HTTP 全链路（M1 + M2 + M3） */
   verify: ['seed', 'e2e:m1', 'e2e:m2', 'e2e:m3'],
+  /**
+   * S9：设计线一键跑（**本地**）。
+   * ⚠️ 刻意不进 `all`：`design:docs` 的语料（`_ABox一盒*` 设计文档）不在仓库内，
+   *    CI 里跑它只会得到一次「装作绿」。故 `all` 只含 CI 可见的 `design:spec`。
+   */
+  design: ['design:spec', 'design:docs'],
   all: [
     'shared',
     'lint',
@@ -358,6 +413,8 @@ const ALIASES = {
     'gate:parity',
     // S7.5：端上图标承载（三档锁）—— 纯静态、毫秒级
     'icons:lock',
+    // S9：设计红线落点（只读仓库内源码 ⇒ CI 可见）。⚠️ design:docs 刻意不进 all，原因见其定义处
+    'design:spec',
     'jest',
     'build:api',
     'build:admin',
@@ -520,7 +577,7 @@ if (process.argv.includes('--json')) {
 if (argv.length === 0 || argv[0] === 'list') {
   console.log('可用门禁：');
   for (const [k, v] of Object.entries(GATES)) console.log(`  ${k.padEnd(16)} [${v.group ?? '-'}] ${v.cwd} › ${v.cmd}`);
-  console.log('\n别名：shared / typecheck / build / verify / all');
+  console.log('\n别名：shared / typecheck / build / verify / all / design');
   process.exit(0);
 }
 

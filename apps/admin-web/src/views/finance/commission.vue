@@ -521,6 +521,14 @@ onMounted(() => {
   .toolbar {
     flex-direction: column;
     align-items: stretch;
+    // S9 补记：同 takeout-links —— 直接命中 EP 的两个 wrapper 本体（见该文件同注）。
+    // ⚠️ 本屏**故意不挂根作用域**：那会把分页器的「每页条数」下拉也抬到 44px，
+    //    而分页按钮仍是 EP 原生的 32px ⇒ 整条分页高矮不齐（观感已坏）。
+    //    分页器整体按已裁定边界不动（后台移动端只做关键路径，不做全站响应式）。
+    :deep(.el-select__wrapper),
+    :deep(.el-input__wrapper) {
+      min-height: 44px;
+    }
 
     .kw,
     .sel {
@@ -538,6 +546,17 @@ onMounted(() => {
 
       .el-radio-button {
         flex: 1;
+        display: flex;
+
+        // S9 补记：状态四按钮由 EP `padding` 撑高（390px 实测 30px），不吃
+        // `--el-component-size` ⇒ 必须显式给**本体**加 min-height（§9.4 的拇指目标）
+        &__inner {
+          width: 100%;
+          min-height: 44px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
       }
     }
 

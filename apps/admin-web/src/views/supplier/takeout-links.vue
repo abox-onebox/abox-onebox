@@ -388,6 +388,26 @@ onMounted(async () => {
     align-items: stretch;
   }
 
+  // S9 补记：§9.3 的「拇指可达」此前只落在 `.el-button` 上 —— 390px 实测：工具栏下拉 32px、
+  // **卡片里的链接输入框 32px**（后者连门禁视野都不在，最危险）。
+  // EP 2.14 的控件高度**不统一**：输入框走 `--el-input-height: var(--el-component-size)`，
+  // 而 `.el-select__wrapper` 里**写死** `min-height: 32px`（不吃任何变量）
+  // ⇒ 直接命中两个 wrapper 本体，别绕变量。
+  // ⚠️ 只给容器 `min-height` 会得到「外框 44 / 控件 32」—— 机械过检但观感已坏。
+  //
+  // ⚠️⚠️ 必须挂在**本地元素类名**（`.toolbar` / `.cards`）之下，**不能**直接挂在
+  //      `.ab-layout.is-narrow` 之下：scoped CSS 把作用域属性加到 `:deep()` 前最后一个
+  //      复合选择器上 —— 挂根节点会编译成 `.ab-layout.is-narrow[data-v-x] …`，
+  //      而 `.ab-layout` 是 layout 组件的节点、拿不到本组件的 data-v ⇒ **规则整条失效**
+  //      （现象＝下拉悄悄退回 32px，而门禁与构建全绿。实测踩过一次）。
+  .toolbar,
+  .cards {
+    :deep(.el-select__wrapper),
+    :deep(.el-input__wrapper) {
+      min-height: 44px;
+    }
+  }
+
   // 供应商选择器占满整行（固定 260px 会把「返回供应商名录」挤下去）
   .toolbar__select {
     width: 100%;

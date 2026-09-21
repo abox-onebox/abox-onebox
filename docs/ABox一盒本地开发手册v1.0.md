@@ -209,6 +209,7 @@ POST /api/v1/payments/mock/paid   { "orderNo": "AB202609150001" }
 & "...\node.exe" abox-onebox\scripts\gate.mjs verify          # 4 道：seed → e2e:m1 → e2e:m2 → e2e:m3
 & "...\node.exe" abox-onebox\scripts\gate.mjs --list          # 列出全部门禁与别名
 & "...\node.exe" abox-onebox\scripts\gate.mjs typecheck:api   # 只跑某几道（快速回归）
+& "...\node.exe" abox-onebox\scripts\gate.mjs design          # 设计线：design:spec + design:docs（本地跑；设计文档不入仓库，CI 看不到）
 ```
 
 > ⚠️ **工作区根 `tests/tools/gate.mjs` 已于 2026-09-21 删除** —— 它是一份只跑 12 道的**陈旧副本**，
@@ -223,14 +224,14 @@ POST /api/v1/payments/mock/paid   { "orderNo": "AB202609150001" }
 
 | 工具 | 用途 |
 | --- | --- |
-| `abox-onebox/scripts/gate.mjs` | **唯一**门禁执行器：`all` + `verify` 两个别名（含 e2e；条数见下方标记） |
+| `abox-onebox/scripts/gate.mjs` | **唯一**门禁执行器：`all` / `verify` / `design` 三个别名（后两者含 e2e 或设计文档链；条数见下方标记） |
 | `tests/tools/verify-manifest.mjs` | 复核《基线冻结清单》全表「字节 + SHA-256」一致性 + 覆盖性 |
 | `tests/tools/audit-contract.mjs` | 契约**静态**对账（与仓库内 `route:audit` 的**运行时反射**互为独立取数） |
 
 > 📌 **门禁条数全文只在此处声明一次**（下面这行是**机器可读标记**，由 `gate:parity` 门禁校验；
 > 加/删门禁后必须同步它，否则门禁会红并点名指出差多少）：
 >
-> `<!-- gate-count: all=21 verify=4 -->`
+> `<!-- gate-count: all=22 verify=4 -->`
 >
 > ⚠️ **其余文档一律不要再写死条数** —— 本项目已反复出现「同一个数字写死在多处，改一处就悄悄错，
 > 而没有任何工具会报错」。条数的**唯一真源**是 `gate.mjs` 自己：`node scripts/gate.mjs --json`。
