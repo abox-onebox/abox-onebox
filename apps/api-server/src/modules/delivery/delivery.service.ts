@@ -46,6 +46,26 @@ type OrderStatusBreakdown = Array<{
   quantity: number;
 }>;
 
+/**
+ * 「**截单已发生**」的履约态集合 —— `cut_off` **及更靠后**的主流程态
+ *
+ * ⚠️ 存在的唯一理由：配送单生成的**可信度告警**要判断「截单任务到底跑没跑」。
+ *    判据若只数 `cut_off`，就会出现**误报**：生产跑批顺序是
+ *    截单（T 00:00）→ 生成配送单（T 00:30）→ 出餐确认（T 09:30），
+ *    但**手动补跑顺序颠倒**时（先出餐确认、后生成配送单），订单已全部推进成 `cooked`，
+ *    只数 `cut_off` 得 0 ⇒ 对着一批完全正常的订单喊「截单没跑」（外部测试报告 OBS-7 实测到）。
+ *
+ * ⭐ 退款态（`refund_applying` / `refunded`）**不在**本集合：
+ *    它们不证明「截单跑过」，只证明「这单后来退了」。本告警只关心「有没有走过截单」。
+ */
+const POST_CUTOFF_ORDER_STATUS: OrderStatus[] = [
+  OrderStatus.CUT_OFF,
+  OrderStatus.COOKED,
+  OrderStatus.DELIVERING,
+  OrderStatus.DELIVERED,
+  OrderStatus.COMPLETED,
+];
+
 /** 配送单生成出参（`generateByDate` · 4.3） */
 export interface DeliveryGenerateResult {
   date: string;
@@ -326,13 +346,16 @@ export class DeliveryService {
     }
 
     // ---- ② 可信度告警：截单是否真的跑过 ----
-    const lockedCount = await this.orderRepo.count({
-      where: { mealDate: date, status: OrderStatus.CUT_OFF },
+    // ⚠️ 判据必须是 `POST_CUTOFF_ORDER_STATUS`（`cut_off` **或更靠后**），不能只数 `cut_off`：
+    //    手动补跑顺序颠倒（先出餐确认、后生成配送单）时订单已推进成 `cooked`，
+    //    只数 `cut_off` 会得到 0 而对正常订单误报「截单没跑」（OBS-7）。
+    const closedCount = await this.orderRepo.count({
+      where: { mealDate: date, status: In(POST_CUTOFF_ORDER_STATUS) },
     });
     let warning: string | null = null;
-    if (created.length && lockedCount === 0) {
+    if (created.length && closedCount === 0) {
       warning =
-        `生成配送单时未发现任何「已截单」订单（date=${date}）—— ` +
+        `生成配送单时未发现任何「已截单」（或更靠后的履约态）订单（date=${date}）—— ` +
         '请确认截单任务是否已执行。份数可能偏小，建议核对后重跑 `cutoff`。';
       this.logger.warn(warning);
     }

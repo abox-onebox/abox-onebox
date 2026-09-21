@@ -1,5 +1,7 @@
 import { OrderStatus, ORDER_STATUS_VIEW, RefundStatus } from '@abox/shared-types';
 
+import { currentTimeline, formatTimeOfDay } from '../../common/utils/order-timeline';
+
 /**
  * 订单状态机映射
  * 权威来源：《ABox一盒订单状态机与全链路流转v1.0.md》§二 状态迁移表
@@ -117,7 +119,20 @@ export const TIMELINE_STEPS: TimelineStep[] = [
   { node: OrderStatus.CUT_OFF, order: 2, pendingText: '待截单' },
   { node: OrderStatus.COOKED, order: 3, pendingText: '待出餐' },
   { node: OrderStatus.DELIVERING, order: 4, pendingText: '待配送' },
-  { node: OrderStatus.DELIVERED, order: 5, pendingText: '预计 11:30 送达' },
+  /**
+   * ⚠️ 送达时刻**派生自真源**（PR-02 收口）：改前是手写 `'预计 11:30 送达'`。
+   *    ⚠️ 两条必须知道的事实（复核结论，别误判它「直接下发用户端」）：
+   *    ① 该文案当前是**死文案** —— `buildTimeline()` 写作 `text: userStatusText(node) || step.pendingText`，
+   *       而 `ORDER_STATUS_VIEW` 对 11 态**全覆盖**（`DELIVERED.user = '待取餐'`）⇒ `||` 右侧永不触发；
+   *    ② 本常量在**模块加载时**求值，此刻配置尚未载入 ⇒ 取到的是 `DEFAULT_TIMELINE`（出厂值）。
+   *    仍要收口它的理由：它是**潜伏的第二份表述** —— 一旦哪天有人把 `userStatusText` 的覆盖去掉，
+   *    它就会成为用户可见的错值。删除字面量比「指望它永远不被用到」便宜。
+   */
+  {
+    node: OrderStatus.DELIVERED,
+    order: 5,
+    pendingText: `预计 ${formatTimeOfDay(currentTimeline().arrival)} 送达`,
+  },
   { node: OrderStatus.COMPLETED, order: 6, pendingText: '待确认收货' },
 ];
 

@@ -66,7 +66,7 @@ export interface WorkbenchPickup {
   status: 'pending' | 'called' | 'en_route' | 'arrived';
   /** 待叫车 / 已叫车 / 配送中 / 已送达 */
   statusText: string;
-  /** 恒为字面量 `'11:30'` */
+  /** 送达时刻 `HH:mm`（服务端按**生效时间轴**派生下发，端上只展示、不自造） */
   expectAt: string;
   /** `+08:00` 带偏移 ISO */
   expectAtIso: string | null;

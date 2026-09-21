@@ -26,6 +26,7 @@ import {
   todayBj,
   tomorrowBj,
 } from '../../common/utils/time';
+import { currentTimeline, formatTimeOfDay } from '../../common/utils/order-timeline';
 import { Building } from '../../database/entities/building.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { MealAssignment, SetMeal, SetMealItem } from '../../database/entities/meal.entity';
@@ -121,6 +122,8 @@ export class MealService {
       mealDate: targetDate,
       publishAt: toBjIso(publishAtOf(targetDate))!,
       cutoffAt: toBjIso(cutoffAtOf(targetDate))!,
+      // ⭐ 送达时刻（PR-02 收口）：与 `cutoffAt` **同源派生** —— 端上「下单确认页」不再写死 `11:30`
+      deliverAt: formatTimeOfDay(currentTimeline().arrival),
       canOrder,
       countdownSec: secondsToCutoff(targetDate),
       reason,
@@ -190,6 +193,9 @@ export class MealService {
         building: null,
         floor: null,
         slogan: '邀请码已失效，可正常浏览套餐',
+        // 无效码也照下发：落地页是免登录页，文案「由团长统一取餐分发」仍需展示，
+        // 若此处缺失会让端上被迫写死一个时刻（PR-02 要消灭的正是这个）。
+        deliverAt: formatTimeOfDay(currentTimeline().arrival),
         valid: false,
       };
     }
@@ -202,6 +208,8 @@ export class MealService {
       building: building?.name ?? null,
       floor: null,
       slogan: `${building?.name ?? '本楼'} 团长 ${leader.realName} 邀你一起吃现做热饭`,
+      // ⭐ 送达时刻（PR-02 收口）：落地页免登录、无法借其它接口取到该值，故随本响应下发
+      deliverAt: formatTimeOfDay(currentTimeline().arrival),
       valid: true,
     };
   }

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
+import { currentTimeline, formatTimeOfDay } from '../../common/utils/order-timeline';
 import { TeamLeader } from '../../database/entities/leader.entity';
 
 /**
@@ -40,7 +41,10 @@ export class ShareService {
       /** 端上可直接拼的完整参数串 */
       shareQuery: `leaderCode=${inviteCode}`,
       title: 'ABox 一盒 · 一饭四菜 ¥25.80',
-      desc: `${leader.realName} 邀请你加入${leader.floor ? ` ${leader.floor} ` : ''}拼饭群，次日上午 11:30 送到楼下`,
+      // ⚠️ 送达时刻**派生自真源**（PR-02 收口）：改前是手写 `'11:30'`，
+      //    后台把「送达时间」改掉后，团长转发出去的分享语与系统实际行为**不一致**，
+      //    而分享语是**离线的**（转发到微信群后无法再纠正）。
+      desc: `${leader.realName} 邀请你加入${leader.floor ? ` ${leader.floor} ` : ''}拼饭群，次日上午 ${formatTimeOfDay(currentTimeline().arrival)} 送到楼下`,
       /** 海报底图：素材库上线前为 null（M5） */
       posterUrl: null as string | null,
       qrcodeUrl: null as string | null,

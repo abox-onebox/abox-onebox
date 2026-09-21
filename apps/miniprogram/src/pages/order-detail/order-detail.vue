@@ -116,7 +116,11 @@
           <text class="pickup__strong">{{ leaderName }}</text
           >（团长）· {{ detail.pickup.point }}
         </text>
-        <text class="pickup__when">明日 11:30 由团长统一取餐并分发至取餐点</text>
+        <!-- ⚠️ 时刻来自响应（`pickup.expectAt`，服务端按生效时间轴派生）—— 曾写死 `11:30`，
+             改配置后会与系统行为不一致（PR-02 收口） -->
+        <text class="pickup__when"
+          >明日 {{ detail.pickup.expectAt }} 由团长统一取餐并分发至取餐点</text
+        >
         <view class="pickup__acts">
           <button class="ghost-btn" hover-class="ghost-btn--hover" @tap="contactLeader">
             📞 联系团长
@@ -225,6 +229,15 @@ const leaderName = computed(
   () => detail.value?.pickup.leaderName || detail.value?.leaderContact?.name || '本楼团长',
 );
 
+/**
+ * 送达时刻（`HH:mm`）—— **来自响应**，不在端上写死（PR-02 收口）
+ *
+ * 真源是服务端 `currentTimeline().arrival`（后台 `set_meal.delivery_arrival_time` 可改）。
+ * 端上拿不到真源 ⇒ 只能由 `pickup.expectAt` 下发。原先这里与取餐卡各写死一个 `11:30`，
+ * 改一次配置就会出现「取餐卡说 12:00、状态提示还说 11:30」。
+ */
+const arriveAt = computed(() => detail.value?.pickup?.expectAt ?? '');
+
 const statusHint = computed(() => {
   switch (detail.value?.status) {
     case OrderStatus.PENDING_PAY:
@@ -235,7 +248,8 @@ const statusHint = computed(() => {
     case OrderStatus.COOKED:
       return '已截单，如需退款请联系团长协助';
     case OrderStatus.DELIVERING:
-      return '配送途中，11:30 送达办公楼';
+      // ⚠️ 曾写死 `'配送途中，11:30 送达办公楼'`（PR-02 收口）—— 同上，改用响应值
+      return arriveAt.value ? `配送途中，${arriveAt.value} 送达办公楼` : '配送途中，即将送达办公楼';
     case OrderStatus.DELIVERED:
       return '已送达取餐点，请凭订单号取餐';
     case OrderStatus.COMPLETED:

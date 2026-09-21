@@ -55,6 +55,13 @@ export interface HomeDailyResult {
   publishAt: string;
   /** 截单时刻 T-1 24:00（ISO +08:00） */
   cutoffAt: string;
+  /**
+   * 送达时刻 `HH:mm`（服务端按**生效时间轴**派生下发，端上只展示、不自造）
+   *
+   * ⚠️ PR-02 收口（2026-09-21）：下单确认页「由团长统一取餐并分发」曾写死 `11:30`；
+   * 与 `cutoffAt` 同源（`currentTimeline().arrival`），后台可改，故必须下发。
+   */
+  deliverAt: string;
   /** 服务端权威可下单判定（截单前 10 分钟即 false） */
   canOrder: boolean;
   /** 距截单秒数，纯展示用 */
@@ -93,4 +100,11 @@ export interface LeaderInviteLanding {
   slogan: string;
   /** 邀请码是否有效（无效时端上降级为普通首页） */
   valid: boolean;
+  /**
+   * 送达时刻 `HH:mm`（服务端按**生效时间轴**派生下发）
+   *
+   * ⚠️ PR-02 收口（2026-09-21）：落地页「明天 11:30 由团长统一取餐分发」曾写死；
+   * 落地页是**免登录**页，无法借其它接口取到该值，故随本响应一并下发。
+   */
+  deliverAt: string;
 }

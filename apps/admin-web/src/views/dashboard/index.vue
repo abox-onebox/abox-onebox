@@ -110,7 +110,11 @@
           SET_MEAL_COMPOSITION.rule
         }}</el-descriptions-item>
         <el-descriptions-item label="截单时刻">
-          T-1 {{ String(BIZ.cutoffHour).padStart(2, '0') }}:00（次日 11:30 送达）
+          <!-- ⚠️ PR-02 收口：原先写死「（次日 11:30 送达）」。本卡是**静态口径卡**（整张卡由 `BIZ`
+               常量驱动），而送达时刻的**真源在服务端时间轴**（`order-timeline.ts`，后台可改）。
+               不给端上再加一个镜像常量（那会制造第三份表述）—— 此处只留口径，**具体时刻以
+               「系统配置 → 时间轴」的生效值为准**。 -->
+          T-1 {{ String(BIZ.cutoffHour).padStart(2, '0') }}:00（次日送达，实际时刻见「系统配置」）
         </el-descriptions-item>
       </el-descriptions>
     </el-card>

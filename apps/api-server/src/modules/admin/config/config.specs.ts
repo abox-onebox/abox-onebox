@@ -493,7 +493,11 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     type: 'time',
     impact: 'master',
     wiring: 'live',
-    description: 'T 日 11:30 送达办公楼 —— 送货单 `expectedAt` 与团长端「取餐时间」的基准。',
+    // ⚠️ 本文件**自身**的纪律（见文件头）：「任何『时刻』都只允许在 order-timeline.ts 声明一次；
+    //    在别处再写一遍数字 ＝ 重新制造 #49」。本行原先写死 `11:30`，正是这条纪律的**自我违反** ——
+    //    收口方式不是「再派生一次」，而是**描述里不再复述具体时刻**：具体值由上方「生效值」输入框给出。
+    description:
+      'T 日送达办公楼 —— 送货单 `expectedAt` 与团长端「取餐时间」的基准（具体时刻见上方生效值）。',
     unit: 'HH:mm',
     consumedBy:
       '`currentTimeline().arrival` → `arrivalAtOf()`（`ab_delivery_record.expected_at` · 团长工作台取餐时刻）',

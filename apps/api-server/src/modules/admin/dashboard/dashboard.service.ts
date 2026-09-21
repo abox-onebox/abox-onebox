@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 
+import { currentTimeline, formatTimeOfDay } from '../../../common/utils/order-timeline';
 import { arrivalAtOf, now, todayBj, tomorrowBj } from '../../../common/utils/time';
 import { BuildingGroup } from '../../../database/entities/building.entity';
 import { MealAssignment } from '../../../database/entities/meal.entity';
@@ -162,9 +163,12 @@ export class DashboardService {
           label: '今日逾期未送达',
           count: deliveriesLate,
           path: '/order/delivery',
+          // ⚠️ 送达时刻**派生自真源**（PR-02 收口）：本行与 `isPastArrival`（由 `arrivalAtOf()`
+          //    算得）**同源**。改前这里是手写 `'11:30'`，与 `isPastArrival` 是两个独立真相 ——
+          //    配置一改就会出现「文案说 11:30、判定按 12:00」的错位，运营据此误判履约异常。
           hint: isPastArrival
-            ? '已过送达时刻（11:30）仍非「已送达」的配送单'
-            : '未到送达时刻（11:30）—— 届时才判定，现在恒为 0',
+            ? `已过送达时刻（${formatTimeOfDay(currentTimeline().arrival)}）仍非「已送达」的配送单`
+            : `未到送达时刻（${formatTimeOfDay(currentTimeline().arrival)}）—— 届时才判定，现在恒为 0`,
         },
       ],
       // 与上面同一批查询的副产物，不额外查库（见类注释 ②）

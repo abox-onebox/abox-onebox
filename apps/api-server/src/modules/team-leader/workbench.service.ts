@@ -12,6 +12,7 @@ import {
 
 import { BizConfigService } from '../../common/services/biz-config.service';
 import { toFen } from '../../common/utils/money';
+import { currentTimeline, formatTimeOfDay } from '../../common/utils/order-timeline';
 import {
   addDays,
   arrivalAtOf,
@@ -132,7 +133,20 @@ export class LeaderWorkbenchService {
         statusText: delivery
           ? (DELIVERY_STATUS_LABEL[delivery.status] ?? delivery.status)
           : DELIVERY_STATUS_LABEL[DeliveryStatus.PENDING],
-        expectAt: '11:30',
+        /**
+         * ⭐⭐ 送达时刻 —— **同一个 payload 里曾经有两个真相**（外部测试报告 PR-02 · 2026-09-21 收口）
+         *
+         * 改前：`expectAt: '11:30'`（手写字面量）与下一行 `expectAtIso: toBjIso(arrivalAtOf(today))`
+         * （派生自真源）**并排下发**。运营在后台配置页把「送达时间」改成 `12:00` 后，同一份响应里
+         * `expectAt` 还是 `'11:30'`、`expectAtIso` 已是 `12:00:00+08:00` —— **当场自相矛盾**，
+         * 且团长端展示哪个由取值方决定（典型的「两个真相」）。
+         *
+         * 收口：`expectAt` 改为与 `expectAtIso` **同源派生**（`currentTimeline().arrival`），
+         * 两者恒等 —— 改一次配置要么一起变、要么都不变。
+         * ⚠️ 不要改回字面量：`set_meal.delivery_arrival_time` 在 D58 白名单里是 `wiring:'live'`
+         *    （`isEditable() === true`）⇒ **后台一键可改**，不是「一期不可配」。
+         */
+        expectAt: formatTimeOfDay(currentTimeline().arrival),
         expectAtIso: toBjIso(arrivalAtOf(today)),
         actualAt: delivery?.actualAt ?? null,
         driverName: delivery?.driverName ?? null,

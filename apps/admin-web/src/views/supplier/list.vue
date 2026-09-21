@@ -203,7 +203,12 @@
 
       <el-table-column label="操作" width="250" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="goEdit(asRow(row).id)">编辑</el-button>
+          <!-- ⚠️ 本列 5 个操作按钮**全部**须带 `:disabled="!canManage"`（后端 `@Roles` 只放行 admin/super_admin）。
+               漏一个就是项目明文列为必须消灭的形态：「按钮亮着、点了 `10003`」（`finance.constants.ts:8-11`）。
+               「编辑」曾漏过（外部测试报告 PR-04 · 2026-09-21），已补。 -->
+          <el-button link type="primary" :disabled="!canManage" @click="goEdit(asRow(row).id)">
+            编辑
+          </el-button>
           <el-button link type="primary" :disabled="!canManage" @click="openAudit(asRow(row))">
             资质审核
           </el-button>

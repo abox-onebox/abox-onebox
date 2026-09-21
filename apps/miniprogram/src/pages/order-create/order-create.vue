@@ -72,7 +72,8 @@
             你未绑定团长，本单已自动挂靠本楼团长，佣金归
             TA；如需更换，请通过该楼团长的邀请链接进入。
           </text>
-          <text class="pickup-row__hint">明天 11:30 由团长统一取餐并分发</text>
+          <!-- ⚠️ 时刻来自响应（`daily.deliverAt`）—— 曾写死 `11:30`（PR-02 收口） -->
+          <text class="pickup-row__hint">明天 {{ daily.deliverAt }} 由团长统一取餐并分发</text>
           <view class="pickup-row__tip">
             <text>💡 有问题？微信直接联系团长沟通</text>
           </view>

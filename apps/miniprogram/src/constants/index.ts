@@ -112,19 +112,20 @@ export const LEVEL_UP_RULE = [
   },
 ] as const;
 
-/** L3 / L4 · 关键时间锚点 */
-export const TIME_ANCHOR = {
-  orderOpenHour: 14, // T-1 14:00 开团
-  cutoffHour: 24, // T-1 24:00 截单（关键锚点 1）
-  deliveryGenerateAt: '00:30',
-  cookStart: '06:00',
-  cookDeadline: '09:30',
-  deliverArrive: '11:30',
-  pickupWindowEnd: '12:30',
-  autoConfirmHour: 14, // T 日 14:00 自动确认收货（关键锚点 2）
-  settleBatchAt: '02:00', // T+1 02:00 跑批
-  payTimeoutMinutes: 30,
-} as const;
+/**
+ * ⭐ 已**删除** `TIME_ANCHOR` 常量表（PR-02 收口 · 2026-09-21）
+ *
+ * 它原先在此声明了 10 个业务时刻（`orderOpenHour` / `cutoffHour` / `deliverArrive` …）。
+ * 删除依据（机械核实，非印象）：
+ *   · **10/10 成员零消费** —— 全仓（`apps/` `packages/` `scripts/`）grep 无任何读取点；
+ *   · 它是**服务端时间轴的第二份表述**（真源 `order-timeline.ts` 的 `DEFAULT_TIMELINE`
+ *     + `ab_config` 覆写）；留着**不会报错**，只会让人误以为「端上也能改时刻」。
+ *
+ * ⚠️ 端上**不要再建任何时刻常量表**：
+ *   · 需要展示的时刻**一律从响应取** —— `HomeDailyResult.cutoffAt/deliverAt`、
+ *     `OrderDetailResult.pickup.expectAt`、`LeaderInviteLanding.deliverAt`；
+ *   · 真源只有一处：`apps/api-server/src/common/utils/order-timeline.ts`。
+ */
 
 /**
  * 外卖平台小程序的 AppID（用户端 P38 溯源页「直接点他们的外卖」）

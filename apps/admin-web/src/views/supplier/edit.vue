@@ -6,8 +6,8 @@
     <el-alert type="warning" :closable="false" show-icon class="note">
       <template #title>
         <b>一期未实装：本页没有可操作的内容。</b>
-        供应商的<strong>资质与资料</strong>目前由运营在平台端录入（「业务 → 供应商管理 → 新建 / 编辑
-        / 资质补录」），商家端不自助维护。
+        供应商的<strong>资质与资料</strong>目前由运营在平台端录入（「供应商与出餐 → 供应商管理 →
+        新建 / 编辑 / 资质补录」），商家端不自助维护。
       </template>
     </el-alert>
 
@@ -15,12 +15,12 @@
       <template #header><span class="card__title">现在要改资料 / 报菜品，走哪里？</span></template>
       <ol class="steps">
         <li>
-          <strong>供应商资料</strong>（名称 / 类型 / 联系人 / 结算账户 / 资质证照）： 运营在「业务 →
-          供应商管理」里维护，含 `新建` 与 `资质补录` ——
-          这也是**资质合规的留痕点**（谁在什么时候补了什么证）。
+          <strong>供应商资料</strong>（名称 / 联系人 / 结算账户 / 资质证照）： 运营在「供应商与出餐
+          → 供应商管理」里维护，含 `新建` 与 `资质补录` ——
+          这也是<strong>资质合规的留痕点</strong>（谁在什么时候补了什么证）。
         </li>
         <li>
-          <strong>菜品上架</strong>：一期的菜品由运营在「业务 → 菜品库」代维护，
+          <strong>菜品上架</strong>：一期的菜品由运营在「供应商与出餐 → 菜品库」代维护，
           见同组菜单「我的菜品」页的说明。
         </li>
         <li>
@@ -57,6 +57,15 @@
  *    结算账户与资质若开给商家自助改，等于把资金与合规的写点交给被监管方；
  *    故一期刻意只在平台端开放（`admin/suppliers` 的 `settle-account` /
  *    `audit` 两个接口，且 `@Roles('super_admin','admin')`）。
+ *
+ * ⚠️ **指路文案是本页唯一的产出，故必须指向「现值」**（外部测试报告 PR-09 · 2026-09-21 收口）：
+ *    ① 分组名一律取 `apps/admin-web/src/constants/index.ts` 的 `ADMIN_NAV`
+ *      —— M5-16 已由 6 组重整为 **8 组，其中没有名为「业务」的组**，
+ *      供应商相关两页现挂在「**供应商与出餐**」组（`/supplier/list` 供应商管理 · `/supplier/dish-library` 菜品库）；
+ *    ② 已剔除**不再由运营维护**的字段：`ab_supplier.type`（M4-0 起 D27 整条路由下线、
+ *      `form.vue` 的 `typeOptions`/`typeLocked` 一并删除，该列仅作历史字段保留）。
+ *    指到一个不存在的分组 = 把「缺口已登记」变成「**按提示也走不通**」——
+ *    正好落回本页想消灭的那种体验。
  */
 </script>
 

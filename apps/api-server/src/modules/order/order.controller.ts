@@ -56,7 +56,27 @@ export class OrderController {
     return this.orderService.detail(user.sub, p.orderNo);
   }
 
+  /**
+   * U11 自助取消（T4）
+   *
+   * ⚠️ **幂等键刻意 `required: false`**（外部测试报告 PR-01 · 2026-09-21 收口）：
+   *    · 带键 → 同一键的**并发 / 重放**在 KV 层被拦下（`idem:order-cancel:<key>`），
+   *      第二次得 `10006` + 首次结果，端上按成功处理；
+   *    · 不带键（既有端上版本）→ 放行，由 **service 层事务内的原子占位**兜底。
+   *    ⇒ **两层覆盖的是不同情况，缺一层就有缝**：KV 只认「同一个键」，
+   *      拦不住「两个不同键」或「一端带键一端不带」的并发；真正让钱不会被退两次的
+   *      是 service 层那条 `WHERE id = ? AND status = ?` + `affected` 判定。
+   *    之所以**不**把 `required` 提为 `true`：那是破坏性契约变更（既有端上调用方与
+   *      e2e 都得先改），而收益已由 service 层覆盖。
+   */
   @Post(':orderNo/cancel')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'order-cancel', required: false })
+  @ApiHeader({
+    name: HEADER.IDEMPOTENCY_KEY,
+    required: false,
+    description: '幂等键（可选；同键重放返回 code:10006 + 首次结果）',
+  })
   @ApiOperation({
     summary: 'U11 自助取消（仅截单前 + pending_pay/paid；截单后返回 40004 + 团长联系方式）',
   })

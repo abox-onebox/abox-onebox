@@ -199,7 +199,10 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     //    要么放行一个发不出去的场景，要么让这个能用的场景也启用不了。
     //    渠道是**代码事实**，代码一期只发人工群 —— 就照实写。
     channels: ['wechat_group'],
-    trigger: '餐送达办公楼楼下（约 11:30）',
+    // ⚠️ 触发时机**不写具体时刻**（PR-02 收口）：改前是 `'…（约 11:30）'`，与
+    //    `order-timeline.ts` 的真源构成第二份表述。时刻已由下方 `variables` 的
+    //    `arriveTime` 承载（且它由服务端按生效时间轴填充），此处只描述**事件**。
+    trigger: '餐送达办公楼楼下',
     mandatory: false,
     variables: ['buildingName', 'mealDate', 'arriveTime', 'quantity'],
     // 微信群人工通知：不经过微信订阅消息，无需授权

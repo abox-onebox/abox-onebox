@@ -32,6 +32,7 @@ import {
   toBjIso,
   tomorrowBj,
 } from '../../common/utils/time';
+import { currentTimeline, formatTimeOfDay } from '../../common/utils/order-timeline';
 import { Building } from '../../database/entities/building.entity';
 import { Balance, BalanceLog } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
@@ -412,6 +413,15 @@ export class OrderService {
         point: building ? `${building.name} 1 楼大堂` : '待确认',
         leaderName: leader?.realName ?? null,
         leaderPhone: maskPhone(leader?.phone),
+        /**
+         * ⭐ 送达时刻（`HH:mm`）—— **新增下发字段**（PR-02 收口 · 2026-09-21）
+         *
+         * 为什么加：端上两处文案（`order-detail.vue` 取餐卡与「配送途中」提示）原先各写死
+         * 一个 `11:30`。端上**无法**知道真源（`currentTimeline()` 只在服务端），若不给字段，
+         * 端上就只有两个选择：写死（第二真相）或删掉时刻（丢品牌承诺）。
+         * ⇒ 由服务端**派生后下发**，端上只做展示 —— 这是端上唯一的合法来源。
+         */
+        expectAt: formatTimeOfDay(currentTimeline().arrival),
       },
       createdAt: toBjIso(order.createdAt)!,
       paidAt: toBjIso(order.paidAt),
@@ -455,9 +465,53 @@ export class OrderService {
     const payAmountFen = toFen(order.payAmount);
     let refundInitiated = false;
 
-    // 事务内：**只落 DB**（余额退回 + 建微信退款单 + 订单取消），不调外部通道（M4-3）
+    // 事务内：**只落 DB**（订单原子占位 → 余额退回 → 建微信退款单），不调外部通道（M4-3）
     const refundPayload = await this.dataSource.transaction(
       async (m: EntityManager): Promise<RefundApplyPayload | null> => {
+        /**
+         * ⭐⭐ 第一步：**原子占位订单**（并发闸门 · 外部测试报告 PR-01 · 2026-09-21 收口）
+         *
+         * ## 改前是什么（真缺陷 · P1）
+         * 顺序是「事务外 `loadOwnOrder` **快照读** → 事务内**无条件** `update({ id }, …)`」，
+         * 且余额动作跑在状态写**之前**。于是并发的第二次取消可以插进来：
+         *   · 双端同点「取消」／断网重试换了幂等键 ⇒ **解冻 / 退回两次余额**；
+         *   · 已支付单还会各建一张退款单（两笔 `out_refund_no` 不同 ⇒ 微信都受理）
+         *     ⇒ **账实不符，且任何门禁都不会红**。
+         *
+         * ## 为什么用 `status = :from` 而不是 `status IN (...)`
+         * `from` 是上方 `explainSelfCancelBlock` **校验通过的那个状态**
+         * （已保证 ∈ `USER_SELF_CANCEL_ALLOWED`）。用**精确等值**做 compare-and-set，
+         * 比「只要还在允许集合里就放行」多挡一档：若这两行之间用户**把这单支付了**
+         * （`pending_pay → paid`），按集合判会放行、随后走「未支付」分支去**解冻**
+         * 一笔已被支付消费掉的冻结额；按等值判则 `affected = 0`、**fail-closed 拒绝**，
+         * 用户重试即走「已支付」分支。与 `finance/refund.service.ts#applyByLeader`
+         * （`where('id = :id AND status = :from')`）同款。
+         *
+         * ## 为什么 `affected = 0` 必须抛错、不能静默返回
+         * 抛错让本事务**整体回滚**，钱一动不动；静默返回则会给出一个
+         * 「取消成功、退款已发起」的**假回执**（与缺陷 #82 同族：出参说做了、账本没动）。
+         *
+         * ⚠️ 与跑批侧（截单 `lockPaidOrders` 的原子占位）是**同一族**，那边早已按
+         *    `affected` 判归属 —— 本端点（T4 自助取消）此前是**漏网的另一个自己**。
+         */
+        const claim = await m
+          .createQueryBuilder()
+          .update(Order)
+          .set({
+            status: OrderStatus.CANCELLED,
+            cancelledAt: now,
+            // ⭐ 用 SQL 表达式自增，不用内存里的 `order.version`（那是事务外快照值）
+            version: () => 'version + 1',
+          })
+          .where('id = :id AND status = :from', { id: Number(order.id), from: status })
+          .execute();
+        if ((claim.affected ?? 0) === 0) {
+          throw new BizException(
+            ErrorCode.ORDER_STATUS_ILLEGAL,
+            '订单状态已变更（可能已在别处取消、已完成支付或已进入退款流程），本次操作未执行，请刷新后重试',
+          );
+        }
+
         let payload: RefundApplyPayload | null = null;
 
         if (status === OrderStatus.PENDING_PAY) {
@@ -489,15 +543,6 @@ export class OrderService {
             }
           }
         }
-
-        await m.getRepository(Order).update(
-          { id: order.id },
-          {
-            status: OrderStatus.CANCELLED,
-            cancelledAt: now,
-            version: (order.version ?? 0) + 1,
-          },
-        );
 
         return payload;
       },
@@ -1323,6 +1368,42 @@ export class OrderService {
     );
   }
 
+  /**
+   * 余额行**乐观锁**写入（本文件唯一入口 · 缺陷 #81 同款收口）
+   *
+   * ⭐ 与 `finance/reversal.service.ts:128` / `finance/withdraw.service.ts:96` /
+   *    `finance/balance-admin.service.ts:321` **同款**。本文件此前是同一族的**漏网处**：
+   *    `freezeBalance` / `releaseBalance` / `consumeBalance` / `refundBalance` 四处都写成
+   *    `.update({ id: row.id }, { …, version: (row.version ?? 0) + 1 })`
+   *    —— `version` **只在 SET 里自增、WHERE 里没有它** ⇒ **乐观锁是装饰性的**：
+   *    读与写之间若有另一路写点（T+1 02:00 佣金入账跑批 / 另一笔退款 / 双端取消）提交，
+   *    这里会把**过期值**写回去（丢更新）；而且 `ab_balance_log.balanceAfter` 记的是
+   *    **自己算的那个错值** —— 流水与余额**一起错、彼此自洽**，事后对账抓不住。
+   *    同一缺陷在 finance 域已收口（#81），订单域这四处属**改一处漏一处**的再次复现。
+   *
+   * ⚠️ `affected = 0` 必须 **fail-closed 抛 `40018`**，不能 `logger.warn` 后继续：
+   *    继续下去就会写出「余额没动、流水说动了」的记录（与缺陷 #82 同族）。
+   *    `40018` 是 M5-7 就为此定义的码（`error-code.ts:224-231`），此前在本文件**不可达**。
+   */
+  private async updateBalanceRow(
+    m: EntityManager,
+    row: Balance,
+    delta: { balance?: string; frozen?: string; totalOut?: string },
+  ): Promise<void> {
+    const upd = await m
+      .createQueryBuilder()
+      .update(Balance)
+      .set({ ...delta, version: () => 'version + 1' })
+      .where('id = :id AND version = :v', { id: row.id, v: row.version ?? 0 })
+      .execute();
+    if (!upd.affected) {
+      throw new BizException(
+        ErrorCode.BALANCE_CONCURRENT_MODIFIED,
+        '余额已被其它操作改动，本次操作未执行，请重试',
+      );
+    }
+  }
+
   /** T1 · 冻结余额（可用 → 冻结） */
   private async freezeBalance(
     m: EntityManager,
@@ -1333,12 +1414,10 @@ export class OrderService {
     const row = await this.getOrCreateBalance(m, userId);
     const balance = toFen(row.balance) - amountFen;
     const frozen = toFen(row.frozen) + amountFen;
-    await m
-      .getRepository(Balance)
-      .update(
-        { id: row.id },
-        { balance: toYuanStr(balance), frozen: toYuanStr(frozen), version: (row.version ?? 0) + 1 },
-      );
+    await this.updateBalanceRow(m, row, {
+      balance: toYuanStr(balance),
+      frozen: toYuanStr(frozen),
+    });
     await this.writeBalanceLog(
       m,
       userId,
@@ -1361,12 +1440,10 @@ export class OrderService {
     const row = await this.getOrCreateBalance(m, userId);
     const frozen = Math.max(0, toFen(row.frozen) - amountFen);
     const balance = toFen(row.balance) + amountFen;
-    await m
-      .getRepository(Balance)
-      .update(
-        { id: row.id },
-        { balance: toYuanStr(balance), frozen: toYuanStr(frozen), version: (row.version ?? 0) + 1 },
-      );
+    await this.updateBalanceRow(m, row, {
+      balance: toYuanStr(balance),
+      frozen: toYuanStr(frozen),
+    });
     await this.writeBalanceLog(
       m,
       userId,
@@ -1389,14 +1466,10 @@ export class OrderService {
     const row = await this.getOrCreateBalance(m, userId);
     const frozen = Math.max(0, toFen(row.frozen) - amountFen);
     const totalOut = toFen(row.totalOut) + amountFen;
-    await m.getRepository(Balance).update(
-      { id: row.id },
-      {
-        frozen: toYuanStr(frozen),
-        totalOut: toYuanStr(totalOut),
-        version: (row.version ?? 0) + 1,
-      },
-    );
+    await this.updateBalanceRow(m, row, {
+      frozen: toYuanStr(frozen),
+      totalOut: toYuanStr(totalOut),
+    });
     await this.writeBalanceLog(
       m,
       userId,
@@ -1419,14 +1492,10 @@ export class OrderService {
     const row = await this.getOrCreateBalance(m, userId);
     const balance = toFen(row.balance) + amountFen;
     const totalOut = Math.max(0, toFen(row.totalOut) - amountFen);
-    await m.getRepository(Balance).update(
-      { id: row.id },
-      {
-        balance: toYuanStr(balance),
-        totalOut: toYuanStr(totalOut),
-        version: (row.version ?? 0) + 1,
-      },
-    );
+    await this.updateBalanceRow(m, row, {
+      balance: toYuanStr(balance),
+      totalOut: toYuanStr(totalOut),
+    });
     await this.writeBalanceLog(
       m,
       userId,

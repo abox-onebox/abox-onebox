@@ -11,6 +11,7 @@ import {
   ShareIdParamDto,
   SupplierShareListQueryDto,
 } from './dto/supplier-share.dto';
+import { FINANCE_READ_ROLES, FUND_ACTION_ROLES } from './finance.constants';
 import { SupplierShareService } from './supplier-share.service';
 
 /**
@@ -25,6 +26,15 @@ import { SupplierShareService } from './supplier-share.service';
  *   —— 这两件事一个决定「欠供应商多少」、一个决定「钱付了没有」，是资金动作。
  *   `viewer`（只读观察者）与 `supplier` 两级都进不来。
  *
+ * ⚠️ **白名单必须走常量，不许再写第 5 份字面量**（外部测试报告 PR-05 · 2026-09-21 收口）：
+ *   本控制器此前**硬编码**了 `'super_admin','admin','finance','operator'` 与
+ *   `'super_admin','admin','finance'` 两份字面量 —— 值**今天恰好**与常量相等，
+ *   所以没有任何测试会红。这正是 `finance.constants.ts:7-11` 记录的失败机制：
+ *   四个字面量副本的后果不是「编译不过」，而是**静默漂移**（改一处忘另一处，
+ *   出现「按钮亮着、点了 `10003`」或更糟的「按钮灰着、其实有权限」）。
+ *   现与 `refund-admin.controller.ts:48,87,109` 统一改为展开常量：
+ *   类级 `FINANCE_READ_ROLES`、方法级 `FUND_ACTION_ROLES`。
+ *
  * ⚠️ **路由顺序**：`GET exceptions` 这类**静态段必须声明在参数路由之前**
  *   （`admin.guard` / D8 的 export、D19 的 filter-options 都踩过这个坑）。
  *   本控制器当前无 `GET :id`，仍按纪律把 `exceptions` 写在前面，避免后续加详情页时踩雷。
@@ -36,7 +46,7 @@ import { SupplierShareService } from './supplier-share.service';
 @ApiBearerAuth()
 @Controller('admin/supplier-shares')
 @UseGuards(AdminGuard)
-@Roles('super_admin', 'admin', 'finance', 'operator')
+@Roles(...FINANCE_READ_ROLES)
 export class SupplierShareAdminController {
   constructor(private readonly shares: SupplierShareService) {}
 
@@ -73,7 +83,7 @@ export class SupplierShareAdminController {
   // ------------------------------------------------------------ 生成应付（资金动作 · 收窄）
 
   @Post('generate')
-  @Roles('super_admin', 'admin', 'finance')
+  @Roles(...FUND_ACTION_ROLES)
   @OperationLog({ module: 'finance', action: '生成应付单' })
   @ApiOperation({
     summary: 'S9 生成应付单（幂等 · 可重跑）',
@@ -90,7 +100,7 @@ export class SupplierShareAdminController {
   // ------------------------------------------------------------ 付款登记（资金动作 · 收窄）
 
   @Post(':id/payment')
-  @Roles('super_admin', 'admin', 'finance')
+  @Roles(...FUND_ACTION_ROLES)
   @OperationLog({ module: 'finance', action: '应付付款登记', targetParam: 'id' })
   @ApiOperation({
     summary: 'S9 付款登记（人工对公转账后回填凭证 · C10）',

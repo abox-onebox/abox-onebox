@@ -34,6 +34,14 @@ export interface OrderPickupInfo {
   leaderName: string | null;
   /** 已脱敏（§1.6） */
   leaderPhone: string | null;
+  /**
+   * 送达时刻 `HH:mm`（服务端按**生效时间轴**派生下发，端上只展示、不自造）
+   *
+   * ⚠️ PR-02 收口（2026-09-21）：端上取餐卡与「配送途中」提示曾各写死 `11:30`。
+   * 真源是服务端 `currentTimeline().arrival`（后台 `set_meal.delivery_arrival_time` 可改），
+   * 端上拿不到 ⇒ 必须由本字段下发，不得再写死。
+   */
+  expectAt: string;
 }
 
 /** 订单详情（U10） */
