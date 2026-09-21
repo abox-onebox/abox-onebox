@@ -443,11 +443,11 @@ onMounted(load);
     font-weight: 700;
 
     &--ok {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &--warn {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
 
     &--small {
@@ -538,7 +538,7 @@ onMounted(load);
 }
 
 .warn {
-  color: $c-warning;
+  color: $c-warn-fg;
   font-size: $fs-caption;
 }
 

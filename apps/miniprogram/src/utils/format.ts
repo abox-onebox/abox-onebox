@@ -5,6 +5,7 @@
  *    端上不做任何「元 → 分」以外的运算，避免浮点误差进入业务判断。
  */
 import { DishCategory } from '@abox/shared-types';
+import type { AboxIconName } from '@abox/shared-utils';
 
 /** 分 → 元（两位小数字符串，如 2580 → "25.80"） */
 export function fenToYuan(fen: number): string {
@@ -41,17 +42,22 @@ export { SET_MEAL_SLOT_LABEL as SLOT_LABEL } from '@abox/shared-utils';
  *    「首页显示 🍛、溯源页显示 🍱」这种同一道菜两个样子的漂移 ——
  *    即本项目反复踩的「同一件事两份表述」。故收敛到此处，两页共用。
  */
-const DISH_EMOJI: Record<string, string> = {
-  [DishCategory.MAIN]: '🍛',
-  [DishCategory.HALF]: '🍳',
-  [DishCategory.VEG]: '🥦',
-  [DishCategory.SOUP]: '🍲',
-  [DishCategory.STAPLE]: '🍚',
+const DISH_ICON: Record<string, AboxIconName> = {
+  [DishCategory.MAIN]: 'meat',
+  [DishCategory.HALF]: 'egg',
+  [DishCategory.VEG]: 'veg',
+  [DishCategory.SOUP]: 'soup',
+  [DishCategory.STAPLE]: 'rice',
 };
 
-/** 品类 → 图示字符；未知 / 空值回落通用餐盒图（不抛错，页面不因脏数据开天窗） */
-export function dishEmoji(category: string | null | undefined): string {
-  return (category && DISH_EMOJI[category]) || '🍱';
+/**
+ * 品类 → 图标语义名；未知 / 空值回落通用餐盒图（不抛错，页面不因脏数据开天窗）
+ *
+ * ⚠️ S3 起返回**语义名**而不是 emoji 字符：端上图标一律走 `ABoxIcons` 字形，
+ *    页面用 `{{ I[dishIcon(...)] }}` 取字形。
+ */
+export function dishIcon(category: string | null | undefined): AboxIconName {
+  return (category && DISH_ICON[category]) || 'rice';
 }
 
 /**

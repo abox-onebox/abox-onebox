@@ -55,11 +55,13 @@
 
     <!-- ④ 提现记录 -->
     <view class="card">
-      <text class="card__title">📋 提现记录</text>
+      <text class="card__title"
+        ><text class="abi abi-16">{{ I.list }}</text> 提现记录</text
+      >
 
       <ab-loading v-if="loadingRecords && !records.length" text="加载中" inline />
 
-      <ab-empty-state v-else-if="!records.length" text="暂无提现记录" />
+      <ab-empty-state v-else-if="!records.length" text="暂无提现记录" illustration="withdraw" />
 
       <template v-else>
         <view v-for="r in records" :key="r.id" class="rec">
@@ -122,6 +124,7 @@ import { ApiError } from '@/api/request';
 import { apiErrorMessage, toastApiError, useRequest } from '@/composables/use-request';
 import { displayOr, fenToYuanText, formatDateTime, uuid } from '@/utils/format';
 import { navigateTo, navigateBack } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const { run } = useRequest();
 
@@ -276,7 +279,7 @@ onShow(() => {
   &__amount {
     font-size: 88rpx;
     font-weight: bold;
-    color: #b8892f;
+    color: $c-gold-fg;
     letter-spacing: 2rpx;
     font-variant-numeric: tabular-nums;
   }
@@ -292,7 +295,7 @@ onShow(() => {
     padding: 6rpx $space-3;
     font-size: $fs-caption;
     color: $c-text;
-    background: #fbf7ee;
+    background: $c-surface-3;
     border-radius: $radius-pill;
   }
 }
@@ -331,14 +334,14 @@ onShow(() => {
 
   &__link {
     font-size: $fs-caption;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 
   &__warn {
     display: block;
     font-size: $fs-caption;
     line-height: 1.7;
-    color: $c-warning;
+    color: $c-warn-fg;
   }
 }
 
@@ -395,7 +398,7 @@ onShow(() => {
 
   &__all {
     font-size: $fs-caption;
-    color: #b8892f;
+    color: $c-gold-fg;
     text-decoration: underline;
   }
 
@@ -422,7 +425,7 @@ onShow(() => {
   align-items: center;
   justify-content: space-between;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &__left {
     flex: 1;
@@ -446,7 +449,7 @@ onShow(() => {
     display: block;
     margin-top: 4rpx;
     font-size: 22rpx;
-    color: $c-warning;
+    color: $c-warn-fg;
   }
 
   &__amount {
@@ -498,7 +501,7 @@ onShow(() => {
   &--primary {
     color: #ffffff;
     font-weight: bold;
-    background: linear-gradient(135deg, $c-gold, #b8892f);
+    background: linear-gradient(135deg, $c-gold, $c-gold-deep);
     border: none;
   }
 

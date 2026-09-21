@@ -337,7 +337,7 @@ onMounted(reload);
 
   &__warn {
     margin: $space-1 0 0;
-    color: $c-warning;
+    color: $c-warn-fg;
     font-size: $fs-caption;
     line-height: 1.7;
   }

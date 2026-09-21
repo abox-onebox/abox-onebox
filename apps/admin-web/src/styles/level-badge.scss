@@ -1,0 +1,55 @@
+// ============================================================
+// 等级徽标（后台）—— 规格《设计系统 v2.1》§八「等级徽标」
+//
+// ⚠️ 本块是**缺陷修复**，不是美化：
+//    改造前的实现走 `levelTagType()` → `el-tag` 的 `type`
+//    （chief=danger 红 · gold=warning 红 · formal=success 绿 · 其他=info 蓝），
+//    即**等级四色当文字**。缺陷③实测：见习 4.41 · 正式 2.21 · 金牌 1.75 · 首席 3.10
+//    —— **全不达标**；且语义错乱（首席这个最高级配「危险红」，金牌配「警告红」）。
+//    ⇒ 按已裁定方案改为「色块 + 文字标签」：
+//       描边款（见习 / 正式）+ 实底款（金牌 / 首席，白字 on 实底）。
+//
+// 对比度实测（`_tmp/icons/s6-contrast.py`，正例全绿）：
+//    见习 5.04 · 正式 4.51 · 金牌(白字) 4.59 · 首席(白字) 5.25
+//
+// ⚠️ 描边款**必须自带底色**（= 卡片面），不能做成「透明底 + 描边」：
+//    `$c-gold-deep #936f3a` 作文字 on 卡片面仅 4.51（**余量 0.01**），
+//    落到金棕浅底 4.19 / 米色底 4.05 —— 都跌破阈值。
+//
+// 用法（复用 `el-tag` 结构，只换 token，不改模板语义）：
+//    <el-tag size="small" class="ab-level" :class="`ab-level--${level}`">{{ levelLabel }}</el-tag>
+// ⚠️ 必须**同时删掉 `:type`** —— 否则 Element 的 `.el-tag--success{--el-tag-text-color:...}`
+//    与 `.ab-level--*` 同优先级，会变成「谁后加载谁赢」的暗坑。
+// ============================================================
+@use '@/styles/tokens.scss' as *;
+
+.ab-level {
+  --el-tag-font-size: #{$fs-micro};
+  --el-tag-border-radius: #{$radius-pill};
+
+  // ---- 描边款：见习 / 正式 ----
+  &--trainee {
+    --el-tag-text-color: #{$c-level-trainee};
+    --el-tag-bg-color: #{$c-surface};
+    --el-tag-border-color: #{$c-border-strong};
+  }
+
+  &--formal {
+    --el-tag-text-color: #{$c-level-formal};
+    --el-tag-bg-color: #{$c-surface};
+    --el-tag-border-color: #{$c-level-formal};
+  }
+
+  // ---- 实底款：金牌 / 首席（色块 + 白字）----
+  &--gold {
+    --el-tag-text-color: #{$c-surface};
+    --el-tag-bg-color: #{$c-level-gold};
+    --el-tag-border-color: #{$c-level-gold};
+  }
+
+  &--chief {
+    --el-tag-text-color: #{$c-surface};
+    --el-tag-bg-color: #{$c-level-chief};
+    --el-tag-border-color: #{$c-level-chief};
+  }
+}

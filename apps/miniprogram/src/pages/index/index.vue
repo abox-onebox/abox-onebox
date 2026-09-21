@@ -16,7 +16,7 @@
     <template v-else-if="daily">
       <!-- 套餐概念大卡（米金渐变） -->
       <view class="hero-card">
-        <text class="hero-card__icon">🍱</text>
+        <text class="abi abi-deco-40 hero-card__icon">{{ I.rice }}</text>
         <text class="hero-card__date">{{ mealDateCn }}</text>
         <view class="hero-card__pill">
           <text class="hero-card__pill-text">四方好味汇一盒</text>
@@ -31,7 +31,7 @@
         hover-class="leader-banner--hover"
         @tap="goWorkbench"
       >
-        <text class="leader-banner__icon">📦</text>
+        <text class="abi abi-deco-28 leader-banner__icon">{{ I.package }}</text>
         <view class="leader-banner__main">
           <text class="leader-banner__title">您是{{ leaderLevelLabel }}团长</text>
           <text class="leader-banner__sub">{{ daily.leader?.building ?? '' }}</text>
@@ -57,7 +57,7 @@
       <!-- 找不到团长时的引导（v4.6） -->
       <view v-if="!daily.leader" class="guide">
         <text class="guide__text">
-          💡 所在办公楼没有团长？
+          <text class="abi abi-16">{{ I.info }}</text> 所在办公楼没有团长？
           <text class="guide__link" @tap="goLeaderApply">申请成为团长</text>
           （无需审核，立即上岗），或通过该楼团长的邀请链接进入。
         </text>
@@ -68,10 +68,12 @@
 
       <!-- 一饭四菜（主食并入同一卡）· 「来自：X」可点 → 溯源页并定位该出品方（M5-17） -->
       <view class="card">
-        <text class="card__title">🍴 一饭四菜</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.rice }}</text> 一饭四菜</text
+        >
         <view v-for="(d, i) in daily.dishes" :key="i" class="dish-row">
-          <view class="dish-row__emoji">
-            <text>{{ dishEmoji(d.category) }}</text>
+          <view class="dish-row__ico">
+            <text class="abi abi-deco-34">{{ I[dishIcon(d.category)] }}</text>
           </view>
           <view class="dish-row__info">
             <text class="dish-row__name">{{ d.supplierName }}{{ d.name }}</text>
@@ -88,8 +90,8 @@
           </view>
         </view>
         <view v-if="daily.rice" class="dish-row">
-          <view class="dish-row__emoji">
-            <text>🍚</text>
+          <view class="dish-row__ico">
+            <text class="abi abi-deco-34">{{ I.rice }}</text>
           </view>
           <view class="dish-row__info">
             <text class="dish-row__name">{{ daily.rice }}</text>
@@ -151,6 +153,7 @@
       v-else
       :text="emptyText"
       :hint="emptyHint"
+      illustration="box"
       action-text="重新加载"
       @action="load"
     />
@@ -195,9 +198,10 @@ import { ApiError } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
 import { buildUrl, navigateTo } from '@/utils/router';
-import { dishEmoji, formatMealDate } from '@/utils/format';
+import { dishIcon, formatMealDate } from '@/utils/format';
 import { ORDER_MAX_QUANTITY } from '@/constants';
 import { useLeaderStore } from '@/stores/leader';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const leaderStore = useLeaderStore();
 const { run, loading } = useRequest();
@@ -381,7 +385,7 @@ onShow(() => {
     margin-top: $space-1;
     font-size: 36rpx;
     font-weight: bold;
-    color: $c-gold;
+    color: $c-gold-fg;
     letter-spacing: 2rpx;
     font-family: monospace;
   }
@@ -400,15 +404,10 @@ onShow(() => {
   align-items: center;
   margin: $space-2 $space-4 0;
   padding: 44rpx $space-4;
-  background: linear-gradient(135deg, #d2c5a0, $c-gold);
+  background: linear-gradient(135deg, $c-gold, $c-gold);
   border-radius: 36rpx;
   color: #ffffff;
   text-align: center;
-
-  &__icon {
-    font-size: 96rpx;
-    line-height: 1;
-  }
 
   &__date {
     margin-top: $space-2;
@@ -448,11 +447,6 @@ onShow(() => {
 
   &--hover {
     opacity: 0.9;
-  }
-
-  &__icon {
-    font-size: 60rpx;
-    line-height: 1;
   }
 
   &__main {
@@ -552,7 +546,7 @@ onShow(() => {
 .guide {
   margin: $space-3 $space-4 0;
   padding: $space-2 $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border-left: 6rpx solid $c-gold;
   border-radius: $radius-sm;
 
@@ -567,7 +561,7 @@ onShow(() => {
   }
 
   &__link {
-    color: #b8915c;
+    color: $c-gold-fg;
     text-decoration: underline;
   }
 }
@@ -578,22 +572,21 @@ onShow(() => {
   align-items: center;
   gap: $space-3;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &:last-child {
     border-bottom: none;
   }
 
-  &__emoji {
+  &__ico {
     flex: none;
     display: flex;
     align-items: center;
     justify-content: center;
     width: 112rpx;
     height: 112rpx;
-    background: #efe5d0;
+    background: $c-surface-2;
     border-radius: $radius-lg;
-    font-size: 64rpx;
   }
 
   &__info {
@@ -626,7 +619,7 @@ onShow(() => {
   &__from {
     font-size: $fs-caption;
     // 既有裸色值（端上裸色值基线之一），收归 token 由 S4「裸色值归零」统一处理，本批不动
-    color: #b8915c;
+    color: $c-gold-fg;
   }
 }
 
@@ -670,7 +663,7 @@ onShow(() => {
   display: inline-flex;
   align-items: center;
   background: $c-bg;
-  border: 1px solid #d4c4a8;
+  border: 1px solid $c-border-strong;
   border-radius: $radius-pill;
   overflow: hidden;
 }
@@ -681,7 +674,7 @@ onShow(() => {
   justify-content: center;
   width: 60rpx;
   height: 60rpx;
-  background: #efe5d0;
+  background: $c-surface-2;
   color: $c-text;
   font-size: 36rpx;
 
@@ -712,7 +705,7 @@ onShow(() => {
   width: calc(100% - #{($space-4 * 2)});
   margin: $space-3 $space-4 0;
   padding: $space-3 0;
-  background: linear-gradient(135deg, $c-text 0%, #b8915c 100%);
+  background: linear-gradient(135deg, $c-text 0%, $c-gold-deep 100%);
   color: $c-bg;
   font-size: $fs-h2;
   font-weight: bold;

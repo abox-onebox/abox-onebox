@@ -615,7 +615,7 @@ onMounted(() => {
     font-weight: 600;
 
     &--ok {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &--muted {
@@ -652,7 +652,7 @@ onMounted(() => {
   line-height: 1.25;
 
   &--today {
-    color: $c-gold;
+    color: $c-gold-fg;
     font-weight: 700;
   }
 
@@ -720,7 +720,7 @@ onMounted(() => {
 
   &__sold {
     font-size: $fs-caption;
-    color: $c-success;
+    color: $c-ok-fg;
   }
 
   &__sub {

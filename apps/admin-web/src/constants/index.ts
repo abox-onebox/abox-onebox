@@ -84,6 +84,19 @@ export function calcSettlement(
  *    `scripts/check-nav-consistency.mjs` 会双向对账（改 path 会让该页对所有人消失）。
  * ⚠️ 组顺序 = 侧边栏顺序，且 **`permission.landingPath` 取「第一组第一项」**
  *    ⇒ `概览` / `/dashboard` 必须留在最前。
+ *
+ * ## `icon` 字段（S7-1 补 · 39 个唯一入口全覆盖）
+ *
+ * **为什么是必修项**：本表此前**没有任何 `icon` 字段**，后台是全文字侧边栏 ——
+ * 34 个入口 / 8 个分组平铺在 216px 的窄栏里，找一页只能逐行读标题。
+ * 图标提供的是**形状记忆**（同一页第二次找时认形状而不是读字）。
+ *
+ * **取值纪律**（机械门禁 = `scripts/check-nav-consistency.mjs` 第 ⑥ 条）：
+ * - 必填，且必须是 `@abox/shared-utils` 的 `ABOX_ICON_NAMES`（82 名 Tabler 子集）之一；
+ * - 写错名字**不会报错**，只是图标位置空白 —— 所以只能靠门禁拦，不能靠肉眼；
+ * - 同组内尽量不复用（视觉区分度），跨组复用是允许的（如 `users` 在团长与系统各组各一次）。
+ *
+ * ⚠️ 图标是**功能性图形**（尺寸三档 16/20/24），不是装饰 —— 侧边栏固定取 16px 行内档。
  */
 export const ADMIN_NAV = [
   {
@@ -98,24 +111,36 @@ export const ADMIN_NAV = [
     //    当时改名是因为它没有待办、叫工作台会让人以为那儿有活可干；
     //    现在那儿确实有活可干，叫回原名才是诚实的。
     //    数字看板仍在 `/stats/core-metrics`（本页只给待办数字，不给 GMV 趋势）。
-    items: [{ path: '/dashboard', title: '工作台', page: '—', module: 'D66' }],
+    items: [{ path: '/dashboard', title: '工作台', page: '—', module: 'D66', icon: 'dashboard' }],
   },
   {
     group: '套餐',
     items: [
-      { path: '/meal/matrix', title: '套餐矩阵', page: 'P27', module: 'M31-01' },
-      { path: '/meal/edit', title: '新建套餐', page: 'P28', module: 'M31-02/03' },
-      { path: '/meal/template', title: '套餐模板', page: 'P29', module: 'M31-04' },
+      { path: '/meal/matrix', title: '套餐矩阵', page: 'P27', module: 'M31-01', icon: 'layout' },
+      { path: '/meal/edit', title: '新建套餐', page: 'P28', module: 'M31-02/03', icon: 'plus' },
+      {
+        path: '/meal/template',
+        title: '套餐模板',
+        page: 'P29',
+        module: 'M31-04',
+        icon: 'template',
+      },
     ],
   },
   {
     group: '订单',
     items: [
-      { path: '/order/list', title: '订单中心', page: 'P30', module: 'M32-01/02/06' },
-      { path: '/order/detail', title: '订单详情', page: 'P31', module: 'M32-03/04/05' },
+      { path: '/order/list', title: '订单中心', page: 'P30', module: 'M32-01/02/06', icon: 'list' },
+      {
+        path: '/order/detail',
+        title: '订单详情',
+        page: 'P31',
+        module: 'M32-03/04/05',
+        icon: 'receipt',
+      },
       // M5-1：配送单管理（D61/D62）。原型无对应页，故 `page` 记 `—`；
       //   `module` 列记**接口编号**而不是原型模块号 —— 不编造一个并不存在的原型页。
-      { path: '/order/delivery', title: '配送单管理', page: '—', module: 'D61/D62' },
+      { path: '/order/delivery', title: '配送单管理', page: '—', module: 'D61/D62', icon: 'truck' },
     ],
   },
   {
@@ -125,7 +150,13 @@ export const ADMIN_NAV = [
     //   中间还隔着供应商与财务八页。
     group: '团长与楼宇',
     items: [
-      { path: '/leader/list', title: '团长管理', page: 'P32', module: 'M33-03/04/05' },
+      {
+        path: '/leader/list',
+        title: '团长管理',
+        page: 'P32',
+        module: 'M33-03/04/05',
+        icon: 'users',
+      },
       // ⚠️⚠️ M5-15 补登（**同类缺陷第三次复发**）：`/building/*` 共 5 条在服务端
       //    `ADMIN_MENU_KEYS`（`admin-role.ts:39-43`）**全部早已授权**、路由也全在
       //    （`routes.ts:158-176`）、后端新建/编辑接口也全实现（`POST admin/buildings`
@@ -136,20 +167,40 @@ export const ADMIN_NAV = [
       //    同族历史：M3-14（财务五页）→ M5-12（通知模板）→ 本次（楼宇五页）。
       //    ⭐ 防复发门禁见 `scripts/check-nav-consistency.mjs`（已接入 `gate.mjs all`）。
       //    模块号取自《PRD v2.1》M33 与《项目目录结构 v2.0》「P37 · 5 视图 · M33-01/02」。
-      { path: '/building/list', title: '办公楼台账', page: 'P37', module: 'M33-01' },
-      { path: '/building/groups', title: '楼群管理', page: 'P37', module: 'M33-02' },
-      { path: '/building/overview', title: '办公楼总览', page: 'P37', module: 'M33-01/02' },
+      {
+        path: '/building/list',
+        title: '办公楼台账',
+        page: 'P37',
+        module: 'M33-01',
+        icon: 'building',
+      },
+      {
+        path: '/building/groups',
+        title: '楼群管理',
+        page: 'P37',
+        module: 'M33-02',
+        icon: 'message',
+      },
+      {
+        path: '/building/overview',
+        title: '办公楼总览',
+        page: 'P37',
+        module: 'M33-01/02',
+        icon: 'chart',
+      },
       {
         path: '/building/leader-binding',
         title: '团长-楼栋绑定',
         page: 'P37',
         module: 'M33-01/02',
+        icon: 'link',
       },
       {
         path: '/building/delivery-map',
         title: '楼栋-集散中心映射',
         page: 'P37',
         module: 'M33-01/02',
+        icon: 'pin',
       },
     ],
   },
@@ -158,7 +209,7 @@ export const ADMIN_NAV = [
     //   供应商台账 → 菜品库（菜品是套餐的上游）→ 加工场所打包（出餐当天的作业页）。
     group: '供应商与出餐',
     items: [
-      { path: '/supplier/list', title: '供应商管理', page: 'P33', module: 'M34' },
+      { path: '/supplier/list', title: '供应商管理', page: 'P33', module: 'M34', icon: 'store' },
       // ⚠️ M5-15 补登：`/supplier/dish-library`（平台端菜品库）自 M3-x 就已在服务端
       //    `ADMIN_MENU_KEYS` 里授权、路由也在（`routes.ts:96`）、后端 CRUD 也齐
       //    （`POST/PUT /admin/dishes` + `batch-status`），**却从来没进过本表** ——
@@ -166,11 +217,17 @@ export const ADMIN_NAV = [
       //    但菜品是**套餐 → 模板 → 分配**的上游：找不到入口 = 后面三层都进不去，
       //    人工测试中表现为「后台缺少餐品创建模块」。判据仍是那句：
       //    **授权了就必须有入口**，否则等价于那些页面不存在。
-      { path: '/supplier/dish-library', title: '菜品库', page: 'P33', module: 'M34' },
+      { path: '/supplier/dish-library', title: '菜品库', page: 'P33', module: 'M34', icon: 'menu' },
       // ⚠️ M4-0：打包任务从供应商端迁到运营后台（原 `GET /supplier/packing-tasks` 已下线）。
       //    闸门要看到**所有**供应商的到位情况，这份信息跨供应商，不能开给供应商端。
       //    它是**运营的日常作业页**（每天都要开包），故给一个**顶级菜单入口**。
-      { path: '/supplier/packing-center', title: '加工场所打包', page: 'P39', module: 'M21-03' },
+      {
+        path: '/supplier/packing-center',
+        title: '加工场所打包',
+        page: 'P39',
+        module: 'M21-03',
+        icon: 'package',
+      },
     ],
   },
   {
@@ -186,17 +243,53 @@ export const ADMIN_NAV = [
     //    否则那些页面等同于不存在（本例正是新做的余额页在界面上点不到）。
     group: '财务',
     items: [
-      { path: '/finance/overview', title: '资金总览', page: 'P34', module: 'M35-01' },
-      { path: '/finance/commission', title: '佣金结算', page: 'P34', module: 'M35-02' },
-      { path: '/finance/balance', title: '余额账户', page: 'P34', module: 'M35-04' },
-      { path: '/finance/supplier-share', title: '应付结算', page: 'P34 / P25', module: 'M35-03' },
-      { path: '/finance/refund', title: '退款审批', page: 'P34', module: 'M35-05' },
+      {
+        path: '/finance/overview',
+        title: '资金总览',
+        page: 'P34',
+        module: 'M35-01',
+        icon: 'wallet',
+      },
+      {
+        path: '/finance/commission',
+        title: '佣金结算',
+        page: 'P34',
+        module: 'M35-02',
+        icon: 'coins',
+      },
+      { path: '/finance/balance', title: '余额账户', page: 'P34', module: 'M35-04', icon: 'cash' },
+      {
+        path: '/finance/supplier-share',
+        title: '应付结算',
+        page: 'P34 / P25',
+        module: 'M35-03',
+        icon: 'split',
+      },
+      { path: '/finance/refund', title: '退款审批', page: 'P34', module: 'M35-05', icon: 'refund' },
       // M4-4：提现审批（D45/D46）—— 团长侧 L12 提交后**唯一**能推进它的地方。
       //    在此之前该页不存在，提现单永远停在 pending、冻结额只增不减。
-      { path: '/finance/withdrawal', title: '提现审批', page: 'P34', module: 'M35-08' },
-      { path: '/finance/reconciliation', title: '微信对账', page: 'P34', module: 'M35-06' },
+      {
+        path: '/finance/withdrawal',
+        title: '提现审批',
+        page: 'P34',
+        module: 'M35-08',
+        icon: 'withdraw',
+      },
+      {
+        path: '/finance/reconciliation',
+        title: '微信对账',
+        page: 'P34',
+        module: 'M35-06',
+        icon: 'checklist',
+      },
       // M3-15：发票管理（进项票台账）—— 与 `admin-role.ts` 的 `ADMIN_MENU_KEYS` 同源
-      { path: '/finance/invoices', title: '发票管理', page: 'P34', module: 'M35-07' },
+      {
+        path: '/finance/invoices',
+        title: '发票管理',
+        page: 'P34',
+        module: 'M35-07',
+        icon: 'invoice',
+      },
     ],
   },
   {
@@ -212,51 +305,106 @@ export const ADMIN_NAV = [
     //    ⭐ 防复发门禁：`scripts/check-nav-consistency.mjs`（已接入 `gate.mjs all`）。
     group: '数据',
     items: [
-      { path: '/stats/core-metrics', title: '数据看板', page: 'P35', module: 'M36-01' },
-      { path: '/stats/building-rank', title: '楼宇排行', page: 'P35', module: 'M36-02' },
-      { path: '/stats/dish-heat', title: '菜品热度', page: 'P35', module: 'M36-03' },
-      { path: '/stats/retention', title: '留存分析', page: 'P35', module: 'M36-04' },
+      {
+        path: '/stats/core-metrics',
+        title: '数据看板',
+        page: 'P35',
+        module: 'M36-01',
+        icon: 'chart',
+      },
+      {
+        path: '/stats/building-rank',
+        title: '楼宇排行',
+        page: 'P35',
+        module: 'M36-02',
+        icon: 'medal',
+      },
+      { path: '/stats/dish-heat', title: '菜品热度', page: 'P35', module: 'M36-03', icon: 'flame' },
+      {
+        path: '/stats/retention',
+        title: '留存分析',
+        page: 'P35',
+        module: 'M36-04',
+        icon: 'history',
+      },
     ],
   },
   {
     group: '系统',
     items: [
-      { path: '/system/config', title: '系统配置', page: 'P36', module: 'M37' },
-      { path: '/system/admin-user', title: '账号管理', page: '—', module: 'M37' },
-      { path: '/system/role', title: '角色权限', page: '—', module: 'M37' },
-      { path: '/system/operation-log', title: '操作日志', page: '—', module: 'M37' },
+      { path: '/system/config', title: '系统配置', page: 'P36', module: 'M37', icon: 'gear' },
+      { path: '/system/admin-user', title: '账号管理', page: '—', module: 'M37', icon: 'users' },
+      { path: '/system/role', title: '角色权限', page: '—', module: 'M37', icon: 'shield' },
+      {
+        path: '/system/operation-log',
+        title: '操作日志',
+        page: '—',
+        module: 'M37',
+        icon: 'history',
+      },
       // ⚠️ M5-12 补登：`/system/message-template` 自 M3-12 就已在服务端
       //    `ADMIN_MENU_KEYS` 里授权、路由也早就存在，**却从来没进过本表** ——
       //    于是通知模板页「能进、但侧边栏点不到」，只能手输 URL（M3-14 修过
       //    `/finance/*` 五页的同一个毛病，这次是系统组）。判据同来源：
       //    **授权了就必须有入口**，否则等价于那些页面不存在。
-      { path: '/system/message-template', title: '通知模板', page: '—', module: 'D59/D60' },
+      {
+        path: '/system/message-template',
+        title: '通知模板',
+        page: '—',
+        module: 'D59/D60',
+        icon: 'send',
+      },
       // M5-12：跑批时刻表（D64/D65）—— 8 个定时任务的时刻 / 目标日期 / 实装状态 + 手动补跑
-      { path: '/system/schedule', title: '跑批时刻表', page: '—', module: 'D64/D65' },
+      {
+        path: '/system/schedule',
+        title: '跑批时刻表',
+        page: '—',
+        module: 'D64/D65',
+        icon: 'clock',
+      },
     ],
   },
 ] as const;
 
-/** 供应商导航（role=supplier · P21–P26） */
+/**
+ * 供应商导航（role=supplier · P21–P26）
+ *
+ * ⚠️ 与 `ADMIN_NAV` 共用同一套 `icon` 取值纪律（82 名 Tabler 子集，必填、门禁校验）。
+ *    `/dashboard` 在本表与 `ADMIN_NAV` 概览组各出现一次（供应商的登录落点也是它），
+ *    两处 `icon` 都是 `dashboard`。
+ */
 export const SUPPLIER_NAV = [
-  { path: '/supplier/workbench', title: '商家工作台', page: 'P21', module: 'M21-01' },
-  { path: '/supplier/cook-confirm', title: '出餐确认', page: 'P22', module: 'M21-02' },
+  { path: '/supplier/workbench', title: '商家工作台', page: 'P21', module: 'M21-01', icon: 'home' },
+  {
+    path: '/supplier/cook-confirm',
+    title: '出餐确认',
+    page: 'P22',
+    module: 'M21-02',
+    icon: 'cook',
+  },
   // ⚠️ M4-0：原 `/supplier/packing`（P22 下游「打包任务」）**已从供应商端下线**。
   //    打包闸门必须看到**所有**供应商的到位情况 —— 开给供应商就是泄露他方经营数据（I1）；
   //    且自营下加工场所属 ABox 自有，原判据「本主体名下有没有启用中集散中心」本身也已失效
   //    （端点整体迁运营后台 `/admin/packing-tasks` · 菜单 `/supplier/packing-center`）。
-  { path: '/supplier/dishes', title: '我的菜品', page: 'P23', module: 'M22-01' },
+  { path: '/supplier/dishes', title: '我的菜品', page: 'P23', module: 'M22-01', icon: 'soup' },
   {
     path: '/supplier/edit',
     title: '上架申请 / 商家资料',
     page: 'P24 / P26',
     module: 'M22-02 · M24',
+    icon: 'edit',
   },
   // ⚠️ M3-9：`/finance/supplier-share` 是**后台财务页**（调 `/admin/supplier-shares`），
   //    供应商进去只会拿 10003 —— 故供应商自己的结算页另起 `/supplier/settlement`。
-  { path: '/supplier/settlement', title: '应付结算明细', page: 'P25', module: 'M23-01/02' },
+  {
+    path: '/supplier/settlement',
+    title: '应付结算明细',
+    page: 'P25',
+    module: 'M23-01/02',
+    icon: 'receipt',
+  },
   // ⚠️ 保留通用概览作为兜底落点（登录后默认路径不受菜单调整影响）。
   //    `P21/P22` 原先借用 `/dashboard`、`/order/list` 顶替，M3-8 已有真实页面，
   //    `/order/list`（订单中心）不再给供应商角色 —— 供应商不需要看全量订单。
-  { path: '/dashboard', title: '概览', page: '—', module: '通用' },
+  { path: '/dashboard', title: '概览', page: '—', module: '通用', icon: 'dashboard' },
 ] as const;

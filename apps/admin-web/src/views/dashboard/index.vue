@@ -72,7 +72,8 @@
         />
 
         <p v-if="todos" class="card__foot">
-          ⚠️ 「今日逾期未送达」在送达时刻（11:30）之前恒为 0 —— 未到点不算异常；
+          <AbIcon name="warn-tri" size="16" /> 「今日逾期未送达」在送达时刻（11:30）之前恒为 0 ——
+          未到点不算异常；
           「明日未排套餐的楼群」只数<strong>完全没排</strong>的楼群，已排待上架的（pending）不算，
           否则这张卡在开团前永远非零，很快就会被无视。
         </p>
@@ -139,7 +140,8 @@
     </el-card>
 
     <p class="hint">
-      <strong>⚠️ 一期说明</strong>：本页的待办是<strong>聚合计数</strong>（D66 · M5-16），
+      <strong><AbIcon name="warn-tri" size="16" /> 一期说明</strong
+      >：本页的待办是<strong>聚合计数</strong>（D66 · M5-16），
       只覆盖「到期必须有人处置」的四件事；明细请点进对应页面。
       其余待办（如履约异常、供应商报量缺口）需要各自的领域接口，<strong>未在</strong>本页冒充。
     </p>
@@ -393,7 +395,7 @@ function go(path: string): void {
 
   &__go {
     margin-top: 2px;
-    color: $c-info;
+    color: $c-info-fg; // 文字位一律走加强档（原色 $c-info 只作图标/描边）
     font-size: $fs-caption;
   }
 }

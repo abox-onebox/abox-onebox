@@ -29,7 +29,8 @@
           >，<text class="tips__strong">不支持充值</text>（避免形成预付资金）；下单时可直接抵扣。
         </text>
         <text class="tips__text">
-          ⚠️ 原型文案原写「用户余额仅来自订单退款、团长佣金余额是独立账户」，与实装不符：
+          <text class="abi abi-16">{{ I['warn-tri'] }}</text>
+          原型文案原写「用户余额仅来自订单退款、团长佣金余额是独立账户」，与实装不符：
           用户与团长<text class="tips__strong">共用同一账户</text>，佣金入账也进这里
           （同一条余额链路）—— 故本页按全部流水列出，不做类型过滤。
         </text>
@@ -38,14 +39,16 @@
       <!-- 流水记录 -->
       <view class="card">
         <view class="card__hd">
-          <text class="card__title">📊 流水记录</text>
+          <text class="card__title"
+            ><text class="abi abi-16">{{ I.chart }}</text> 流水记录</text
+          >
           <text class="card__count">共 {{ summary?.count ?? 0 }} 笔</text>
         </view>
 
         <ab-loading v-if="loadingLogs && !list.length" text="正在读取流水" />
 
         <view v-else-if="!list.length" class="empty">
-          <text class="empty__icon">🧾</text>
+          <text class="abi abi-deco-34 empty__icon">{{ I.receipt }}</text>
           <text class="empty__text">还没有余额流水</text>
           <text class="empty__hint">退款到账或佣金入账后，会在这里逐笔列出</text>
         </view>
@@ -118,6 +121,7 @@ import { toastApiError, useRequest } from '@/composables/use-request';
 import { fenToYuanText, formatDateTime } from '@/utils/format';
 import { PAGE_SIZE } from '@/constants';
 import { switchTab } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const balance = ref<UserBalanceData | null>(null);
 const list = ref<MyBalanceLogItem[]>([]);
@@ -193,7 +197,7 @@ onShow(() => {
   flex-direction: column;
   align-items: center;
   padding: 44rpx $space-4;
-  background: linear-gradient(135deg, $c-text, #b8892f);
+  background: linear-gradient(135deg, $c-text, $c-gold-deep);
   border-radius: 36rpx;
   color: #ffffff;
   text-align: center;
@@ -256,7 +260,7 @@ onShow(() => {
 .tips {
   margin-top: $space-3;
   padding: $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border-left: 6rpx solid $c-info;
   border-radius: $radius-sm;
 
@@ -310,7 +314,7 @@ onShow(() => {
   align-items: center;
   justify-content: space-between;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &__left {
     flex: 1;
@@ -346,11 +350,11 @@ onShow(() => {
     font-weight: bold;
 
     &.is-in {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &.is-out {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
   }
 
@@ -367,7 +371,7 @@ onShow(() => {
   justify-content: space-between;
   margin-top: $space-3;
   padding: $space-2 $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border-radius: $radius-sm;
 
   &__text {
@@ -389,7 +393,6 @@ onShow(() => {
   padding: $space-5 0;
 
   &__icon {
-    font-size: 72rpx;
     opacity: 0.4;
   }
 
@@ -410,7 +413,7 @@ onShow(() => {
   height: 68rpx;
   margin-top: $space-3;
   line-height: 68rpx;
-  color: $c-gold;
+  color: $c-gold-fg;
   font-size: $fs-caption;
   background: $c-bg;
   border: 1px solid $c-border;

@@ -9,6 +9,7 @@
       v-else-if="!data"
       text="今日战报加载失败"
       :hint="errorText"
+      illustration="warn-tri"
       action-text="重新加载"
       @action="reload"
     />
@@ -16,8 +17,13 @@
     <template v-else>
       <!-- ① 状态战报卡（渐变随状态切换） -->
       <view class="war" :class="`war--${war.kind}`">
-        <text class="war__head">{{ war.head }}</text>
-        <text class="war__main">{{ war.main }}</text>
+        <text v-if="war.kind === 'arrived'" class="war__head"
+          ><text class="abi abi-16">{{ I.box }}</text> {{ war.head }}</text
+        >
+        <text v-else class="war__head">{{ war.head }}</text>
+        <text class="war__main"
+          ><text class="abi abi-24">{{ I[war.mainIcon] }}</text> {{ war.main }}</text
+        >
 
         <block v-if="war.kind === 'arrived'">
           <text class="war__sub">
@@ -25,22 +31,27 @@
             {{ fenToYuanText(data.today.commissionFen) }}（{{ ratePercent }}%）
           </text>
           <button class="war__btn" hover-class="war__btn--hover" @tap="goPickup">
-            🍱 立即去取餐分发 ›
+            <text class="abi abi-20">{{ I.rice }}</text> 立即去取餐分发 ›
           </button>
-          <text class="war__foot">💡 佣金按「实发份数」结算，取餐确认后才计佣</text>
+          <text class="war__foot"
+            ><text class="abi abi-16">{{ I.info }}</text>
+            佣金按「实发份数」结算，取餐确认后才计佣</text
+          >
         </block>
 
         <block v-else-if="war.kind === 'delivered'">
           <text class="war__sub">{{ war.sub }}</text>
           <text class="war__foot"
-            >💡 已计佣 {{ fenToYuanText(data.today.commissionFen) }} · 待次日入账</text
+            ><text class="abi abi-16">{{ I.info }}</text> 已计佣
+            {{ fenToYuanText(data.today.commissionFen) }} · 待次日入账</text
           >
         </block>
 
         <block v-else>
           <text class="war__sub">{{ war.sub }}</text>
           <text v-if="war.kind === 'open'" class="war__foot">
-            💡 截单后不可自助取消；分享给同事可提升本月单量
+            <text class="abi abi-16">{{ I.info }}</text>
+            截单后不可自助取消；分享给同事可提升本月单量
           </text>
         </block>
       </view>
@@ -55,7 +66,7 @@
               分佣 {{ ratePercent }}%{{ isTopLevel ? ' · 已达最高等级' : '' }}
             </text>
           </view>
-          <text class="level__icon">{{ isTopLevel ? '👑' : '🎖️' }}</text>
+          <text class="abi abi-deco-34 level__icon">{{ I[isTopLevel ? 'crown' : 'medal'] }}</text>
         </view>
 
         <view class="level__bar">
@@ -69,14 +80,14 @@
 
         <view class="level__acts">
           <button class="level__btn" hover-class="level__btn--hover" @tap="goShare">
-            📤 推荐新团长
+            <text class="abi abi-20">{{ I.share }}</text> 推荐新团长
           </button>
           <button
             class="level__btn level__btn--ghost"
             hover-class="level__btn--hover"
             @tap="goCommission"
           >
-            💰 佣金与等级
+            <text class="abi abi-20">{{ I.cash }}</text> 佣金与等级
           </button>
         </view>
       </view>
@@ -90,7 +101,7 @@
           hover-class="grid__item--hover"
           @tap="go(entry.path)"
         >
-          <text class="grid__icon">{{ entry.icon }}</text>
+          <text class="abi abi-deco-28 grid__icon">{{ I[entry.icon] }}</text>
           <text class="grid__label">{{ entry.label }}</text>
           <text class="grid__desc">{{ entry.desc }}</text>
         </view>
@@ -98,7 +109,9 @@
 
       <!-- 取餐点（原型未画，但配送信息对团长有用 → 保留为轻量行） -->
       <view class="pickup">
-        <text class="pickup__hd">🚚 取餐点 · {{ data.pickup.statusText }}</text>
+        <text class="pickup__hd"
+          ><text class="abi abi-16">{{ I.truck }}</text> 取餐点 · {{ data.pickup.statusText }}</text
+        >
         <text class="pickup__point">{{ displayOr(data.pickup.point, '待分配办公楼 / 楼层') }}</text>
         <text class="pickup__meta">
           预计到达 {{ data.pickup.expectAt }}
@@ -155,6 +168,8 @@ import {
   formatTime,
 } from '@/utils/format';
 import { navigateTo } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
+import type { AboxIconName } from '@abox/shared-utils';
 
 const { run, loading, error } = useRequest();
 const leaderStore = useLeaderStore();
@@ -188,15 +203,22 @@ const progressPercent = computed(() => {
 /** 战报卡四态（真实状态驱动，非时刻驱动） */
 type WarKind = 'arrived' | 'delivered' | 'open' | 'waiting';
 
-const war = computed<{ kind: WarKind; head: string; main: string; sub: string }>(() => {
+const war = computed<{
+  kind: WarKind;
+  head: string;
+  mainIcon: AboxIconName;
+  main: string;
+  sub: string;
+}>(() => {
   const d = data.value;
-  if (!d) return { kind: 'waiting', head: '', main: '', sub: '' };
+  if (!d) return { kind: 'waiting', head: '', mainIcon: 'clock', main: '', sub: '' };
 
   if (d.pickup.status === 'arrived') {
     return {
       kind: 'arrived',
-      head: '📦 餐已送达办公楼下！',
-      main: `⏰ ${displayOr(d.pickup.buildingName, '本办公楼')} · ${d.pickup.expectAt}`,
+      head: '餐已送达办公楼下！',
+      mainIcon: 'clock',
+      main: `${displayOr(d.pickup.buildingName, '本办公楼')} · ${d.pickup.expectAt}`,
       sub: '',
     };
   }
@@ -205,8 +227,9 @@ const war = computed<{ kind: WarKind; head: string; main: string; sub: string }>
     return {
       kind: 'delivered',
       head: `今日 ${formatMealDate(d.today.mealDate)}`,
+      mainIcon: 'check',
       main:
-        `✅ 已取餐分发 ${d.today.completedQuantity}/${d.today.quantity}` +
+        `已取餐分发 ${d.today.completedQuantity}/${d.today.quantity}` +
         (d.today.refundCount > 0 ? `（${d.today.refundCount} 单退款已跳过）` : ''),
       sub: '佣金已计，次日自动入账到余额',
     };
@@ -216,7 +239,8 @@ const war = computed<{ kind: WarKind; head: string; main: string; sub: string }>
     return {
       kind: 'open',
       head: `明日 ${formatMealDate(d.tomorrow.mealDate)} · 预订已开放`,
-      main: '📤 现在分享拉单',
+      mainIcon: 'share',
+      main: '现在分享拉单',
       sub: `截单倒计时：${formatCountdown(remainSec.value)}`,
     };
   }
@@ -224,7 +248,8 @@ const war = computed<{ kind: WarKind; head: string; main: string; sub: string }>
   return {
     kind: 'waiting',
     head: `明日 ${formatMealDate(d.tomorrow.mealDate)}`,
-    main: '⏰ 等待开始接单',
+    mainIcon: 'clock',
+    main: '等待开始接单',
     sub: d.tomorrow.cutoffAt ? `本日截单 ${formatTime(d.tomorrow.cutoffAt)}` : '下单窗口未开放',
   };
 });
@@ -235,27 +260,29 @@ const pendingDesc = computed(() => {
   return p.pendingQuantity > 0 ? `${p.pendingQuantity} 份待取` : '今日已全部分发';
 });
 
-const entries = computed(() => [
-  { icon: '📤', label: '分享拉单', desc: '2 种分享方式', path: '/pages/leader/share' },
-  {
-    icon: '📋',
-    label: '本办公楼订单',
-    desc: `${data.value?.today.quantity ?? 0} 份 · 退款中 ${data.value?.today.refundCount ?? 0} 单`,
-    path: '/pages/leader/orders',
-  },
-  {
-    icon: '🍱',
-    label: '今日取餐',
-    desc: pickup.value ? pendingDesc.value : (data.value?.pickup.statusText ?? '待确认分发'),
-    path: '/pages/leader/pickup',
-  },
-  {
-    icon: '👤',
-    label: '团长资料',
-    desc: `累计 ${profile.value?.totalOrders ?? 0} 单`,
-    path: '/pages/leader/profile',
-  },
-]);
+const entries = computed(
+  (): Array<{ icon: AboxIconName; label: string; desc: string; path: string }> => [
+    { icon: 'share', label: '分享拉单', desc: '2 种分享方式', path: '/pages/leader/share' },
+    {
+      icon: 'list',
+      label: '本办公楼订单',
+      desc: `${data.value?.today.quantity ?? 0} 份 · 退款中 ${data.value?.today.refundCount ?? 0} 单`,
+      path: '/pages/leader/orders',
+    },
+    {
+      icon: 'rice',
+      label: '今日取餐',
+      desc: pickup.value ? pendingDesc.value : (data.value?.pickup.statusText ?? '待确认分发'),
+      path: '/pages/leader/pickup',
+    },
+    {
+      icon: 'users',
+      label: '团长资料',
+      desc: `累计 ${profile.value?.totalOrders ?? 0} 单`,
+      path: '/pages/leader/profile',
+    },
+  ],
+);
 
 /** 截单倒计时：每秒重算剩余秒数（不依赖服务端推送） */
 function startCountdown(): void {
@@ -349,21 +376,21 @@ onUnmounted(() => {
 
   // 送达提醒（暖红）
   &--arrived {
-    background: linear-gradient(135deg, #ff6b6b, #c44536);
+    background: linear-gradient(135deg, $c-warning, $c-warning);
 
     .war__btn {
-      color: #c44536;
+      color: $c-warn-fg;
     }
   }
 
   // 已分发（成功绿）
   &--delivered {
-    background: linear-gradient(135deg, $c-success, #3f5c28);
+    background: linear-gradient(135deg, $c-success, $c-ok-fg);
   }
 
   // 预订开放（金棕）
   &--open {
-    background: linear-gradient(135deg, #b8892f, $c-text);
+    background: linear-gradient(135deg, $c-gold-deep, $c-text);
   }
 
   // 等待接单（暖棕）
@@ -425,7 +452,7 @@ onUnmounted(() => {
 .level {
   margin-top: $space-3;
   padding: $space-4;
-  background: linear-gradient(135deg, $c-text, #b8892f);
+  background: linear-gradient(135deg, $c-text, $c-gold-deep);
   border-radius: 32rpx;
   color: #ffffff;
   box-shadow: 0 8rpx 22rpx rgba(110, 84, 53, 0.2);
@@ -463,7 +490,6 @@ onUnmounted(() => {
   &__icon {
     flex: none;
     margin-left: $space-3;
-    font-size: 72rpx;
   }
 
   &__bar {
@@ -476,7 +502,7 @@ onUnmounted(() => {
 
   &__bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, #ffe082, #ffffff);
+    background: linear-gradient(90deg, $c-gold-deep, #ffffff);
     border-radius: $radius-pill;
     transition: width 0.4s ease;
   }
@@ -550,7 +576,6 @@ onUnmounted(() => {
 
   &__icon {
     display: block;
-    font-size: 56rpx;
   }
 
   &__label {
@@ -601,7 +626,7 @@ onUnmounted(() => {
     display: block;
     margin-top: 6rpx;
     font-size: $fs-caption;
-    color: $c-success;
+    color: $c-ok-fg;
   }
 }
 </style>

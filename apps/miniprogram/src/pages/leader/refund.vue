@@ -8,14 +8,17 @@
       <!-- ① 顶部横幅 -->
       <view class="banner" :class="allSettled ? 'banner--ok' : 'banner--warn'">
         <text class="banner__text">
-          {{ abnormalTotal > 0 ? '⚠️' : '✅' }} 今日异常与退款订单共 {{ abnormalTotal }} 单
+          <text class="abi abi-16">{{ I[abnormalTotal > 0 ? 'warn-tri' : 'ok-circle'] }}</text>
+          今日异常与退款订单共 {{ abnormalTotal }} 单
           {{ allSettled ? '· 均已处理' : '· 有处理中的单' }}
         </text>
       </view>
 
       <!-- ② 处理原则 -->
       <view class="card card--principle">
-        <text class="card__title">📌 处理原则（三段式流程）</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.checklist }}</text> 处理原则（三段式流程）</text
+        >
         <text class="rule">
           ① <text class="rule__strong">截单前</text>：用户主动取消 → 系统自动退，团长无需操作
         </text>
@@ -35,7 +38,10 @@
         <!-- ③ 段一：已系统处理 -->
         <view class="card">
           <text class="card__title card__title--ok">
-            ✅ 段一：已系统处理（{{ autoHandled.length }} 单 · 截单前取消 / 未支付取消）
+            <text class="abi abi-16">{{ I['ok-circle'] }}</text> 段一：已系统处理（{{
+              autoHandled.length
+            }}
+            单 · 截单前取消 / 未支付取消）
           </text>
           <text class="card__sub">系统自动退款或自动取消，团长无需操作。</text>
 
@@ -55,7 +61,10 @@
         <!-- ④ 段二：退款 / 代退 -->
         <view class="card card--gold">
           <text class="card__title card__title--gold">
-            👑 段二：退款与代退（{{ refundHandled.length }} 单）
+            <text class="abi abi-16">{{ I.crown }}</text> 段二：退款与代退（{{
+              refundHandled.length
+            }}
+            单）
           </text>
           <text class="card__sub">
             截单后用户微信联系团长 → 团长在订单明细「发起代退申请」→ 运营审批通过后原路退回。
@@ -82,7 +91,11 @@
         <!-- ⑤ 可发起代退 -->
         <view class="card">
           <view class="card__hd">
-            <text class="card__title">🛠 可发起代退的订单（{{ candidates.length }}）</text>
+            <text class="card__title"
+              ><text class="abi abi-16">{{ I.refund }}</text> 可发起代退的订单（{{
+                candidates.length
+              }}）</text
+            >
           </view>
           <text class="card__sub">仅已支付且未终结的订单可发起；提交后只登记申请，资金不动。</text>
 
@@ -110,8 +123,9 @@
       </template>
 
       <text class="foot">
-        ⚠️ 原型此页为「本月历史总览（跨日聚合）」，实装为<text class="foot__strong">当日口径</text
-        >： 契约里没有跨日异常汇总端点（L4 只接受单个出餐日），故不做跨月统计 ——
+        <text class="abi abi-16">{{ I['warn-tri'] }}</text>
+        原型此页为「本月历史总览（跨日聚合）」，实装为<text class="foot__strong">当日口径</text>：
+        契约里没有跨日异常汇总端点（L4 只接受单个出餐日），故不做跨月统计 ——
         跨日历史需后端补读侧端点，已登记缺陷，不在排版批顺手新造端点。
       </text>
     </template>
@@ -135,7 +149,9 @@
 
       <!-- 提交结果 -->
       <view v-if="result" class="card card--done">
-        <text class="done__title">✅ 代退申请已提交</text>
+        <text class="done__title"
+          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 代退申请已提交</text
+        >
         <view class="kv">
           <text class="kv__k">退款单号</text>
           <text class="kv__v">{{ result.refundNo }}</text>
@@ -201,7 +217,8 @@
         </button>
 
         <text class="foot">
-          ⚠️ C6 三段式：本步只登记申请（资金零变动）→ 运营后台审批 → 实际退款并回退佣金。
+          <text class="abi abi-16">{{ I['warn-tri'] }}</text> C6
+          三段式：本步只登记申请（资金零变动）→ 运营后台审批 → 实际退款并回退佣金。
         </text>
       </template>
     </template>
@@ -241,6 +258,7 @@ import type { LeaderOrderItem, LeaderRefundApplyData } from '@/api/leader-order'
 import { apiErrorMessage, useRequest } from '@/composables/use-request';
 import { displayOr, fenToYuanText, formatTime } from '@/utils/format';
 import { pageQuery } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 /** 可发起代退的原因（与 shared-types 同一来源，端上不自造文案） */
 const reasons = Object.values(RefundReasonType).map((v) => ({
@@ -394,7 +412,7 @@ onShow(() => {
   box-shadow: $shadow-card;
 
   &--principle {
-    background: linear-gradient(135deg, #ffe4d5, #fcdbc0);
+    background: linear-gradient(135deg, $c-trace-card-from, $c-trace-card-to);
     border-color: $c-warning;
   }
 
@@ -420,11 +438,11 @@ onShow(() => {
     color: $c-text;
 
     &--ok {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &--gold {
-      color: #b8892f;
+      color: $c-gold-fg;
     }
   }
 
@@ -459,7 +477,7 @@ onShow(() => {
   align-items: center;
   justify-content: space-between;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &:last-of-type {
     border-bottom: none;
@@ -491,11 +509,11 @@ onShow(() => {
     color: $c-text-weak;
 
     &--ok {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &--warn {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
   }
 }
@@ -516,7 +534,7 @@ onShow(() => {
   align-items: center;
   justify-content: space-between;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &:last-of-type {
     border-bottom: none;
@@ -584,7 +602,7 @@ onShow(() => {
     &--strong {
       font-size: $fs-h2;
       font-weight: bold;
-      color: $c-gold;
+      color: $c-gold-fg;
     }
   }
 }
@@ -637,7 +655,7 @@ onShow(() => {
     margin-bottom: $space-3;
     font-size: $fs-h2;
     font-weight: bold;
-    color: $c-success;
+    color: $c-ok-fg;
   }
 
   &__tips {
@@ -652,7 +670,7 @@ onShow(() => {
     display: block;
     margin-top: $space-2;
     font-size: 22rpx;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 }
 
@@ -676,7 +694,7 @@ onShow(() => {
   &--primary {
     color: #ffffff;
     font-weight: bold;
-    background: linear-gradient(135deg, $c-gold, #b8892f);
+    background: linear-gradient(135deg, $c-gold, $c-gold-deep);
     border: none;
   }
 

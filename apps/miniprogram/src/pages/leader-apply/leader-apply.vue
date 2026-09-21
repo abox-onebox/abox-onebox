@@ -90,7 +90,7 @@
     <view class="section">
       <view class="agree" @tap="toggleAgree">
         <view class="agree__box" :class="{ 'is-checked': agreed }">
-          <text v-if="agreed" class="agree__tick">✓</text>
+          <text v-if="agreed" class="abi abi-16 agree__tick">{{ I.check }}</text>
         </view>
         <text class="agree__text">
           我已阅读并同意<text class="agree__link" @tap.stop="openAgreement">《团长合作协议》</text>
@@ -141,6 +141,7 @@ import { useSubscribeMessage } from '@/composables/use-subscribe-message';
 import { useLeaderStore } from '@/stores/leader';
 import { useUserStore } from '@/stores/user';
 import { switchTab } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 /** 协议版本号：与《团长合作协议》文本版本一一对应，随文本升级而改 */
 const AGREEMENT_VERSION = 'v1.0';
@@ -388,7 +389,7 @@ onLoad(() => {
   }
 
   &__req {
-    color: $c-warning;
+    color: $c-warn-fg;
   }
 
   &__input {
@@ -398,7 +399,7 @@ onLoad(() => {
   }
 
   &__placeholder {
-    color: #c4b7a2;
+    color: $c-text-disabled;
   }
 }
 
@@ -425,7 +426,7 @@ onLoad(() => {
   &__rate {
     font-size: $fs-body;
     font-weight: 600;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 
   &__cond {
@@ -442,10 +443,11 @@ onLoad(() => {
 
   &__box {
     flex: none;
-    width: 36rpx;
-    height: 36rpx;
+    // 36 → 40rpx：勾从 22rpx(11px) 收回功能档 16px(32rpx) 后，原尺寸装不下（32/36 = 89% 贴边）
+    width: 40rpx;
+    height: 40rpx;
     margin-top: 2rpx;
-    line-height: 36rpx;
+    line-height: 40rpx;
     text-align: center;
     background: $c-surface;
     border: 1px solid $c-border;
@@ -458,8 +460,7 @@ onLoad(() => {
   }
 
   &__tick {
-    font-size: 22rpx;
-    color: #fffdf8;
+    color: $c-surface;
   }
 
   &__text {
@@ -471,7 +472,7 @@ onLoad(() => {
   }
 
   &__link {
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 }
 
@@ -485,7 +486,7 @@ onLoad(() => {
     color: $c-text-weak;
 
     &--warn {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
   }
 }
@@ -508,13 +509,13 @@ onLoad(() => {
   border-radius: $radius-pill;
 
   &--primary {
-    color: #fffdf8;
+    color: $c-surface;
     background: $c-text;
   }
 
   &--disabled {
-    color: #fffdf8;
-    background: #c4b7a2;
+    color: $c-surface;
+    background: $c-border-strong;
   }
 
   &--hover {

@@ -6,7 +6,7 @@
     @tap="onTap"
   >
     <view class="supplier-card__avatar">
-      <text class="supplier-card__avatar-text">{{ avatar }}</text>
+      <text class="abi abi-deco-28 supplier-card__avatar-text">{{ I[avatarIcon] }}</text>
     </view>
 
     <view class="supplier-card__main">
@@ -33,7 +33,9 @@
       </view>
     </view>
 
-    <text v-if="clickable" class="supplier-card__arrow">›</text>
+    <text v-if="clickable" class="supplier-card__arrow"
+      ><text class="abi abi-16">{{ I.chev }}</text></text
+    >
   </view>
 </template>
 
@@ -60,11 +62,13 @@
 import { computed } from 'vue';
 import { TAKEOUT_PLATFORM_SHORT, TakeoutPlatform } from '@abox/shared-types';
 import type { TraceabilityTakeoutLink } from '@abox/shared-types';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
+import type { AboxIconName } from '@abox/shared-utils';
 
 const props = withDefaults(
   defineProps<{
-    /** 头像图示字符（菜品 emoji，由 `utils/format` 的 `dishEmoji()` 给出） */
-    avatar: string;
+    /** 头像图标语义名（由 `utils/format` 的 `dishIcon()` 给出；S3 起不再传 emoji 字符） */
+    avatarIcon: AboxIconName;
     /** 出品方名称 */
     name: string;
     /** 右上角品类角标（主荤 / 素菜 / 汤品 / 主食…）；空则不显示 */
@@ -132,7 +136,7 @@ function onTap(): void {
   box-shadow: $shadow-card;
 
   &--hover {
-    background: #fbf7ee;
+    background: $c-surface-3;
   }
 
   // 被「定位」的那一张（M5-17）：描金圈 + 浅金底，与平台弹层的「推荐」同一种强调语言。
@@ -149,12 +153,11 @@ function onTap(): void {
     justify-content: center;
     width: 104rpx;
     height: 104rpx;
-    background: #efe5d0;
+    background: $c-surface-2;
     border-radius: $radius-lg;
   }
 
   &__avatar-text {
-    font-size: 56rpx;
     line-height: 1;
   }
 
@@ -201,14 +204,12 @@ function onTap(): void {
     display: block;
     margin-top: $space-1;
     font-size: $fs-caption;
-    color: $c-success;
+    color: $c-ok-fg;
   }
 
   &__arrow {
     flex: none;
     align-self: center;
-    font-size: 40rpx;
-    line-height: 1;
     color: $c-text-weak;
   }
 }

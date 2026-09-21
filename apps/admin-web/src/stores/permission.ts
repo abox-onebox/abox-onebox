@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 
 import { ADMIN_NAV, SUPPLIER_NAV } from '@/constants';
 import { canAccess, filterByMenus, filterGroupsByMenus } from '@/utils/permission';
+import type { AboxIconName } from '@abox/shared-utils';
 import { useAuthStore } from './auth';
 
 export interface NavItem {
@@ -9,6 +10,14 @@ export interface NavItem {
   title: string;
   page: string;
   module: string;
+  /**
+   * 菜单图标（见 `ADMIN_NAV` / `SUPPLIER_NAV` 每项的 `icon`）
+   *
+   * ⚠️ 必填且必须是 `ABOX_ICON_NAMES`（82 名 Tabler 子集）之一 ——
+   *    写错名字的表现是**图标位置空白**（字形不存在，不报错）。
+   *    机械门禁：`scripts/check-nav-consistency.mjs` 第 ⑥ 条同源校验。
+   */
+  icon: AboxIconName;
 }
 
 export interface NavGroup {

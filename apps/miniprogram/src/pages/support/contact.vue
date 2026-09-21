@@ -6,6 +6,7 @@
       v-else-if="!contact"
       text="客服信息加载失败"
       hint="请稍后重试"
+      illustration="warn-tri"
       action-text="重试"
       @action="reload"
     />
@@ -168,7 +169,7 @@ onShow(() => {
   font-size: $fs-display;
   font-weight: 600;
   letter-spacing: 2rpx;
-  color: $c-gold;
+  color: $c-gold-fg;
   word-break: break-all;
 }
 
@@ -235,7 +236,7 @@ onShow(() => {
     flex: none;
     margin-right: $space-2;
     font-size: $fs-caption;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 
   &__text {

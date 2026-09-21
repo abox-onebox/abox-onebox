@@ -628,11 +628,11 @@ onMounted(() => {
 }
 
 .stats__value--ok {
-  color: #5b7c3a;
+  color: $c-ok-fg;
 }
 
 .stats__value--warn {
-  color: #c9a876;
+  color: $c-gold-fg;
 }
 
 .stats__sub {

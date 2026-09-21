@@ -34,8 +34,8 @@
         <el-form-item label="供应商名" prop="name">
           <el-input v-model="form.name" maxlength="128" placeholder="如：三味屋" />
           <div class="hint">
-            ⚠️ 演示占位名为「三味屋 / 四季鲜蔬 / 京味小馆 / 老李家」；
-            <b>「巡礼之年」是平台主体公司品牌，不得用作供应商名</b>。
+            <AbIcon name="warn-tri" size="16" /> 演示占位名为「三味屋 / 四季鲜蔬 / 京味小馆 /
+            老李家」； <b>「巡礼之年」是平台主体公司品牌，不得用作供应商名</b>。
           </div>
         </el-form-item>
 
@@ -117,7 +117,8 @@
             style="width: 220px"
           />
           <div class="hint">
-            ⚠️ 保存为<b>过去日期</b>时，系统会<b>同时下架该供应商的全部在架菜品</b>并回报数量 （123
+            <AbIcon name="warn-tri" size="16" />
+            保存为<b>过去日期</b>时，系统会<b>同时下架该供应商的全部在架菜品</b>并回报数量 （123
             号令：证照过期不得出餐）。通过资质审核也要求此字段未过期。
           </div>
         </el-form-item>
@@ -155,7 +156,8 @@
           <el-form-item label="银行账号">
             <el-input v-model="form.bankAccount" maxlength="64" style="width: 260px" />
             <div class="hint">
-              ⚠️ 账号保存后<b>任何接口都不会回传原文</b>（连本页也只显示脱敏号）——
+              <AbIcon name="warn-tri" size="16" />
+              账号保存后<b>任何接口都不会回传原文</b>（连本页也只显示脱敏号）——
               付款登记时由财务线下核对，避免账号在日志或截图里泄露。
               <template v-if="isEdit && detail?.bank.bankAccountMasked">
                 当前：{{ detail.bank.bankAccountMasked }}
@@ -515,6 +517,6 @@ onMounted(() => {
 
 .neg {
   font-weight: 700;
-  color: $c-warning;
+  color: $c-warn-fg;
 }
 </style>

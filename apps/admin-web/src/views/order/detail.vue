@@ -571,7 +571,7 @@ onMounted(load);
   }
 
   &__refundable {
-    color: $c-warning;
+    color: $c-warn-fg;
   }
 }
 
@@ -589,7 +589,7 @@ onMounted(load);
 }
 
 .negative {
-  color: $c-warning;
+  color: $c-warn-fg;
   font-weight: 700;
 }
 
@@ -632,7 +632,7 @@ onMounted(load);
   }
 
   &__refundable {
-    color: $c-warning;
+    color: $c-warn-fg;
   }
 
   &__tip {

@@ -9,6 +9,7 @@
       v-else-if="!detail"
       text="找不到该订单"
       :hint="errorHint"
+      illustration="search"
       action-text="返回订单列表"
       @action="goList"
     />
@@ -20,14 +21,16 @@
           <text class="status__label">订单状态</text>
           <text class="status__text">{{ detail.statusText }}</text>
         </view>
-        <text class="status__icon">{{ abnormal ? '🗑️' : '🍱' }}</text>
+        <text class="abi abi-deco-34 status__icon">{{ I[abnormal ? 'x-circle' : 'rice'] }}</text>
       </view>
       <text class="status__hint">{{ statusHint }}</text>
 
       <!-- 出餐进度（服务端 6 步状态机时间线） -->
       <view class="card">
         <view class="card__hd">
-          <text class="card__title">📍 出餐进度</text>
+          <text class="card__title"
+            ><text class="abi abi-16">{{ I.pin }}</text> 出餐进度</text
+          >
           <text class="card__sub">{{ doneCount }}/{{ detail.timeline.length }} 步</text>
         </view>
         <view class="timeline">
@@ -35,11 +38,21 @@
             v-for="(node, i) in detail.timeline"
             :key="node.node"
             class="tl"
-            :class="{ 'is-done': node.done, 'is-last': i === detail.timeline.length - 1 }"
+            :class="{
+              'is-done': node.done,
+              'is-doing': dotState(node, i) === 'doing',
+              'is-last': i === detail.timeline.length - 1,
+            }"
           >
             <view class="tl__rail">
-              <view class="tl__dot" />
-              <view v-if="i !== detail.timeline.length - 1" class="tl__line" />
+              <view class="tl__dot" :class="`is-${dotState(node, i)}`">
+                <text v-if="node.done" class="abi abi-deco-28 tl__dot-ico">{{ I.check }}</text>
+              </view>
+              <view
+                v-if="i !== detail.timeline.length - 1"
+                class="tl__line"
+                :class="{ 'is-done': node.done }"
+              />
             </view>
             <view class="tl__body">
               <text class="tl__text">{{ node.text }}</text>
@@ -58,13 +71,17 @@
           <text class="ono__label">订单号</text>
           <text class="ono__value">{{ detail.orderNo }}</text>
         </view>
-        <button class="mini-btn" hover-class="mini-btn--hover" @tap="copyOrderNo">📋 复制</button>
+        <button class="mini-btn" hover-class="mini-btn--hover" @tap="copyOrderNo">
+          <text class="abi abi-20">{{ I.copy }}</text> 复制
+        </button>
       </view>
 
       <!-- 套餐明细 -->
       <view class="card">
         <view class="card__hd">
-          <text class="card__title">🍱 套餐明细</text>
+          <text class="card__title"
+            ><text class="abi abi-16">{{ I.rice }}</text> 套餐明细</text
+          >
           <text class="card__sub"
             >{{ formatMealDate(detail.mealDate) }} · × {{ detail.quantity }}</text
           >
@@ -111,7 +128,9 @@
 
       <!-- 取餐方式 -->
       <view class="card">
-        <text class="card__title">📍 取餐方式</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.pin }}</text> 取餐方式</text
+        >
         <text class="pickup__who">
           <text class="pickup__strong">{{ leaderName }}</text
           >（团长）· {{ detail.pickup.point }}
@@ -123,10 +142,10 @@
         >
         <view class="pickup__acts">
           <button class="ghost-btn" hover-class="ghost-btn--hover" @tap="contactLeader">
-            📞 联系团长
+            <text class="abi abi-20">{{ I.phone }}</text> 联系团长
           </button>
           <button class="ghost-btn" hover-class="ghost-btn--hover" @tap="goSupport">
-            💬 平台客服
+            <text class="abi abi-20">{{ I.message }}</text> 平台客服
           </button>
         </view>
       </view>
@@ -188,13 +207,14 @@
 import { computed, ref } from 'vue';
 import { onLoad, onShow } from '@dcloudio/uni-app';
 import { OrderStatus } from '@abox/shared-types';
-import type { OrderDetailResult } from '@abox/shared-types';
+import type { OrderDetailResult, OrderTimelineNode } from '@abox/shared-types';
 
 import { fetchOrderDetail } from '@/api/order';
 import { ApiError } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { SLOT_LABEL, fenToYuanText, formatDateTime, formatMealDate } from '@/utils/format';
 import { buildUrl, navigateTo, pageQuery, switchTab } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const { run, loading } = useRequest();
 
@@ -224,6 +244,21 @@ const abnormal = computed(() => {
 });
 
 const doneCount = computed(() => detail.value?.timeline.filter((n) => n.done).length ?? 0);
+
+/**
+ * 时间线节点三态 —— 规格 §八「时间线 · 节点 15px 圆形」+ 清单 §七「已过 / 当前 / 未到」。
+ *
+ * ⚠️ 端上只实现**有数据支撑**的三态：契约 `OrderTimelineNode` 只有 `done: boolean`，
+ *    **没有「异常」字段**；而规格 §八 承诺了「异常实心叉」。
+ *    这是**规格与契约的口径不一致**（已登记），端上不凭空造数据
+ *    ⇒ 异常态留待契约补字段后再实现。
+ *
+ * 「当前」的判据 = 第一个未完成节点（与 `doneCount` 同位，不另立第二份真源）。
+ */
+function dotState(node: OrderTimelineNode, i: number): 'done' | 'doing' | 'todo' {
+  if (node.done) return 'done';
+  return i === doneCount.value ? 'doing' : 'todo';
+}
 
 const leaderName = computed(
   () => detail.value?.pickup.leaderName || detail.value?.leaderContact?.name || '本楼团长',
@@ -334,13 +369,13 @@ onShow(() => {
   align-items: center;
   justify-content: space-between;
   padding: $space-4;
-  background: linear-gradient(135deg, #d2c5a0, #b8892f);
+  background: linear-gradient(135deg, $c-gold, $c-gold-deep);
   border-radius: 28rpx;
   color: #ffffff;
   box-shadow: 0 8rpx 24rpx rgba(184, 137, 47, 0.22);
 
   &--muted {
-    background: linear-gradient(135deg, #9a9a9a, #5a5a5a);
+    background: linear-gradient(135deg, $c-text-disabled, $c-text-weak);
     box-shadow: none;
   }
 
@@ -361,7 +396,6 @@ onShow(() => {
   }
 
   &__icon {
-    font-size: 64rpx;
     line-height: 1;
   }
 
@@ -423,21 +457,53 @@ onShow(() => {
     width: 44rpx;
   }
 
+  // 节点 15px 圆形（规格 §八）。三态：已完成实心勾 / 当前空心 / 未到弱化点。
   &__dot {
-    width: 18rpx;
-    height: 18rpx;
-    margin-top: 8rpx;
-    background: $c-border;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    // 15px 圆形（30rpx）· 守规格 §八原值。勾走**装饰档** `abi-deco-28`（14px）——
+    // 与 `avatar__icon` / `level__icon` / `grid__icon` 同族约定：**圆/徽标容器内的字形走装饰档**。
+    // （早先按功能档 16px(32rpx) 会撑破 30rpx 圆点；走装饰档后圆点无需变形。）
+    width: 30rpx;
+    height: 30rpx;
+    margin-top: 4rpx;
     border-radius: 50%;
+    // 「未到」= 弱化装饰态：信息由文字承担 ⇒ WCAG 1.4.11 装饰豁免（见 s6-contrast.py）
+    background: $c-mut-bd;
+
+    // 已完成：实心 + 勾
+    &.is-done {
+      background: $c-gold-deep;
+    }
+
+    // 当前进行中：空心描边
+    &.is-doing {
+      background: transparent;
+      border: 3rpx solid $c-gold-deep;
+    }
+  }
+
+  &__dot-ico {
+    font-family: $font-family-base;
+    line-height: 1;
+    color: $c-surface;
   }
 
   &__line {
     position: absolute;
-    top: 30rpx;
+    // top = 圆点高 30 + 上边距 4 + 间隙 4；left = 圆点中心 15 − 线宽 2/2
+    top: 38rpx;
     bottom: 0;
-    left: 8rpx;
+    left: 14rpx;
     width: 2rpx;
-    background: $c-border;
+    background: $c-mut-bd;
+
+    // 已过段落的连线随之加深，与「已过」文字同层
+    &.is-done {
+      background: $c-gold-deep;
+    }
   }
 
   &__body {
@@ -458,12 +524,13 @@ onShow(() => {
     color: $c-text-weak;
   }
 
-  &.is-done .tl__dot {
-    background: $c-gold;
-  }
-
   &.is-done .tl__text {
     font-weight: bold;
+    color: $c-text;
+  }
+
+  // 「当前」节点文字同样用主文字色（节点色与文字色分离：节点归节点，文字归文字）
+  &.is-doing .tl__text {
     color: $c-text;
   }
 
@@ -508,7 +575,7 @@ onShow(() => {
   line-height: 56rpx;
   color: $c-text;
   font-size: $fs-caption;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border: 1px solid $c-border;
   border-radius: $radius-pill;
 
@@ -526,7 +593,7 @@ onShow(() => {
   display: flex;
   align-items: baseline;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &__slot {
     flex: none;
@@ -545,7 +612,7 @@ onShow(() => {
     flex: none;
     margin-left: $space-2;
     font-size: $fs-caption;
-    color: #b8915c;
+    color: $c-gold-fg;
   }
 }
 
@@ -579,14 +646,14 @@ onShow(() => {
   &__total {
     font-size: 40rpx;
     font-weight: bold;
-    color: #b8892f;
+    color: $c-gold-fg;
   }
 }
 
 .remark {
   margin-top: $space-3;
   padding: $space-2 $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border-radius: $radius-sm;
 
   &__text {
@@ -629,7 +696,7 @@ onShow(() => {
   line-height: 68rpx;
   color: $c-text;
   font-size: $fs-caption;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border: 1px solid $c-border;
   border-radius: $radius-pill;
 
@@ -678,7 +745,7 @@ onShow(() => {
   font-size: $fs-h2;
   font-weight: bold;
   letter-spacing: 2rpx;
-  background: linear-gradient(135deg, $c-text 0%, #b8915c 100%);
+  background: linear-gradient(135deg, $c-text 0%, $c-gold-deep 100%);
   border: none;
   border-radius: $radius-pill;
 
@@ -697,7 +764,7 @@ onShow(() => {
   color: #ffffff;
   font-size: $fs-h2;
   font-weight: bold;
-  background: linear-gradient(135deg, $c-warning, #a02818);
+  background: linear-gradient(135deg, $c-warning, $c-warn-fg);
   border: none;
   border-radius: $radius-pill;
 

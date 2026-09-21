@@ -5,8 +5,8 @@
     <template v-else-if="result">
       <!-- 结果 hero（原型 P4：大 ✅ + 标题 + 订单号） -->
       <view class="hero">
-        <text class="hero__icon">{{
-          paid ? '✅' : result.status === 'cancelled' ? '🚫' : '⏳'
+        <text class="abi abi-deco-40 hero__icon">{{
+          I[paid ? 'ok-circle' : result.status === 'cancelled' ? 'x-circle' : 'clock']
         }}</text>
         <text class="hero__title">{{ heroTitle }}</text>
         <text class="hero__order-no">订单号 {{ result.orderNo }}</text>
@@ -62,6 +62,7 @@
       v-else
       text="找不到该订单"
       :hint="errorHint"
+      illustration="search"
       action-text="回到首页"
       @action="goHome"
     />
@@ -91,6 +92,7 @@ import { toastApiError, useRequest } from '@/composables/use-request';
 import { useWechatPay } from '@/composables/use-wechat-pay';
 import { fenToYuan, formatDateTime } from '@/utils/format';
 import { buildUrl, navigateTo, pageQuery, switchTab } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const { run, loading } = useRequest();
 const { pay, paying, pollResult } = useWechatPay();
@@ -167,7 +169,6 @@ onLoad((options) => {
   text-align: center;
 
   &__icon {
-    font-size: 160rpx;
     line-height: 1;
   }
 
@@ -187,7 +188,7 @@ onLoad((options) => {
   &__reason {
     margin-top: $space-2;
     font-size: $fs-caption;
-    color: $c-warning;
+    color: $c-warn-fg;
   }
 }
 
@@ -195,8 +196,8 @@ onLoad((options) => {
 .info {
   margin: $space-4 $space-2 0;
   padding: $space-4 $space-4;
-  background: #fbf7ee;
-  border: 1px solid #d4c4a8;
+  background: $c-surface-3;
+  border: 1px solid $c-border-strong;
   border-radius: 28rpx;
 
   &__row {
@@ -237,7 +238,7 @@ onLoad((options) => {
   width: 100%;
   margin: $space-5 0 0;
   padding: $space-3 0;
-  background: linear-gradient(135deg, $c-text 0%, #b8915c 100%);
+  background: linear-gradient(135deg, $c-text 0%, $c-gold-deep 100%);
   color: $c-bg;
   font-size: $fs-h2;
   font-weight: bold;

@@ -866,11 +866,11 @@ onMounted(() => {
     font-weight: 700;
 
     &--ok {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &--warn {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
 
     &--muted {
@@ -927,7 +927,7 @@ onMounted(() => {
 
 .amount {
   font-weight: 700;
-  color: $c-warning;
+  color: $c-warn-fg;
 }
 
 .num {

@@ -126,7 +126,8 @@
       <el-table-column label="等级 / 费率" width="130">
         <template #default="{ row }">
           <div class="stack">
-            <el-tag size="small" :type="levelTagType(asRow(row).level)">
+            <!-- 等级徽标（S6）：色块 + 文字标签，替代原「等级四色当文字」方案 -->
+            <el-tag size="small" class="ab-level" :class="`ab-level--${asRow(row).level}`">
               {{ asRow(row).levelLabel }}
             </el-tag>
             <span class="stack__sub">{{ asRow(row).commissionRateText }}</span>
@@ -548,13 +549,6 @@ function asRow(raw: unknown): LeaderRow {
   return raw as LeaderRow;
 }
 
-function levelTagType(level: string): 'info' | 'success' | 'warning' | 'danger' {
-  if (level === 'chief') return 'danger';
-  if (level === 'gold') return 'warning';
-  if (level === 'formal') return 'success';
-  return 'info';
-}
-
 function onGroupChange(): void {
   // 换楼群后，原选中的办公楼可能不在新楼群里 → 清掉，避免「筛选条件自相矛盾返回空列表」
   if (query.buildingId && !buildingChoices.value.some((b) => b.id === query.buildingId)) {
@@ -802,11 +796,11 @@ onMounted(async () => {
     font-weight: 700;
 
     &--ok {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &--warn {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
 
     &--muted {

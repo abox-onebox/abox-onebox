@@ -33,7 +33,7 @@
     >
       <view class="leader-card__hd">
         <view class="leader-card__crown">
-          <text class="leader-card__crown-text">👑</text>
+          <text class="abi abi-deco-28 leader-card__crown-text">{{ I.crown }}</text>
         </view>
         <view class="leader-card__main">
           <view class="leader-card__title-row">
@@ -63,51 +63,86 @@
 
     <!-- 非团长：申请引导（C3 提交即生效） -->
     <view v-else class="apply" hover-class="apply--hover" @tap="goApply">
-      <text class="apply__icon">👑</text>
+      <text class="abi abi-deco-28 apply__icon">{{ I.crown }}</text>
       <view class="apply__main">
         <text class="apply__title">我也想成为团长</text>
         <text class="apply__sub">每天顺路帮忙带餐，8% - 12% 阶梯佣金</text>
       </view>
-      <text class="apply__arrow">›</text>
+      <text class="apply__arrow"
+        ><text class="abi abi-16">{{ I.chev }}</text></text
+      >
     </view>
 
     <!-- 团长专属入口 -->
     <view v-if="leaderStore.isLeader" class="menu">
       <view class="menu__item" hover-class="menu__item--hover" @tap="goCommission">
-        <text class="menu__label">💰 佣金中心（佣金余额 {{ fenToYuanText(balanceFen) }}）</text>
-        <text class="menu__arrow">›</text>
+        <text class="menu__label"
+          ><text class="abi abi-16">{{ I.wallet }}</text> 佣金中心（佣金余额
+          {{ fenToYuanText(balanceFen) }}）</text
+        >
+        <text class="menu__arrow"
+          ><text class="abi abi-16">{{ I.chev }}</text></text
+        >
       </view>
       <view class="menu__item" hover-class="menu__item--hover" @tap="goShare">
-        <text class="menu__label">📤 分享中心 · 推广拉单</text>
-        <text class="menu__arrow">›</text>
+        <text class="menu__label"
+          ><text class="abi abi-16">{{ I.share }}</text> 分享中心 · 推广拉单</text
+        >
+        <text class="menu__arrow"
+          ><text class="abi abi-16">{{ I.chev }}</text></text
+        >
       </view>
       <view class="menu__item" hover-class="menu__item--hover" @tap="goLeaderProfile">
-        <text class="menu__label">🏢 团长资料 · 绑定办公楼</text>
-        <text class="menu__arrow">›</text>
+        <text class="menu__label"
+          ><text class="abi abi-16">{{ I.building }}</text> 团长资料 · 绑定办公楼</text
+        >
+        <text class="menu__arrow"
+          ><text class="abi abi-16">{{ I.chev }}</text></text
+        >
       </view>
     </view>
 
     <!-- 常用 -->
     <view class="menu">
       <view class="menu__item" hover-class="menu__item--hover" @tap="goOrders">
-        <text class="menu__label">📋 我的订单</text>
-        <text class="menu__arrow">›</text>
+        <text class="menu__label"
+          ><text class="abi abi-16">{{ I.list }}</text> 我的订单</text
+        >
+        <text class="menu__arrow"
+          ><text class="abi abi-16">{{ I.chev }}</text></text
+        >
       </view>
       <view class="menu__item" hover-class="menu__item--hover" @tap="goBalance">
-        <text class="menu__label">💰 余额明细</text>
-        <text class="menu__arrow">›</text>
+        <text class="menu__label"
+          ><text class="abi abi-16">{{ I.wallet }}</text> 余额明细</text
+        >
+        <text class="menu__arrow"
+          ><text class="abi abi-16">{{ I.chev }}</text></text
+        >
       </view>
       <view class="menu__item" hover-class="menu__item--hover" @tap="tapSwitchLeader">
-        <text class="menu__label">🏠 切换团长（绑定办公楼）</text>
-        <text class="menu__arrow">›</text>
+        <text class="menu__label"
+          ><text class="abi abi-16">{{ I.home }}</text> 切换团长（绑定办公楼）</text
+        >
+        <text class="menu__arrow"
+          ><text class="abi abi-16">{{ I.chev }}</text></text
+        >
       </view>
       <view class="menu__item" hover-class="menu__item--hover" @tap="goSupport">
-        <text class="menu__label">📞 客服微信号</text>
-        <text class="menu__arrow">›</text>
+        <text class="menu__label"
+          ><text class="abi abi-16">{{ I.phone }}</text> 客服微信号</text
+        >
+        <text class="menu__arrow"
+          ><text class="abi abi-16">{{ I.chev }}</text></text
+        >
       </view>
       <view class="menu__item" hover-class="menu__item--hover" @tap="showSettings">
-        <text class="menu__label">⚙️ 设置</text>
-        <text class="menu__arrow">›</text>
+        <text class="menu__label"
+          ><text class="abi abi-16">{{ I.gear }}</text> 设置</text
+        >
+        <text class="menu__arrow"
+          ><text class="abi abi-16">{{ I.chev }}</text></text
+        >
       </view>
     </view>
 
@@ -172,6 +207,7 @@ import { useUserStore } from '@/stores/user';
 import { clearAuthStorage } from '@/utils/storage';
 import { navigateTo, switchTab } from '@/utils/router';
 import { AGREEMENT_OPERATOR } from '@/constants/agreements';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const { run } = useRequest();
 const userStore = useUserStore();
@@ -440,7 +476,7 @@ onShow(() => {
     justify-content: center;
     width: 128rpx;
     height: 128rpx;
-    background: #efe5d0;
+    background: $c-surface-2;
     border-radius: 50%;
   }
 
@@ -484,7 +520,7 @@ onShow(() => {
     color: $c-text;
 
     &--gold {
-      color: #b8892f;
+      color: $c-gold-fg;
     }
   }
 
@@ -499,7 +535,7 @@ onShow(() => {
 .leader-card {
   margin-top: $space-3;
   padding: $space-4;
-  background: linear-gradient(135deg, $c-text, #b8892f);
+  background: linear-gradient(135deg, $c-text, $c-gold-deep);
   border-radius: $radius-lg;
   color: #ffffff;
   box-shadow: 0 8rpx 24rpx rgba(110, 84, 53, 0.22);
@@ -526,7 +562,6 @@ onShow(() => {
   }
 
   &__crown-text {
-    font-size: 52rpx;
     line-height: 1;
   }
 
@@ -603,7 +638,7 @@ onShow(() => {
   gap: $space-3;
   margin-top: $space-3;
   padding: $space-4;
-  background: linear-gradient(135deg, #fff6e0, #ffeed5);
+  background: linear-gradient(135deg, $c-trace-card-from, $c-trace-card-to);
   border: 1px dashed $c-gold;
   border-radius: $radius-lg;
 
@@ -612,7 +647,6 @@ onShow(() => {
   }
 
   &__icon {
-    font-size: 56rpx;
     line-height: 1;
   }
 
@@ -635,7 +669,6 @@ onShow(() => {
   }
 
   &__arrow {
-    font-size: $fs-h1;
     color: $c-text-weak;
   }
 }
@@ -671,7 +704,6 @@ onShow(() => {
   }
 
   &__arrow {
-    font-size: $fs-h1;
     color: $c-text-weak;
   }
 }
@@ -695,7 +727,7 @@ onShow(() => {
   &__row {
     display: block;
     font-size: $fs-caption;
-    color: $c-warning;
+    color: $c-warn-fg;
 
     &--hover {
       opacity: 0.8;

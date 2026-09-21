@@ -243,7 +243,7 @@ onMounted(load);
 }
 .card__warn {
   margin: 0 0 $space-1;
-  color: $c-warning;
+  color: $c-warn-fg;
   font-size: $fs-caption;
   line-height: 1.6;
 }
@@ -297,7 +297,7 @@ onMounted(load);
 .blockers {
   margin: $space-1 0 0;
   padding-left: 1.2em;
-  color: $c-warning;
+  color: $c-warn-fg;
   font-size: $fs-caption;
   line-height: 1.6;
 }

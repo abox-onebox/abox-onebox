@@ -230,7 +230,7 @@ POST /api/v1/payments/mock/paid   { "orderNo": "AB202609150001" }
 > 📌 **门禁条数全文只在此处声明一次**（下面这行是**机器可读标记**，由 `gate:parity` 门禁校验；
 > 加/删门禁后必须同步它，否则门禁会红并点名指出差多少）：
 >
-> `<!-- gate-count: all=20 verify=4 -->`
+> `<!-- gate-count: all=21 verify=4 -->`
 >
 > ⚠️ **其余文档一律不要再写死条数** —— 本项目已反复出现「同一个数字写死在多处，改一处就悄悄错，
 > 而没有任何工具会报错」。条数的**唯一真源**是 `gate.mjs` 自己：`node scripts/gate.mjs --json`。

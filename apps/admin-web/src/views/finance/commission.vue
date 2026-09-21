@@ -2,6 +2,8 @@
 import { onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
+import { useNarrow } from '@/composables/use-narrow';
+
 import {
   fetchFinanceCommissions,
   settleCommissions,
@@ -45,6 +47,13 @@ const summary = ref<FinanceCommissionSummary | null>(null);
 const page = ref(1);
 const pageSize = ref(20);
 const total = ref(0);
+
+/**
+ * 窄屏（S8）判据 —— 唯一真源见 `composables/use-narrow.ts`。
+ * 仅用于**表格 ↔ 卡片列表**的切换：11 列宽表在手机上没有可用的降级写法
+ * （逐列隐藏会丢掉「费率快照 / 计佣基数」这些对账必需列，横向滚动则每行都要左右拖）。
+ */
+const { narrow } = useNarrow();
 
 const money = (fen?: number | null) => `¥${((fen ?? 0) / 100).toFixed(2)}`;
 /** 冲销是负值 —— 展示为 -¥x.xx */
@@ -244,7 +253,8 @@ onMounted(() => {
     </el-card>
 
     <el-card v-loading="loading" shadow="never">
-      <el-table v-if="rows.length" :data="rows" size="small" stripe>
+      <!-- 桌面：11 列宽表。窄屏（S8）改渲染下方卡片列表 —— 见 useNarrow() 注释 -->
+      <el-table v-if="rows.length && !narrow" :data="rows" size="small" stripe>
         <el-table-column prop="orderNo" label="订单号" min-width="150" />
         <el-table-column prop="mealDate" label="出餐日" width="105" />
         <el-table-column prop="leaderName" label="团长" min-width="90" />
@@ -276,6 +286,44 @@ onMounted(() => {
           <template #default="{ row }">{{ row.settledAt || '—' }}</template>
         </el-table-column>
       </el-table>
+      <!--
+        窄屏（S8 关键路径 2 / 2）：一单一张卡。
+        信息层级 = 团长 / 佣金金额 / 状态 → 出餐日 + 订单号 → 六项明细。
+        ⚠️ 明细列的**列名与桌面表完全一致**（含「（快照）」后缀）：两份表述若各写各的，
+           运营在手机上看到的字段名与在电脑上看到的会漂移。
+      -->
+      <div v-else-if="rows.length" class="mcards">
+        <div v-for="row in rows" :key="row.orderNo" class="mcard">
+          <div class="mcard__hd">
+            <span class="mcard__who">{{ row.leaderName || '—' }}</span>
+            <el-tag size="small" :type="statusTagType(row.status)">{{ row.statusText }}</el-tag>
+            <span class="mcard__amt" :class="{ neg: row.amountFen < 0 }">{{
+              signedMoney(row.amountFen)
+            }}</span>
+          </div>
+
+          <div class="mcard__sub">
+            <span>{{ row.mealDate }}</span>
+            <span class="mcard__no">{{ row.orderNo }}</span>
+          </div>
+
+          <dl class="mcard__kv">
+            <dt>等级（快照）</dt>
+            <dd>{{ row.leaderLevelText }}</dd>
+            <dt>费率（快照）</dt>
+            <dd>{{ (row.rate * 100).toFixed(0) }}%</dd>
+            <dt>计佣基数</dt>
+            <dd>{{ money(row.baseAmountFen) }}</dd>
+            <dt>份数</dt>
+            <dd>{{ row.quantity }}</dd>
+            <dt>类型</dt>
+            <dd>{{ row.typeText }}</dd>
+            <dt>入账时间</dt>
+            <dd>{{ row.settledAt || '—' }}</dd>
+          </dl>
+        </div>
+      </div>
+
       <el-empty v-else description="该条件下没有佣金记录" />
 
       <el-pagination
@@ -294,7 +342,7 @@ onMounted(() => {
     <p class="note">
       提示：佣金入账按钮处理的是 `pending` 状态的佣金，它是 M4 跑批（T+1 02:00 佣金入账）的
       <strong>同一执行口</strong>。佣金两段式下 `pending` 是每天的常态（团长确认收货即计佣），
-      故该按钮通常**不是** 0 条；结果弹窗会把服务端给出的口径原样展示。
+      故该按钮通常<strong>不是</strong> 0 条；结果弹窗会把服务端给出的口径原样展示。
     </p>
   </div>
 </template>
@@ -389,5 +437,133 @@ onMounted(() => {
   color: $c-text-weak;
   font-size: $fs-caption;
   line-height: 1.8;
+}
+
+/* ── 窄屏卡片列表（S8 关键路径 2 / 2）· 仅在 narrow 为真时渲染 ── */
+.mcards {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.mcard {
+  padding: $space-3;
+  background: $c-surface;
+  border: 1px solid $c-border;
+  border-radius: $radius-md;
+
+  &__hd {
+    display: flex;
+    align-items: center;
+    gap: $space-2;
+  }
+
+  &__who {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-weight: 600;
+  }
+
+  &__amt {
+    flex: none;
+    font-family: $font-family-num;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+  }
+
+  &__sub {
+    display: flex;
+    gap: $space-2;
+    margin-top: 2px;
+    color: $c-text-weak;
+    font-size: $fs-caption;
+  }
+
+  &__no {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /* 明细：两列（名 / 值）。列名与桌面表逐字一致，避免两份表述漂移 */
+  &__kv {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px $space-2;
+    margin: $space-2 0 0;
+
+    dt {
+      color: $c-text-weak;
+      font-size: $fs-caption;
+    }
+
+    dd {
+      margin: 0;
+      font-size: $fs-caption;
+      text-align: right;
+    }
+  }
+}
+
+/**
+ * ── S8 · 窄屏（关键路径 2 / 2：团长佣金结算）──
+ *
+ * 祖先 `.ab-layout.is-narrow` 由 `layouts/default-layout.vue` 挂上
+ * （唯一真源 = `composables/use-narrow.ts` 的 `NARROW_MAX`）。
+ * ⚠️ 此处**故意不写 `@media`**：写第二份断点就与 JS 真源错开，而门禁看不见。
+ */
+.ab-layout.is-narrow {
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+
+    .kw,
+    .sel {
+      width: 100%;
+    }
+
+    :deep(.el-date-editor) {
+      width: 100%;
+    }
+
+    // 4 个状态按钮等分铺满一行（3 字标签 × 4 ≈ 288px < 可用宽度，无需换行）
+    :deep(.el-radio-group) {
+      display: flex;
+      width: 100%;
+
+      .el-radio-button {
+        flex: 1;
+      }
+    }
+
+    &__right {
+      width: 100%;
+      margin-left: 0;
+
+      :deep(.el-button) {
+        flex: 1;
+        min-height: 44px; // 移动端触摸目标
+      }
+    }
+  }
+
+  // 概览数字：两列（原 min-width 180px 在 320px 视口只能落一列，浪费纵向空间）
+  .stats {
+    gap: $space-2;
+
+    &__item {
+      flex: 1 1 44%;
+      min-width: 0;
+    }
+
+    &__value {
+      font-size: $fs-h2;
+    }
+  }
 }
 </style>

@@ -10,9 +10,9 @@
     <!-- C8 是这一页最容易被误解的地方：可跳转 ≠ 合作商家 -->
     <el-alert type="warning" :closable="false" class="note">
       <template #title>
-        <b>能跳转 ≠ 是合作伙伴</b> —— 本页配置的 6 家备选供应商外卖店铺，用户端只做**跳转**，
+        <b>能跳转 ≠ 是合作伙伴</b> —— 本页配置的 6 家备选供应商外卖店铺，用户端只做<b>跳转</b>，
         <b>不参与平台结算</b>（无供价、无集散、无佣金）。 C8
-        口径：平台**永不下发「哪些是备选商家」**这类名单，避免被解读为平台为第三方背书。
+        口径：平台<b>永不下发「哪些是备选商家」</b>这类名单，避免被解读为平台为第三方背书。
       </template>
     </el-alert>
 
@@ -21,9 +21,9 @@
       <span class="toolbar__label">供应商</span>
       <el-select
         v-model="supplierId"
+        class="toolbar__select"
         placeholder="选择要配置的供应商"
         filterable
-        style="width: 260px"
         @change="onSupplierChange"
       >
         <el-option v-for="s in suppliers" :key="s.id" :label="s.name" :value="s.id" />
@@ -89,7 +89,8 @@
               <el-radio value="">不推荐</el-radio>
             </el-radio-group>
             <p class="field-hint">
-              只影响用户端默认跳转哪个平台。⚠️ 若把推荐平台的链接清空，服务端会**自动撤销推荐**
+              只影响用户端默认跳转哪个平台。<AbIcon name="warn-tri" size="16" />
+              若把推荐平台的链接清空，服务端会<b>自动撤销推荐</b>
               （推荐一个不存在的店铺比没有推荐更糟）。
             </p>
           </div>
@@ -287,6 +288,11 @@ onMounted(async () => {
   font-size: $fs-caption;
 }
 
+// 桌面固定宽度（原为行内 `style="width: 260px"`）；窄屏由下方 S8 段改为 100%
+.toolbar__select {
+  width: 260px;
+}
+
 .toolbar__right {
   margin-left: auto;
   display: flex;
@@ -311,7 +317,9 @@ onMounted(async () => {
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  // ⚠️ 用 `min(320px, 100%)` 而不是裸 `320px`：320px 视口下可用宽度只剩约 292px，
+  //    裸 320px 会让网格轨道**溢出容器**（横向滚动 / 卡片被裁）。`min()` 让轨道可收缩。
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
   gap: $space-3;
 }
 
@@ -366,5 +374,49 @@ onMounted(async () => {
   color: $c-text-weak;
   font-size: $fs-caption;
   line-height: 1.7;
+}
+
+/**
+ * ── S8 · 窄屏（关键路径 1 / 2：供应商配外卖链接）──
+ *
+ * 祖先 `.ab-layout.is-narrow` 由 `layouts/default-layout.vue` 挂上
+ * （唯一真源 = `composables/use-narrow.ts` 的 `NARROW_MAX`）。
+ * ⚠️ 此处**故意不写 `@media`** —— 写第二份断点就与真源错开，而门禁看不见。
+ */
+.ab-layout.is-narrow {
+  .toolbar {
+    align-items: stretch;
+  }
+
+  // 供应商选择器占满整行（固定 260px 会把「返回供应商名录」挤下去）
+  .toolbar__select {
+    width: 100%;
+  }
+
+  .toolbar__right {
+    width: 100%;
+    margin-left: 0;
+
+    :deep(.el-button) {
+      width: 100%;
+      min-height: 44px; // 移动端触摸目标
+    }
+  }
+
+  // 三平台卡片：窄屏一列到底，不在 320px 视口下硬挤并排
+  .cards {
+    grid-template-columns: 1fr;
+  }
+
+  // 保存区：按钮与说明纵排，按钮满宽（拇指可达）
+  .actions {
+    flex-direction: column;
+    align-items: stretch;
+
+    :deep(.el-button) {
+      width: 100%;
+      min-height: 44px;
+    }
+  }
 }
 </style>

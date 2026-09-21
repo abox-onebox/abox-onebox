@@ -21,7 +21,8 @@
           <div class="card__header">
             <span class="card__title">{{ detail.profile.realName }}</span>
             <span class="card__tags">
-              <el-tag size="small" :type="levelTagType(detail.profile.level)">
+              <!-- 等级徽标（S6）：色块 + 文字标签，替代原「等级四色当文字」方案 -->
+              <el-tag size="small" class="ab-level" :class="`ab-level--${detail.profile.level}`">
                 {{ detail.profile.levelLabel }} · {{ detail.profile.commissionRateText }}
               </el-tag>
               <el-tag size="small" :type="detail.profile.status === 1 ? 'success' : 'info'">
@@ -140,7 +141,12 @@
           </el-table-column>
           <el-table-column label="等级" width="90">
             <template #default="{ row }">
-              <el-tag size="small" :type="levelTagType(asInvitee(row).level ?? '')">
+              <!-- 等级徽标（S6）：同「团长列表」口径 -->
+              <el-tag
+                size="small"
+                class="ab-level"
+                :class="`ab-level--${asInvitee(row).level ?? ''}`"
+              >
                 {{ asInvitee(row).levelLabel }}
               </el-tag>
             </template>
@@ -274,7 +280,8 @@
 
         <el-alert type="info" :closable="false" class="chain-tip">
           <template #title>
-            ⚠️ <b>targetId 的两种含义</b>：<b>任命</b>（D20）记录的是<b>被任命用户 id</b>
+            <AbIcon name="warn-tri" size="16" />
+            <b>targetId 的两种含义</b>：<b>任命</b>（D20）记录的是<b>被任命用户 id</b>
             （该接口路径与请求体里都没有团长 id）；<b>变更 / 例外处理</b>（D21/D22）记录的是
             <b>团长 id</b>。本页两者都查，所以两个数字都看得见。
           </template>
@@ -314,14 +321,6 @@ function asCommission(raw: unknown): Commission {
 function asLog(raw: unknown): OpLog {
   return raw as OpLog;
 }
-
-function levelTagType(level: string): 'info' | 'success' | 'warning' | 'danger' {
-  if (level === 'chief') return 'danger';
-  if (level === 'gold') return 'warning';
-  if (level === 'formal') return 'success';
-  return 'info';
-}
-
 function channelText(channel: string | null): string {
   if (!channel) return '—';
   if (channel === 'qrcode') return '小程序码';
@@ -430,11 +429,11 @@ onMounted(async () => {
 
 .pos {
   font-weight: 700;
-  color: $c-success;
+  color: $c-ok-fg;
 }
 
 .neg {
   font-weight: 700;
-  color: $c-warning;
+  color: $c-warn-fg;
 }
 </style>

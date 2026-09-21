@@ -5,7 +5,9 @@
 
     <!-- ① 账户口径 -->
     <view class="card">
-      <text class="card__title">📊 账户口径</text>
+      <text class="card__title"
+        ><text class="abi abi-16">{{ I.chart }}</text> 账户口径</text
+      >
 
       <view class="simple">
         <text class="simple__label">累计分成收入</text>
@@ -41,7 +43,9 @@
     <!-- ② 流水 -->
     <view class="card">
       <view class="card__hd">
-        <text class="card__title">📋 流水记录</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.list }}</text> 流水记录</text
+        >
         <text v-if="summary" class="card__count">共 {{ summary.count }} 笔</text>
       </view>
 
@@ -72,6 +76,7 @@
         v-else-if="!list.length"
         text="暂无流水记录"
         hint="佣金入账 / 提现后会在此逐笔留痕"
+        illustration="coins"
       />
 
       <template v-else>
@@ -105,9 +110,10 @@
         hover-class="btn--hover"
         @tap="goWithdraw"
       >
-        {{
-          balance.canWithdraw ? '💸 去提现' : `满 ${fenToYuanText(balance.minWithdrawFen)} 起可提现`
-        }}
+        <text v-if="balance.canWithdraw"
+          ><text class="abi abi-20">{{ I.withdraw }}</text> 去提现</text
+        >
+        <text v-else>满 {{ fenToYuanText(balance.minWithdrawFen) }} 起可提现</text>
       </button>
     </view>
   </view>
@@ -140,6 +146,7 @@ import { toastApiError, useRequest } from '@/composables/use-request';
 import { PAGE_SIZE } from '@/constants';
 import { fenToYuanText, formatDateTime } from '@/utils/format';
 import { navigateTo } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const { run, loading } = useRequest();
 
@@ -239,7 +246,7 @@ onShow(() => {
   align-items: center;
   justify-content: space-between;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &--hl {
     margin-top: $space-1;
@@ -265,7 +272,7 @@ onShow(() => {
     &--gold {
       font-size: $fs-h2;
       font-weight: bold;
-      color: #b8892f;
+      color: $c-gold-fg;
     }
   }
 }
@@ -325,7 +332,7 @@ onShow(() => {
     color: $c-text-weak;
 
     &--out {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
   }
 }
@@ -335,7 +342,7 @@ onShow(() => {
   align-items: center;
   justify-content: space-between;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &:last-of-type {
     border-bottom: none;
@@ -374,12 +381,12 @@ onShow(() => {
     font-variant-numeric: tabular-nums;
 
     &.is-in {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &--out,
     &.is-out {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
   }
 }
@@ -390,7 +397,7 @@ onShow(() => {
 
   &__btn {
     font-size: $fs-caption;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 
   &__end {
@@ -405,7 +412,7 @@ onShow(() => {
   line-height: 80rpx;
   color: #ffffff;
   font-size: $fs-body;
-  background: linear-gradient(135deg, $c-gold, #b8892f);
+  background: linear-gradient(135deg, $c-gold, $c-gold-deep);
   border: none;
   border-radius: $radius-pill;
 

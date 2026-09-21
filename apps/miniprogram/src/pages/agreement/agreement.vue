@@ -122,7 +122,7 @@ function goSupport(): void {
     display: block;
     font-size: $fs-caption;
     line-height: 1.7;
-    color: $c-warning;
+    color: $c-warn-fg;
   }
 }
 
@@ -157,7 +157,7 @@ function goSupport(): void {
     width: 36rpx;
     font-size: $fs-body;
     line-height: 1.8;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 
   &__text {

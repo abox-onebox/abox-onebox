@@ -2,6 +2,13 @@
 // 此处不再重复 @use，避免同一模块重复绑定到 `*` 命名空间。
 @use './element-override.scss';
 
+// 图标（iconfont · base64 内嵌 · 与端上同一份字形）。
+// ⚠️ 必须**全局引入一次**：若改在各组件里 @import，17KB 的 base64 会被复制进每一个组件。
+@use './icons.scss';
+
+// 等级徽标（S6 · 缺陷③修复：等级四色当文字 → 色块 + 文字标签）。
+@use './level-badge.scss';
+
 html,
 body,
 #app {
@@ -25,3 +32,56 @@ body {
   font-size: $fs-h1;
   font-weight: 600;
 }
+
+// >>> S2 字体分层（由 _tmp/icons/gen-font-layers.py 生成 · 勿手改）>>>
+// 规格 §四：后台是内部工具 —— 标题层保留楷体品牌调性，正文/表格走无衬线（密集阅读）。
+// 后台未内嵌楷体子集（597KB 对首屏是负担）⇒ display 走**系统楷体栈**，缺失回退 serif。
+// 等宽栈用于所有数字与金额，配 tabular-nums 保证成列对齐。
+
+// 工具类（供新增元素直接挂）
+.t-display {
+  font-family: $font-family-display;
+}
+
+.t-num {
+  font-family: $font-family-num;
+  font-variant-numeric: tabular-nums;
+}
+
+// 标题类 → 楷体（14 个）
+.ab-login__title,
+.card__title,
+.chain__title,
+.copyresult__title,
+.detail__title,
+.dish-title,
+.gcard__title,
+.group__title,
+.link__title,
+.page-container__title,
+.page-container__title-sub,
+.row__title,
+.section__title,
+.sub-block__title {
+  font-family: $font-family-display;
+}
+
+// <<< S2 字体分层 <<<
+
+// >>> S8 移动端关键路径（窄屏）· 全局容器留白 >>>
+// ⚠️ **不用 `@media`**：窄屏的唯一真源是 `composables/use-narrow.ts` 的 `NARROW_MAX`
+//    （它把 `is-narrow` 挂到 `.ab-layout` 根容器上）。再写一份媒体查询 =
+//    第二份断点表述，错开半像素时没有任何门禁能发现。
+// `.page-container` 由各视图自己挂（不在 scoped 作用域内），故只能在这里做全局收敛。
+.ab-layout.is-narrow {
+  .page-container {
+    padding: $space-3;
+  }
+
+  // 页标题在窄屏略收，避免与右上角用户区抢行
+  .page-container__title {
+    font-size: $fs-h2;
+    margin-bottom: $space-2;
+  }
+}
+// <<< S8 移动端关键路径 <<<

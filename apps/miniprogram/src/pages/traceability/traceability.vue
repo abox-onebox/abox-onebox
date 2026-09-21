@@ -8,6 +8,7 @@
         v-if="isEmpty"
         text="今日暂无出品方信息"
         :hint="data.traceNote"
+        illustration="store"
         action-text="重新加载"
         @action="load"
       />
@@ -16,7 +17,7 @@
         <!-- 溯源说明卡（米金浅底 + 金棕描边 · 原型 P38） -->
         <view class="trace-card">
           <view class="trace-card__hd">
-            <text class="trace-card__icon">🔍</text>
+            <text class="abi abi-24 trace-card__icon">{{ I.search }}</text>
             <text class="trace-card__title">今日这盒 · 溯源</text>
           </view>
           <text class="trace-card__text">{{ data.traceNote }}</text>
@@ -26,7 +27,7 @@
         <ab-supplier-card
           v-for="(d, i) in data.dishes"
           :key="`${d.supplier.id}-${d.dishName}-${i}`"
-          :avatar="dishEmoji(d.category)"
+          :avatar-icon="dishIcon(d.category)"
           :name="d.supplier.name"
           :category="categoryLabel(d.category)"
           :detail="`今日出品：${d.dishName}`"
@@ -40,7 +41,7 @@
         <!-- 集散中心（主食与打包 · 无外卖入口，故不可点） -->
         <ab-supplier-card
           v-if="data.distributionCenter"
-          avatar="🍚"
+          avatar-icon="rice"
           :name="data.distributionCenter.name"
           category="主食"
           detail="今日出品：米饭与打包"
@@ -53,6 +54,7 @@
       v-else
       :text="emptyText"
       :hint="emptyHint"
+      illustration="search"
       :action-text="userStore.info?.buildingId ? '重新加载' : ''"
       @action="load"
     />
@@ -148,7 +150,8 @@ import { ApiError } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { TAKEOUT_MINI_PROGRAM_APPID } from '@/constants';
 import { useUserStore } from '@/stores/user';
-import { dishEmoji } from '@/utils/format';
+import { dishIcon } from '@/utils/format';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const userStore = useUserStore();
 const { run, loading } = useRequest();
@@ -379,7 +382,6 @@ onShow(() => {
   }
 
   &__icon {
-    font-size: 44rpx;
     line-height: 1;
   }
 

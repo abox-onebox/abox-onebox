@@ -64,6 +64,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ROLE_FILE = join(ROOT, 'apps/api-server/src/common/constants/admin-role.ts');
 const NAV_FILE = join(ROOT, 'apps/admin-web/src/constants/index.ts');
+/** 图标名真源（S7-1 起菜单每条必带 icon，取值必须落在这一集内） */
+const ICON_FILE = join(ROOT, 'packages/shared-utils/src/icons.ts');
 const ADMIN_SRC = join(ROOT, 'apps/admin-web/src');
 
 /**
@@ -174,11 +176,47 @@ function readNavPaths(src, exportName) {
 }
 
 /**
+ * 取导航清单里每个条目的 `{ path, icon }`（`icon` 缺失记 `null`）
+ *
+ * ⚠️ 对象体用 `[^{}]*?` 而不是 `.*?` —— 后者会**跨过对象边界**，把上一个条目的
+ *    `path` 和下一个条目的 `icon` 配成一对（静默错配，门禁会假装通过）。
+ *    `[^{}]` 是字符类、**含换行**，故单行与多行两种书写形态都能命中。
+ */
+function readNavItems(src, exportName) {
+  const start = src.indexOf(`export const ${exportName}`);
+  if (start < 0) throw new Error(`未找到导出：${exportName}`);
+  const end = src.indexOf('] as const', start);
+  if (end < 0) throw new Error(`${exportName} 未找到数组结尾 "] as const"`);
+  const seg = src.slice(start, end);
+  return [...seg.matchAll(/\{[^{}]*?path:\s*'([^']*)'[^{}]*?\}/g)].map((m) => {
+    const ic = m[0].match(/icon:\s*'([^']*)'/);
+    return { path: m[1], icon: ic ? ic[1] : null };
+  });
+}
+
+/** 取 `ABOX_ICON_NAMES = [ 'a', 'b', ... ]` 里的语义名 */
+function readIconNames(src) {
+  const m = src.match(/ABOX_ICON_NAMES\s*=\s*\[([\s\S]*?)\]/);
+  if (!m) throw new Error('未能在 shared-utils/icons.ts 里解析 ABOX_ICON_NAMES（解析口径失效，请修门禁）');
+  return [...m[1].matchAll(/'([a-z0-9-]+)'/g)].map((x) => x[1]);
+}
+
+/**
  * 核心对账（抽成纯函数，便于自证时用「变异输入」再跑一遍）
  * @returns {string[]} 问题列表（空数组 = 通过）
  */
 function check(input) {
-  const { roleAdmin, roleSupplier, navAdmin, navSupplier, exemptAdmin, exemptSupplier, adminSrc } = input;
+  const {
+    roleAdmin,
+    roleSupplier,
+    navAdmin,
+    navSupplier,
+    exemptAdmin,
+    exemptSupplier,
+    adminSrc,
+    navItems,
+    iconNames,
+  } = input;
   const problems = [];
 
   // ① 授权 → 必须有入口（或显式豁免）
@@ -240,12 +278,38 @@ function check(input) {
     problems.push(`[供应商·授权无入口] ${key} —— SUPPLIER_MENU_KEYS 已授权，但 SUPPLIER_NAV 无此项且未豁免`);
   }
 
+  // ⑥ 图标同源校验（S7-1）—— 每条必带 `icon`，且必须落在图标集真源里
+  //
+  // 为什么必须机械校验：图标名的**错误形态是静默的** —— 字形表里没有该名字，
+  // `ABOX_ICON_CODEPOINTS['typo-name']` 得到 undefined，渲染成一个空白位。
+  // 不报错、不警告、构建通过、截图里只是"那块地方空着"，肉眼极易漏过。
+  //
+  // ⚠️ 先挡「空样本」：若解析出的条目为 0，下面的循环一次都不跑 ⇒ **恒绿**。
+  //    恒绿的检查等于没有检查（实测教训），所以解析失效必须自己报出来。
+  if (navItems.length === 0) {
+    problems.push(
+      '[解析失效] 未能从 NAV_FILE 解析出任何导航条目 ⇒ 图标校验空转（真实问题会被静默放过），请修门禁的解析口径',
+    );
+  }
+  for (const it of navItems) {
+    if (!it.icon) {
+      problems.push(`[图标缺失] ${it.path} —— 导航条目没有 icon 字段 ⇒ 侧边栏该行图标位空白`);
+      continue;
+    }
+    if (!iconNames.includes(it.icon)) {
+      problems.push(
+        `[图标悬空] ${it.path} 的 icon='${it.icon}' 不在 ABOX_ICON_NAMES（${iconNames.length} 名）内 ⇒ 字形不存在，渲染为空且不报错`,
+      );
+    }
+  }
+
   return problems;
 }
 
 function loadInput() {
   const roleSrc = stripComments(readFileSync(ROLE_FILE, 'utf8'));
   const navSrc = stripComments(readFileSync(NAV_FILE, 'utf8'));
+  const iconSrc = stripComments(readFileSync(ICON_FILE, 'utf8'));
   return {
     roleAdmin: readStringKeys(roleSrc, 'ADMIN_MENU_KEYS'),
     roleSupplier: readStringKeys(roleSrc, 'SUPPLIER_MENU_KEYS'),
@@ -254,10 +318,13 @@ function loadInput() {
     exemptAdmin: ADMIN_EXEMPT,
     exemptSupplier: SUPPLIER_EXEMPT,
     adminSrc: ADMIN_SRC,
+    // 图标校验覆盖两侧（供应商侧同样有侧边栏）
+    navItems: [...readNavItems(navSrc, 'ADMIN_NAV'), ...readNavItems(navSrc, 'SUPPLIER_NAV')],
+    iconNames: readIconNames(iconSrc),
   };
 }
 
-/** 自证：4 种缺口分别注入，每一种都必须被报出 */
+/** 自证：8 种缺口分别注入，每一种都必须被报出；干净输入必须零问题 */
 function selfTest(base) {
   const cases = [
     {
@@ -293,6 +360,26 @@ function selfTest(base) {
         exemptAdmin: [...base.exemptAdmin, { key: '/ghost/legacy', kind: 'legacy-duplicate' }],
       },
       expect: '[豁免无据]',
+    },
+    {
+      name: '图标缺失（导航条目没有 icon 字段）',
+      input: { ...base, navItems: [...base.navItems, { path: '/ghost/no-icon', icon: null }] },
+      expect: '[图标缺失] /ghost/no-icon',
+    },
+    {
+      name: '图标悬空（名字不在 ABOX_ICON_NAMES 内）',
+      input: { ...base, navItems: [...base.navItems, { path: '/ghost/bad-icon', icon: 'not-in-the-set' }] },
+      expect: '[图标悬空] /ghost/bad-icon',
+    },
+    {
+      name: '图标集真源读空（改口径 / 解析失效）',
+      input: { ...base, iconNames: [] },
+      expect: '[图标悬空]',
+    },
+    {
+      name: '导航条目读空（⇒ 图标校验空转，必须自曝）',
+      input: { ...base, navItems: [] },
+      expect: '[解析失效]',
     },
   ];
 
@@ -334,5 +421,6 @@ if (problems.length > 0) {
 console.log(
   `✔ nav:consistency 通过：运营 ${input.roleAdmin.length} 授权 ↔ ${input.navAdmin.length} 入口` +
     `（豁免 ${ADMIN_EXEMPT.length}）· 供应商 ${input.roleSupplier.length} ↔ ${input.navSupplier.length}` +
-    ` · 自证 ${5 + 1}/6`,
+    ` · 图标 ${input.navItems.length} 条 / 真源 ${input.iconNames.length} 名` +
+    ` · 自证 9/9`,
 );

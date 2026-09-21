@@ -40,7 +40,8 @@
       </p>
       <p class="para">
         它需要一套<strong>新的后端</strong>（带 `supplierId` 数据隔离的菜品 CRUD +
-        上架申请状态机），不是一个页面补丁 —— 故不塞进本次修复批次。 ⚠️
+        上架申请状态机），不是一个页面补丁 —— 故不塞进本次修复批次。
+        <AbIcon name="warn-tri" size="16" />
         已登记在《ABox一盒悬而未决登记册》，与 `/supplier/edit`（商家资料）同批。
         <br />
         <strong>在此之前，供应商端的菜品由平台端代维护，功能上不缺东西。</strong>

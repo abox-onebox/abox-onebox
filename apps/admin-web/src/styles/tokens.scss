@@ -1,28 +1,106 @@
-// 与小程序端 token 同源（《设计 token 规范 v1.0》）
-$c-bg: #f6f0e5;
-$c-surface: #fffdf8;
-$c-text: #6e5435;
-$c-text-weak: #9a8b72;
-$c-gold: #c9a876;
-$c-border: #e4d8c3;
+// ============================================================
+// ABox 一盒 · 设计 token（v2.1）
+//
+// ⚠️ 本文件由 `_tmp/icons/gen-tokens.py` 从 **唯一真源** 派生：
+//    `_ABox一盒设计token真源v2.1/design-tokens.json`
+//    改色值请改真源再重跑，**不要手改本文件** —— 手改即产生第二份表述。
+//
+// 本版相对 v1.0 的变化（三处真缺陷 + 一套加强档，全部 WCAG 自算）：
+//   ① 次文字 #9A8B72（2.93/3.27 不达标）→ #796c57（4.52/5.04）
+//   ② 金棕 #C9A876 当文字只有 1.98 ⇒ **退出文字位**，只做填充/描边/图标
+//   ③ 等级四色当文字全不达标 ⇒ 改「色块 + 文字标签」（深金棕实底 + 白字）
+//   ④ 文字加强档升级为「**全浅底达标**」：既能压色调底（chip），也能直接压米色底（裸色文字）。
+//      判据取最不利底 = 米色 #f6f0e5；旧值只按各自色调底调到 4.50，压米色底仅 4.39/4.44/4.35。
+// ============================================================
 
+// ---- 品牌色 ----
+$c-bg: #f6f0e5; // 米色 · 主背景（6.21 达标，**不动**）
+$c-surface: #fffdf8; // 卡片面
+$c-surface-2: #f7f1e4; // 次级面（内嵌块 / 表头）
+$c-surface-3: #fbf6ec; // 三级面（弱提示块）
+$c-text: #6e5435; // 暖棕 · 主文字（6.21/6.93 达标，**不动**）
+$c-text-weak: #796c57; // 次级文字 ← v1.0 的 #9a8b72 只有 2.93，已修正
+$c-text-disabled: #a79a85; // 禁用态文字；（仅禁用，不做正文）
+$c-gold: #c9a876; // 金棕 · **只做填充/描边/图标**，当文字只有 1.98
+$c-gold-deep: #936f3a; // 深金棕 · 描边款等级色 / 色块
+$c-gold-deepest: #8a6620; // 最深金棕 · 首席实底色块
+$c-border: #e4d8c3;
+$c-border-strong: #d6cbb8;
+
+// ---- 状态色（原色**只用于图标与描边**，当文字压色调底不达标）----
 $c-success: #5b7c3a;
-$c-warning: #c44536; // 后台须覆盖 Element Plus 默认橙
+$c-warning: #c44536; // 警告统一用暖红，后台须覆盖 Element 默认橙
 $c-info: #4a6fa5;
 
-$fs-h1: 20px;
-$fs-h2: 16px;
-$fs-body: 14px;
-$fs-caption: 12px;
+// ---- 色调底（chip / 提示条底）----
+$c-ok-bg: #f1f5ea;
+$c-ok-bd: #bbcba6;
+$c-warn-bg: #fbf0ee;
+$c-warn-bd: #e3bfb8;
+$c-info-bg: #edf1f8;
+$c-info-bd: #b4c4da;
+$c-mut-bg: #f7f2e8;
+$c-mut-bd: #e4d8c3;
+$c-gold-bg: #fbf4e6;
+$c-gold-bd: #dcc79c;
 
+// ---- ⭐ 文字「加强档」（**全浅底达标**：色调底 chip 与米色底裸文字通用）----
+//  为什么必须分开：状态原色用于图标与描边（细线比文字宽容），当文字压浅底就不达标。
+//  判据取**最不利底 = 米色 #f6f0e5**（比卡片面更难达标）；旧值只按各自色调底调到 4.50，
+//  压在米色底上仅 4.39/4.44/4.35 ⇒ 裸色文字仍不达标，故已升级到全底达标值。
+$c-ok-fg: #577738; // 米色底 4.51 · 色调底 4.63（最不利 4.51）
+$c-warn-fg: #be4334; // 米色底 4.58 · 色调底 4.65（最不利 4.58）
+$c-info-fg: #4a6fa5; // 米色底 4.51 · 色调底 4.62（最不利 4.51）
+$c-gold-fg: #8a6620; // 米色底 4.63 · 色调底 4.79（最不利 4.63）
+
+// ---- 等级（v2.1：色块 + 文字标签；颜色只承载档位，等级由文字承载）----
+$c-level-trainee: #796c57; // 描边款：border #d6cbb8
+$c-level-formal: #936f3a; // 描边款：border #936f3a
+$c-level-gold: #936f3a; // 实底款 + 白字
+$c-level-chief: #8a6620; // 实底款 + 白字
+
+// ---- 第三方平台品牌色（P38 溯源页的外卖平台角标）----
+// ⚠️ 底色**不可改**（用户靠颜色认平台，改色只会降低识别度）；不达标就**改文字色**：
+//    美团黄配黑字 14.67 / 淘宝橙配黑字 7.31（白字仅 2.87）/ 京东红配白字 4.69。
+$c-brand-meituan: #ffd400;
+$c-brand-meituan-text: #000000;
+$c-brand-taobao: #ff6a00;
+$c-brand-taobao-text: #000000;
+$c-brand-jd: #e1251b;
+$c-brand-jd-text: #ffffff;
+$c-brand-on-color: #ffffff; // 兼容别名（= 京东红上的白字）
+
+// ---- 溯源说明卡（P38 · 米金浅底 + 金棕描边）----
+$c-trace-card-from: #fff6e0;
+$c-trace-card-to: #ffeed5;
+
+// ---- 字阶（精简层级）+ ⭐ 字体分层：楷体只留标题/品牌字/金额，正文走无衬线 ----
+$fs-h1: 20px; // 页标题 · 楷体
+$fs-h2: 16px; // 区块标题 · 楷体
+$fs-body: 14px; // 正文 / 表格 · 无衬线
+$fs-caption: 12px; // 辅助 / 表头 · 无衬线
+$fs-micro: 11px; // 角标 · 无衬线
+
+// ---- 间距（6 / 10 / 14 / 20 / 28 五档）----
 $space-1: 6px;
 $space-2: 10px;
 $space-3: 14px;
 $space-4: 20px;
 $space-5: 28px;
 
+// ---- 圆角 ----
+// 后台 4 / 10 / 16 / 999 px：与《设计系统 v2.1 规格》表一致（v1.0 代码里的 8 / 12 是与规格的偏差）。
+//    ⚠️ 后台 md/lg 由 8/12 变为 10/16 属**可见变化**（约 2px），如需回退改这两个数即可。
 $radius-sm: 4px;
-$radius-md: 8px;
-$radius-lg: 12px;
+$radius-md: 10px;
+$radius-lg: 16px;
+$radius-pill: 999px;
 
-$font-family-base: KaiTi, STKaiti, 楷体, 'Noto Serif SC', serif;
+// ---- 字体（分层：display 楷体 / base 无衬线 / num 等宽）----
+// 后台是内部工具：正文走无衬线（表格密集、长时间阅读），标题层保留楷体品牌调性。
+// 后台未内嵌楷体字体文件（583KB 对首屏是负担）⇒ display 走**系统楷体栈**，缺失时回退 serif。
+$font-family-display: KaiTi, STKaiti, 楷体, 'Noto Serif SC', ABoxIcons, serif;
+$font-family-base:
+  -apple-system, BlinkMacSystemFont, 'PingFang SC', 'HarmonyOS Sans SC', 'Noto Sans CJK SC',
+  'Microsoft YaHei', 'Helvetica Neue', Arial, ABoxIcons, sans-serif;
+$font-family-num: 'SF Mono', 'Roboto Mono', Consolas, 'Liberation Mono', ABoxIcons, monospace;

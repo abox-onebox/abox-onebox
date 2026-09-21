@@ -1,69 +1,108 @@
 // ============================================================
-// ABox 一盒 · 设计 token（与《ABox一盒设计token规范v1.0.html》一致）
-// 注意：文档型 HTML 的色值不进产品代码；此处为产品侧唯一来源
+// ABox 一盒 · 设计 token（v2.1）
+//
+// ⚠️ 本文件由 `_tmp/icons/gen-tokens.py` 从 **唯一真源** 派生：
+//    `_ABox一盒设计token真源v2.1/design-tokens.json`
+//    改色值请改真源再重跑，**不要手改本文件** —— 手改即产生第二份表述。
+//
+// 本版相对 v1.0 的变化（三处真缺陷 + 一套加强档，全部 WCAG 自算）：
+//   ① 次文字 #9A8B72（2.93/3.27 不达标）→ #796c57（4.52/5.04）
+//   ② 金棕 #C9A876 当文字只有 1.98 ⇒ **退出文字位**，只做填充/描边/图标
+//   ③ 等级四色当文字全不达标 ⇒ 改「色块 + 文字标签」（深金棕实底 + 白字）
+//   ④ 文字加强档升级为「**全浅底达标**」：既能压色调底（chip），也能直接压米色底（裸色文字）。
+//      判据取最不利底 = 米色 #f6f0e5；旧值只按各自色调底调到 4.50，压米色底仅 4.39/4.44/4.35。
 // ============================================================
 
 // ---- 品牌色 ----
-$c-bg: #f6f0e5; // 米色 · 主背景
+$c-bg: #f6f0e5; // 米色 · 主背景（6.21 达标，**不动**）
 $c-surface: #fffdf8; // 卡片面
-$c-text: #6e5435; // 暖棕 · 主文字
-$c-text-weak: #9a8b72; // 次级文字
-$c-gold: #c9a876; // 金棕 · 强调
+$c-surface-2: #f7f1e4; // 次级面（内嵌块 / 表头）
+$c-surface-3: #fbf6ec; // 三级面（弱提示块）
+$c-text: #6e5435; // 暖棕 · 主文字（6.21/6.93 达标，**不动**）
+$c-text-weak: #796c57; // 次级文字 ← v1.0 的 #9a8b72 只有 2.93，已修正
+$c-text-disabled: #a79a85; // 禁用态文字；（仅禁用，不做正文）
+$c-gold: #c9a876; // 金棕 · **只做填充/描边/图标**，当文字只有 1.98
+$c-gold-deep: #936f3a; // 深金棕 · 描边款等级色 / 色块
+$c-gold-deepest: #8a6620; // 最深金棕 · 首席实底色块
 $c-border: #e4d8c3;
+$c-border-strong: #d6cbb8;
 
-// ---- 状态色 ----
+// ---- 状态色（原色**只用于图标与描边**，当文字压色调底不达标）----
 $c-success: #5b7c3a;
 $c-warning: #c44536; // 警告统一用暖红，后台须覆盖 Element 默认橙
 $c-info: #4a6fa5;
 
-// ---- 等级色 ----
-$c-level-trainee: #8b7355;
-$c-level-formal: #c9a876;
-$c-level-gold: #d9bf8e;
-$c-level-chief: #b8892f;
+// ---- 色调底（chip / 提示条底）----
+$c-ok-bg: #f1f5ea;
+$c-ok-bd: #bbcba6;
+$c-warn-bg: #fbf0ee;
+$c-warn-bd: #e3bfb8;
+$c-info-bg: #edf1f8;
+$c-info-bd: #b4c4da;
+$c-mut-bg: #f7f2e8;
+$c-mut-bd: #e4d8c3;
+$c-gold-bg: #fbf4e6;
+$c-gold-bd: #dcc79c;
 
-// ---- 第三方平台品牌色（用户端 P38 溯源页的外卖平台角标）----
-// ⚠️ 这是**第三方平台的品牌识别色**，不属于本产品主题色系，因此**不能**换成金棕 ——
-//    用户靠颜色认平台（黄=美团 / 橙=淘宝 / 红=京东），改色只会降低识别度。
-//    集中登记在此，避免散落在页面里硬编码（P0-3 禁止硬编码色值的例外情形要留痕）。
+// ---- ⭐ 文字「加强档」（**全浅底达标**：色调底 chip 与米色底裸文字通用）----
+//  为什么必须分开：状态原色用于图标与描边（细线比文字宽容），当文字压浅底就不达标。
+//  判据取**最不利底 = 米色 #f6f0e5**（比卡片面更难达标）；旧值只按各自色调底调到 4.50，
+//  压在米色底上仅 4.39/4.44/4.35 ⇒ 裸色文字仍不达标，故已升级到全底达标值。
+$c-ok-fg: #577738; // 米色底 4.51 · 色调底 4.63（最不利 4.51）
+$c-warn-fg: #be4334; // 米色底 4.58 · 色调底 4.65（最不利 4.58）
+$c-info-fg: #4a6fa5; // 米色底 4.51 · 色调底 4.62（最不利 4.51）
+$c-gold-fg: #8a6620; // 米色底 4.63 · 色调底 4.79（最不利 4.63）
+
+// ---- 等级（v2.1：色块 + 文字标签；颜色只承载档位，等级由文字承载）----
+$c-level-trainee: #796c57; // 描边款：border #d6cbb8
+$c-level-formal: #936f3a; // 描边款：border #936f3a
+$c-level-gold: #936f3a; // 实底款 + 白字
+$c-level-chief: #8a6620; // 实底款 + 白字
+
+// ---- 第三方平台品牌色（P38 溯源页的外卖平台角标）----
+// ⚠️ 底色**不可改**（用户靠颜色认平台，改色只会降低识别度）；不达标就**改文字色**：
+//    美团黄配黑字 14.67 / 淘宝橙配黑字 7.31（白字仅 2.87）/ 京东红配白字 4.69。
 $c-brand-meituan: #ffd400;
-$c-brand-meituan-text: #000000; // 黄底必须配黑字，白字在 #ffd400 上不可读
+$c-brand-meituan-text: #000000;
 $c-brand-taobao: #ff6a00;
+$c-brand-taobao-text: #000000;
 $c-brand-jd: #e1251b;
-$c-brand-on-color: #ffffff; // 淘宝 / 京东 深色底上的白字
+$c-brand-jd-text: #ffffff;
+$c-brand-on-color: #ffffff; // 兼容别名（= 京东红上的白字）
 
-// ---- 字阶（精简层级）----
-$fs-display: 44rpx;
-$fs-h1: 34rpx;
-$fs-h2: 30rpx;
-$fs-body: 28rpx;
-$fs-caption: 24rpx;
+// ---- 溯源说明卡（P38 · 米金浅底 + 金棕描边）----
+$c-trace-card-from: #fff6e0;
+$c-trace-card-to: #ffeed5;
+
+// ---- 字阶（精简层级）+ ⭐ 字体分层：楷体只留标题/品牌字/金额，正文走无衬线 ----
+$fs-display: 44rpx; // 倒计时 / 金额大字 · 楷体
+$fs-h1: 34rpx; // 页面主标题 · 楷体
+$fs-h2: 30rpx; // 卡片标题（品牌层） · 楷体
+$fs-body: 28rpx; // 正文 / 菜名 / 表格 · 无衬线
+$fs-caption: 24rpx; // 辅助说明 · 无衬线
+$fs-micro: 22rpx; // 角标 / 单位 / 极弱说明 · 无衬线
 
 // ---- 间距（6 / 10 / 14 / 20 / 28 五档）----
-$space-1: 6rpx;
-$space-2: 10rpx;
-$space-3: 14rpx;
-$space-4: 20rpx;
-$space-5: 28rpx;
+$space-1: 12rpx;
+$space-2: 20rpx;
+$space-3: 28rpx;
+$space-4: 40rpx;
+$space-5: 56rpx;
 
 // ---- 圆角 ----
-$radius-sm: 4rpx;
-$radius-md: 10rpx;
-$radius-lg: 16rpx;
+// ⭐ 端上 4/10/16 → 8/20/32rpx：本轮**唯一非缺陷类的视觉调整**（可见的圆润度变化）。
+//    改它没有可访问性依据，纯观感取舍 ⇒ 单独成块，**可单点回退**（改回三个数即可）。
+$radius-sm: 8rpx;
+$radius-md: 20rpx;
+$radius-lg: 32rpx;
 $radius-pill: 999rpx;
 
 // ---- 阴影 ----
 $shadow-card: 0 2rpx 8rpx rgba(110, 84, 53, 0.06);
 
-// ---- 溯源说明卡（P38 · 米金浅底 + 金棕描边）----
-// 原型 P38 顶部说明卡用的是金色系渐变；此处把两端色值登记为 token，
-// 避免在页面 scss 里裸写十六进制（P0-3）。
-$c-trace-card-from: #fff6e0;
-$c-trace-card-to: #ffeed5;
-
-// ---- 字体 ----
+// ---- 字体（分层：display 楷体 / base 无衬线 / num 等宽）----
 // 手机上没有 KaiTi/楷体（那是 Windows 字体）→ 整条字体栈落空、回退系统黑体，页面观感「失真」。
-// 对策：自带子集字体（GB2312 一级汉字 + 常用符号，woff2 约 580KB），由 scripts/make-font-subset.py 生成。
+// 对策：自带子集字体（GB2312 一级汉字 + 常用符号，woff2 约 583KB），由 scripts/make-font-subset.py 生成。
 /* #ifdef H5 */
 @font-face {
   font-family: 'ABoxKai';
@@ -73,4 +112,9 @@ $c-trace-card-to: #ffeed5;
   font-display: swap;
 }
 /* #endif */
-$font-family-base: 'ABoxKai', KaiTi, STKaiti, 楷体, 'Noto Serif SC', serif;
+$font-family-display: 'ABoxKai', KaiTi, STKaiti, 楷体, 'Noto Serif SC', ABoxIcons, serif;
+// ⭐ 正文/表单/表格改无衬线：整段楷体在手机上读三段以上就累（长文页是判据）。
+$font-family-base:
+  -apple-system, BlinkMacSystemFont, 'PingFang SC', 'HarmonyOS Sans SC', 'Noto Sans CJK SC',
+  'Microsoft YaHei', 'Helvetica Neue', Arial, ABoxIcons, sans-serif;
+$font-family-num: 'SF Mono', 'Roboto Mono', Consolas, 'Liberation Mono', ABoxIcons, monospace;

@@ -199,7 +199,7 @@
     </div>
 
     <p class="footnote">
-      ⚠️ 主团长在本页为<b>只读</b>：改团长只有「团长管理 → 任命 /
+      <AbIcon name="warn-tri" size="16" /> 主团长在本页为<b>只读</b>：改团长只有「团长管理 → 任命 /
       转交（D20）」与「变更（D21）」一个入口， 且带<b>撞车确认闸门</b>（20012）——
       本页刻意不提供团长字段，避免绕过闸门造出 「楼上写 A、团长档案写 B」的不一致。
     </p>
@@ -552,11 +552,11 @@ onMounted(load);
     font-weight: 700;
 
     &--ok {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &--warn {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
 
     &--small {

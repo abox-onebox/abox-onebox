@@ -13,7 +13,9 @@
 
     <!-- ② 四级分佣体系 -->
     <view class="card">
-      <text class="card__title">📊 团长分佣体系（4 级）</text>
+      <text class="card__title"
+        ><text class="abi abi-16">{{ I.chart }}</text> 团长分佣体系（4 级）</text
+      >
 
       <view v-if="rules" class="matrix">
         <view class="matrix__row matrix__row--hd">
@@ -37,8 +39,13 @@
       </view>
 
       <view class="note">
-        <text class="note__text">💡 升级条件：月单量与推荐人数须同时满足，缺一不可。</text>
-        <text v-if="rules?.expireRule" class="note__text">⚠️ {{ rules.expireRule }}</text>
+        <text class="note__text"
+          ><text class="abi abi-16">{{ I.info }}</text>
+          升级条件：月单量与推荐人数须同时满足，缺一不可。</text
+        >
+        <text v-if="rules?.expireRule" class="note__text"
+          ><text class="abi abi-16">{{ I['warn-tri'] }}</text> {{ rules.expireRule }}</text
+        >
       </view>
 
       <view class="mine">
@@ -51,17 +58,21 @@
         <view class="mine__bar">
           <view class="mine__bar-fill" :style="{ width: `${progressPercent}%` }" />
         </view>
-        <text v-if="levelNote" class="mine__note">⚠️ {{ levelNote }}</text>
+        <text v-if="levelNote" class="mine__note"
+          ><text class="abi abi-16">{{ I['warn-tri'] }}</text> {{ levelNote }}</text
+        >
       </view>
 
       <button class="btn btn--gold btn--block" hover-class="btn--hover" @tap="goShare">
-        📤 推荐新团长
+        <text class="abi abi-20">{{ I.share }}</text> 推荐新团长
       </button>
     </view>
 
     <!-- ③ 余额账户 -->
     <view class="card">
-      <text class="card__title">💰 余额账户</text>
+      <text class="card__title"
+        ><text class="abi abi-16">{{ I.wallet }}</text> 余额账户</text
+      >
 
       <view class="stats">
         <view class="stats__item">
@@ -87,9 +98,11 @@
       </view>
 
       <view class="pair">
-        <button class="btn btn--ghost" hover-class="btn--hover" @tap="goWithdraw">💸 提现</button>
+        <button class="btn btn--ghost" hover-class="btn--hover" @tap="goWithdraw">
+          <text class="abi abi-20">{{ I.withdraw }}</text> 提现
+        </button>
         <button class="btn btn--gold" hover-class="btn--hover" @tap="goBalanceLog">
-          📜 查看流水
+          <text class="abi abi-20">{{ I.history }}</text> 查看流水
         </button>
       </view>
     </view>
@@ -97,11 +110,18 @@
     <!-- ④ 最近 3 笔 -->
     <view class="card">
       <view class="card__hd">
-        <text class="card__title">🔁 最近 3 笔</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.refresh }}</text> 最近 3 笔</text
+        >
         <text class="card__link" @tap="goBalanceLog">全部流水 ›</text>
       </view>
 
-      <ab-empty-state v-if="!list.length" text="暂无佣金记录" hint="取餐分发后按实发份数计佣" />
+      <ab-empty-state
+        v-if="!list.length"
+        text="暂无佣金记录"
+        hint="取餐分发后按实发份数计佣"
+        illustration="coins"
+      />
 
       <view v-for="item in list.slice(0, 3)" :key="item.id" class="row">
         <view class="row__left">
@@ -120,7 +140,9 @@
       删掉会让团长无法核对自己每一单的佣金。
     -->
     <view class="card">
-      <text class="card__title">📋 佣金明细</text>
+      <text class="card__title"
+        ><text class="abi abi-16">{{ I.checklist }}</text> 佣金明细</text
+      >
 
       <view class="seg">
         <view
@@ -149,6 +171,7 @@
         v-else-if="!list.length"
         text="本期间暂无佣金"
         hint="佣金在「取餐确认 / 一键分发」后按实发份数计佣，次日自动入账"
+        illustration="coins"
         action-text="去取餐确认"
         @action="goPickup"
       />
@@ -161,9 +184,10 @@
               {{ formatMealDate(item.mealDate) }} · {{ item.quantity }} 份 · 基数
               {{ fenToYuanText(item.baseAmountFen) }} · {{ (item.rate * 100).toFixed(0) }}%
             </text>
-            <text class="row__tag">
-              {{ levelLabelOf(item.leaderLevel) }} · {{ statusText(item) }}
-            </text>
+            <view class="row__tag">
+              <ab-level-badge :level="item.leaderLevel" />
+              <text class="row__tag-status">{{ statusText(item) }}</text>
+            </view>
           </view>
           <text class="row__amount" :class="item.amountFen < 0 ? 'is-out' : 'is-in'">
             {{ item.amountFen < 0 ? '' : '+' }}{{ fenToYuanText(item.amountFen) }}
@@ -216,6 +240,7 @@ import { toastApiError, useRequest } from '@/composables/use-request';
 import { PAGE_SIZE } from '@/constants';
 import { fenToYuanText, formatMealDate } from '@/utils/format';
 import { navigateTo } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const ranges = [
   { label: '今日', value: 'day' as const },
@@ -386,7 +411,7 @@ onShow(() => {
   flex-direction: column;
   align-items: center;
   padding: 36rpx $space-4;
-  background: linear-gradient(135deg, #b8892f, $c-text);
+  background: linear-gradient(135deg, $c-gold-deep, $c-text);
   border-radius: 36rpx;
   color: #ffffff;
   text-align: center;
@@ -446,7 +471,7 @@ onShow(() => {
 
   &__link {
     font-size: $fs-caption;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 }
 
@@ -468,7 +493,7 @@ onShow(() => {
     }
 
     &--hd {
-      background: #fbf7ee;
+      background: $c-surface-3;
 
       .matrix__cell {
         font-size: $fs-caption;
@@ -500,13 +525,13 @@ onShow(() => {
   &__now {
     font-size: 20rpx;
     font-weight: bold;
-    color: #b8892f;
+    color: $c-gold-fg;
   }
 }
 
 .note {
   padding: $space-2 $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border-radius: $radius-sm;
 
   &__text {
@@ -527,7 +552,7 @@ onShow(() => {
   }
 
   &__next {
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 
   &__bar {
@@ -540,7 +565,7 @@ onShow(() => {
 
   &__bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, $c-gold, #b8892f);
+    background: linear-gradient(90deg, $c-gold, $c-gold-deep);
     border-radius: $radius-pill;
     transition: width 0.4s ease;
   }
@@ -574,7 +599,7 @@ onShow(() => {
     font-variant-numeric: tabular-nums;
 
     &--gold {
-      color: #b8892f;
+      color: $c-gold-fg;
     }
   }
 
@@ -588,7 +613,7 @@ onShow(() => {
 .pending {
   margin-top: $space-3;
   padding: $space-2 $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border-radius: $radius-sm;
 
   &__text {
@@ -627,7 +652,7 @@ onShow(() => {
   &--gold {
     color: #ffffff;
     font-weight: bold;
-    background: linear-gradient(135deg, $c-gold, #b8892f);
+    background: linear-gradient(135deg, $c-gold, $c-gold-deep);
     border: none;
   }
 
@@ -645,7 +670,7 @@ onShow(() => {
   align-items: center;
   justify-content: space-between;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &:last-of-type {
     border-bottom: none;
@@ -669,11 +694,19 @@ onShow(() => {
     color: $c-text-weak;
   }
 
+  // 等级徽标 + 状态文案并排（原来是一整串「等级 · 状态」纯文字，
+  // 且字号 20rpx 不在字阶档位内）。等级色改由 `ab-level-badge` 自带，
+  // 状态文案回归次级色 —— 节点色与文字色分离。
   &__tag {
-    display: block;
+    display: flex;
+    align-items: center;
     margin-top: 4rpx;
-    font-size: 20rpx;
-    color: $c-gold;
+  }
+
+  &__tag-status {
+    margin-left: $space-1;
+    font-size: $fs-micro;
+    color: $c-text-weak;
   }
 
   &__amount {
@@ -684,11 +717,11 @@ onShow(() => {
     font-variant-numeric: tabular-nums;
 
     &.is-in {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &.is-out {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
   }
 }
@@ -728,7 +761,7 @@ onShow(() => {
   align-items: baseline;
   justify-content: space-between;
   padding: $space-2 $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border-radius: $radius-sm;
 
   &__text {
@@ -738,7 +771,7 @@ onShow(() => {
 
   &__warn {
     font-size: $fs-caption;
-    color: $c-warning;
+    color: $c-warn-fg;
   }
 }
 
@@ -748,7 +781,7 @@ onShow(() => {
 
   &__btn {
     font-size: $fs-caption;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 
   &__end {

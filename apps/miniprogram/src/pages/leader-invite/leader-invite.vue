@@ -9,7 +9,7 @@
     <template v-else>
       <!-- 楼栋大标题 -->
       <view class="head">
-        <text class="head__icon">🏠</text>
+        <text class="abi abi-deco-40 head__icon">{{ I.home }}</text>
         <text class="head__building">{{ landing?.building || '本楼订餐' }}</text>
         <text class="head__sub">团长邀请你加入</text>
       </view>
@@ -18,7 +18,7 @@
       <view class="card">
         <view class="leader">
           <view class="leader__avatar">
-            <text class="leader__avatar-text">👨‍💼</text>
+            <text class="abi abi-deco-28 leader__avatar-text">{{ I.users }}</text>
           </view>
           <view class="leader__main">
             <text class="leader__name">{{ landing?.leaderName || '本楼团长' }}</text>
@@ -36,7 +36,9 @@
 
       <!-- 来源说明条（左金边 · 原型 v4.6 新增段） -->
       <view class="tips">
-        <text class="tips__title">💡 您是怎么进来的？</text>
+        <text class="tips__title"
+          ><text class="abi abi-16">{{ I.info }}</text> 您是怎么进来的？</text
+        >
         <text class="tips__line">· 团长分享的链接（含团长 ID 参数）→ 自动匹配该团长</text>
         <text class="tips__line">· 自己搜索进入 / 扫海报二维码 → 系统按办公楼匹配团长</text>
         <text class="tips__line">
@@ -47,9 +49,16 @@
 
       <!-- 三条承诺 -->
       <view class="promise">
-        <text class="promise__line">✅ 微信授权登录即可</text>
-        <text class="promise__line">✅ 无需填地址、随团长订餐</text>
-        <text class="promise__line">✅ 每天 14:00 - 24:00 可预订明日套餐</text>
+        <text class="promise__line"
+          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 微信授权登录即可</text
+        >
+        <text class="promise__line"
+          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 无需填地址、随团长订餐</text
+        >
+        <text class="promise__line"
+          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 每天 14:00 - 24:00
+          可预订明日套餐</text
+        >
       </view>
 
       <button
@@ -105,6 +114,7 @@ import { ApiError } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { bindLeaderByInvite } from '@/utils/auth';
 import { pageQuery, switchTab } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const { run, loading } = useRequest();
 
@@ -187,7 +197,6 @@ onLoad((options) => {
   align-items: center;
 
   &__icon {
-    font-size: 120rpx;
     line-height: 1;
   }
 
@@ -241,7 +250,6 @@ onLoad((options) => {
   }
 
   &__avatar-text {
-    font-size: 52rpx;
     line-height: 1;
   }
 
@@ -268,7 +276,7 @@ onLoad((options) => {
 .tips {
   margin-top: $space-4;
   padding: $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border-left: 6rpx solid $c-gold;
   border-radius: $radius-sm;
   text-align: left;
@@ -316,7 +324,7 @@ onLoad((options) => {
   font-size: $fs-h2;
   font-weight: bold;
   letter-spacing: 2rpx;
-  background: linear-gradient(135deg, $c-text 0%, #b8915c 100%);
+  background: linear-gradient(135deg, $c-text 0%, $c-gold-deep 100%);
   border: none;
   border-radius: $radius-pill;
 
@@ -351,14 +359,14 @@ onLoad((options) => {
 .warn {
   margin-top: $space-3;
   padding: $space-2 $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border: 1px dashed $c-warning;
   border-radius: $radius-sm;
 
   &__text {
     font-size: $fs-caption;
     line-height: 1.7;
-    color: $c-warning;
+    color: $c-warn-fg;
   }
 }
 </style>

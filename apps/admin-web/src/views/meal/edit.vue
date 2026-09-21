@@ -465,7 +465,7 @@ onMounted(() => {
   }
 
   &__cost {
-    color: $c-warning;
+    color: $c-warn-fg;
     font-weight: 600;
   }
 }
@@ -500,12 +500,12 @@ onMounted(() => {
 }
 
 .ok {
-  color: $c-success;
+  color: $c-ok-fg;
   font-weight: 600;
 }
 
 .bad {
-  color: $c-warning;
+  color: $c-warn-fg;
   font-weight: 600;
 }
 </style>

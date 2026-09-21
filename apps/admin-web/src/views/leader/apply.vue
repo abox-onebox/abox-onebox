@@ -134,7 +134,8 @@
       <el-table-column label="等级 / 状态" width="130">
         <template #default="{ row }">
           <div class="stack">
-            <el-tag size="small" :type="levelTagType(asRow(row).level)">
+            <!-- 等级徽标（S6）：色块 + 文字标签，替代原「等级四色当文字」方案 -->
+            <el-tag size="small" class="ab-level" :class="`ab-level--${asRow(row).level}`">
               {{ asRow(row).levelLabel }}
             </el-tag>
             <span class="stack__sub">
@@ -226,13 +227,6 @@ const query = reactive({
 
 function asRow(raw: unknown): LeaderApplicationRow {
   return raw as LeaderApplicationRow;
-}
-
-function levelTagType(level: string): 'info' | 'success' | 'warning' | 'danger' {
-  if (level === 'chief') return 'danger';
-  if (level === 'gold') return 'warning';
-  if (level === 'formal') return 'success';
-  return 'info';
 }
 
 function channelText(channel: string): string {

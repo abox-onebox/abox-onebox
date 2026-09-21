@@ -9,6 +9,7 @@
       v-else-if="!today"
       text="概况加载失败"
       hint="请稍后重试"
+      illustration="warn-tri"
       action-text="重试"
       @action="reload"
     />
@@ -41,22 +42,27 @@
 
       <!-- ② 各订单类型分布 -->
       <view class="card">
-        <text class="card__title">📊 各订单类型分布</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.chart }}</text> 各订单类型分布</text
+        >
 
         <view
           v-for="row in distribution"
-          :key="row.label"
+          :key="row.text"
           class="simple"
           :class="{ 'simple--link': row.link }"
           @tap="row.link && goOrders()"
         >
-          <text class="simple__label" :class="`is-${row.tone}`">{{ row.label }}</text>
+          <text class="simple__label" :class="`is-${row.tone}`"
+            ><text class="abi abi-16">{{ I[row.icon] }}</text> {{ row.text }}</text
+          >
           <text class="simple__value">{{ row.count }} 单</text>
         </view>
 
         <view class="note">
           <text class="note__text">
-            💡 以上为<text class="note__strong">今日实时待处理</text
+            <text class="abi abi-16">{{ I.info }}</text> 以上为<text class="note__strong"
+              >今日实时待处理</text
             >数据；本月历史异常订单已处理记录见 <text class="note__strong">异常订单总览</text>。
           </text>
         </view>
@@ -64,7 +70,9 @@
 
       <!-- ③ 今日成员订餐 -->
       <view class="card">
-        <text class="card__title">👥 今日成员订餐</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.users }}</text> 今日成员订餐</text
+        >
 
         <view class="simple">
           <text class="simple__label simple__label--weak">下单人数</text>
@@ -96,8 +104,10 @@
       </button>
 
       <text class="foot">
-        ⚠️ 原型此处列「未下单同事」—— 该口径需<text class="foot__strong">楼栋成员名册</text>（按
-        ab_user.building_id 只能统计已注册用户，没有「应到人数」作分母），当前未实装，
+        <text class="abi abi-16">{{ I['warn-tri'] }}</text> 原型此处列「未下单同事」—— 该口径需<text
+          class="foot__strong"
+          >楼栋成员名册</text
+        >（按 ab_user.building_id 只能统计已注册用户，没有「应到人数」作分母），当前未实装，
         故以「下单人数 / 人均份数」替代，不做估算填充。
       </text>
     </template>
@@ -132,6 +142,8 @@ import type { PickupTodayData } from '@/api/leader-order';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { displayOr, fenToYuanText } from '@/utils/format';
 import { navigateTo } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
+import type { AboxIconName } from '@abox/shared-utils';
 
 const { run, loading } = useRequest();
 
@@ -154,17 +166,38 @@ const heroFoot = computed(() => {
 });
 
 /** 各订单类型分布（口径：全部取服务端数，端上不做减法的口径自造） */
-const distribution = computed(() => {
+type DistributionRow = {
+  icon: AboxIconName;
+  text: string;
+  count: number;
+  tone: string;
+  link: boolean;
+};
+
+const distribution = computed<DistributionRow[]>(() => {
   const w = war.value?.today;
   return [
     {
-      label: '✅ 正常订单',
+      icon: 'check',
+      text: '正常订单',
       count: w ? Math.max(0, w.orderCount - w.refundCount) : 0,
       tone: 'success',
       link: false,
     },
-    { label: '💸 退款处理中', count: w?.refundCount ?? 0, tone: 'warning', link: false },
-    { label: '⚠️ 异常订单（待我处理）', count: abnormalCount.value, tone: 'warning', link: true },
+    {
+      icon: 'withdraw',
+      text: '退款处理中',
+      count: w?.refundCount ?? 0,
+      tone: 'warning',
+      link: false,
+    },
+    {
+      icon: 'warn-tri',
+      text: '异常订单（待我处理）',
+      count: abnormalCount.value,
+      tone: 'warning',
+      link: true,
+    },
   ];
 });
 
@@ -224,7 +257,7 @@ onShow(() => {
   flex-direction: column;
   align-items: center;
   padding: 36rpx $space-4;
-  background: linear-gradient(135deg, $c-gold, #b8892f);
+  background: linear-gradient(135deg, $c-gold, $c-gold-deep);
   border-radius: 36rpx;
   color: #ffffff;
   text-align: center;
@@ -261,7 +294,7 @@ onShow(() => {
     font-weight: bold;
 
     &--gold {
-      color: #ffe082;
+      color: $c-gold-fg;
     }
   }
 
@@ -302,7 +335,7 @@ onShow(() => {
   align-items: center;
   justify-content: space-between;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &:last-child {
     border-bottom: none;
@@ -328,11 +361,11 @@ onShow(() => {
     }
 
     &.is-success {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &.is-warning {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
   }
 
@@ -342,7 +375,7 @@ onShow(() => {
     color: $c-text;
 
     &--warn {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
   }
 }
@@ -350,7 +383,7 @@ onShow(() => {
 .note {
   margin-top: $space-3;
   padding: $space-2 $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border-radius: $radius-sm;
 
   &__text {
@@ -378,7 +411,7 @@ onShow(() => {
     margin: 0 $space-2 $space-2 0;
     padding: 6rpx $space-3;
     font-size: $fs-caption;
-    color: $c-warning;
+    color: $c-warn-fg;
     background: rgba(196, 69, 54, 0.12);
     border-radius: $radius-pill;
   }
@@ -397,7 +430,7 @@ onShow(() => {
   color: #ffffff;
   font-size: $fs-body;
   font-weight: bold;
-  background: linear-gradient(135deg, $c-gold, #b8892f);
+  background: linear-gradient(135deg, $c-gold, $c-gold-deep);
   border: none;
   border-radius: $radius-pill;
 

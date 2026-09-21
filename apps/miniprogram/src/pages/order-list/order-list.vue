@@ -24,6 +24,7 @@
       v-else-if="!list.length"
       :text="activeStatus ? '暂无相关订单' : '还没有订单'"
       :hint="activeStatus ? '换个筛选看看' : '回到首页挑一份今日套餐吧'"
+      illustration="receipt"
       :action-text="activeStatus ? '看全部订单' : '去首页'"
       @action="onEmptyAction"
     />
@@ -217,7 +218,7 @@ onShow(() => {
   gap: 4rpx;
   margin: $space-3 0;
   padding: 4rpx;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border: 1px solid $c-border;
   border-radius: 14rpx;
 
@@ -294,12 +295,12 @@ onShow(() => {
     border-radius: $radius-sm;
 
     &.is-pending {
-      color: #b8892f;
+      color: $c-gold-fg;
       background: rgba(201, 168, 118, 0.2);
     }
 
     &.is-completed {
-      color: $c-success;
+      color: $c-ok-fg;
       background: rgba(91, 124, 58, 0.14);
     }
 
@@ -337,7 +338,7 @@ onShow(() => {
     align-items: baseline;
     justify-content: space-between;
     padding-top: $space-3;
-    border-top: 1px dashed #d4c4a8;
+    border-top: 1px dashed $c-border-strong;
   }
 
   &__no {
@@ -358,7 +359,7 @@ onShow(() => {
 
   &__btn {
     font-size: $fs-caption;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 
   &__end {

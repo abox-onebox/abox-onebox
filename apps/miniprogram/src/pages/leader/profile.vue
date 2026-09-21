@@ -9,6 +9,7 @@
       v-else-if="!profile"
       text="资料加载失败"
       hint="请稍后重试"
+      illustration="warn-tri"
       action-text="重试"
       @action="reload"
     />
@@ -17,7 +18,7 @@
       <!-- ① 头像卡 -->
       <view class="card card--center">
         <view class="avatar">
-          <text class="avatar__icon">👨‍💼</text>
+          <text class="abi abi-deco-34 avatar__icon">{{ I.users }}</text>
         </view>
         <text class="hero__name">{{ profile.realName }}</text>
         <view class="hero__tags">
@@ -46,7 +47,9 @@
       <!-- ② 服务办公楼 -->
       <view class="card">
         <view class="card__hd">
-          <text class="card__title">🏢 服务办公楼</text>
+          <text class="card__title"
+            ><text class="abi abi-16">{{ I.building }}</text> 服务办公楼</text
+          >
           <text class="card__link" @tap="askSwitchBuilding">切换 ›</text>
         </view>
 
@@ -55,20 +58,24 @@
             <text class="bld__name">{{ displayOr(profile.buildingName, '未分配楼栋') }}</text>
             <text class="bld__floor">{{ displayOr(profile.floor, '未设楼层') }}</text>
           </view>
-          <text class="bld__status">✅ 当前服务</text>
+          <text class="bld__status"
+            ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 当前服务</text
+          >
         </view>
 
         <view class="note">
           <text class="note__text">
-            💡 办公楼变更需运营审核（L15 刻意不接受端上改楼栋），请通过客服提交；
-            同楼同事扫码时会自动绑定到你这栋。
+            <text class="abi abi-16">{{ I.info }}</text> 办公楼变更需运营审核（L15
+            刻意不接受端上改楼栋），请通过客服提交； 同楼同事扫码时会自动绑定到你这栋。
           </text>
         </view>
       </view>
 
       <!-- ③ 晋升进度 -->
       <view class="card">
-        <text class="card__title">📈 团长晋升进度</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.dashboard }}</text> 团长晋升进度</text
+        >
 
         <view class="prog__hd">
           <text class="prog__text">
@@ -88,13 +95,17 @@
           <view class="prog__bar-fill" :style="{ width: `${progressPercent}%` }" />
         </view>
 
-        <text v-if="levelNote" class="prog__rule">⚠️ {{ levelNote }}</text>
+        <text v-if="levelNote" class="prog__rule"
+          ><text class="abi abi-16">{{ I['warn-tri'] }}</text> {{ levelNote }}</text
+        >
 
-        <text v-if="rules?.expireRule" class="prog__rule">⚠️ {{ rules.expireRule }}</text>
+        <text v-if="rules?.expireRule" class="prog__rule"
+          ><text class="abi abi-16">{{ I['warn-tri'] }}</text> {{ rules.expireRule }}</text
+        >
 
         <view class="pair">
           <button class="btn btn--gold" hover-class="btn--hover" @tap="goShare">
-            📤 推荐新团长
+            <text class="abi abi-20">{{ I.share }}</text> 推荐新团长
           </button>
           <button class="btn btn--ghost" hover-class="btn--hover" @tap="goCommission">
             升级规则
@@ -104,13 +115,19 @@
 
       <!-- ④ 账户设置（折叠菜单） -->
       <view class="card">
-        <text class="card__title">⚙️ 账户设置</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.gear }}</text> 账户设置</text
+        >
 
         <!-- 联系方式 -->
         <view class="menu" hover-class="menu--hover" @tap="toggle('phone')">
-          <text class="menu__label">📞 联系方式</text>
+          <text class="menu__label"
+            ><text class="abi abi-16">{{ I.phone }}</text> 联系方式</text
+          >
           <text class="menu__value">{{ maskPhone(profile.phone) }}</text>
-          <text class="menu__arrow">{{ open === 'phone' ? '⌄' : '›' }}</text>
+          <text class="menu__arrow" :class="{ 'menu__arrow--open': open === 'phone' }"
+            ><text class="abi abi-16">{{ I.chev }}</text></text
+          >
         </view>
         <view v-if="open === 'phone'" class="panel">
           <view class="field">
@@ -142,11 +159,15 @@
 
         <!-- 提现账户 -->
         <view class="menu" hover-class="menu--hover" @tap="toggle('payout')">
-          <text class="menu__label">🏦 提现账户</text>
+          <text class="menu__label"
+            ><text class="abi abi-16">{{ I.withdraw }}</text> 提现账户</text
+          >
           <text class="menu__value">
             {{ profile.payoutBound ? displayOr(profile.payoutAccount) : '未绑定' }}
           </text>
-          <text class="menu__arrow">{{ open === 'payout' ? '⌄' : '›' }}</text>
+          <text class="menu__arrow" :class="{ 'menu__arrow--open': open === 'payout' }"
+            ><text class="abi abi-16">{{ I.chev }}</text></text
+          >
         </view>
         <view v-if="open === 'payout'" class="panel">
           <view class="field">
@@ -199,9 +220,13 @@
 
         <!-- 团长合作协议 -->
         <view class="menu" hover-class="menu--hover" @tap="toggle('agree')">
-          <text class="menu__label">📄 团长合作协议</text>
+          <text class="menu__label"
+            ><text class="abi abi-16">{{ I.invoice }}</text> 团长合作协议</text
+          >
           <text class="menu__value">{{ displayOr(profile.agreeVersion, '未签署') }}</text>
-          <text class="menu__arrow">{{ open === 'agree' ? '⌄' : '›' }}</text>
+          <text class="menu__arrow" :class="{ 'menu__arrow--open': open === 'agree' }"
+            ><text class="abi abi-16">{{ I.chev }}</text></text
+          >
         </view>
         <view v-if="open === 'agree'" class="panel">
           <text class="field__note"> 签署时间：{{ formatDateTime(profile.agreedAt) }} </text>
@@ -212,15 +237,21 @@
 
         <!-- 客服 -->
         <view class="menu" hover-class="menu--hover" @tap="goSupport">
-          <text class="menu__label">💬 联系客服</text>
+          <text class="menu__label"
+            ><text class="abi abi-16">{{ I.message }}</text> 联系客服</text
+          >
           <text class="menu__value">人工处理</text>
-          <text class="menu__arrow">›</text>
+          <text class="menu__arrow"
+            ><text class="abi abi-16">{{ I.chev }}</text></text
+          >
         </view>
 
         <!-- 退出团长身份 -->
         <view class="menu menu--danger" hover-class="menu--hover" @tap="toggle('quit')">
           <text class="menu__label menu__label--danger">退出团长身份</text>
-          <text class="menu__arrow">{{ open === 'quit' ? '⌄' : '›' }}</text>
+          <text class="menu__arrow" :class="{ 'menu__arrow--open': open === 'quit' }"
+            ><text class="abi abi-16">{{ I.chev }}</text></text
+          >
         </view>
         <view v-if="open === 'quit'" class="panel panel--danger">
           <text class="field__note">
@@ -228,7 +259,8 @@
             日后仍可重新提交申请（重新从见习等级开始）。
           </text>
           <text class="field__note">
-            ⚠️ 退出前需先结清资金：可用余额与冻结额须为 ¥0.00，
+            <text class="abi abi-16">{{ I['warn-tri'] }}</text>
+            退出前需先结清资金：可用余额与冻结额须为 ¥0.00，
             且不能有处理中的提现或待结算佣金。不满足时服务端会逐条告知原因。
           </text>
 
@@ -303,6 +335,7 @@ import { useLeaderStore } from '@/stores/leader';
 import { useUserStore } from '@/stores/user';
 import { displayOr, formatDateTime, maskPhone, uuid } from '@/utils/format';
 import { navigateTo, switchTab } from '@/utils/router';
+import { ABOX_ICON_CHARS as I, ABOX_RUNTIME_COLORS } from '@abox/shared-utils';
 
 const payoutTypes: Array<{ label: string; value: PayoutType }> = [
   { label: '银行卡', value: 'bank' },
@@ -498,7 +531,7 @@ function confirmQuit(): void {
     content:
       '退出后底部将不再展示团长入口，你需要先在「提现」页结清全部余额。历史订单与佣金记录会保留。',
     confirmText: '确认退出',
-    confirmColor: '#C44536',
+    confirmColor: ABOX_RUNTIME_COLORS.warning,
     success: (res) => {
       if (res.confirm) void doQuit();
     },
@@ -607,7 +640,7 @@ onShow(() => {
 
   &__link {
     font-size: $fs-caption;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 }
 
@@ -619,11 +652,10 @@ onShow(() => {
   width: 144rpx;
   height: 144rpx;
   margin: 0 auto;
-  background: linear-gradient(135deg, $c-gold, #b8892f);
+  background: linear-gradient(135deg, $c-gold, $c-gold-deep);
   border-radius: 50%;
 
   &__icon {
-    font-size: 72rpx;
   }
 }
 
@@ -653,7 +685,7 @@ onShow(() => {
 
     &--gold {
       color: #ffffff;
-      background: #b8892f;
+      background: $c-gold-deep;
     }
   }
 }
@@ -677,7 +709,7 @@ onShow(() => {
     font-variant-numeric: tabular-nums;
 
     &--gold {
-      color: #b8892f;
+      color: $c-gold-fg;
     }
   }
 
@@ -718,13 +750,13 @@ onShow(() => {
     flex: none;
     margin-left: $space-3;
     font-size: $fs-caption;
-    color: $c-success;
+    color: $c-ok-fg;
   }
 }
 
 .note {
   padding: $space-2 $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border-radius: $radius-sm;
 
   &__text {
@@ -749,7 +781,7 @@ onShow(() => {
 
   &__next {
     font-size: 22rpx;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 
   &__bar {
@@ -762,7 +794,7 @@ onShow(() => {
 
   &__bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, $c-gold, #b8892f);
+    background: linear-gradient(90deg, $c-gold, $c-gold-deep);
     border-radius: $radius-pill;
     transition: width 0.4s ease;
   }
@@ -797,7 +829,7 @@ onShow(() => {
     color: $c-text;
 
     &--danger {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
   }
 
@@ -810,8 +842,12 @@ onShow(() => {
 
   &__arrow {
     flex: none;
-    font-size: 28rpx;
     color: $c-text-weak;
+    transition: transform 0.18s ease;
+
+    &--open {
+      transform: rotate(90deg);
+    }
   }
 }
 
@@ -894,7 +930,7 @@ onShow(() => {
     margin-bottom: $space-1;
     font-size: $fs-caption;
     font-weight: bold;
-    color: $c-warning;
+    color: $c-warn-fg;
   }
 
   &__item {
@@ -906,7 +942,7 @@ onShow(() => {
     flex: none;
     margin-right: $space-1;
     font-size: $fs-caption;
-    color: $c-warning;
+    color: $c-warn-fg;
   }
 
   &__text {
@@ -953,7 +989,7 @@ onShow(() => {
   &--gold {
     color: #ffffff;
     font-weight: bold;
-    background: linear-gradient(135deg, $c-gold, #b8892f);
+    background: linear-gradient(135deg, $c-gold, $c-gold-deep);
     border: none;
   }
 
@@ -968,7 +1004,7 @@ onShow(() => {
   }
 
   &--danger {
-    color: $c-warning;
+    color: $c-warn-fg;
     background: rgba(196, 69, 54, 0.06);
     border: 1px solid rgba(196, 69, 54, 0.4);
   }

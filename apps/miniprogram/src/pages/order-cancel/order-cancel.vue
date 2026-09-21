@@ -69,6 +69,7 @@
       v-else
       text="找不到该订单"
       :hint="errorHint"
+      illustration="search"
       action-text="返回订单列表"
       @action="goList"
     />
@@ -239,7 +240,7 @@ onLoad((options) => {
   }
 
   &--warn &__title {
-    color: $c-warning;
+    color: $c-warn-fg;
   }
 }
 
@@ -290,7 +291,7 @@ onLoad((options) => {
     }
 
     &--link {
-      color: $c-info;
+      color: $c-info-fg; // 文字位一律走加强档（原色 $c-info 只作图标/描边；二者同值时也不留口子）
     }
   }
 }

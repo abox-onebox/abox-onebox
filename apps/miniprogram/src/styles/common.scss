@@ -1,5 +1,10 @@
 @import './tokens.scss';
 
+// 图标（iconfont · base64 内嵌 · 与后台同一份字形）。
+// ⚠️ 小程序 @font-face 的 src 不支持本地文件路径 → 只能 base64 内嵌（详见该文件头注释）。
+// ⚠️ 必须**全局引入一次**：若改在各页面里 @import，17KB 会被复制进每一个页面。
+@import './icons.scss';
+
 .page {
   min-height: 100vh;
   background: $c-bg;
@@ -18,9 +23,60 @@
 }
 
 .text-gold {
-  color: $c-gold;
+  color: $c-gold-fg;
 }
 
 .text-warning {
-  color: $c-warning;
+  color: $c-warn-fg;
 }
+
+// >>> S2 字体分层（由 _tmp/icons/gen-font-layers.py 生成 · 勿手改）>>>
+// 规格 §四：楷体（ABoxKai 子集）只用于 标题 / 品牌字 / 金额大字；
+// 正文 / 表单 / 表格 / 菜名 / 按钮 走全局 $font-family-base（无衬线，page 默认）。
+// ⚠️ WXSS **不支持属性选择器**（[class$="__title"]）⇒ 只能显式白名单；
+//    白名单漂移由 _tmp/icons/check-font-layers.py 机械拦截（出现未登记标题类即报红）。
+
+// 工具类（供新增元素直接挂）
+.t-display {
+  font-family: $font-family-display;
+}
+
+.t-num {
+  font-family: $font-family-num;
+  font-variant-numeric: tabular-nums;
+}
+
+// 标题类 → 楷体（16 个）
+.alert__title,
+.apply__title,
+.blockers__title,
+.card__title,
+.done__title,
+.hd__title,
+.hero__alert-title,
+.hero__title,
+.leader-banner__title,
+.leader-card__title,
+.row__title,
+.section__title,
+.sheet__title,
+.tips__title,
+.trace-card__title,
+.way__title {
+  font-family: $font-family-display;
+}
+
+// 数字 / 金额类 → 等宽 + 等宽数字（8 个 · 端上 rpx）
+.cand__amount,
+.countdown__num,
+.hero__amount,
+.order__amount,
+.rec__amount,
+.row__amount,
+.stats__num,
+.top__amount {
+  font-family: $font-family-num;
+  font-variant-numeric: tabular-nums;
+}
+
+// <<< S2 字体分层 <<<

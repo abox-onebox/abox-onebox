@@ -6,6 +6,7 @@
       v-else-if="!daily"
       text="无法下单"
       :hint="errorHint"
+      illustration="clock"
       action-text="返回首页"
       @action="goHome"
     />
@@ -60,7 +61,9 @@
         <!-- 取餐信息（M5-17：把「这一单的团长是谁 / 佣金归谁」写清楚） -->
         <view class="card">
           <text class="card__title">
-            📍 取餐信息（{{ daily.leader?.source === 'bound' ? '跟随团长' : '本楼团长' }}）
+            <text class="abi abi-16">{{ I.pin }}</text> 取餐信息（{{
+              daily.leader?.source === 'bound' ? '跟随团长' : '本楼团长'
+            }}）
           </text>
           <view class="pickup-row">
             <text class="pickup-row__leader">
@@ -75,7 +78,9 @@
           <!-- ⚠️ 时刻来自响应（`daily.deliverAt`）—— 曾写死 `11:30`（PR-02 收口） -->
           <text class="pickup-row__hint">明天 {{ daily.deliverAt }} 由团长统一取餐并分发</text>
           <view class="pickup-row__tip">
-            <text>💡 有问题？微信直接联系团长沟通</text>
+            <text
+              ><text class="abi abi-16">{{ I.info }}</text> 有问题？微信直接联系团长沟通</text
+            >
           </view>
         </view>
 
@@ -94,9 +99,13 @@
 
         <!-- 支付方式 -->
         <view class="card">
-          <text class="card__title">💳 支付方式</text>
+          <text class="card__title"
+            ><text class="abi abi-16">{{ I.cash }}</text> 支付方式</text
+          >
           <view class="pay-row">
-            <text class="pay-row__name">🟢 微信支付</text>
+            <text class="pay-row__name"
+              ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 微信支付</text
+            >
             <text class="pay-row__dot">●</text>
           </view>
         </view>
@@ -157,6 +166,7 @@ import { useWechatPay } from '@/composables/use-wechat-pay';
 import { ORDER_MAX_QUANTITY } from '@/constants';
 import { fenToYuan, uuid } from '@/utils/format';
 import { buildUrl, navigateBack, navigateTo, pageQuery, redirectTo } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const { run, loading } = useRequest();
 const { remainSec, start } = useCountdown();
@@ -310,7 +320,7 @@ onLoad((options) => {
     margin-top: $space-1;
     font-size: 36rpx;
     font-weight: bold;
-    color: $c-gold;
+    color: $c-gold-fg;
     letter-spacing: 2rpx;
     font-family: monospace;
   }
@@ -347,7 +357,7 @@ onLoad((options) => {
   align-items: baseline;
   justify-content: space-between;
   padding: $space-2 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &__name {
     font-size: $fs-body;
@@ -392,7 +402,7 @@ onLoad((options) => {
     justify-content: center;
     width: 56rpx;
     height: 56rpx;
-    background: #efe5d0;
+    background: $c-surface-2;
     border-radius: $radius-sm;
     color: $c-text;
     font-size: $fs-h2;
@@ -485,7 +495,7 @@ onLoad((options) => {
   &__dot {
     font-size: $fs-body;
     font-weight: bold;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 }
 
@@ -493,7 +503,7 @@ onLoad((options) => {
 .guide {
   margin: $space-3 $space-4 0;
   padding: $space-2 $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border-left: 6rpx solid $c-gold;
   border-radius: $radius-sm;
 
@@ -514,7 +524,7 @@ onLoad((options) => {
   width: calc(100% - #{($space-4 * 2)});
   margin: $space-4 $space-4 0;
   padding: $space-3 0;
-  background: linear-gradient(135deg, $c-text 0%, #b8915c 100%);
+  background: linear-gradient(135deg, $c-text 0%, $c-gold-deep 100%);
   color: $c-bg;
   font-size: $fs-h2;
   font-weight: bold;

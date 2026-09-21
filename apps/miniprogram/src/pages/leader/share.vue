@@ -10,6 +10,7 @@
       v-else-if="!material"
       text="分享物料加载失败"
       hint="请稍后重试"
+      illustration="warn-tri"
       action-text="重试"
       @action="reload"
     />
@@ -17,7 +18,7 @@
     <template v-else>
       <!-- ① 渐变大卡 -->
       <view class="hero">
-        <text class="hero__icon">📤</text>
+        <text class="abi abi-deco-40 hero__icon">{{ I.share }}</text>
         <text class="hero__title">分享给同事</text>
         <text class="hero__sub">每天顺路帮同事带餐，顺手赚点零花钱</text>
 
@@ -30,30 +31,38 @@
 
       <!-- ② 2 种分享方式 -->
       <view class="card">
-        <text class="card__title">🎯 2 种分享方式</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.share }}</text> 2 种分享方式</text
+        >
 
         <view class="way" hover-class="way--hover" @tap="shareToWechat">
-          <text class="way__icon">💬</text>
+          <text class="abi abi-24 way__icon">{{ I.message }}</text>
           <view class="way__body">
             <text class="way__title">分享到微信群</text>
             <text class="way__sub">带邀请码，同事点开即绑定到你这栋楼</text>
           </view>
-          <text class="way__arrow">›</text>
+          <text class="way__arrow"
+            ><text class="abi abi-16">{{ I.chev }}</text></text
+          >
         </view>
 
         <view class="way" hover-class="way--hover" @tap="makeQrcode">
-          <text class="way__icon">🖼️</text>
+          <text class="abi abi-24 way__icon">{{ I.image }}</text>
           <view class="way__body">
             <text class="way__title">生成二维码海报</text>
             <text class="way__sub">保存相册后可贴群里 / 打在楼下</text>
           </view>
-          <text class="way__arrow">›</text>
+          <text class="way__arrow"
+            ><text class="abi abi-16">{{ I.chev }}</text></text
+          >
         </view>
       </view>
 
       <!-- ③ 当前等级奖励 -->
       <view class="card">
-        <text class="card__title">🎁 当前等级奖励</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.gift }}</text> 当前等级奖励</text
+        >
 
         <view class="reward">
           <text class="reward__level">{{ levelLabel }}团长</text>
@@ -63,13 +72,14 @@
 
         <view class="rule">
           <text class="rule__text">
-            💡 佣金按<text class="rule__strong">实发份数</text>计佣：同事取餐确认后才计佣，
-            次日自动入账到你的余额。
+            <text class="abi abi-16">{{ I.info }}</text> 佣金按<text class="rule__strong"
+              >实发份数</text
+            >计佣：同事取餐确认后才计佣， 次日自动入账到你的余额。
           </text>
         </view>
 
         <button class="btn btn--gold" hover-class="btn--hover" @tap="shareToWechat">
-          📤 推荐新团长
+          <text class="abi abi-20">{{ I.share }}</text> 推荐新团长
         </button>
       </view>
 
@@ -189,6 +199,7 @@ import type {
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useLeaderStore } from '@/stores/leader';
 import { formatDateTime } from '@/utils/format';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const { run, loading } = useRequest();
 const leaderStore = useLeaderStore();
@@ -329,14 +340,13 @@ onShow(() => {
   flex-direction: column;
   align-items: center;
   padding: 44rpx $space-4;
-  background: linear-gradient(135deg, #d2c5a0, $c-gold);
+  background: linear-gradient(135deg, $c-gold, $c-gold);
   border-radius: 36rpx;
   color: #ffffff;
   text-align: center;
   box-shadow: 0 10rpx 28rpx rgba(110, 84, 53, 0.18);
 
   &__icon {
-    font-size: 96rpx;
     line-height: 1;
   }
 
@@ -439,7 +449,7 @@ onShow(() => {
   display: flex;
   align-items: center;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &:last-child {
     border-bottom: none;
@@ -451,7 +461,6 @@ onShow(() => {
 
   &__icon {
     flex: none;
-    font-size: 44rpx;
   }
 
   &__body {
@@ -476,7 +485,6 @@ onShow(() => {
 
   &__arrow {
     flex: none;
-    font-size: 36rpx;
     color: $c-text-weak;
   }
 }
@@ -498,7 +506,7 @@ onShow(() => {
     margin: $space-2 0;
     font-size: 72rpx;
     font-weight: bold;
-    color: #b8892f;
+    color: $c-gold-fg;
   }
 
   &__desc {
@@ -510,7 +518,7 @@ onShow(() => {
 .rule {
   margin-top: $space-2;
   padding: $space-2 $space-3;
-  background: #fbf7ee;
+  background: $c-surface-3;
   border-radius: $radius-sm;
 
   &__text {
@@ -531,7 +539,7 @@ onShow(() => {
   font-size: 48rpx;
   font-weight: bold;
   letter-spacing: 4rpx;
-  color: #b8892f;
+  color: $c-gold-fg;
   text-align: center;
 }
 
@@ -584,7 +592,7 @@ onShow(() => {
   align-items: center;
   justify-content: space-between;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &:last-of-type {
     border-bottom: none;
@@ -644,7 +652,7 @@ onShow(() => {
     border-radius: $radius-sm;
 
     &.is-formal {
-      color: $c-success;
+      color: $c-ok-fg;
       background: rgba(91, 124, 58, 0.12);
     }
   }
@@ -679,7 +687,7 @@ onShow(() => {
   &--gold {
     color: #ffffff;
     font-weight: bold;
-    background: linear-gradient(135deg, $c-gold, #b8892f);
+    background: linear-gradient(135deg, $c-gold, $c-gold-deep);
     border: none;
   }
 

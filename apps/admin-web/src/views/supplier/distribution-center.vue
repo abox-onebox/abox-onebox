@@ -576,7 +576,7 @@ onMounted(() => {
 }
 
 .stats__value--ok {
-  color: #5b7c3a;
+  color: $c-ok-fg;
 }
 
 .stats__sub {

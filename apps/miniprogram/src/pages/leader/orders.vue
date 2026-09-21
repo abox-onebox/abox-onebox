@@ -29,14 +29,16 @@
         hover-class="hero__alert--hover"
         @tap="goAbnormal"
       >
-        <text class="hero__alert-icon">⚠️</text>
+        <text class="abi abi-24 hero__alert-icon">{{ I['warn-tri'] }}</text>
         <view class="hero__alert-body">
           <text class="hero__alert-title">异常订单（待你处理）</text>
           <text class="hero__alert-sub">
             {{ abnormalCount }} 单待支付 · 共 {{ abnormalQuantity }} 份
           </text>
         </view>
-        <text class="hero__alert-arrow">›</text>
+        <text class="hero__alert-arrow"
+          ><text class="abi abi-16">{{ I.chev }}</text></text
+        >
       </view>
     </view>
 
@@ -71,7 +73,9 @@
     <!-- ② 成员订单 -->
     <view class="card">
       <view class="card__hd">
-        <text class="card__title">📋 成员订单（脱敏信息）</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.list }}</text> 成员订单（脱敏信息）</text
+        >
         <text class="card__count">{{ formatMealDate(mealDate) }} · 共 {{ total }} 单</text>
       </view>
 
@@ -81,6 +85,7 @@
         v-else-if="!list.length"
         text="本日暂无订单"
         hint="换个筛选条件，或检查是否已到开团时间"
+        illustration="receipt"
       />
 
       <template v-else>
@@ -115,7 +120,10 @@
       </template>
     </view>
 
-    <text class="hint">💡 点击任意成员可查看订单详情并发起代退申请（截单后用户不可自助退款）</text>
+    <text class="hint"
+      ><text class="abi abi-16">{{ I.info }}</text>
+      点击任意成员可查看订单详情并发起代退申请（截单后用户不可自助退款）</text
+    >
 
     <!--
       导出（⚠️ 原型此页标注「去导出」，实装**保留**）：
@@ -158,6 +166,7 @@ import { toastApiError, useRequest } from '@/composables/use-request';
 import { PAGE_SIZE } from '@/constants';
 import { displayOr, fenToYuanText, formatMealDate } from '@/utils/format';
 import { buildUrl, navigateTo } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const tabs = [
   { label: '全部', value: '' },
@@ -353,7 +362,7 @@ onShow(() => {
 .hero {
   margin-top: $space-4;
   padding: 32rpx $space-4;
-  background: linear-gradient(135deg, $c-gold, #b8892f);
+  background: linear-gradient(135deg, $c-gold, $c-gold-deep);
   border-radius: 32rpx;
   color: #ffffff;
   box-shadow: 0 10rpx 26rpx rgba(110, 84, 53, 0.2);
@@ -407,7 +416,6 @@ onShow(() => {
 
   &__alert-icon {
     flex: none;
-    font-size: 44rpx;
   }
 
   &__alert-body {
@@ -431,7 +439,6 @@ onShow(() => {
 
   &__alert-arrow {
     flex: none;
-    font-size: 40rpx;
     opacity: 0.9;
   }
 }
@@ -491,7 +498,7 @@ onShow(() => {
     flex: none;
     padding-left: $space-3;
     font-size: $fs-caption;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 }
 
@@ -528,7 +535,7 @@ onShow(() => {
   align-items: center;
   justify-content: space-between;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &:last-of-type {
     border-bottom: none;
@@ -561,7 +568,7 @@ onShow(() => {
     display: block;
     margin-top: 4rpx;
     font-size: 22rpx;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 
   &__right {
@@ -586,7 +593,7 @@ onShow(() => {
 
   &__btn {
     font-size: $fs-caption;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 
   &__end {

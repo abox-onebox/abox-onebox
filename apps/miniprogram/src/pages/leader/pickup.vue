@@ -9,6 +9,7 @@
       v-else-if="!today"
       text="取餐信息加载失败"
       hint="请稍后重试"
+      illustration="warn-tri"
       action-text="重试"
       @action="reload"
     />
@@ -19,12 +20,17 @@
         <text class="hero__label">配送状态</text>
         <text class="hero__status">{{ today.delivery?.statusText ?? '待叫车' }}</text>
         <text class="hero__where">{{ heroWhere }}</text>
-        <text class="hero__foot">💡 送达提醒通过团长群通知；取餐后请及时分发</text>
+        <text class="hero__foot"
+          ><text class="abi abi-16">{{ I.info }}</text>
+          送达提醒通过团长群通知；取餐后请及时分发</text
+        >
       </view>
 
       <!-- ② 本办公楼总份数 -->
       <view class="card">
-        <text class="card__title">📦 本办公楼总份数</text>
+        <text class="card__title"
+          ><text class="abi abi-16">{{ I.package }}</text> 本办公楼总份数</text
+        >
 
         <view class="stats">
           <view class="stats__item">
@@ -53,7 +59,7 @@
       <!-- ③ 分发重点提醒（2 份以上） -->
       <view v-if="multiList.length" class="card card--alert">
         <view class="alert__hd">
-          <text class="alert__icon">⚠️</text>
+          <text class="abi abi-24 alert__icon">{{ I['warn-tri'] }}</text>
           <view class="alert__body">
             <text class="alert__title">分发重点提醒</text>
             <text class="alert__sub">以下同事点了 2 份以上，分发时务必核对：</text>
@@ -68,7 +74,9 @@
 
       <!-- 本次分发结果 -->
       <view v-if="done" class="card card--done">
-        <text class="done__title">✅ 分发完成</text>
+        <text class="done__title"
+          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 分发完成</text
+        >
         <view class="kv">
           <text class="kv__k">确认订单</text>
           <text class="kv__v">{{ done.confirmedCount }} 单</text>
@@ -98,7 +106,12 @@
       <!-- ④ 成员列表 -->
       <view class="card">
         <view class="card__hd">
-          <text class="card__title">👥 成员列表（{{ today.members.length }} 单）</text>
+          <text class="card__title"
+            ><text class="abi abi-16">{{ I.users }}</text> 成员列表（{{
+              today.members.length
+            }}
+            单）</text
+          >
           <text v-if="pendingList.length" class="card__link" @tap="toggleAll">
             {{ allSelected ? '取消全选' : '全选' }}
           </text>
@@ -109,6 +122,7 @@
           v-if="!today.members.length"
           text="本楼今日暂无订单"
           hint="T-1 截单后本楼有订单才会出现在这里"
+          illustration="box"
         />
 
         <template v-else>
@@ -148,17 +162,20 @@
           hover-class="submit__btn--hover"
           @tap="confirm"
         >
-          {{
-            submitting
-              ? '分发中…'
-              : `✅ 一键分发并结算佣金（${selectedQuantity} 份 · ${fenToYuanText(selectedCommissionFen)}）`
-          }}
+          <text v-if="submitting">分发中…</text>
+          <text v-else
+            ><text class="abi abi-20">{{ I.check }}</text> 一键分发并结算佣金（{{
+              selectedQuantity
+            }}
+            份 · {{ fenToYuanText(selectedCommissionFen) }}）</text
+          >
         </button>
         <text class="submit__hint">
           佣金按「实发份数」计佣、次日入账；重复提交不会重复计佣（幂等）
         </text>
         <text class="submit__hint">
-          ⏰ 超时未操作 → 由系统自动确认（口径同上，仍按实发份数计佣）
+          <text class="abi abi-16">{{ I.clock }}</text> 超时未操作 →
+          由系统自动确认（口径同上，仍按实发份数计佣）
         </text>
       </view>
     </template>
@@ -197,6 +214,7 @@ import type { PickupConfirmDone, PickupTodayData } from '@/api/leader-order';
 import { apiErrorMessage, useRequest } from '@/composables/use-request';
 import { displayOr, fenToYuanText, formatDateTime, uuid } from '@/utils/format';
 import { navigateTo } from '@/utils/router';
+import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const { run, loading } = useRequest();
 
@@ -390,11 +408,11 @@ onShow(() => {
   box-shadow: 0 10rpx 26rpx rgba(110, 84, 53, 0.18);
 
   &--done {
-    background: linear-gradient(135deg, $c-success, #3f5c28);
+    background: linear-gradient(135deg, $c-success, $c-ok-fg);
   }
 
   &--moving {
-    background: linear-gradient(135deg, $c-gold, #b8892f);
+    background: linear-gradient(135deg, $c-gold, $c-gold-deep);
   }
 
   &--idle {
@@ -468,7 +486,7 @@ onShow(() => {
 
   &__link {
     font-size: $fs-caption;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 
   &__foot {
@@ -501,15 +519,15 @@ onShow(() => {
     font-variant-numeric: tabular-nums;
 
     &--ok {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &--warn {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
 
     &--gold {
-      color: #b8892f;
+      color: $c-gold-fg;
     }
   }
 
@@ -529,7 +547,6 @@ onShow(() => {
 
   &__icon {
     flex: none;
-    font-size: 44rpx;
   }
 
   &__body {
@@ -562,7 +579,7 @@ onShow(() => {
     margin: 0 $space-2 $space-2 0;
     padding: 6rpx $space-3;
     font-size: $fs-caption;
-    color: $c-warning;
+    color: $c-warn-fg;
     background: rgba(196, 69, 54, 0.15);
     border-radius: $radius-pill;
   }
@@ -575,7 +592,7 @@ onShow(() => {
     margin-bottom: $space-3;
     font-size: $fs-h2;
     font-weight: bold;
-    color: $c-success;
+    color: $c-ok-fg;
   }
 
   &__tips {
@@ -594,7 +611,7 @@ onShow(() => {
   &__link {
     margin-right: $space-4;
     font-size: $fs-caption;
-    color: $c-gold;
+    color: $c-gold-fg;
   }
 }
 
@@ -616,7 +633,7 @@ onShow(() => {
     &--strong {
       font-size: $fs-h2;
       font-weight: bold;
-      color: $c-gold;
+      color: $c-gold-fg;
     }
   }
 }
@@ -626,7 +643,7 @@ onShow(() => {
   display: flex;
   align-items: center;
   padding: $space-3 0;
-  border-bottom: 1px dashed #d4c4a8;
+  border-bottom: 1px dashed $c-border-strong;
 
   &:last-child {
     border-bottom: none;
@@ -678,11 +695,11 @@ onShow(() => {
     color: $c-text-weak;
 
     &.is-done {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &.is-pending {
-      color: $c-gold;
+      color: $c-gold-fg;
     }
   }
 }
@@ -697,7 +714,7 @@ onShow(() => {
     font-weight: bold;
     line-height: 96rpx;
     color: #ffffff;
-    background: linear-gradient(135deg, $c-success, #3f5c28);
+    background: linear-gradient(135deg, $c-success, $c-ok-fg);
     border: none;
     border-radius: $radius-pill;
 

@@ -248,11 +248,11 @@ onMounted(load);
     font-weight: 700;
 
     &--ok {
-      color: $c-success;
+      color: $c-ok-fg;
     }
 
     &--warn {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
 
     &--muted {
@@ -295,7 +295,7 @@ onMounted(load);
 }
 
 .warn {
-  color: $c-warning;
+  color: $c-warn-fg;
 }
 
 .pager {

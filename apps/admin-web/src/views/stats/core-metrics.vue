@@ -279,10 +279,10 @@ onMounted(() => void reload());
   &__value {
     font-size: 28px;
     font-weight: 700;
-    color: $c-success;
+    color: $c-ok-fg;
 
     &.is-negative {
-      color: $c-warning;
+      color: $c-warn-fg;
     }
   }
 
@@ -319,7 +319,7 @@ onMounted(() => void reload());
   padding: 1px 6px;
   border-radius: $radius-sm;
   background: rgba(196, 69, 54, 0.1);
-  color: $c-warning;
+  color: $c-warn-fg;
   font-size: $fs-caption;
 }
 

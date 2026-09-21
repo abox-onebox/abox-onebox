@@ -245,8 +245,10 @@
           <b>{{ current.name }}</b> · 当前审核状态：{{ current.auditStatusLabel }}
         </p>
         <p class="dialog-hint">
-          核验营业执照与食品经营许可证。⚠️ 通过审核<b>要求登记未过期的证照有效期</b> ——
-          没有它，「证照过期不得出餐」无从判定，平台就是明知故犯。
+          核验营业执照与食品经营许可证。<AbIcon name="warn-tri" size="16" /> 通过审核<b
+            >要求登记未过期的证照有效期</b
+          >
+          —— 没有它，「证照过期不得出餐」无从判定，平台就是明知故犯。
         </p>
 
         <el-form label-width="120px">
@@ -547,15 +549,15 @@ onMounted(() => {
 }
 
 .stats__value--ok {
-  color: #5b7c3a;
+  color: $c-ok-fg;
 }
 
 .stats__value--warn {
-  color: #c44536;
+  color: $c-warn-fg;
 }
 
 .stats__value--danger {
-  color: #c44536;
+  color: $c-warn-fg;
 }
 
 .stats__sub {
@@ -597,7 +599,7 @@ onMounted(() => {
 }
 
 .ok {
-  color: #5b7c3a;
+  color: $c-ok-fg;
   font-weight: 600;
 }
 
