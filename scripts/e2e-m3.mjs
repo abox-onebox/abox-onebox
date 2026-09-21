@@ -11,6 +11,10 @@
  *   · A4 `POST /auth/logout`       —— 无状态登出
  *   · A5 `GET  /auth/profile`      —— 双主体分流（user → 用户资料；admin → account）
  *   · D51–D53 `/admin/system/accounts*`  —— 账号列表 / 新增 / 编辑停用
+ *         · **C1 授权边界（§10b）**：`admin` 不得**授予 / 撤销** `super_admin`
+ *           （创建 / 提权 / 停用 / 降级四个方向均 20010），且闸门**不误伤**与权限无关的
+ *           字段（`admin` 改超管姓名仍可）；附「超管令牌同动作必须成功」的正向对照。
+ *           ⚠️ 种子里**没有** `admin` 角色的账号 ⇒ 该面在种子下不可触发，本段先自建一个。
  *   · D54     `/admin/system/roles`      —— 角色矩阵（只读）
  *   · D55     `/admin/system/roles/:role`—— 一期明确不支持（10001）
  *   · D56     `/admin/system/logs`       —— 操作日志（含脱敏断言）
@@ -337,6 +341,7 @@ async function main() {
   const stamp = String(Date.now()).slice(-8);
   const userA = `e2e_op_${stamp}`; // 锁定 + 吊销用例
   const userB = `e2e_dis_${stamp}`; // 停用登录用例
+  const userC = `e2e_adm_${stamp}`; // C1 授权边界用例（admin 角色，种子无此角色）
   const PWD = 'Abox@1234';
 
   // ==========================================================================
@@ -754,6 +759,142 @@ async function main() {
     renameOk.body?.code === 0 && renameOk.body?.data?.name === 'e2e 只读（已改名）',
     'D53 仅改姓名 → 成功且**不写吊销标记**（权限未变就不必踢人）',
     `name=${renameOk.body?.data?.name}`,
+  );
+
+  // ==========================================================================
+  // §10b C1 授权边界：只有 super_admin 能授予 / 撤销 super_admin
+  // ==========================================================================
+  // 背景：`@Roles('super_admin','admin')` 挂在**类**上，而 `ADMIN_ROLES`（= Object.keys(ROLE_MENUS)）
+  //   里**含** `super_admin` ⇒ 缺此闸门时，一个 `admin` 可以把任意账号（含自己）改成超管，
+  //   一举绕过全部角色边界，且改动**永久生效**（不是临时越权）。
+  //   ⚠️ 种子只有 super_admin / finance / supplier，**没有 admin 角色账号** ⇒ 先自建一个把面打开。
+  //   本段两个方向都验：**违规必须红**（20010）**且合规必须绿**（超管同动作成功）—— 
+  //   只验「会红」不验「会绿」的检查，等于没有检查。
+  log('\n§10b C1 授权边界（20010 第 ④ 条）');
+
+  const mkAdminC = await call('POST', '/admin/system/accounts', {
+    token: adminToken,
+    body: { username: userC, password: PWD, role: 'admin', realName: 'e2e 管理员' },
+  });
+  const idC = mkAdminC.body?.data?.id;
+  assert(
+    mkAdminC.body?.code === 0 && mkAdminC.body?.data?.role === 'admin',
+    '前置：超管令牌建一个 admin 账号成功（种子无 admin 角色 → 本步把提权面打开）',
+    `code=${mkAdminC.body?.code} id=${idC}`,
+  );
+
+  const adminCLogin = await adminLogin(userC, PWD);
+  const adminCToken = adminCLogin.token;
+  const adminCSysMenus = (adminCLogin.account?.menus ?? []).filter((m) => m.startsWith('/system/'));
+  assert(
+    adminCLogin.code === 0 &&
+      adminCLogin.account?.role === 'admin' &&
+      !!adminCToken &&
+      adminCSysMenus.length > 0,
+    '前置：该 admin 可登录，且菜单**含 `/system/*`** → 提权面在前端 UI 里也点得到（不只是 API）',
+    `role=${adminCLogin.account?.role} sysMenus=${JSON.stringify(adminCSysMenus)}`,
+  );
+
+  // ④-a 授予方向：把**已有账号**改成超管
+  const grantByAdmin = await call('PUT', `/admin/system/accounts/${idB}`, {
+    token: adminCToken,
+    body: { role: 'super_admin' },
+  });
+  assert(
+    grantByAdmin.body?.code === 20010,
+    'C1 ④-a admin 把已有账号提为超管 → 20010（否则等于绕开全部角色边界）',
+    `code=${grantByAdmin.body?.code} msg=${grantByAdmin.body?.message}`,
+  );
+
+  // ④-b 创建方向：直接造一个新的超管账号
+  const makeSuperByAdmin = await call('POST', '/admin/system/accounts', {
+    token: adminCToken,
+    body: { username: `${userC}_sup`, password: PWD, role: 'super_admin' },
+  });
+  assert(
+    makeSuperByAdmin.body?.code === 20010,
+    'C1 ④-b admin 直接创建一个超管账号 → 20010（否则可先造超管、再用它完成提权）',
+    `code=${makeSuperByAdmin.body?.code} msg=${makeSuperByAdmin.body?.message}`,
+  );
+
+  // 正向对照：**同一个动作**换成超管令牌必须成功（有绿才有红的意义）
+  const secondSuper = await call('POST', '/admin/system/accounts', {
+    token: adminToken,
+    body: {
+      username: `${userC}_sup2`,
+      password: PWD,
+      role: 'super_admin',
+      realName: 'e2e 第二超管',
+    },
+  });
+  const idSup2 = secondSuper.body?.data?.id;
+  assert(
+    secondSuper.body?.code === 0 && secondSuper.body?.data?.role === 'super_admin',
+    'C1 正向对照：超管令牌建超管账号**成功**（同上两个动作在 admin 令牌下必须是 20010）',
+    `code=${secondSuper.body?.code} id=${idSup2}`,
+  );
+
+  // ④-c 撤销方向：必须先让「启用超管」≥ 2，否则会被规则 ③「最后一个超管」抢先命中 ——
+  //      那样本断言就是**因为错误的原因而通过**（code 相同、根因不同），是最难发现的自欺。
+  const activeSupers = readDb(
+    "SELECT COUNT(*) AS n FROM ab_admin_user WHERE role = 'super_admin' AND status = 1",
+  );
+  assert(
+    Number(activeSupers?.n) >= 2,
+    'C1 隔离前提：启用超管数 ≥ 2 ⇒ 规则 ③ 在下一步不可能命中，故 20010 只可能来自第 ④ 条',
+    `启用超管数=${activeSupers?.n}`,
+  );
+
+  const disableSuperByAdmin = await call('PUT', `/admin/system/accounts/${idSup2}`, {
+    token: adminCToken,
+    body: { status: 2 },
+  });
+  assert(
+    disableSuperByAdmin.body?.code === 20010,
+    `C1 ④-c admin 停用超管 → 20010（此时启用超管=${activeSupers?.n} ≥ 2，规则 ③ 已排除，必为第 ④ 条）`,
+    `code=${disableSuperByAdmin.body?.code} msg=${disableSuperByAdmin.body?.message}`,
+  );
+
+  const demoteSuperByAdmin = await call('PUT', `/admin/system/accounts/${idSup2}`, {
+    token: adminCToken,
+    body: { role: 'viewer' },
+  });
+  assert(
+    demoteSuperByAdmin.body?.code === 20010,
+    'C1 ④-c admin 把超管降级 → 20010（撤销方向的另一半：夺权，不是降级自己）',
+    `code=${demoteSuperByAdmin.body?.code} msg=${demoteSuperByAdmin.body?.message}`,
+  );
+
+  // 边界：闸门只判「角色是否等于 super_admin」，**不该**管与权限无关的字段
+  const renameSuperByAdmin = await call('PUT', `/admin/system/accounts/${idSup2}`, {
+    token: adminCToken,
+    body: { realName: 'e2e 第二超管（被改名）' },
+  });
+  assert(
+    renameSuperByAdmin.body?.code === 0,
+    'C1 边界正确：admin 改超管的**姓名仍可**（闸门不误伤与权限无关的字段，否则是过度封锁）',
+    `code=${renameSuperByAdmin.body?.code} name=${renameSuperByAdmin.body?.data?.name}`,
+  );
+
+  // 落库复核：被拒的停用 / 降级**一个字段都没写进去**
+  const sup2Row = readDb('SELECT role, status, real_name FROM ab_admin_user WHERE id = ?', [idSup2]);
+  assert(
+    sup2Row?.role === 'super_admin' &&
+      Number(sup2Row?.status) === 1 &&
+      sup2Row?.real_name === 'e2e 第二超管（被改名）',
+    'C1 被拒的停用 / 降级**均无副作用**（拒绝是真拒绝，不是「先写后报错」）',
+    `role=${sup2Row?.role} status=${sup2Row?.status} name=${sup2Row?.real_name}`,
+  );
+
+  // 收尾：删掉本段自建的第二超管，别让每次 e2e 都往库里留一个**启用中的超管**
+  writeDb('DELETE FROM ab_admin_user WHERE id = ?', [idSup2]);
+  const supersAfterClean = readDb(
+    "SELECT COUNT(*) AS n FROM ab_admin_user WHERE role = 'super_admin' AND status = 1",
+  );
+  assert(
+    Number(supersAfterClean?.n) === 1,
+    'C1 收尾：清掉自建第二超管后启用超管回到 **1**（本段不向库中留脏）',
+    `启用超管数=${supersAfterClean?.n}`,
   );
 
   // ==========================================================================
@@ -4059,10 +4200,24 @@ async function main() {
     '菜品库下发 5 个档位（main/half/veg/soup/staple）',
     `cats=${JSON.stringify((dishList.body?.data?.categoryOptions ?? []).map((o) => o.value))}`,
   );
+  /**
+   * ⚠️ 2026-09-21 改写判据（α 批 · 缺陷 D1/D2 收口）：
+   *   本条原断言出参 note 里出现字符串 `DishSlot` —— 那时仓库里真有一个
+   *   `shared-types/src/enums/dish-slot.ts`（`vegetable`/`side`），而它**全仓零消费**、
+   *   且标签 `DISH_SLOT_LABEL` 与真源漂移；4 处注释把它描述成真实存在，
+   *   于是「同一件事有了两份表述」（正是本批在收的病根）。该枚举已**整文件删除**。
+   *   ⇒ 断言改为盯**真正要承诺的那件事**：出参必须把「品类轴」与「档位轴」**显式说清**，
+   *     并**逐字点名两条轴的物理落点**（`ab_dish.category` / `ab_set_meal_item.slot`）——
+   *     这才是「写在契约里，而不是留给下一个人去猜」；
+   *     断言一个**已删除的枚举名**只会让下一个读的人去找一个不存在的东西。
+   *   ⚠️ 断言总数不变（仍 1066）—— 这是**改写**不是新增。
+   */
   assert(
     typeof dishList.body?.data?.notes?.category === 'string' &&
-      dishList.body?.data?.notes.category.includes('DishSlot'),
-    '菜品库出参**显式标注**档位与套餐槽位 DishSlot 是两套枚举（写在契约里，而不是留给下一个人去猜）',
+      dishList.body.data.notes.category.includes('两条轴') &&
+      dishList.body.data.notes.category.includes('ab_dish.category') &&
+      dishList.body.data.notes.category.includes('ab_set_meal_item.slot'),
+    '菜品库出参**显式标注**「品类轴（`ab_dish.category`）」与「档位轴（`ab_set_meal_item.slot`）」是两条轴（写在契约里，而不是留给下一个人去猜）',
     `note=${dishList.body?.data?.notes?.category?.slice(0, 30)}…`,
   );
   assert(

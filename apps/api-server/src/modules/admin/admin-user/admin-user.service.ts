@@ -39,6 +39,15 @@ export interface AdminAccountItem {
  *   ③ 不能停用 / 降级**最后一个启用的 super_admin** —— 否则没有任何人能再管账号，
  *      只能改数据库救场。①②③ 都在服务端判定，不依赖前端把按钮置灰。
  *
+ * 另有一条**授权边界**规则（同样 20010）：
+ *   ④ **只有 super_admin 能授予或撤销 super_admin** ——
+ *      类级 `@Roles('super_admin','admin')` 只回答「是不是超管/管理员」，
+ *      而 `ADMIN_ROLES` 里**含** `super_admin`，因此缺此闸门时，一个 `admin`
+ *      可以把任意账号（含自己）改成超管 —— 且改动**永久生效**，不是临时越权。
+ *      撤销方向同理：`admin` 不该能停用 / 降级超管（那是夺权，不是降级自己）。
+ *      ⚠️ 本闸门只判「角色是否等于 super_admin」，**不**妨碍 `admin` 改超管的
+ *      姓名 / 手机号（与权限无关；口令改走独立审计路径，不在 D53 内）。
+ *
  * 另：**改角色或停用后写 KV 吊销标记**，`AdminGuard` 据此让旧令牌立即失效
  *    （否则最长有 12 小时的特权滞留窗口，见 admin-role.ts 注释）。
  */
@@ -77,11 +86,19 @@ export class AdminUserService {
   }
 
   /** D52 新增账号 */
-  async create(dto: CreateAdminUserDto): Promise<AdminAccountItem> {
+  async create(dto: CreateAdminUserDto, callerRole: string): Promise<AdminAccountItem> {
     const username = dto.username.trim();
 
     const exists = await this.adminRepo.findOne({ where: { username } });
     if (exists) throw new BizException(ErrorCode.ADMIN_USERNAME_TAKEN);
+
+    // ④ 只有 super_admin 能授予 super_admin
+    if (dto.role === 'super_admin' && callerRole !== 'super_admin') {
+      throw new BizException(
+        ErrorCode.ADMIN_ACCOUNT_PROTECTED,
+        '只有超级管理员能创建超级管理员账号（当前角色无权授予该角色）',
+      );
+    }
 
     if (dto.role === 'supplier' && !dto.supplierId) {
       throw new BizException(
@@ -108,7 +125,12 @@ export class AdminUserService {
   }
 
   /** D53 编辑 / 停用 */
-  async update(id: number, dto: UpdateAdminUserDto, operatorId: number): Promise<AdminAccountItem> {
+  async update(
+    id: number,
+    dto: UpdateAdminUserDto,
+    operatorId: number,
+    callerRole: string,
+  ): Promise<AdminAccountItem> {
     const target = await this.adminRepo.findOne({ where: { id } });
     if (!target) throw new BizException(ErrorCode.NOT_FOUND, '账号不存在');
 
@@ -129,6 +151,18 @@ export class AdminUserService {
       target.role === 'super_admin' &&
       target.status === 1 &&
       ((!!dto.role && dto.role !== 'super_admin') || willDisable);
+    // ④ 只有 super_admin 能**授予或撤销** super_admin
+    const grantsSuper = dto.role === 'super_admin' && target.role !== 'super_admin';
+    const revokesSuper =
+      target.role === 'super_admin' &&
+      ((dto.role !== undefined && dto.role !== 'super_admin') || willDisable);
+    if (callerRole !== 'super_admin' && (grantsSuper || revokesSuper)) {
+      throw new BizException(
+        ErrorCode.ADMIN_ACCOUNT_PROTECTED,
+        '只有超级管理员能授予或撤销超级管理员角色',
+      );
+    }
+
     if (losesSuper && (await this.countActiveSuperAdmins()) <= 1) {
       throw new BizException(
         ErrorCode.ADMIN_ACCOUNT_PROTECTED,

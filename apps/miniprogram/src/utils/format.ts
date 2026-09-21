@@ -23,14 +23,15 @@ export function yuanToFen(yuan: number | string): number {
 
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const;
 
-/** 菜品档位文案（与后端 `SLOT_LABEL` 同源） */
-export const SLOT_LABEL: Record<number, string> = {
-  1: '主荤',
-  2: '半荤',
-  3: '素菜',
-  4: '汤',
-  5: '主食',
-};
+/**
+ * 套餐档位文案（档位轴 · `ab_set_meal_item.slot`：1–5）· **真源在 `@abox/shared-utils`**
+ *
+ * ⚠️ 此处只做**转发**（与 `apps/api-server/src/modules/meal/dto/meal.dto.ts` 同款写法）。
+ *    此前这里手抄了一份映射，内容当时是对的 —— 但**改真源时它不会跟着改，
+ *    而没有任何门禁会红**。端上 `package.json` 早已声明 `@abox/shared-utils` 依赖，
+ *    却从未使用：**「唯一真相」在依赖层建好了、使用层没跟上**，这份手抄就是后果。
+ */
+export { SET_MEAL_SLOT_LABEL as SLOT_LABEL } from '@abox/shared-utils';
 
 /**
  * 菜品品类 → 图示字符

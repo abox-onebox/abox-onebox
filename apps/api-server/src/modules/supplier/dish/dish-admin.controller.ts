@@ -47,7 +47,8 @@ export class DishAdminController {
     summary: '菜品库列表（扩展）',
     description:
       '按供应商 / 档位 / 上下架 / 菜名筛选；summary 为同过滤条件全量统计（含 avgPriceFen）。' +
-      '⚠️ 档位 `main/half/veg/soup/staple` 与套餐槽位 `DishSlot` 是**两套枚举**，见出参 notes。',
+      '⚠️ 档位 `main/half/veg/soup/staple`（品类轴 · `ab_dish.category`）与套餐槽位' +
+      '（档位轴 · `ab_set_meal_item.slot`，数字 1–5）是**两条轴**，见出参 notes。',
   })
   list(@Query() q: AdminDishesQueryDto, @CurrentAdmin('role') role: string) {
     return this.dishAdmin.list(q, role);

@@ -104,8 +104,8 @@ export class DishAdminService {
       actions: { canManage: viewerRole === 'super_admin' || viewerRole === 'admin' },
       notes: {
         category:
-          '档位取值 main 主荤 / half 半荤 / veg 素菜 / soup 汤品 / staple 主食，' +
-          '**与套餐槽位 DishSlot（main/vegetable/side/soup/staple）是两套枚举**，不要互相映射。',
+          '档位取值 main 主荤 / half 半荤 / veg 素菜 / soup 汤品 / staple 主食 —— 这是**品类轴**，落点 `ab_dish.category`；' +
+          '**与套餐槽位是两条轴**（档位轴，落点 `ab_set_meal_item.slot`，数字 1–5：主荤/半荤/素菜/汤/主食），不要互相映射。',
         costPrice:
           '供价（costPriceFen）为**逐菜协商价**（C9），不是固定口径；它是 D7 套餐成本与' +
           '供应商应付的唯一来源（编排页不收供应商与成本，全部由菜品反查）。',

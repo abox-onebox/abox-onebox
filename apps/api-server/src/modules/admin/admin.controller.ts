@@ -59,9 +59,14 @@ export class AdminController {
 
   @Post('accounts')
   @OperationLog({ module: 'system', action: '新增后台账号' })
-  @ApiOperation({ summary: 'D52 新增后台账号（口令用 scrypt 哈希入库，永不回显）' })
-  createAccount(@Body() dto: CreateAdminUserDto) {
-    return this.adminUserService.create(dto);
+  @ApiOperation({
+    summary: 'D52 新增后台账号（口令用 scrypt 哈希入库，永不回显）',
+    description:
+      '⚠️ `role=super_admin` 时**调用者必须也是 super_admin**，否则 20010 —— ' +
+      '类级 `@Roles` 只回答「是不是超管/管理员」，不回答「能不能造超管」。',
+  })
+  createAccount(@Body() dto: CreateAdminUserDto, @CurrentAdmin('role') callerRole: string) {
+    return this.adminUserService.create(dto, callerRole);
   }
 
   @Put('accounts/:id')
@@ -69,15 +74,17 @@ export class AdminController {
   @ApiOperation({
     summary: 'D53 编辑 / 停用账号',
     description:
-      '三条防自锁规则（20010）：不能停用自己、不能降级自己、不能动最后一个启用的超管。' +
+      '四条 20010 规则：不能停用自己、不能降级自己、不能动最后一个启用的超管，' +
+      '以及**只有 super_admin 能授予或撤销 super_admin**（否则 admin 可自我提权）。' +
       '角色或状态变更时会吊销该账号的旧令牌（AdminGuard 即时生效）。',
   })
   updateAccount(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAdminUserDto,
     @CurrentAdmin('sub') operatorId: number,
+    @CurrentAdmin('role') callerRole: string,
   ) {
-    return this.adminUserService.update(id, dto, operatorId);
+    return this.adminUserService.update(id, dto, operatorId, callerRole);
   }
 
   // ------------------------------------------------------------ D54–D55 角色

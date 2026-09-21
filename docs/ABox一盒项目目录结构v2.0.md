@@ -62,7 +62,9 @@ abox-onebox/                            ← 项目根目录
 │   ├── setup.sh                        ← 一键初始化项目（PowerShell 版：setup.ps1）
 │   ├── init.sql                        ← MySQL 初始化（供 docker 入口挂载）
 │   ├── sync-docs.mjs                   ← 根文档 → docs/ 镜像同步
-│   ├── gate.mjs                        ← 免 pnpm 门禁执行器（⭐ **20 道**：M5-2 增 `schema:parity`，M5-3 增 `route:audit` + `security:scan`，M5-6 增 `index:parity`，M5-7 增 `state:audit`；⭐ M5-9 增独立门禁 **`seed:demo`** —— 演示/边界数据集，**刻意不并进 `seed`**）
+│   ├── gate.mjs                        ← 免 pnpm 门禁执行器 —— ⭐⭐ **门禁清单的唯一真源**（`GATES` / `ALIASES`；`--json` 可机器读取）。增删门禁**只改这里**；`.github/workflows/ci.yml` 只许写 `node scripts/gate.mjs <别名>`；**条数只在《本地开发手册》§6.1 声明一处**（机器可读标记）。三条都由门禁 **`gate:parity`** 机械校验 —— 治「同一件事两份表述，不被自动化执行的那一份必然悄悄错掉」。历代增量：M5-2 增 `schema:parity` · M5-3 增 `route:audit` + `security:scan` · M5-6 增 `index:parity` · M5-7 增 `state:audit` · M5-9 增独立门禁 **`seed:demo`**（演示/边界数据集，**刻意不并进 `seed`**）· 2026-09-21 增 `dup:const`（真源字面量外溢）+ `gate:parity`（CI ↔ 门禁 ↔ 文档条数一致性）。⚠️ **本行刻意不写总条数**（历史上写死过，且已悄悄过期两轮）
+│   ├── check-dup-const.mjs             ← 门禁 `dup:const`：真源字面量外溢扫描（档位映射 / 送达时刻 / 前端日期解析），16 个合成样本自证
+│   ├── check-gate-parity.mjs           ← 门禁 `gate:parity`：CI 只许调 `gate.mjs`（且必须全覆盖 `all`+`verify`）/ CI 不得另抄一份逐包命令 / 文档条数标记与实算一致；10 个合成样本自证
 │   ├── e2e-m1.mjs / e2e-m2.mjs / e2e-m3.mjs   ← 端到端验收（真实起服务 + 真实 HTTP）
 │   ├── lib/e2e-server.mjs              ← e2e 共用托管（端口隔离 + 进程树回收 + 健康轮询）
 │   ├── local-test.mjs                  ← 【本地内部测试】一键起「API + 用户端 H5 + 运营后台」并打印**手机扫码地址**（云服务器就绪前的内部测试入口）· ⚠️ M5-9 收尾修：`--build` 重建 H5 前先把 `dist-h5` **改名挪走**，否则 vite 的 `emptyOutDir` 撞沙箱 bulk-delete 守卫，报「构建失败」而**代码一行没错**
@@ -542,10 +544,18 @@ packages/shared-types/
 │   │   ├── building-admin.ts           ← D13–D18 楼栋 / 楼群枚举（含状态三态）
 │   │   ├── supplier-admin.ts           ← D23–D32 供应商管理枚举（含 `TAKEOUT_PLATFORM_LABEL` / `TAKEOUT_PLATFORM_SHORT` —— **M5-14** 起被 U5 与后台 P33 **共用同一份文案**）
 │   │   ├── payout-channel.ts           ← 佣金出款通道（C11：灵活用工代发 / 已停用的微信商家转账）
-│   │   └── dish-slot.ts                ← 主菜 / 素菜 / 配菜 / 汤品 / 主食
+│   │   └── 其余 7 个：delivery-status / leader-level / leader-status / order-status / refund / role / withdraw-status
 ```
 
 > **已删除**：`api/floor-leader.ts`（L2 无楼长）。
+> **已删除（2026-09-21 全量体检 α 批）**：`enums/dish-slot.ts` —— 它是**死文件**：`DishSlot` 的
+> `vegetable`/`side` **全仓零消费**（仅自身与 `dist/` 命中），标签 `DISH_SLOT_LABEL` 的内容
+> （主菜 / 素菜 / 配菜 / 汤品 / 主食）**与档位轴真源已漂移**，而**4 处注释把它描述成真实存在**
+> ⇒「同一件事两份表述」的又一形态。删除同时：`index.ts` 去掉再导出、`supplier-admin.ts` 就地留历史说明、
+> 端到端断言改为**点名两条轴的物理落点**（`ab_dish.category` / `ab_set_meal_item.slot`）——
+> 断言一个**已删除的枚举名**只会让下一个读的人去找一个不存在的东西。
+> ⚠️ **档位轴**（`ab_set_meal_item.slot` 数字 1–5，中文写 `汤`）与**品类轴**（`ab_dish.category`，
+> 中文写 `汤品`）是**两条轴、刻意不同名**，别互相映射、也别改成一个（真源与判据见 `shared-utils/src/biz.ts`）。
 > ⚠️ **M5-14 更正**：本节曾把 DTO 记在 `api/` 下并虚列 `user.ts` / `meal.ts` / `order.ts` / `delivery.ts` / `team-leader.ts` / `supplier.ts` / `distribution-center.ts` / `traceability.ts` / `finance.ts` —— 这些文件**一个都不存在**（真实位置是 `dto/`），且 `enums/` 里记的 `meal-status.ts` 也已不存在。属「文档描述的路径与真实树不一致」的典型：照文档去找必然找不到，而**没有任何门禁会发现**（`dead-files-scan` 只扫源码、不校文档）。
 
 ---

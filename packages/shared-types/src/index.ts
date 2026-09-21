@@ -6,7 +6,6 @@ export * from './enums/supplier-admin';
 export * from './enums/building-admin';
 export * from './enums/payout-channel';
 export * from './enums/role';
-export * from './enums/dish-slot';
 export * from './enums/refund';
 export * from './enums/withdraw-status';
 export * from './enums/delivery-status';

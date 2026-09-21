@@ -195,7 +195,7 @@ import { ApiError } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
 import { buildUrl, navigateTo } from '@/utils/router';
-import { dishEmoji } from '@/utils/format';
+import { dishEmoji, formatMealDate } from '@/utils/format';
 import { ORDER_MAX_QUANTITY } from '@/constants';
 import { useLeaderStore } from '@/stores/leader';
 
@@ -228,14 +228,19 @@ const countdownText = computed(() => {
   return `${pad(h)}:${pad(m)}:${pad(sec)}`;
 });
 
-/** mealDate → 「9月19日 周六」（原型概念卡日期行） */
+/**
+ * mealDate → 「9月19日 周六」（原型概念卡日期行）
+ *
+ * ⚠️ 一律走 `formatMealDate`（`utils/format.ts`）—— 它**手工解析**、不碰 `Date` 的时区语义。
+ *    此处曾内联 `new Date(`${raw}T00:00:00`)`，**正是该工具文件注释里逐字禁止的写法**：
+ *    `YYYY-MM-DDTHH:mm:ss` 在 ES2016+ 按**本地时间**解析（东八区恰好正确），
+ *    但旧 WebView / JSCore 有按 **UTC** 解析的历史行为 ⇒ 会整体偏移一天。
+ *    「碰巧正确」不是正确：两份实现在**缺省兜底**上也已不同（内联版返回 `raw`，
+ *    `formatMealDate` 返回入参 `mealDate`），将来任一处改动都会**单边生效**。
+ */
 const mealDateCn = computed(() => {
   const raw = daily.value?.mealDate;
-  if (!raw) return '';
-  const dt = new Date(`${raw}T00:00:00`);
-  if (Number.isNaN(dt.getTime())) return raw;
-  const week = ['日', '一', '二', '三', '四', '五', '六'][dt.getDay()];
-  return `${dt.getMonth() + 1}月${dt.getDate()}日 周${week}`;
+  return raw ? formatMealDate(raw) : '';
 });
 
 const leaderLevelLabel = computed(() => {

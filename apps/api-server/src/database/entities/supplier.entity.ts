@@ -186,7 +186,7 @@ export class Dish {
   @Column({ name: 'image_url', type: 'varchar', length: 512, nullable: true })
   imageUrl?: string | null;
 
-  /** 档位：main 主荤 / half 半荤 / veg 素菜 / soup 汤 / staple 主食 */
+  /** 品类轴：main 主荤 / half 半荤 / veg 素菜 / soup 汤品 / staple 主食（展示文案见 DISH_CATEGORY_LABEL） */
   @Column({ type: 'varchar', length: 32, nullable: true })
   category?: string | null;
 

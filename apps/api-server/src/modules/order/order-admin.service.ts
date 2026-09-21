@@ -10,6 +10,7 @@ import {
   RefundReasonType,
   RefundStatus,
 } from '@abox/shared-types';
+import { SET_MEAL_SLOT_LABEL as SLOT_LABEL } from '@abox/shared-utils';
 
 import { BizException } from '../../common/exceptions/biz.exception';
 import { ErrorCode } from '../../common/constants/error-code';
@@ -694,13 +695,9 @@ const INVALID_FOR_SUMMARY: string[] = [OrderStatus.CANCELLED, OrderStatus.REFUND
 /** 导出上限：一次最多导这么多行，超出截断并提示（防把内存拉爆） */
 const EXPORT_MAX_ROWS = 5000;
 
-const SLOT_LABEL: Record<number, string> = {
-  1: '主荤',
-  2: '半荤',
-  3: '素菜',
-  4: '汤',
-  5: '主食',
-};
+// 档位文案（档位轴 · `ab_set_meal_item.slot` 1–5）· **真源在 `@abox/shared-utils`**，
+// 本文件只做转发（同 `modules/meal/dto/meal.dto.ts`）。
+// ⚠️ 此处原手抄过一份映射：内容当时一致，但改真源时不跟着改、且无门禁会红。
 
 const REFUND_STATUS_TEXT: Record<string, string> = {
   [RefundStatus.APPLYING]: '待审批',

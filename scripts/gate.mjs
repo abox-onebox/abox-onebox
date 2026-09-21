@@ -10,6 +10,7 @@
  *
  * 用法：
  *   node scripts/gate.mjs list            # 列出全部门禁
+ *   node scripts/gate.mjs --json          # 机器可读：{ gates, aliases }（别名已展开）—— 供一致性门禁消费
  *   node scripts/gate.mjs shared          # 仅重建共享包 dist（其它门禁的前置）
  *   node scripts/gate.mjs lint typecheck jest format
  *   node scripts/gate.mjs all
@@ -79,7 +80,13 @@ const GATES = {
   'typecheck:api': { cwd: 'apps/api-server', cmd: 'tsc --noEmit' },
   'typecheck:admin': { cwd: 'apps/admin-web', cmd: 'vue-tsc --noEmit' },
   'typecheck:mp': { cwd: 'apps/miniprogram', cmd: 'vue-tsc --noEmit -p tsconfig.json' },
-  jest: { cwd: 'apps/api-server', cmd: 'jest --passWithNoTests' },
+  /**
+   * ⚠️ 2026-09-21 移除 `--passWithNoTests`（对策②）：该参数让「**一个测试都没跑到**」也返回 0
+   *    ⇒ 5 个 spec 被重命名 / 误删时，门禁**依旧全绿**，且输出里没有任何线索。
+   *    本地开发者的 `pnpm test` 仍保留它（本地未必有测试文件），
+   *    **门禁路径必须严格：0 个测试 = 红。**
+   */
+  jest: { cwd: 'apps/api-server', cmd: 'jest' },
   /**
    * M5-2：**迁移 ↔ 实体 结构机械对账**（缺陷 #76 的防复发门禁）
    *
@@ -196,6 +203,45 @@ const GATES = {
    */
   'doc:tables': { cwd: '.', cmd: 'node scripts/check-md-tables.mjs' },
   /**
+   * 2026-09-21：**真源字面量外溢**（dup-const）—— 针对「同一件事多份表述」这一条横向根因
+   *
+   * 本项目反复出现的形状：同一个概念有 N 份表述，**不被自动化执行的那一份必然悄悄错掉**。
+   * 已发生的两例（本门禁直接针对）：
+   *   ① **档位映射**：真源 `shared-utils/src/biz.ts` 的 `SET_MEAL_SLOT_LABEL`，而端上
+   *      `utils/format.ts` 与 `order-admin.service.ts` **各手抄了一份同值映射** ——
+   *      抄的时候是对的 ⇒ 改真源那一刻它们就错了，而那时门禁全绿。
+   *   ② **送达时刻**：真源 `common/utils/order-timeline.ts` 的 `DEFAULT_TIMELINE.arrival`；
+   *      PR-02 一次性收口 **8 处**手写时刻（含「同 payload 里 `expectAt` 手写 + `expectAtIso`
+   *      派生」这种**双真相并排**形态，改一次配置当场分裂）。
+   *
+   * 判据只挑「**当前零命中且零误报**」的三条（`slot-map` / `arrival-literal` / `date-parse`），
+   * **刻意不覆盖**费率（`0.12` 与 CSS `rgba(...,0.12)` 同形）与售价（快照/示例合法出现）——
+   * 理由与实测命中数写在 `scripts/check-dup-const.mjs` 头注释里。
+   * 自带自证：16 个样本「必报的报得出 / 必不报的不报」，任一侧不符即 exit 2。
+   */
+  'dup:const': { cwd: '.', cmd: 'node scripts/check-dup-const.mjs' },
+  /**
+   * 2026-09-21：**门禁清单一致性**（CI ↔ `gate.mjs` ↔ 文档条数）—— `dup:const` 的同族
+   *
+   * 病根与 `dup:const` 完全相同：**同一件事两份表述**。只是这次被抄的是「门禁清单本身」：
+   *   · `.github/workflows/ci.yml` 自工程仓重建后**一次都没改过**，里面另写了一套
+   *     `pnpm lint / typecheck / test / build:*`，**缺** schema:parity / index:parity /
+   *     route:audit / security:scan / nav:consistency / doc:tables / dup:const / state:audit；
+   *   · 往本文件加门禁**不会**传到 CI ⇒「本地绿、CI 装作绿」，CI 的绿灯**不构成证据**；
+   *   · 而 CLI 里那个 `NODE_VERSION: '20'` 更直接使 `verify` 起不来（`node:sqlite` 要 ≥22.5）
+   *     —— 即「CI 跑 e2e」此前只是**一句声明**。
+   *
+   * 判据（纯文本，**不依赖 yaml 解析器** —— 只引传递依赖会随 lockfile 漂移）：
+   *   ① CI 必须**只**通过 `node scripts/gate.mjs <别名>` 调门禁，且两个别名
+   *      （`all` / `verify`）**覆盖到全部门禁**（漏一道即红）；
+   *   ② CI 里**不得**再出现逐包门禁命令（`pnpm lint|typecheck|test|build*`、裸 `eslint`/`jest`/
+   *      `tsc` 等）—— 那就是第二份清单的起点；
+   *   ③ 文档里声明的条数必须等于实算条数（读 `docs/` 内镜像的显式标记，格式见脚本头注释）。
+   *      这一条治的是本项目另一类高发病：**数字写死在多处，改一处就悄悄错**。
+   * 自带自证：合成样本「必报的报得出 / 必不报的不报」，任一侧不符即 exit 2。
+   */
+  'gate:parity': { cwd: '.', cmd: 'node scripts/check-gate-parity.mjs' },
+  /**
    * M5-7：**订单状态机「声明 ↔ 生产写入点」机械对账**（缺陷 #79 的防复发门禁）
    *
    * #79 是一条 **P0**，而当时 **19 道门禁全绿、e2e 969 条全绿** —— 一条都没红。
@@ -284,6 +330,10 @@ const ALIASES = {
     'nav:consistency',
     // M5-15：契约文档表格完整性（表格被空行截断 → 行退化成正文）—— 纯静态、毫秒级
     'doc:tables',
+    // 2026-09-21：真源字面量外溢（档位映射 / 送达时刻 / 日期解析）—— 纯静态、秒级
+    'dup:const',
+    // 2026-09-21：门禁清单一致性（CI 只许调本文件 · 不得另抄一份 · 文档条数一致）—— 纯静态、毫秒级
+    'gate:parity',
     'jest',
     'build:api',
     'build:admin',
@@ -328,6 +378,40 @@ function purgeTrash(trash) {
   } catch {
     /* 临时目录残留由系统兜底，不影响门禁结论 */
   }
+}
+
+/**
+ * 门禁自报覆盖面（2026-09-21 · 对策②）
+ *
+ * 目的：让每条门禁在汇总里**自报「查了什么、查了多少」**，而不是只报「过 / 不过」。
+ * 判据：有专门正则的用专门正则抽计数；没有的**兜底打印其最后一行输出**
+ *      （每个门禁脚本都会打印一行小结），保证任何门禁都不是「静默通过」。
+ * ⚠️ 兜底只是**可见性**，不等于断言 —— 断言仍在各门禁脚本内部（且它们自带自证）。
+ */
+const REPORT_RE = {
+  jest: [/^Test Suites:\s+.*$/m, /^Tests:\s+.*$/m],
+  'e2e:m1': [/^通过\s+\d+\/\d+.*$/m],
+  'e2e:m2': [/^通过\s+\d+\/\d+.*$/m],
+  'e2e:m3': [/^通过\s+\d+\/\d+.*$/m],
+};
+
+function reportOf(r) {
+  const out = r.out ?? '';
+  if (!out) return ['（无输出 —— 该门禁应自报覆盖面）'];
+  const res = REPORT_RE[r.name];
+  if (res) {
+    const hits = [];
+    for (const re of res) {
+      const m = out.match(re);
+      if (m) hits.push(m[0].trim());
+    }
+    if (hits.length) return hits;
+  }
+  const lines = out
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return lines.length ? [`最后一行：${lines[lines.length - 1].slice(0, 150)}`] : [];
 }
 
 /** 命中宿主 bulk-delete 守卫时给出可操作解释（否则只剩一坨 vite 堆栈） */
@@ -385,11 +469,29 @@ function run(name) {
     const hint = explainFailure(combined);
     if (hint) console.log(hint);
   }
-  return { name, ok, code: r.status ?? -1, ms, out: ok ? stdout : '' };
+  // ⚠️ 2026-09-21（对策②）：**成功时也保留输出**（此前写成 `ok ? stdout : ''`，
+  //    于是跑完只看到 `✔ jest (4310ms)`，**「跑了几条测试」完全不可见** ——
+  //    门禁自身的退化不在任何失败路径上，正是 E1/E3 的共同病根）。
+  return { name, ok, code: r.status ?? -1, ms, out: [stdout, stderr].filter(Boolean).join('\n') };
 }
 
 const argv = process.argv.slice(2).filter((a) => a !== '--stop');
 const stopOnError = process.argv.includes('--stop');
+
+/**
+ * `--json`：把「门禁真源」以机器可读形式吐出（`{ gates, aliases }`，别名已展开为具体门禁）。
+ *
+ * 为什么需要它：`scripts/check-gate-parity.mjs` 要判「CI 覆盖到了全部门禁」，
+ * 而**「哪些门禁存在」本身就是本文件的事实** —— 让检查脚本自己去正则扒本文件，
+ * 等于又造一份会漂移的表述。**唯一真源必须以可读形式自报**。
+ * ⚠️ 只结构化既有数据，不额外维护一份清单。
+ */
+if (process.argv.includes('--json')) {
+  const aliases = {};
+  for (const k of Object.keys(ALIASES)) aliases[k] = expand([k]);
+  console.log(JSON.stringify({ gates: Object.keys(GATES), aliases }));
+  process.exit(0);
+}
 
 if (argv.length === 0 || argv[0] === 'list') {
   console.log('可用门禁：');
@@ -420,6 +522,9 @@ for (const name of queue) {
 
 const failed = results.filter((r) => !r.ok);
 console.log('\n──────── 汇总 ────────');
-for (const r of results) console.log(`${r.ok ? '✔' : '✘'} ${r.name.padEnd(16)} ${r.ms}ms`);
+for (const r of results) {
+  console.log(`${r.ok ? '✔' : '✘'} ${r.name.padEnd(16)} ${r.ms}ms`);
+  for (const line of reportOf(r)) console.log(`      ↳ ${line}`);
+}
 console.log(`\n通过 ${results.length - failed.length}/${results.length}${failed.length ? ` · 失败：${failed.map((f) => f.name).join(', ')}` : ' · 全绿 ✅'}`);
 process.exit(failed.length ? 1 : 0);

@@ -11,12 +11,35 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: '20'
+  # ⚠️ 必须是 22.x（此前写的是 20）。
+  #    e2e 验收脚本用 `node:sqlite` 的 `DatabaseSync` 直接读开发库做**落库断言**
+  #    （scripts/e2e-m1.mjs:23 / e2e-m2.mjs:40 / e2e-m3.mjs:151），而 `node:sqlite`
+  #    自 Node **22.5** 才有。写 20 ⇒ `verify` 在 CI 里根本起不来。
+  #    也就是说：旧配置下「CI 跑 e2e」只是一句声明，从未真的跑过。
+  NODE_VERSION: '22'
   PNPM_VERSION: '9'
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 唯一门禁执行器：CI **不自己抄一份门禁清单**，只调用 `scripts/gate.mjs`。
+#
+# 背景（本批要收的病根）：同一件事有两份表述，而不被自动执行的那一份必然悄悄错掉。
+#   旧 CI 里另写了一套 `pnpm lint / typecheck / test / build:*` 步骤，与本地
+#   `scripts/gate.mjs` 是同一件事的两份表述，而 CI 那份**缺**：
+#     schema:parity · index:parity · route:audit · security:scan ·
+#     nav:consistency · doc:tables · dup:const · state:audit
+#   ⇒ 这 8 条门禁在 CI 从来不跑；本地往 `gate.mjs` 里加门禁也不会传到 CI
+#   （事实印证：ci.yml 自工程仓重建后一次都没改过）。
+#   ⇒ 结果就是「本地绿、CI 装作绿」——CI 的绿灯不构成任何证据。
+#
+# 现在 CI 与本地跑**同一条命令**：
+#     node scripts/gate.mjs all        # 全量静态门禁 + 单测 + 三端构建
+#     node scripts/gate.mjs verify     # 重置种子 + M1/M2/M3 全链路真实 HTTP
+# ⚠️ 要增删门禁，只改 `scripts/gate.mjs` 的 `GATES` / `ALIASES` —— **不要在本文件里另列一份**。
+# ─────────────────────────────────────────────────────────────────────────────
+
 jobs:
-  lint:
-    name: Lint & Format
+  gates:
+    name: Gates (scripts/gate.mjs all)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,13 +50,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+      # `pnpm install` 只是把 node_modules 装好 —— gate.mjs 自己会拼 PATH、逐条执行
       - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm format:check
+      - run: node scripts/gate.mjs all
 
-  typecheck:
-    name: Typecheck
+  verify:
+    name: E2E (scripts/gate.mjs verify)
     runs-on: ubuntu-latest
+    needs: gates
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -44,63 +68,25 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
+      # `verify` 别名 = seed + e2e:m1/m2/m3（**不含** shared 构建），
+      # 而 seed 走 ts-node + tsconfig-paths 读共享包 —— 前置先显式跑一次 `shared`。
+      - run: node scripts/gate.mjs shared
+      - run: node scripts/gate.mjs verify
 
-  test:
-    name: Unit Test
-    runs-on: ubuntu-latest
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: root123
-          MYSQL_DATABASE: abox_onebox_test
-        ports: ['3306:3306']
-        options: >-
-          --health-cmd="mysqladmin ping -h localhost -proot123"
-          --health-interval=5s --health-timeout=5s --health-retries=30
-      redis:
-        image: redis:7-alpine
-        ports: ['6379:6379']
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=5s --health-timeout=3s --health-retries=20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test
-        env:
-          NODE_ENV: test
-          DB_HOST: 127.0.0.1
-          DB_PORT: '3306'
-          DB_USER: root
-          DB_PASSWORD: root123
-          DB_DATABASE: abox_onebox_test
-          REDIS_HOST: 127.0.0.1
-          REDIS_PORT: '6379'
-          JWT_SECRET: ci_secret
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    needs: [lint, typecheck]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build:api
-      - run: pnpm build:admin
-      - run: pnpm build:mp
+# ─────────────────────────────────────────────────────────────────────────────
+# 关于 MySQL / Redis service 容器（2026-09-21 移除）
+#
+# 旧 `test` job 声明了 mysql:8.0 + redis:7 两个 service，但**没有任何门禁连过它们**：
+#   · schema:parity / index:parity  —— `new DataSource({ type: 'better-sqlite3', database: ':memory:' })`，
+#                                     纯内存 sqlite，比对的是「迁移 DDL ↔ 实体装饰器 metadata」
+#   · route:audit / security:scan / state:audit / nav:consistency / doc:tables / dup:const
+#                                   —— 纯静态扫源码，不连库
+#   · jest                          —— test/unit 下 5 条纯逻辑 spec（时间轴 / 状态机 / 幂等 / 单号 / 时钟锚）
+#   · e2e                           —— 自起 sqlite 服务
+# ⇒ 那两个 service 给出的信号是**假的**（看起来「CI 在 MySQL 上验证过」，实际没有）。
+#   这是与门禁清单同族的病：一份不被使用的表述，会让人误以为覆盖存在。
+#
+# ⚠️ 如果将来新增的门禁**确实**要连 MySQL / Redis，就在这里加回 service —— 并在
+#    `scripts/gate.mjs` 里注明该门禁的依赖，让本地跑的人也知道要起容器。
+#    真机 MySQL 的验证路径仍是生产首迁（`ref《缺陷与陷阱》` 已登记未跑过）。
+# ─────────────────────────────────────────────────────────────────────────────

@@ -190,33 +190,50 @@ POST /api/v1/payments/mock/paid   { "orderNo": "AB202609150001" }
 | `pnpm build:shared` | **构建共享包 dist**（跨包编译失败时先跑它） |
 | `pnpm dev:api` / `dev:admin` / `dev:mp` | 分别启动后端 / 后台 / 小程序（已自动前置 build:shared） |
 | `pnpm db:migrate` / `db:seed` | 迁移 / 种子（仅 mysql 模式需要迁移） |
-| `pnpm typecheck` / `lint` / `test` | 类型检查 / 静态检查 / 单测（= CI 前三道门禁） |
-| `pnpm format:check` | 校验格式（**CI 用的是这个**；`pnpm format` 是就地改写，别在 CI 用） |
+| `pnpm typecheck` / `lint` / `test` | 类型检查 / 静态检查 / 单测（三者都是 `gate.mjs` 里对应门禁的**同一条命令**） |
+| `pnpm format:check` | 校验格式（`gate.mjs` 的 `format` 门禁用的就是这个；`pnpm format` 是就地改写，别在 CI 用） |
 | `pnpm docs:sync` | 把工作区根目录的权威文档同步进 `docs/`（自动淘汰旧版本） |
 | `pnpm docker:up` / `docker:down` | 起停本地 MySQL + Redis |
 | `pwsh scripts/setup.ps1` | Windows 一键初始化（自动识别是否装了 Docker） |
 
-### 6.1 ⚠️ 开发机沙箱内：`pnpm` 跑不了，改用 `tests/tools/`
+### 6.1 ⚠️ 开发机沙箱内：`pnpm` 跑不了，改用仓库内 `scripts/gate.mjs`
 
 **现象**：本机沙箱内 `pnpm -v` / `pnpm -C <dir> lint` **无任何输出、退出码为空**（corepack shim 路径被错拼成 `C:\\c\\Users\\...`）。
 因此上表所有 `pnpm xxx` 在这台机器上**一律不可用**，但这**不影响任何验收口径** —— 绕开 pnpm 即可完整复刻 CI。
 
-替代方案已固化在工作区的 `tests/tools/`（**注意：`tests/` 在工作区根，不在 git 仓库内，随工作区共享给所有任务**）：
-
-| 工具 | 用途 |
-| --- | --- |
-| `tests/tools/gate.mjs` | 一次跑完 CI 全部 12 道门禁（lint / tsc×3 / vue-tsc×2 / jest / nest·vite·uni build / format:check / seed） |
-| `tests/tools/verify-manifest.mjs` | 复核《基线冻结清单》全表「字节 + SHA-256」一致性 + 覆盖性 |
+替代方案**只有一处**：仓库内 `abox-onebox/scripts/gate.mjs`（免 pnpm；自带 `all` / `verify` 别名，**含 e2e**）。
 
 ```powershell
 # 跑全部门禁（node 用 managed 版本，勿用裸 node）
-& "C:\Users\herma\.workbuddy\binaries\node\versions\22.22.2-3\node.exe" tests\tools\gate.mjs
-
-# 只跑指定几道（快速回归）
-& "...\node.exe" tests\tools\gate.mjs --only lint,test-api
-& "...\node.exe" tests\tools\gate.mjs --list          # 列出 12 道步骤
-& "...\node.exe" tests\tools\verify-manifest.mjs      # 复核基线清单
+& "C:\Users\herma\.workbuddy\binaries\node\versions\22.22.2-3\node.exe" abox-onebox\scripts\gate.mjs all
+& "...\node.exe" abox-onebox\scripts\gate.mjs verify          # 4 道：seed → e2e:m1 → e2e:m2 → e2e:m3
+& "...\node.exe" abox-onebox\scripts\gate.mjs --list          # 列出全部门禁与别名
+& "...\node.exe" abox-onebox\scripts\gate.mjs typecheck:api   # 只跑某几道（快速回归）
 ```
+
+> ⚠️ **工作区根 `tests/tools/gate.mjs` 已于 2026-09-21 删除** —— 它是一份只跑 12 道的**陈旧副本**，
+> 缺 M5 期新增的**多道**「声明 ↔ 实现」对账门禁（`schema:parity` / `index:parity` / `state:audit` /
+> `route:audit` / `security:scan` / `nav:consistency` / `doc:tables` / `dup:const` / `gate:parity`，
+> 且**新旧两份的门禁数会各自独立漂移**），却自称「逐条复刻 CI 的**全部**作业」，
+> 跑完打印「通过 12 / 失败 0」⇒ **会给出假绿的验收结论**。现行门禁执行器**只有一份**。
+> 🔒 **新增 / 修改门禁一律改 `abox-onebox/scripts/gate.mjs`，不要在别处再写第二份实现**
+> （「同一件事多份表述，而不被自动化执行的那一份必然是错的」）。
+> 🔒 同理 **CI（`.github/workflows/ci.yml`）只许写 `node scripts/gate.mjs <别名>`**，
+> 不许在 CI 里另列一套 `pnpm lint / typecheck / test / build` —— 那道门禁叫 `gate:parity`，它会在 CI 里红。
+
+| 工具 | 用途 |
+| --- | --- |
+| `abox-onebox/scripts/gate.mjs` | **唯一**门禁执行器：`all` + `verify` 两个别名（含 e2e；条数见下方标记） |
+| `tests/tools/verify-manifest.mjs` | 复核《基线冻结清单》全表「字节 + SHA-256」一致性 + 覆盖性 |
+| `tests/tools/audit-contract.mjs` | 契约**静态**对账（与仓库内 `route:audit` 的**运行时反射**互为独立取数） |
+
+> 📌 **门禁条数全文只在此处声明一次**（下面这行是**机器可读标记**，由 `gate:parity` 门禁校验；
+> 加/删门禁后必须同步它，否则门禁会红并点名指出差多少）：
+>
+> `<!-- gate-count: all=20 verify=4 -->`
+>
+> ⚠️ **其余文档一律不要再写死条数** —— 本项目已反复出现「同一个数字写死在多处，改一处就悄悄错，
+> 而没有任何工具会报错」。条数的**唯一真源**是 `gate.mjs` 自己：`node scripts/gate.mjs --json`。
 
 **原理**：不经过 pnpm，直接把各包 `node_modules/.bin` 的 `.CMD` shim 塞进 `PATH`，再用 `spawnSync(cmd, {shell:true})` 调用。
 共享包改动后必须先重建 dist（`gate.mjs` 的前两步已包含 `build-shared-types` / `build-shared-utils`）。
@@ -235,13 +252,16 @@ POST /api/v1/payments/mock/paid   { "orderNo": "AB202609150001" }
 ### 6.2 ⏱ 时钟注入：让「下单窗口」不再把端到端套件锁死在下午
 
 **仓库内现行门禁是 `abox-onebox/scripts/gate.mjs`**（带 `all` / `verify` 别名，**含 e2e**；
-工作区根的 `tests/tools/gate.mjs` 是只跑 12 道静态/构建步骤的等价物，不含 e2e）。日常这样跑：
+工作区根那份「只跑 12 道」的旧副本已于 2026-09-21 删除，理由见 §6.1）。日常这样跑：
 
 ```bash
 cd abox-onebox
 export NODE_PATH=/c/Users/herma/.workbuddy/binaries/node/workspace/node_modules
 NODE=/c/Users/herma/.workbuddy/binaries/node/versions/22.22.2-3/node.exe
-$NODE scripts/gate.mjs all        # 8 道：shared / lint / format / typecheck×3 / jest / build×3
+$NODE scripts/gate.mjs all        # 全量静态门禁 + 单测 + 三端构建（条数见 §6.1 标记，勿在此写死）
+                                  #   shared×2 / lint / format / typecheck×3 / jest / build×3
+                                  #   + schema:parity / index:parity / state:audit / route:audit
+                                  #   + security:scan / nav:consistency / doc:tables / dup:const / gate:parity
 $NODE scripts/gate.mjs verify     # 4 道：seed → e2e:m1 → e2e:m2 → e2e:m3
 $NODE scripts/gate.mjs e2e:m3     # 单跑某一段（⚠️ 单跑不重置种子，先补 `seed`）
 ```

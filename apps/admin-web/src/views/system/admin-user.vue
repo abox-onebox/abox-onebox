@@ -118,9 +118,16 @@
           <el-input v-model="form.realName" placeholder="选填" />
         </el-form-item>
         <el-form-item label="角色" prop="role">
-          <el-select v-model="form.role" style="width: 100%" @change="onRoleChange">
-            <el-option v-for="r in ADMIN_ROLES" :key="r.value" :label="r.label" :value="r.value" />
+          <el-select
+            v-model="form.role"
+            style="width: 100%"
+            :disabled="roleLocked"
+            @change="onRoleChange"
+          >
+            <!-- 非超管不列出「超级管理员」：服务端 20010 会拒（见 roleOptions 注释） -->
+            <el-option v-for="r in roleOptions" :key="r.value" :label="r.label" :value="r.value" />
           </el-select>
+          <span v-if="roleLocked" class="hint">仅超级管理员可变更超级管理员的角色</span>
         </el-form-item>
         <el-form-item v-if="form.role === 'supplier'" label="关联供应商" prop="supplierId">
           <el-input-number
@@ -150,10 +157,12 @@
  * ⚠️ 本页是**运营侧**账号管理（`ab_admin_user`），与小程序用户（`ab_user`）无关。
  * ⚠️ 前端弹出「不能停用自己 / 不能动最后一个超管」等提示只是**提前告知**，
  *    判定权威在服务端（20010），前端不复制这套规则 —— 否则两处规则必然漂移。
+ * ⚠️ 角色下拉对非超管**不列出「超级管理员」**（`roleOptions`）：同样只是不提供选项，
+ *    服务端 D52/D53 会以 20010 拒绝「非超管授予 / 撤销超管」。
  * ⚠️ 供应商角色必须选 supplierId，否则该账号登录后所有 S* 接口都查不到数据，
  *    表现为「空白页」而非报错；服务端已强制（10001）。
  */
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import type { FormInstance, FormRules } from 'element-plus';
 
@@ -162,6 +171,7 @@ import type { AdminAccountRow } from '@/api/system';
 import { createAdminAccount, fetchAdminAccounts, updateAdminAccount } from '@/api/system';
 import { ApiError } from '@/api/request';
 import { displayOr, formatDateTime, maskPhone } from '@/utils/format';
+import { useAuthStore } from '@/stores/auth';
 
 const loading = ref(false);
 const saving = ref(false);
@@ -181,7 +191,26 @@ const dialog = reactive({
   mode: 'create' as 'create' | 'edit',
   title: '新增账号',
   id: 0,
+  /** 编辑目标当前的角色（仅用于「非超管不得变更超管角色」的置灰判断） */
+  targetRole: '',
 });
+
+/**
+ * 角色下拉的可选项。
+ *
+ * ⚠️ 这里**只是不提供选项**（体验层），判定权威在服务端（D52/D53 的 20010）——
+ *    与「不能停用自己」同理：前端不复刻规则，否则两处必然漂移。
+ *    非超管若绕过界面构造请求把 role 设成 super_admin，服务端照拒。
+ */
+const auth = useAuthStore();
+const isSuperAdmin = computed(() => auth.role === 'super_admin');
+const roleOptions = computed(() =>
+  isSuperAdmin.value ? ADMIN_ROLES : ADMIN_ROLES.filter((r) => r.value !== 'super_admin'),
+);
+/** 正在编辑一个超管账号、而自己不是超管 → 角色不可改（改了必被服务端拒） */
+const roleLocked = computed(
+  () => dialog.mode === 'edit' && !isSuperAdmin.value && dialog.targetRole === 'super_admin',
+);
 
 const formRef = ref<FormInstance>();
 const form = reactive({
@@ -243,6 +272,7 @@ function openCreate(): void {
   dialog.mode = 'create';
   dialog.title = '新增账号';
   dialog.id = 0;
+  dialog.targetRole = '';
   Object.assign(form, {
     username: '',
     password: '',
@@ -269,6 +299,7 @@ function openEdit(raw: unknown): void {
   dialog.mode = 'edit';
   dialog.title = `编辑账号 #${row.id}`;
   dialog.id = row.id;
+  dialog.targetRole = row.role;
   Object.assign(form, {
     username: row.username,
     password: '',

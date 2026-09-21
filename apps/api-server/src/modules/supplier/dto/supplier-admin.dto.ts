@@ -393,7 +393,8 @@ export class SetTakeoutLinksDto {
  *
  * ⚠️ 不在此另写一份字符串数组：端上要显示中文档位名（主荤/半荤/素菜/汤品/主食），
  *    两处各写一套，就等着「后端认 main、前端显示成主菜」的漂移。
- * ⚠️ 与 `DishSlot`（套餐槽位）是两套枚举，见 `shared-types/enums/supplier-admin.ts` 的注释。
+ * ⚠️ 与**套餐槽位**（`ab_set_meal_item.slot`，数字 1–5）是**两条轴**，
+ *    见 `shared-types/enums/supplier-admin.ts` 的注释（含「汤 vs 汤品 不是漂移」的说明）。
  */
 export const DISH_CATEGORIES = Object.values(DishCategory);
 export type DishCategoryValue = DishCategory;
