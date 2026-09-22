@@ -340,7 +340,7 @@ onShow(() => {
   flex-direction: column;
   align-items: center;
   padding: 44rpx $space-4;
-  background: linear-gradient(135deg, $c-gold, $c-gold);
+  background: linear-gradient(135deg, $c-gold, $c-gold-deep);
   border-radius: 36rpx;
   color: #ffffff;
   text-align: center;

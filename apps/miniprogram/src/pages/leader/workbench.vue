@@ -375,8 +375,11 @@ onUnmounted(() => {
   box-shadow: 0 10rpx 28rpx rgba(110, 84, 53, 0.18);
 
   // 送达提醒（暖红）
+  // ⚠️ 色停必须两头不同 —— 原为 `$c-warning, $c-warning`（同值 ⇒ 渲染是纯色，
+  //    「渐变」纯属摆设）。按本组其余三态的同一个写法对齐（`原色 → 加强档`，
+  //    如 `--delivered` 的 `$c-success → $c-ok-fg`）。此处过渡刻意很轻。
   &--arrived {
-    background: linear-gradient(135deg, $c-warning, $c-warning);
+    background: linear-gradient(135deg, $c-warning, $c-warn-fg);
 
     .war__btn {
       color: $c-warn-fg;

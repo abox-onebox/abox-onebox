@@ -15,11 +15,19 @@
  *    （不报错、不警告、位置空着）。⇒ 唯一可行写法是**统一 class 约定**：
  *       `<text class="abi abi-16">{{ I.chart }}</text>`
  *
- * ── 七条断言 ────────────────────────────────────────────────────────────────
+ * ── 八条断言 ────────────────────────────────────────────────────────────────
  *   ① 渲染区真 emoji == 0（模板 + 脚本**字符串**内；脚本注释不计）
  *   ② `I.xxx` 出现在「非档位承载位」== 0
  *        · 模板里 `{{ }}` 之外（属性表达式 `:text="..."` 等）
  *        · `<script>` 段内任意出现（脚本里无法承载档位 class）
+ *   ②-c **直取字符表** `ABOX_ICON_CHARS[...]`（import 语句除外）== 0
+ *        · 这类取值同时逃过 ① ② ③：名字里没有 `I.`（② 认不出），
+ *          `{{ ico }}` 里也没有 `I`（③ 的分母数的是 `{{ I… }}`）。
+ *          实测事故：`ab-empty-state` 用 `{{ ico }}` + script 段
+ *          `ABOX_ICON_CHARS[props.illustration]` 渲染插图，
+ *          在 ①②③ 全绿的情况下，**整个文件对门禁不可见**。
+ *        · 唯一许可形态：`import { ABOX_ICON_CHARS as I } from '@abox/shared-utils'`
+ *          （跨行 import 也算许可 —— 判据抹的是**整条 import 语句**，不是「以 import 开头的行」）
  *   ③ `<template>` 里每个 `{{ I... }}` 必须被档位 class 包裹
  *   ④ 档位 class 取值必须落在两族内（功能 16/20/24 · 装饰 14/28/34/40）
  *   ⑤ 档位定义与真源一致（两端 icons.scss 各 7 档、数值成对）
@@ -35,13 +43,16 @@
  *   · 不剥 HTML 注释，实测把 27 行 `<!-- ⭐ 版式基准 -->` 记成「渲染区 emoji」（假阳性）。
  *   · 取外层 `<template>` **必须深度配对** —— 非贪婪正则在第一个嵌套 `</template>` 处截断，
  *     实测 `withdraw.vue` 只截到 1128/12145 字符，后面 7 处未加档位的插值**全部漏扫**（假阴性）。
+ *   · 免检区（import 语句 / 注释）**必须是「语句级」而不是「行级」** —— 按「行首是否 import」
+ *     免检，一遇跨行花括号 import（`import {\n  ABOX_ICON_CHARS as I,\n} from '…'`）就会
+ *     把第二行判成违规（假阳性），而下一个人只会把它改成一行了事。
  *
  * ── 自证（必做：恒绿的检查比没有检查更糟）─────────────────────────────────
- * 四组合成样本：「必报的报得出 / 必不报的不报」，任一侧不符即 **exit 2**。
+ * 十四组合成样本：「必报的报得出 / 必不报的不报」，任一侧不符即 **exit 2**。
  *
  * 退出码：0 通过 · 1 有违规 · 2 自证失败（检查器自身坏掉 ⇒ 显式失败，不静默放行）
  */
-import { existsSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -76,6 +87,11 @@ const EXPECT = {
 
 // 图标引用：I.xxx / I['xxx'] / I[dynamic]
 const ICON_REF_RE = /\bI(?:\.([A-Za-z0-9_$-]+)|\[([^\]]+)\])/g;
+
+// ②-c 直取字符表
+const CHAR_TABLE_RE = /\bABOX_ICON_CHARS\b/g;
+/** 整条 import 语句（支持跨行花括号写法）；用于「语句级」免检 */
+const IMPORT_STMT_RE = /^[ \t]*import\b[\s\S]*?from[ \t]*(['"])[^'"]*\1[ \t]*;?/gm;
 
 // ⑦ 独立箭头元素
 const ARROW_CLS_RE = /arrow|chev|caret/i;
@@ -142,6 +158,11 @@ function blankComments(text, isVue) {
     i++;
   }
   return out.join('');
+}
+
+/** 把整条 import 语句用空格覆盖（**等长**，换行保留）⇒ 行号守恒、语句级免检 */
+function blankImports(text) {
+  return text.replace(IMPORT_STMT_RE, (m) => m.replace(/[^\n]/g, ' '));
 }
 
 /**
@@ -235,7 +256,18 @@ function scanFile(abs, rel) {
   const segs = segMap(raw);
   const stripped = blankComments(raw, true);
   const lines = raw.split('\n');
-  const res = { rel, emoji: [], bare: [], script: [], interpTotal: 0, tiered: 0, badTier: [], bareInterp: [], bareArrow: [] };
+  const res = {
+    rel,
+    emoji: [],
+    bare: [],
+    script: [],
+    charTable: [],
+    interpTotal: 0,
+    tiered: 0,
+    badTier: [],
+    bareInterp: [],
+    bareArrow: [],
+  };
 
   // ① 渲染区真 emoji（注释已剥成空格 ⇒ 自动排除注释）
   stripped.split('\n').forEach((sline, k) => {
@@ -289,6 +321,13 @@ function scanFile(abs, rel) {
   for (const m of stripped.matchAll(new RegExp(ICON_REF_RE.source, 'g'))) {
     const ln = lineOf(stripped, m.index);
     if (segs.get(ln) === 'script') res.script.push([rel, ln, m[0], (lines[ln - 1] ?? '').trim().slice(0, 90)]);
+  }
+
+  // ②-c 直取字符表（import 语句 + 注释已抹掉 ⇒ 剩下的都是「绕开别名的取值」）
+  const noImport = blankImports(stripped);
+  for (const m of noImport.matchAll(new RegExp(CHAR_TABLE_RE.source, 'g'))) {
+    const ln = lineOf(noImport, m.index);
+    res.charTable.push([rel, ln, (lines[ln - 1] ?? '').trim().slice(0, 90)]);
   }
 
   return res;
@@ -398,6 +437,12 @@ function probeArrow(txt) {
   return n;
 }
 
+/** ②-c 探针：直取字符表的次数（注释与整条 import 语句均不计） */
+function probeCharTable(txt) {
+  const t = blankImports(blankComments(txt, true));
+  return [...t.matchAll(new RegExp(CHAR_TABLE_RE.source, 'g'))].length;
+}
+
 function selftest() {
   const t = [];
   const bad = '<template><text :text="`${I.check} 走`">x</text><view>{{ I.check }}</view></template>';
@@ -422,11 +467,44 @@ function selftest() {
   t.push(['⑦ 独立带图标不应报', a2 === 0]);
   t.push(['⑦ 句内后缀不应报', a3 === 0]);
 
+  // ②-c 必报：script 段直取字符表（ab-empty-state 的真实形态）
+  t.push([
+    '②-c script 直取字符表应报',
+    probeCharTable('<script setup lang="ts">const ico = ABOX_ICON_CHARS[props.illustration];</script>') === 1,
+  ]);
+  // ②-c 必报：模板位直取字符表（同样逃过 ③ 的分母）
+  t.push([
+    '②-c 模板位直取字符表应报',
+    probeCharTable('<template><text class="abi abi-deco-34">{{ ABOX_ICON_CHARS.box }}</text></template>') === 1,
+  ]);
+  // ②-c 必不报：单行 import 是唯一许可形态
+  t.push([
+    '②-c 单行 import 不应报',
+    probeCharTable(
+      '<script setup lang="ts">\nimport { ABOX_ICON_CHARS as I, type AboxIconName } from \'@abox/shared-utils\';\nconst x = I.box;\n</script>',
+    ) === 0,
+  ]);
+  // ②-c 必不报：跨行花括号 import（按「行首是否 import」免检会在这里假阳性）
+  t.push([
+    '②-c 跨行 import 不应报',
+    probeCharTable(
+      '<script setup lang="ts">\nimport {\n  ABOX_ICON_CHARS as I,\n  type AboxIconName,\n} from \'@abox/shared-utils\';\nconst x = I.box;\n</script>',
+    ) === 0,
+  ]);
+  // ②-c 必不报：注释里的提及（本仓库大量注释会点名该常量）
+  t.push([
+    '②-c 注释里的提及不应报',
+    probeCharTable('<script setup lang="ts">\n// 不要写 ABOX_ICON_CHARS[x]，走别名\n/* ABOX_ICON_CHARS[y] */\nconst x = I.box;\n</script>') === 0,
+  ]);
+
   let ok = true;
-  for (const [name, pass] of t) {
-    if (!pass) ok = false;
-    console.log(`   [自证] ${pass ? 'OK ' : 'FAIL'} ${name}`);
+  let pass = 0;
+  for (const [name, p] of t) {
+    if (p) pass++;
+    else ok = false;
+    console.log(`   [自证] ${p ? 'OK ' : 'FAIL'} ${name}`);
   }
+  console.log(`   [自证] 汇总 ${pass}/${t.length}`);
   // 顺带清理：自证不需要落盘文件（纯内存探针）
   const tmp = join(SRC, '__selftest_icon_lock.vue');
   if (existsSync(tmp)) rmSync(tmp, { force: true });
@@ -448,6 +526,7 @@ function main() {
   const emoji = collect('emoji');
   const bare = collect('bare');
   const script = collect('script');
+  const charTable = collect('charTable');
   const bareInterp = collect('bareInterp');
   const badTier = collect('badTier');
   const bareArrow = collect('bareArrow');
@@ -463,16 +542,18 @@ function main() {
   dump('① 渲染区真 emoji（必须 0）', emoji, (r) => `${r[0]}:${r[1]}  ${r[2]} ${r[3]}  | ${r[4]}`);
   dump('②-a 模板属性表达式里的 I.xxx（必须 0）', bare, (r) => `${r[0]}:${r[1]}  ${r[2]}  | ${r[3]}`);
   dump('②-b script 段里的 I.xxx（必须 0）', script, (r) => `${r[0]}:${r[1]}  ${r[2]}  | ${r[3]}`);
+  dump('②-c 直取 ABOX_ICON_CHARS（import 除外，必须 0）', charTable, (r) => `${r[0]}:${r[1]}  | ${r[2]}`);
   dump('③ 未被档位包裹的 `{{ I... }}`（必须 0）', bareInterp, (r) => `${r[0]}:${r[1]}  ${r[2]}  class=${r[3]}  | ${r[4]}`);
   dump('④ 非法档位取值（必须 0）', badTier, (r) => `${r[0]}:${r[1]}  ${r[2]}`);
   dump('⑤ 档位定义偏差（必须 0）', tierIssues, (r) => r);
   dump('⑦ 独立箭头元素内的裸字形（必须 0）', bareArrow, (r) => `${r[0]}:${r[1]}  ${r[2]}  ${r[3]}  | ${r[4]}`);
 
   console.log(`\n③ 覆盖率：${tiered}/${interpTotal} 个模板插值图标被档位包裹`);
+  console.log(`②-c 直取字符表：${charTable.length} 处（唯一许可形态 = import 语句）`);
   console.log(`⑥ ${ab.level === 'ok' ? 'OK' : ab.level === 'warn' ? 'WARN' : 'BAD'} ${ab.msg}`);
 
   const bad_ =
-    emoji.length + bare.length + script.length + bareInterp.length + badTier.length + tierIssues.length + bareArrow.length + (ab.level === 'bad' ? 1 : 0);
+    emoji.length + bare.length + script.length + charTable.length + bareInterp.length + badTier.length + tierIssues.length + bareArrow.length + (ab.level === 'bad' ? 1 : 0);
   console.log(`\n${bad_ === 0 ? '✅ 全部通过' : `❌ 共 ${bad_} 项未达标`}`);
   return bad_ === 0 ? 0 : 1;
 }

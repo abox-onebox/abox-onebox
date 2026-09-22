@@ -70,13 +70,44 @@ STATE_ORIGINALS = ["$c-success", "$c-warning", "$c-info", "$c-gold"]
 COLOR_STATE = re.compile(r"(?<![-\w])color\s*:\s*(\$c-(?:success|warning|info|gold))\s*;")
 
 # 紫粉渐变 / 弹跳缓动 / 空洞文案（P0-2 / P0-3）
-PURPLE = re.compile(r"linear-gradient\([^)]*#(?:7C3AED|A855F7|EC4899|6366F1)", re.I)
+# 紫粉渐变 / 弹跳缓动 / 空洞文案（P0-2 / P0-3）
+#
+# ⚠️ 旧判据 `linear-gradient\([^)]*#(?:4 个 hex)` 有两处漏：
+#    ① `[^)]*` **过不了内层括号** —— `linear-gradient(135deg, rgba(124,58,237,.5), #EC4899)`
+#       里 `#EC4899` 落在 `rgba(...)` 的 `)` 之后 ⇒ 匹配不到 ⇒ 假阴性；
+#    ② 只认 4 个 Tailwind 规范色号 ⇒ `#818CF8`(indigo-400) → `#F472B6`(pink-400) 可绕过。
+# ⇒ 现为双轨：① 规范 4 色号（原判据，**不放松**，并把 radial/conic 一并纳入）；
+#    ② **族对**判据 —— 同一渐变内同时出现「靛/紫族」与「粉/品红族」即报（覆盖非规范色号）。
+#    P0-2 禁的是「Indigo→Pink 组合」，而靛蓝 `#6366F1` 等**作纯色**是明文允许的
+#    ⇒ 判据只看**同一个渐变声明内部**，纯色不拦（否则会把合法用法判红）。
+PURPLE = re.compile(r"(?:linear|radial|conic)-gradient\([^)]*#(?:7C3AED|A855F7|EC4899|6366F1)", re.I)
+PURPLE_GRADIENT = re.compile(r"(?:linear|radial|conic)-gradient\s*\(", re.I)
+# 「靛 / 紫」族与「粉 / 品红」族（Tailwind 常用色阶；小写、展开成 6 位后比对）
+FAMILY_INDIGO = {
+    "#6366f1", "#4f46e5", "#4338ca", "#3730a3", "#7c3aed", "#8b5cf6", "#a855f7",
+    "#818cf8", "#a78bfa", "#c084fc", "#e0e7ff", "#ede9fe",
+}
+FAMILY_PINK = {
+    "#ec4899", "#db2777", "#be185d", "#f472b6", "#f9a8d4", "#d946ef", "#c026d3",
+    "#e879f9", "#f0abfc", "#f43f5e", "#fb7185", "#fce7f3",
+}
+HEX_IN_TEXT = re.compile(r"#([0-9a-fA-F]{3,8})\b")
+RGB_IN_TEXT = re.compile(r"rgba?\(\s*(\d{1,3})\s*[,\s]\s*(\d{1,3})\s*[,\s]\s*(\d{1,3})", re.I)
 BOUNCE = re.compile(r"cubic-bezier\(\s*0?\.68\s*,\s*-0?\.55")
+
+# 渐变：`linear-gradient(…)` 的**两个色停同值** ⇒ 渲染就是纯色（「假渐变」）
+# ⚠️ 注释写着「米金渐变」而代码渲染成纯色，两边都不报错 —— 只有机器扫得出来。
+GRADIENT = re.compile(r"linear-gradient\s*\(", re.I)
+# 方向/角度不是色停：`135deg` / `0.5turn` / `to right`（不剔掉会让判据恒不报）
+GRADIENT_DIR = re.compile(r"^(?:-?\d+(?:\.\d+)?(?:deg|grad|rad|turn)|to\s+(?:top|bottom|left|right)\b)", re.I)
 EMPTY_COPY = re.compile(r"Lorem ipsum|Welcome to (?:Our|the) App|Sign up today", re.I)
 
-# 功能图标三档 / 装饰插图四档（规格 §五）
+# 功能图标三档（规格 §五）
+# ⚠️ 装饰插图四档（14/28/34/40）**刻意不在本文件判**：它已有一处唯一执行点 ——
+#    `scripts/check-icon-lock.mjs` ④（两族档位取值合法性）+ ⑤（两端 icons.scss 数值）。
+#    这里曾留一句 `ILLUS_SIZES = {14, 28, 34, 40}`，**全文件 0 引用** ——
+#    死常量会让人误以为「本文件也管装饰档」，改档位时白跑甚至改错地方。
 ICON_SIZES = {16, 20, 24}
-ILLUS_SIZES = {14, 28, 34, 40}
 # 团长等级四档（=`abl`/LeaderLevel 的取值）
 LEVELS = ("trainee", "formal", "gold", "chief")
 
@@ -243,6 +274,75 @@ def check_md_emphasis(corpus):
     return hits
 
 
+def _paren_at(txt: str, start: int):
+    """从 `start` 之后第一个 `(` 起，按**深度配平**取到配对的 `)`（含两端）。
+
+    与 `brace_at` 同源，只是括号种类不同：`linear-gradient(90deg, rgba(0,0,0,.2), …)`
+    里第一个 `)` 并不闭合最外层，不做配平会截断 ⇒ 判据失真。
+    """
+    i = txt.find("(", start)
+    if i < 0:
+        return None
+    depth, j = 0, i
+    while j < len(txt):
+        if txt[j] == "(":
+            depth += 1
+        elif txt[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return txt[i : j + 1]
+        j += 1
+    return None
+
+
+def _split_top_commas(s: str):
+    """按**顶层**逗号切分（`rgba(0,0,0,.2)` 内部的逗号不算分隔符）。"""
+    out, cur, depth = [], [], 0
+    for ch in s:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    out.append("".join(cur))
+    return [x.strip() for x in out]
+
+
+def check_fake_gradient(corpus):
+    """「假渐变」：`linear-gradient(135deg, $c-gold, $c-gold)` —— 两色停**同值** ⇒ 纯色。
+
+    为什么值得单列一道：注释写着「米金渐变」，渲染出来却是**纯色**，而两边都不报错。
+    S1–S8 批实测 2 处（`pages/index/index.vue` hero 卡 / `pages/leader/share.vue` 渐变大卡），
+    与同批 13 处 `$c-gold → $c-gold-deep` 并存 —— 人眼逐页比对是看不出来的。
+
+    ⚠️ 方向/角度（`135deg` / `to right`）不是色停，必须先剔掉，否则 `(135deg, X, X)`
+    会数出 3 个「色停」而前两个永远不同 ⇒ **恒不报**（等于没有检查）。
+    ⚠️ 色停可带位置（`#fff 0%`）⇒ 只取第一个 token 比对。
+    ⚠️ 颜色可以是函数式（`rgba(0,0,0,.2)`）⇒ 必须按**顶层**逗号切，不能裸 `split(',')`。
+    返回 (hits, samples)；samples = 渐变声明总数（0 由 gate() 记 N/A，不许静默变绿）。
+    """
+    hits, seen = [], 0
+    for p, txt in corpus:
+        body = strip_comments(txt, p.suffix == ".vue")
+        for m in GRADIENT.finditer(body):
+            block = _paren_at(body, m.start())
+            if not block:
+                continue
+            stops = [s for s in _split_top_commas(block[1:-1])
+                     if s and not GRADIENT_DIR.match(s)]
+            if len(stops) < 2:
+                continue
+            seen += 1
+            colors = [re.split(r"\s+", s)[0].lower() for s in stops]
+            if len(set(colors)) == 1:
+                hits.append((p, txt.count(chr(10), 0, m.start()) + 1,
+                             f"同色渐变：{colors[0]} 两头同值 ⇒ 假渐变（渲染为纯色）"))
+    return hits, seen
+
 def iter_src(root: Path, exts=(".vue", ".ts", ".js", ".scss", ".css")):
     for p in sorted(root.rglob("*")):
         if p.is_file() and p.suffix in exts and "node_modules" not in p.as_posix():
@@ -400,12 +500,65 @@ def check_icon_tiers():
     return tier_defects(p.read_text(encoding="utf-8"))
 
 
+def _gradient_colors(body: str):
+    """把一段渐变声明里的颜色归一成 `{6 位小写 hex}`（保序去重）。
+
+    ⚠️ 必须按**顶层**逗号切（`rgba(0,0,0,.5)` 里的逗号不是分隔符），
+    且 3/4 位简写要展开 —— 否则 `#abc` 与 `#aabbcc` 会被当成两个不同色。
+    """
+    out = []
+    for seg in _split_top_commas(body):
+        h = HEX_IN_TEXT.search(seg)
+        if h:
+            v = h.group(1).lower()
+            if len(v) == 4:
+                v = v[:3]                      # #abcd → 丢掉 alpha
+            if len(v) == 3:
+                v = "".join(c * 2 for c in v)  # #abc → #aabbcc
+            out.append("#" + v[:6])
+            continue
+        r = RGB_IN_TEXT.search(seg)
+        if r:
+            out.append("#%02x%02x%02x" % tuple(int(g) for g in r.groups()))
+    seen, uniq = set(), []
+    for c in out:
+        if c not in seen:
+            seen.add(c)
+            uniq.append(c)
+    return uniq
+
+
+def fake_purple_hits(txt: str):
+    """族对判据：同一渐变内**同时**出现靛/紫族与粉/品红族 ⇒ 返回命中行号。
+
+    用**配平括号**取渐变内容（`[^)]*` 在 `rgba(...)` 处会截断），再按顶层逗号取色。
+    """
+    lines = []
+    for m in PURPLE_GRADIENT.finditer(txt):
+        block = _paren_at(txt, m.start())
+        if not block:
+            continue
+        cols = _gradient_colors(block[1:-1])
+        if any(c in FAMILY_INDIGO for c in cols) and any(c in FAMILY_PINK for c in cols):
+            lines.append(txt.count("\n", 0, m.start()) + 1)
+    return lines
+
+
 def check_theme(corpus):
     hits = []
     for p, txt in corpus:
+        # ⚠️ 必须剥注释：注释里引用旧色号**不渲染**，算进来就是假阳性
+        #    （本仓库已两次踩到「注释里引用旧值反而触发判据」；行号由等长替换保证可回溯）。
+        body = strip_comments(txt, p.suffix == ".vue")
         for rx, tag in ((PURPLE, "紫粉渐变"), (BOUNCE, "弹跳缓动"), (EMPTY_COPY, "空洞文案")):
-            for m in rx.finditer(txt):
-                hits.append((tag, p, txt.count("\n", 0, m.start()) + 1))
+            for m in rx.finditer(body):
+                hits.append((tag, p, body.count("\n", 0, m.start()) + 1))
+        # 规范色号已命中的行不重复计数（同一处违规只报一次）
+        canonical = {body.count("\n", 0, m.start()) + 1 for m in PURPLE.finditer(body)}
+        for ln in fake_purple_hits(body):
+            if ln in canonical:
+                continue
+            hits.append(("紫粉渐变（靛↔粉非规范色号）", p, ln))
     return hits
 
 
@@ -437,7 +590,13 @@ def check_spec_landing():
 
     # ③ 空状态装饰插图（34px 通道）+ 各处已配
     es = read(MP / "components/ab-empty-state/index.vue")
-    facts["空状态插图 34px"] = "font-size: 68rpx" in es
+    # ⚠️ 断言锚定**唯一真源**：尺寸由全局档位 class `.abi-deco-34` 承载
+    #    （`styles/icons.scss` 里 `.abi-deco-34 { font-size: 68rpx; }`）。
+    #    早先这里断言字面量 `"font-size: 68rpx"` —— 而那正是**第二份表述**：
+    #    组件内自己再写一句 font-size，档位类改不动它，且该渲染点对
+    #    `icons:lock` 的 `{{ I… }}` 计数**不可见**（S9 已收口，见该门禁 ②-c）。
+    facts["空状态插图走装饰档 abi-deco-34"] = "abi-deco-34 ab-empty-state__ico" in es
+    facts["空状态插图不另写 font-size（单一表述）"] = not re.search(r"__ico\s*\{[^}]*font-size", es)
     facts["空状态插图走 AboxIconName"] = "AboxIconName" in es
 
     # ④ 时间线三态（端上）
@@ -585,6 +744,22 @@ def selftest():
                           ".abi-24 { font-size: 48rpx; }")), 1)
 
     # ⑤ 主题红线
+    def _th(txt):
+        return len(check_theme([(Path("a.vue"), txt)]))
+
+    # ⑤-b S9 加固：旧判据跨不过内层括号 + 只认 4 个规范色号
+    case("应报：跨内层括号的规范色号（旧 [^)]* 判据漏报）",
+         _th("background:linear-gradient(135deg,rgba(124,58,237,.5),#EC4899);"), 1)
+    case("应报：非规范色号的靛→粉族对（#818CF8 → #F472B6）",
+         _th("background:linear-gradient(135deg,#818CF8,#F472B6);"), 1)
+    case("应报：radial 同类组合",
+         _th("background:radial-gradient(circle,#8B5CF6,#DB2777);"), 1)
+    case("不报：靛蓝作纯色（P0-2 明文允许，判据只看渐变内部）",
+         _th("background:#6366F1;"), 0)
+    case("不报：族外颜色渐变",
+         _th("background:linear-gradient(135deg,#6e5435,#936f3a);"), 0)
+    case("不报：注释里的紫粉（注释不渲染）",
+         _th("// linear-gradient(135deg,#7C3AED,#EC4899)"), 0)
     case("应报：紫粉渐变",
          len(check_theme([(Path("a.scss"), "background:linear-gradient(135deg,#7C3AED,#EC4899);")])), 1)
     case("应报：弹跳缓动",
@@ -650,6 +825,21 @@ def selftest():
              ".ab-layout.is-narrow { " + BOTH
              + " .el-radio-button { &__inner { min-height: 30px; } } }", need_radio=True)), 1)
 
+    # ⑨ 假渐变（两头同值 = 纯色，注释却写「渐变」）—— 本批实测 2 处
+    def _fg(txt):
+        h, seen = check_fake_gradient([(Path("a.vue"), txt)])
+        return (len(h), seen)
+
+    case("应报：两头同值的假渐变", _fg("background: linear-gradient(135deg, $c-gold, $c-gold);"), (1, 1))
+    case("不报：真渐变", _fg("background: linear-gradient(135deg, $c-gold, $c-gold-deep);"), (0, 1))
+    case("应报：带位置百分比的假渐变（去位置后再比）",
+         _fg("background: linear-gradient(to right, #fff 0%, #fff 100%);"), (1, 1))
+    case("应报：函数式颜色里的逗号不得被误切（同色 rgba ×2）",
+         _fg("background: linear-gradient(90deg, rgba(0,0,0,.2), rgba(0,0,0,.2));"), (1, 1))
+    case("不报：函数式颜色两头不同",
+         _fg("background: linear-gradient(90deg, rgba(0,0,0,.2), rgba(255,255,255,.2));"), (0, 1))
+    case("不报且不计样本：注释里的渐变不算数",
+         _fg("// linear-gradient(135deg, $c-gold, $c-gold)"), (0, 0))
     print()
     if fails:
         print(f"自证不通过 ❌ 失效判据={fails}")
@@ -730,13 +920,14 @@ def main():
          narrow_touch_hits("views/supplier/takeout-links.vue"), 1)
     gate(9, "窄屏触摸目标 · commission（§9.3 控件 + §9.4 状态按钮 44px）",
          narrow_touch_hits("views/finance/commission.vue", True), 1)
+    gate(10, "同色渐变（两个色停同值 = 假渐变/纯色）", *check_fake_gradient(corpus))
 
     print("  ---- 规格落点存在性（防「文档写了、代码没做」）----")
     for k, v in check_spec_landing().items():
         fact(k, v)
 
     print()
-    total = 9 + len(check_spec_landing())   # 9 道扫描闸门 + 落点事实条目
+    total = 10 + len(check_spec_landing())   # 10 道扫描闸门 + 落点事实条目
     passed = total - fail - na
     print(f"门禁结果：{passed}/{total} 通过"
           + (f"（另 {na} 项无样本 · 判据未生效，不计入分母）" if na else "")

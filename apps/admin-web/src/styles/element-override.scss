@@ -68,7 +68,16 @@
   --el-text-color-regular: #{$c-text};
   --el-border-color: #{$c-border};
   --el-border-radius-base: 8px;
-  --el-font-family: #{$font-family-display};
+  // ⚠️ 这里**曾经**写的是 `#{$font-family-display}`（楷体栈）—— 两处都不对：
+  //    ① 与 S9 裁定相矛盾：Element 承载的是**正文 / 表格 / 表单**，按裁定走无衬线，
+  //       楷体只留标题 / 品牌字 / 金额大字；
+  //    ② 这个变量 Element **自己不消费** —— 实测 `element-plus/dist/index.css` 里
+  //       `var(--el-font-family)` 出现 **0 次**（它把字体栈直接写死在 `font-family` 上，
+  //       另有 3 处 `font-family: inherit`）。它只在 `:root` 里**定义**了这个变量。
+  //    ⇒ 它今天是「改了也看不出」的死声明；但 EP 把它列在主题变量里，将来版本一旦开始消费，
+  //      楷体会**静默**铺满全部表单与表格 ⇒ 现在就把它接到正确的栈上（与 EP 自身的
+  //      sans 默认同义），而不是删掉留个坑。
+  --el-font-family: #{$font-family-base};
 }
 
 // ============================================================

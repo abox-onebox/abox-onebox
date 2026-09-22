@@ -24,6 +24,9 @@
  * ── 判据 ────────────────────────────────────────────────────────────────────
  *   ① CI 只许通过 `node scripts/gate.mjs <别名>` 调门禁；且 `all` 与 `verify`
  *      必须**全覆盖**到 `gate.mjs` 里实际存在的门禁（漏一道即红）。
+ *      ⚠️ **只认 `run:` 行**（行内式与块状式都算）—— 注释里写一遍
+ *      `node scripts/gate.mjs all` 曾让本判据**恒真**：那条命令从未被执行，
+ *      而检查读的是整个文件文本，于是「CI 装作覆盖」这件事**连检查本身都一起骗过去了**。
  *   ② CI 的 `run:` 行里**不得**再出现逐包门禁命令（`pnpm lint|typecheck|test|build*`、
  *      裸 `eslint` / `jest` / `tsc` / `vue-tsc` / `prettier` / `nest build` / `vite build` /
  *      `uni build`）—— 那就是「第二份清单」的起点。
@@ -33,7 +36,8 @@
  *      （标记由本脚本消费；文档正文其余地方一律**不要再写死条数**。）
  *
  * ── 自证（必做，恒绿的检查比没有检查更糟）────────────────────────────────────
- * 内置 6 个合成样本：「必报的报得出 / 必不报的不报」，任一侧不符即 **exit 2**。
+ * 内置 14 个合成样本：「必报的报得出 / 必不报的不报」，任一侧不符即 **exit 2**。
+ * 样本数由脚本**自算后打印**，不写死（写死的计数本身就是本文件要治的病）。
  *
  * 退出码：0 通过 · 1 有违规 · 2 自证失败（检查器自身坏掉 ⇒ 显式失败，不静默放行）
  */
@@ -67,7 +71,7 @@ const FORBIDDEN = [
     why: '裸调门禁工具绕过了 `gate.mjs` 的统一 env / outDir 处置',
   },
   { re: /(^|[\s'"/])(nest|vite)\s+build(\s|$)/, why: '三端构建应走 `gate.mjs build:api|build:admin' },
-  { re: /(^|[\s'"/])uni\s+build(\s|$)/, why: '小程序构建应走 `gate.mjs build:mp`' },
+  { re: /(^|[\s'"/])uni\s+build(\s|$)/, why: '小程序构建应走 `gate.mjs build:mp' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,12 +102,49 @@ function expandNames(names, truth) {
 // 判据实现（纯函数：吃文本、吐发现 —— 便于用合成样本自证）
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** ① CI 覆盖：调了哪些别名、是否覆盖 `all` + `verify` */
+/**
+ * 提取**真正会被执行**的脚本行（① 与 ② 共用，避免「同一件事两份取数表述」）
+ *
+ * 只认 YAML 的 `run:` 键：行内式（`- run: node x`）与块状式（`run: |` + 更深缩进正文）。
+ * ⚠️ 注释行一律不取 —— 这条正是本判据曾经恒真的根因：ci.yml 顶部的说明注释里
+ *    写了 `node scripts/gate.mjs all` / `… verify`，而真正执行的 `run:` 行被换掉，
+ *    判据照旧报告「已全覆盖」。
+ */
+function extractRunScripts(ciText) {
+  const out = [];
+  const lines = ciText.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^([ \t]*)(?:-[ \t]*)?run:[ \t]*(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    const indent = m[1].length;
+    const inline = m[2].trim();
+    // 块状式：`run: |` / `run: >` / `run: |-` / `run: |2` …（正文在后续更深缩进行）
+    if (/^[|>][-+]?\d*$/.test(inline)) {
+      for (let j = i + 1; j < lines.length; j++) {
+        const raw = lines[j];
+        if (!raw.trim()) {
+          out.push(''); // 块内空行：不是命令，占位以保持顺序
+          continue;
+        }
+        if (raw.length - raw.trimStart().length <= indent) break; // 缩进回到本层 ⇒ 块结束
+        out.push(raw.trim());
+      }
+      continue;
+    }
+    out.push(inline);
+  }
+  return out;
+}
+
+/** ① CI 覆盖：调了哪些别名、是否覆盖 `all` + `verify`（只认 `run:` 行） */
 function checkCiCoverage(ciText, truth) {
-  const used = [...ciText.matchAll(/gate\.mjs[ \t]+([A-Za-z:_-]+)/g)].map((m) => m[1]);
+  const used = [];
+  for (const line of extractRunScripts(ciText)) {
+    for (const m of line.matchAll(/gate\.mjs[ \t]+([A-Za-z:_-]+)/g)) used.push(m[1]);
+  }
   const out = [];
   if (!used.length) {
-    out.push('CI 里没有任何 `node scripts/gate.mjs …` 调用 —— 门禁在 CI 里等于不存在');
+    out.push('CI 里没有任何 `node scripts/gate.mjs …` 调用（注释里的不算）—— 门禁在 CI 里等于不存在');
     return out;
   }
   const known = new Set([...truth.gates, ...Object.keys(truth.aliases)]);
@@ -119,11 +160,11 @@ function checkCiCoverage(ciText, truth) {
   return out;
 }
 
-/** ② CI 不得另抄一份门禁清单 */
+/** ② CI 不得另抄一份门禁清单（同一个取数函数，口径与 ① 强制一致） */
 function checkCiNoDuplicate(ciText) {
   const out = [];
-  const runs = [...ciText.matchAll(/^[ \t]*(?:-[ \t]*)?run:[ \t]*(.+)$/gm)].map((m) => m[1].trim());
-  for (const line of runs) {
+  for (const line of extractRunScripts(ciText)) {
+    if (!line) continue;
     if (/^pnpm\s+install\b/.test(line)) continue; // 装依赖不是门禁
     if (/gate\.mjs/.test(line)) continue; // 正规路径
     for (const { re, why } of FORBIDDEN) {
@@ -163,10 +204,15 @@ const SYNTH_TRUTH = {
 
 function selfTest() {
   const bad = [];
+  let n = 0;
   const t = (name, cond, detail = '') => {
+    n++;
     if (!cond) bad.push(`${name}${detail ? `（${detail}）` : ''}`);
   };
+  /** 把若干命令行折成「行内式 run:」的 YAML 片段 */
   const runs = (text) => text.split('\n').map((c) => `      - run: ${c}`).join('\n');
+  /** 同上，但折成「块状式 run: |」（正文缩进一层） */
+  const block = (text) => `      - run: |\n${text.split('\n').map((c) => `          ${c}`).join('\n')}`;
 
   // ① 必不报：完整覆盖
   t(
@@ -180,6 +226,29 @@ function selfTest() {
   );
   // ① 必报：完全没有 gate.mjs 调用
   t('① 无任何调用应报出', checkCiCoverage(runs('pnpm lint'), SYNTH_TRUTH).length > 0);
+  // ① 必报：注释里的调用**不构成覆盖**（本批修复的那个假阴性）
+  t(
+    '① 注释里的 gate.mjs 调用不算覆盖',
+    checkCiCoverage(
+      '# 本 CI 会跑 node scripts/gate.mjs all / node scripts/gate.mjs verify\n      - run: echo 跳过门禁',
+      SYNTH_TRUTH,
+    ).length > 0,
+  );
+  // ① 必报：注释声明覆盖 + run 实际跳过 verify（真实事故的最小复刻）
+  t(
+    '① 注释声明覆盖但 run 跳过 ⇒ 必须报出',
+    checkCiCoverage(
+      '      - run: node scripts/gate.mjs all\n' +
+        '      - run: echo 跳过 verify\n' +
+        '# 说明：另有一条 node scripts/gate.mjs verify',
+      SYNTH_TRUTH,
+    ).some((x) => /未覆盖 `verify`/.test(x)),
+  );
+  // ① 必不报：块状式 run 里的调用应算覆盖
+  t(
+    '① 块状 run 里的调用应算覆盖',
+    checkCiCoverage(block('node scripts/gate.mjs all\nnode scripts/gate.mjs verify'), SYNTH_TRUTH).length === 0,
+  );
 
   // ② 必不报：gate.mjs + pnpm install
   t(
@@ -191,7 +260,12 @@ function selfTest() {
   // ② 必报：裸 jest
   t('② 裸 jest 应报出', checkCiNoDuplicate(runs('npx jest --ci')).length === 1);
   // ② 必不报：注释行里的历史描述（不是 run: 行）
-  t('② 注释里的 pnpm lint 应不报', checkCiNoDuplicate('# 旧 CI 曾写 pnpm lint / tsc\n      - run: node scripts/gate.mjs all').length === 0);
+  t(
+    '② 注释里的 pnpm lint 应不报',
+    checkCiNoDuplicate('# 旧 CI 曾写 pnpm lint / tsc\n      - run: node scripts/gate.mjs all').length === 0,
+  );
+  // ② 必报：块状式 run 里的逐包命令（此前是取数盲区）
+  t('② 块状 run 里的 pnpm lint 应报出', checkCiNoDuplicate(block('pnpm lint\nnode scripts/gate.mjs all')).length === 1);
 
   // ③ 必报：标记过期 / 缺失
   t('③ 标记过期应报出', checkDocMarker('<!-- gate-count: all=3 verify=1 -->', SYNTH_TRUTH, '样本').length === 1);
@@ -204,7 +278,7 @@ function selfTest() {
     for (const b of bad) console.error(`   · ${b}`);
     process.exit(2);
   }
-  console.log(`✔ 自证 10/10：必报的报得出、必不报的不报（合成样本）`);
+  console.log(`✔ 自证 ${n}/${n}：必报的报得出、必不报的不报（合成样本）`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

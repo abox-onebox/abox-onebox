@@ -21,11 +21,14 @@
 
     <el-container>
       <el-header class="ab-layout__header">
+        <!-- ⚠️ 标签必须是**静态的「打开菜单」**：这个按钮只负责**打开** —— 抽屉展开时它被
+             遮罩盖住、根本点不到，所以写「收起菜单」是在描述一个用户做不到的动作（读屏
+             用户会被误导）。关闭走遮罩点击 / Esc，由 el-drawer 自己处理。 -->
         <el-button
           v-if="narrow"
           text
           class="ab-layout__burger"
-          :aria-label="menuOpen ? '收起菜单' : '展开菜单'"
+          aria-label="打开菜单"
           @click="menuOpen = true"
         >
           <AbIcon name="menu" :size="24" />
@@ -61,7 +64,7 @@
  * 其余 40 余个视图在窄屏下保持桌面布局（可横向滚动）—— 这是本批**明确不做**全站响应式的落点。
  * 断点值取自 `useNarrow()`（唯一真源），此处不写第二份数字。
  */
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessageBox } from 'element-plus';
 
@@ -80,6 +83,15 @@ const { narrow } = useNarrow();
 
 /** 窄屏抽屉开关（仅窄屏渲染抽屉，见模板 `v-if="narrow"`） */
 const menuOpen = ref(false);
+
+/**
+ * ⚠️ 抽屉是 `v-if` 渲染的：`narrow` 变 false 时抽屉组件被卸载，但 **`menuOpen` 不会跟着复位**
+ *    （`ref` 活在 setup 里，不随子组件卸载）。不手动复位的话，回到窄屏时抽屉会以**上一轮的
+ *    展开态**直接弹出来 —— 用户看到一个自己从没点开过的抽屉。
+ */
+watch(narrow, (isNarrow) => {
+  if (!isNarrow) menuOpen.value = false;
+});
 
 const navGroups = computed(() => perm.navGroups);
 

@@ -204,9 +204,22 @@ const dialog = reactive({
  */
 const auth = useAuthStore();
 const isSuperAdmin = computed(() => auth.role === 'super_admin');
-const roleOptions = computed(() =>
-  isSuperAdmin.value ? ADMIN_ROLES : ADMIN_ROLES.filter((r) => r.value !== 'super_admin'),
-);
+const roleOptions = computed(() => {
+  const base = isSuperAdmin.value
+    ? ADMIN_ROLES
+    : ADMIN_ROLES.filter((r) => r.value !== 'super_admin');
+  // ⚠️ 必须**总是包含当前值**：非超管编辑一个超管账号时 `form.role === 'super_admin'`，
+  //    而 `base` 里刻意没有它（理由见上面那段注释）。`el-select` 找不到匹配的 option 时
+  //    会把**原始值当文本显示** ⇒ 屏幕上直接冒出枚举名 `super_admin`（用户看不懂，
+  //    且与表格「角色」列用的 `roleLabel` 不一致）。
+  //    取值用 `dialog.targetRole`（编辑目标账号的角色）而不是 `form.role`：`form` 在本行
+  //    之后才声明，直接引用会踩「块级变量先用后声明」；而 `dialog` 已在上方声明。
+  // ⚠️ 这不会开出「非超管授予超管」的口子：该分支只在 `dialog.targetRole === 'super_admin'`
+  //    时触发，而那正是 `roleLocked` 为真的情形 —— 下拉同时是 `disabled` 的。
+  const cur =
+    dialog.mode === 'edit' ? ADMIN_ROLES.find((r) => r.value === dialog.targetRole) : undefined;
+  return cur && !base.some((r) => r.value === cur.value) ? [...base, cur] : base;
+});
 /** 正在编辑一个超管账号、而自己不是超管 → 角色不可改（改了必被服务端拒） */
 const roleLocked = computed(
   () => dialog.mode === 'edit' && !isSuperAdmin.value && dialog.targetRole === 'super_admin',
