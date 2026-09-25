@@ -34,7 +34,8 @@
     <!-- 联系方式：一律走客服页，**不在此硬编码微信号 / 电话**（换号只需运营改配置） -->
     <view class="foot">
       <text class="foot__text"
-        >如对本文有疑问，或需要行使查询、更正、注销等权利，可通过客服与我们联系。</text
+        >如对本文有疑问，可在「我的 → 设置 →
+        账号注销」自助注销账号；其他查询、更正等权利可通过客服与我们联系。</text
       >
       <button class="foot__btn" hover-class="foot__btn--hover" @tap="goSupport">联系客服</button>
     </view>

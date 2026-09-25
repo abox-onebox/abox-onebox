@@ -389,14 +389,18 @@ function tapSwitchLeader(): void {
  * 设置（原型 P8 `showSettings` 弹窗）
  *
  * ⚠️ 原型里「设置」是**含可点条目的弹窗**，而 `uni.showModal` 只有两个按钮、装不下条目
- *    ⇒ 改用 `uni.showActionSheet` 承载同样四条（不在 S6 组件规格之前新增弹出层组件）。
+ *    ⇒ 改用 `uni.showActionSheet` 承载同样条目（不在 S6 组件规格之前新增弹出层组件）。
  *
  * ⭐ **M5-18：用户协议 / 隐私政策从此可点** —— 走**原生页**
  *    `pages/agreement/agreement?type=user|privacy`，正文唯一真源在 `@/constants/agreements`。
  *    在此之前这两条**刻意不给可点入口**（正文没落地，点开就是假页面）；正文落地后该约束解除。
  *    一期**不设** `GET /me/agreements` 端点（见《接口规范》§1.8）。
+ *
+ * ⭐ **M5-20：第 5 条「账号注销」** —— 跳原生页 `pages/account-cancel/account-cancel`，
+ *    与协议页并列。它是**微信提审硬条件**（提供账号注销入口），
+ *    此前只有协议正文里一句「找客服申请」（M6 `K53`：「已在册、未排期」）。
  */
-const SETTINGS_ACTIONS = ['平台客服微信号', '用户协议', '隐私政策', '关于 ABox 一盒'];
+const SETTINGS_ACTIONS = ['平台客服微信号', '用户协议', '隐私政策', '关于 ABox 一盒', '账号注销'];
 
 function showSettings(): void {
   uni.showActionSheet({
@@ -406,6 +410,7 @@ function showSettings(): void {
       else if (tapIndex === 1) goAgreement('user');
       else if (tapIndex === 2) goAgreement('privacy');
       else if (tapIndex === 3) showAbout();
+      else if (tapIndex === 4) goAccountCancel();
     },
   });
 }
@@ -413,6 +418,17 @@ function showSettings(): void {
 /** 协议页（原生）。`type` 非法时由 `toAgreementType` 回退，端上不会白屏 */
 function goAgreement(type: 'user' | 'privacy'): void {
   navigateTo(`/pages/agreement/agreement?type=${type}`);
+}
+
+/**
+ * 账号注销页（原生 · M5-20 · **提审硬条件**）
+ *
+ * ⚠️ 入口**必须留在「设置」里**，不要挪进二级页或客服对话里：
+ *    提审判据是「用户能否**找得到**注销入口」（《提审自检清单 v1.2》第 10 条）。
+ *    与《用户协议》《隐私政策》同列，是这个弹窗里唯一被审核逐条点开的一组。
+ */
+function goAccountCancel(): void {
+  navigateTo('/pages/account-cancel/account-cancel');
 }
 
 /**

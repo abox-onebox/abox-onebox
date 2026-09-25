@@ -97,6 +97,10 @@
     {
       "path": "pages/agreement/agreement",
       "style": { "navigationBarTitleText": "用户协议" }
+    },
+    {
+      "path": "pages/account-cancel/account-cancel",
+      "style": { "navigationBarTitleText": "账号注销" }
     }
   ],
   "globalStyle": {

@@ -4,7 +4,8 @@
  * M4-3 实装 **订阅授权清单**（U18）；M5-10 补 **U13 余额 / U14 余额明细**。
  * U12 用户信息**不在本文件** —— 由 A2 `GET /auth/me`（`api/auth.ts` 的 `fetchMe`）
  * 承担同一份数据，端上不要为它再包一层。
- * U15 订阅上报一期未实装；U16 协议正文待补。
+ * U15 订阅上报一期未实装；U16 协议正文已由 M5-18 实装（`constants/agreements.ts`，**不经接口**）；
+ * M5-20 补 **U19 账号注销**（`POST /me/cancel` · 提审硬条件）。
  */
 import { http, query } from './request';
 
@@ -130,4 +131,51 @@ export interface SubscribeTemplateList {
  */
 export function fetchSubscribeTemplates(): Promise<SubscribeTemplateList> {
   return http.get<SubscribeTemplateList>('/me/subscribe/templates');
+}
+
+// ---------------------------------------------------------------------------
+// U19 账号注销（M5-20 · 提审硬条件）
+// ---------------------------------------------------------------------------
+
+/**
+ * 注销确认词（**服务端为准**，这里只是给输入框做提示与本地预校验）
+ *
+ * ⚠️ 服务端校验的是它自己那份常量（`ACCOUNT_CANCEL_CONFIRM_TEXT`）。
+ *    两份不一致 ⇒ 请求报 `10001`，**是看得见的失败**，不是静默放行 ——
+ *    所以允许各写一份，但不允许端上「跳过校验直接提交」。
+ */
+export const ACCOUNT_CANCEL_CONFIRM_TEXT = '注销账号';
+
+export interface AccountCancelResult {
+  /** 注销时刻（UTC ISO） */
+  canceledAt: string;
+  /** 注销后的 `ab_user.status`（3） */
+  status: number;
+  /** 被清空的字段名（服务端下发，端上不自造一份清单） */
+  clearedFields: string[];
+  /** 口径说明（服务端下发：不可登录 / 已匿名化 / 资金记录依法保留 / 恢复走客服） */
+  note: string;
+}
+
+/** 暂不能注销时，服务端给出的闸门键（与文案分离，端上不解析中文） */
+export type AccountCancelBlockReason = 'leader' | 'balance' | 'orders';
+
+/**
+ * U19 · 注销当前账号（**不可逆**）
+ *
+ * ## ⚠️ 调用方必须先做二次确认
+ *
+ * 服务端只认 `confirmText` 逐字相等。端上**不得**把确认词写死进按钮点击回调
+ * （那样一次误触就注销了），必须由用户**手打**出来 —— 见注销页的输入框。
+ *
+ * ## ⚠️ 这是一个**不幂等**的写操作
+ *
+ * 重复调用返回 `20014`（已注销），**不是**成功。端上收到 20014 应直接把页面
+ * 切到「已注销」终态，而不是提示「请重试」。
+ */
+export function cancelAccount(payload: {
+  confirmText: string;
+  reason?: string;
+}): Promise<AccountCancelResult> {
+  return http.post<AccountCancelResult>('/me/cancel', payload);
 }

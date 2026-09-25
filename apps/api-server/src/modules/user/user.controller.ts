@@ -1,10 +1,12 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { CurrentUser, JwtPayload } from '../../common/decorators/auth.decorator';
 import { BizConfigService } from '../../common/services/biz-config.service';
 import { LeaderMoneyService } from '../../common/services/leader-money.service';
 import { UserBalanceLogQueryDto } from './dto/user-balance.dto';
+import { UserCancelDto } from './dto/user-cancel.dto';
+import { UserService } from './user.service';
 
 /**
  * 个人中心（`/me/*`）· 《接口规范》§3.5
@@ -52,6 +54,8 @@ export class UserController {
   constructor(
     private readonly bizConfig: BizConfigService,
     private readonly leaderMoney: LeaderMoneyService,
+    /** M5-20：U19 账号注销的**唯一写点**（见 `UserService.cancelAccount` 头注） */
+    private readonly userService: UserService,
   ) {}
 
   @Get('support')
@@ -141,5 +145,36 @@ export class UserController {
   })
   async balanceLogs(@CurrentUser() user: JwtPayload, @Query() q: UserBalanceLogQueryDto) {
     return this.leaderMoney.logsOf(user.sub, q);
+  }
+
+  /**
+   * U19 · 账号注销（M5-20）· **提审硬条件**
+   *
+   * 微信小程序提审要求「提供账号注销入口」（《提审自检清单 v1.2》第 10 条
+   * 「缺失不通过」）。本端点与 U16 协议阅读页（M5-18，端上原生页）是**同一对
+   * 提审阻塞项** —— 协议页已收口，本项此前只有「找客服」一句引导。
+   *
+   * ## ⚠️ 为什么是 `POST /me/cancel` 而不是 `DELETE /me`
+   *
+   * ① 本动作**不是**删除资源：`ab_user` 行仍在（订单/佣金要引用它），
+   *    只是置 `status=3` + 匿名化。用 `DELETE` 会让读者以为库里的行没了，
+   *    而排查时按 `deleted_at` 一查——**记录都在**，两边对不上。
+   * ② 端上要带**确认词与原因**（`confirmText` / `reason`），`DELETE` 的语义
+   *    不鼓励带 body，微信端 H5 与真机对 DELETE body 的支持也不一致。
+   *
+   * ## ⭐ 幂等性：**刻意不幂等**
+   *
+   * 重复注销报 `20014`（而不是「成功」）。与 `20013`（团长状态非法）/`40013`
+   * （退款单状态非法）同一哲学：**对已处于目标态的重复操作是错误，不是幂等成功** ——
+   * 否则用户以为「刚刚才注销成功」，而其实他早就注销过了，审计链上分不清哪次是真的。
+   *
+   * ⚠️ 三道闸门（在职团长 / 余额未结清 / 有在途订单）与全部语义见 `UserService.cancelAccount`。
+   */
+  @Post('cancel')
+  @ApiOperation({
+    summary: 'U19 账号注销（自助 · 不可逆）—— 置 status=3 + 匿名化个人资料',
+  })
+  cancel(@CurrentUser() user: JwtPayload, @Body() dto: UserCancelDto) {
+    return this.userService.cancelAccount(user.sub, dto);
   }
 }
