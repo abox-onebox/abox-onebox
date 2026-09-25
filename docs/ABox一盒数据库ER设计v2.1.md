@@ -28,7 +28,7 @@
 | `ab_company` | 简化模型，普通用户无需选公司 |
 | `ab_floor_leader` | **无楼长角色**，团长兼任取餐分发 |
 
-### 1.2 新增的表（10 张）
+### 1.2 新增的表（11 张）
 
 | 表名 | 用途 |
 | --- | --- |
@@ -42,6 +42,7 @@
 | `ab_withdraw` | **提现申请单**（2026-09-15 补 · C11：出款走灵活用工代发代扣，须独立单承载提现单号 / 审批 / 打款状态） |
 | `ab_supplier_dish_center_daily` | **供应商-菜品-集散中心-日 交付确认明细**（2026-09-16 补 · M3-8：出餐确认的交互粒度是「一道菜分别送达 N 个集散中心」的**逐项**确认，需独立承载实送份数 / 确认人 / 确认时点） |
 | `ab_message_template` | **通知模板**（2026-09-16 补 · M3-12：D59/D60 的「场景 + 渠道 + 变量白名单 + 启用闸门」在 `ab_config` 的**扁平标量**类型系统里装不下；且 `ab_message` 是**推送日志**表（`template_id` 存微信侧模板 ID），**不是模板定义**） |
+| `ab_dish_rating` | **口味评价**（2026-09-25 补 · P1-U2 / U20：既有 `ab_dish.rating` 是菜品库的**静态展示列**（无写点、无逐餐明细），撑不住「哪个菜、哪顿饭、被谁评了几分」；P1 验收判据「能说出本周最差的三道菜」要求**按菜品聚合**，该事实必须独立落表） |
 
 ### 1.3 修改的表（7 张）
 
@@ -57,7 +58,7 @@
 
 ---
 
-## 二、ER 总览（27 张表 · 2026-09-16 增补 `ab_supplier_dish_center_daily` 与 `ab_message_template`）
+## 二、ER 总览（28 张表 · 2026-09-16 增补 `ab_supplier_dish_center_daily` 与 `ab_message_template`；2026-09-25 增补 `ab_dish_rating`）
 
 ```
                               ┌──────────────────┐
@@ -129,14 +130,19 @@
        └──────────────┘    └──────────────┘
                                    ▲ 发射自（场景键）
        ┌────────────────────┐      │
-       │ab_message_template │──────┘  通知模板（M3-12 · 27 张表）
-       │ (通知模板·5 场景)  │
+       │ab_message_template │──────┘  通知模板（M3-12 · 28 张表）
+       │ (通知模板·7 场景)  │
        └────────────────────┘
 
        ┌────────────────┐  ┌────────────────────┐
        │ab_supplier_    │  │ab_distribution_    │
        │share(分账流水) │  │center(集散中心)    │
        └────────────────┘  └────────────────────┘
+
+       ┌────────────────────┐
+       │  ab_dish_rating    │  口味评价（P1-U2 / U20 · 28 张 · 只增）
+       │ (口味评价·逐菜三键)│
+       └────────────────────┘
 ```
 
 ---
@@ -406,7 +412,7 @@ CREATE TABLE `ab_message_template` (
   `updated_at`         DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_msg_tpl_scene` (`scene`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通知模板（5 场景 · 只存可编辑部分，场景定义留在代码里）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通知模板（7 场景 · 只存可编辑部分，场景定义留在代码里）';
 ```
 
 > ⭐ **为什么必须独立成表**（而不是塞进 `ab_config`）：
@@ -426,8 +432,100 @@ CREATE TABLE `ab_message_template` (
 > 用户看到的推送**。故本字段是**存档 / 人工发群**用途，页面以 `fieldWiring='record_only'`
 > 如实标注（同 M3-10「给了输入框却没接上线」的纪律）。
 >
-> **零产量不适用**：本表是**全局配置**（5 行），由 `MESSAGE_TEMPLATE_SPECS` **派生种子**
+> **零产量不适用**：本表是**全局配置**（**7 行** —— 原型 P36 的 5 行 + M4-3 `commission_settled` + F5 `cutoff_remind`），由 `MESSAGE_TEMPLATE_SPECS` **派生种子**
 > （不存在第二份场景列表）；只有 `leader_delivery` 种子态启用（含微信群渠道，人工发群只需文案）。
+>
+> ⚠️ **场景数 5 → 7（2026-09-25 更正）**：本表原注「5 场景 / 5 行」，实装 `MESSAGE_TEMPLATE_SPECS` 已是 **7 个场景** ——
+> 第 6 行 `commission_settled`（M4-3 新增 · 两段式佣金入账后通知团长）、第 7 行 `cutoff_remind`（**F5 新增 · 截单提醒**，对应「忘了下单」，
+> 与 `leader_delivery`（=「忘了取餐」）配成一对）。二者同属「原型没写、但业务上必需」的行，**一律追加在末尾**
+> （保持「前 5 行 = 原型 P36」这一结构可被 e2e §24 锚定）。表注释同步改为「7 场景」。
+
+### 3.10 `ab_dish_rating` 口味评价（P1-U2 / U20 · 2026-09-25 新增 · **第 28 张表**）⭐
+
+> **为何必须独立成表**：U20「口味评价」要的是**按菜品聚合**的红黑榜 —— P1 验收判据原话是
+> 「能说出本周最差的三道菜」，还要能回答「这道菜本月第几次被投诉」的红线告警。
+> 既有 `ab_dish.rating` 是菜品库的**静态展示列**（无写点、无逐餐明细），撑不住
+> 「哪个菜、哪顿饭、被谁评了几分」这一事实；塞进 `ab_order` 的 JSON 列则无法做
+> 「按菜品聚合」的 SQL 统计（同 §3.6.1 的裁决理由）。
+
+```sql
+CREATE TABLE IF NOT EXISTS `ab_dish_rating` (
+  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `order_id`      BIGINT UNSIGNED NOT NULL COMMENT '订单（ab_order.id）',
+  `order_no`      VARCHAR(32) NOT NULL COMMENT '业务订单号（冗余，便于直查）',
+  `user_id`       BIGINT UNSIGNED NOT NULL COMMENT '评价人（ab_user.id）',
+  `meal_date`     DATE NOT NULL COMMENT '出餐日（红黑榜按吃到的日子切区间）',
+  `dish_id`       BIGINT UNSIGNED NOT NULL COMMENT '菜品（ab_dish.id；按 id 定位，name 无唯一约束）',
+  `dish_name`     VARCHAR(64) NOT NULL COMMENT '菜品名快照（落库时，改名不改史）',
+  `supplier_id`   BIGINT UNSIGNED NOT NULL COMMENT '供应商（ab_supplier.id）',
+  `supplier_name` VARCHAR(64) NOT NULL COMMENT '供应商名快照（落库时）',
+  `slot`          TINYINT NOT NULL COMMENT '档位快照：1主荤 2半荤 3素菜 4汤 5主食',
+  `rating`        TINYINT NOT NULL COMMENT '1好吃 2一般 3不好（不好=投诉，红线分子）',
+  `reason`        VARCHAR(128) DEFAULT NULL COMMENT '可选原因（自由文本）',
+  `created_at`    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_dish_rating_order_dish` (`order_id`,`dish_id`),
+  KEY `idx_dish_rating_dish_date` (`dish_id`,`meal_date`),
+  KEY `idx_dish_rating_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='口味评价（P1-U2 · 逐菜三键 · 只增 · 一次提交定稿）';
+```
+
+**字段清单（逐列取自实体 `DishRating` · `entities/order.entity.ts:432-477`，与迁移 `1700000000003-dish-rating.ts:28-46` 逐列一致）**
+
+| 字段 | 类型 | 可空 | 默认值 | 口径 |
+| --- | --- | --- | --- | --- |
+| `id` | `BIGINT UNSIGNED` | 否 | AUTO_INCREMENT | 主键（`PkColumn()`） |
+| `order_id` | `BIGINT UNSIGNED` | 否 | — | 订单（`ab_order.id`）· 唯一键左列 |
+| `order_no` | `VARCHAR(32)` | 否 | — | 业务订单号（**冗余**，便于不 join 直查） |
+| `user_id` | `BIGINT UNSIGNED` | 否 | — | 评价人（`ab_user.id`） |
+| `meal_date` | `DATE` | 否 | — | **出餐日** —— 红黑榜按「吃到的日子」切区间，**不按评价提交的日子** |
+| `dish_id` | `BIGINT UNSIGNED` | 否 | — | 菜品（`ab_dish.id`）· 按 **id** 定位（`name` 无唯一约束） |
+| `dish_name` | `VARCHAR(64)` | 否 | — | **菜品名快照**（落库时的 `ab_dish.name`） |
+| `supplier_id` | `BIGINT UNSIGNED` | 否 | — | 供应商（`ab_supplier.id`） |
+| `supplier_name` | `VARCHAR(64)` | 否 | — | **供应商名快照**（落库时的 `ab_supplier.name`） |
+| `slot` | `TINYINT` | 否 | — | 档位快照：1 主荤 / 2 半荤 / 3 素菜 / 4 汤 / 5 主食（与 `ab_set_meal_item.slot` 同值域） |
+| `rating` | `TINYINT` | 否 | — | **三键**：1 好吃 / 2 一般 / 3 不好（`3` = 投诉，**红线分子**） |
+| `reason` | `VARCHAR(128)` | **是** | `NULL` | 可选原因（自由文本，上限 128 字） |
+| `created_at` | `DATETIME(3)` | 否 | `CURRENT_TIMESTAMP(3)` | `CreateDateColumn` —— 评价提交时刻 |
+
+**索引**
+
+| 索引 | 列 | 类型 | 用途 |
+| --- | --- | --- | --- |
+| `PRIMARY` | `id` | 主键 | — |
+| `uk_dish_rating_order_dish` | (`order_id`, `dish_id`) | **UNIQUE** | 一单一菜一行；与「无 UPDATE 路径」共同保证**一次提交即定稿** |
+| `idx_dish_rating_dish_date` | (`dish_id`, `meal_date`) | KEY | 红黑榜主查询：某菜在某区间被评了几分 / 几次「不好」 |
+| `idx_dish_rating_user` | (`user_id`) | KEY | 按人回看自己的评价历史 |
+
+**关联关系（逻辑关联 · 与全库一致，不建物理 `FOREIGN KEY`）**
+
+| 本表列 | 指向 | 关系 | 说明 |
+| --- | --- | --- | --- |
+| `order_id` | `ab_order.id` | N → 1 | 一单可评多菜（每菜一行） |
+| `order_no` | `ab_order.order_no` | 冗余副本 | 与 `ab_payment_log` / `ab_refund` 同手法，避免为展示而 join |
+| `user_id` | `ab_user.id` | N → 1 | 评价人 |
+| `dish_id` | `ab_dish.id` | N → 1 | 被评菜品；**聚合时不回查主数据**（见下方快照纪律 ③） |
+| `supplier_id` | `ab_supplier.id` | N → 1 | 出品供应商（追责与「供应商维度」红黑榜用） |
+
+> **四项裁决（2026-09-25）**
+>
+> ① **粒度 = 逐菜一行**：`uk_dish_rating_order_dish` 保证一单一菜一行。「整餐一键」无法按菜聚合，
+> 红黑榜不成立；且**允许跳过**（未评的菜不落行）——「不想评那道」不该逼用户给「一般」。
+>
+> ② **一次提交即定稿、不可改**：无 UPDATE 路径，**重复提交返回 `30021`**（不合并、不覆盖）。
+>
+> ③ ⚠️ **快照列（`dish_name` / `supplier_name` / `slot`）**：菜品/供应商事后改名、下架甚至软删，
+> 红黑榜的**历史行**必须保持「当时吃到的那个名字」—— **聚合不回查 `ab_dish`，改名不改史**。
+> 回查会让「本周最差三道菜」在菜品改名后**静默重排**，历史结论无从复核。
+>
+> ④ **无 `order_status` 冗余**：可评状态（`delivered` / `completed`）在下单后只会沿状态机**远离**
+> 可评窗口（`refunded` 除外）；评价后订单退款**不影响已评价的历史事实** —— 「当时觉得难吃」
+> 与「后来退了钱」是两件事，都该留。
+>
+> ⚠️ **只增表，与 `ab_message` 同族**：**刻意不设 `version`、不设 `updated_at`** ——
+> 写上反而暗示「会改」（原话：`version` 列刻意不设）。故本表**不适用** §〇 设计原则第 5 条
+> 「每张表必备 `id` / `created_at` / `updated_at` / `version`」—— 与 `ab_message`（`system.entity.ts:113-141`）、
+> `ab_balance_log`（§3.4）同为**只增流水**的既有豁免族，非本次新开口子。
 
 ---
 
@@ -643,7 +741,8 @@ PARTITION BY RANGE (TO_DAYS(`created_at`)) (
 ### 5.1 M3 补丁（2 张表各加 1 列）
 
 > **为什么这两列必须在 M3 之前补上**：账号体系的「运营 + 供应商同工程、按 role 过滤菜单」
-> 与「所有后台写操作可审计」是 M3 的验收前提。两列都**不新增表**（总表数仍 **25 张**）。
+> 与「所有后台写操作可审计」是 M3 的验收前提。两列都**不新增表**（**当时**总表数仍 **25 张**；
+> ⚠️ 2026-09-25 注：该数字仅对 2026-09-15 成立，现为 **28 张**，见 §九）。
 
 ```sql
 -- ① 供应商后台账号的身份锚点
@@ -767,7 +866,7 @@ ALTER TABLE `ab_supplier`
 
 ### 5.7 M4-0 契约级修正：两列降级为历史字段（**改可空 · 零新增列 · 零新表**）
 
-> M4-0（2026-09-16 · 自营口径前置）把 M3-6 引入的、在自营口径下不再成立的两个假设拆掉。**表数仍 27**。
+> M4-0（2026-09-16 · 自营口径前置）把 M3-6 引入的、在自营口径下不再成立的两个假设拆掉。**表数仍 27**（当时；现为 **28**，见 §九）。
 
 | 表 | 列 | 变更 | 理由 |
 | --- | --- | --- | --- |
@@ -813,13 +912,20 @@ ALTER TABLE `ab_building`
 
 ⚠️ **「主/备集散中心 + 路线号」不落库**：`delivery-map` 视图与 D13/D16 出参里的 `mainDcId` / `backupDcId` / `routeNo` 全部由 `ab_distribution_center.service_groups`（M3-6）**实时派生**，楼栋上不存副本。落库就要有定时任务去刷，改一次集散配置就会造出「配置已改、楼栋还显示老集散」的不一致。
 
-⚠️ **DDL 总量**：25 张表不变（M2 的 `ab_withdraw` 之后**无新增表**）；`ab_building` 是本批次唯一被改的表。
+⚠️ **DDL 总量**：本批次**零新表** —— `ab_building` 是本批次唯一被改的表。
+（⚠️ 2026-09-25 注：原文「M2 的 `ab_withdraw` 之后**无新增表**」**仅对当时成立** ——
+其后 M3-8 `ab_supplier_dish_center_daily`、M3-12 `ab_message_template`、P1-U2 `ab_dish_rating`
+各补 1 张，现为 **28 张**，见 §九。）
 
 ### 5.8 M5-2 迁移 ↔ 实体 结构对齐（**有 DDL 变更 · 补 2 表 + 9 列 + 1 索引**）
 
 > 本节**不是新功能**，而是补上此前**从未生效**的结构变更：全仓只有一支迁移
-> `1700000000000-init.ts`（25 张表），而实体有 **27 张表** —— 缺口来自 M3-4 / M3-6 / M3-7 /
+> `1700000000000-init.ts`（25 张表），而实体有 **28 张表** —— 缺口来自 M3-4 / M3-6 / M3-7 /
 > M3-8 / M3-12 五批 DDL **只改了实体与本 ER、没改迁移**（《缺陷与陷阱》**#76**）。
+>
+> ⚠️ **第 28 张 `ab_dish_rating` 不计入本批缺口**（2026-09-25 注）：P1-U2 自带独立迁移
+> `1700000000003-dish-rating.ts`（`CREATE TABLE IF NOT EXISTS`），**实体与迁移同期落库**，
+> 不属「只改实体忘了改迁移」这一类缺陷。
 
 | 缺口 | 内容 |
 | --- | --- |
@@ -872,6 +978,9 @@ e2e 全绿，而生产（MySQL，结构**只由迁移决定**）首迁会建出�
 | `ab_withdraw` | `uk_withdraw_no` (withdraw_no) | 提现单号唯一（`WD`+yyyyMMdd+8 位） |
 | `ab_withdraw` | `idx_withdraw_leader_time` (leader_id, created_at) | 团长提现记录（L13 列表） |
 | `ab_withdraw` | `idx_withdraw_status` (status, created_at) | 后台审批队列（D45） |
+| `ab_dish_rating` | `uk_dish_rating_order_dish` (order_id, dish_id) | 一单一菜一行 + 一次提交定稿（P1-U2） |
+| `ab_dish_rating` | `idx_dish_rating_dish_date` (dish_id, meal_date) | 红黑榜 / 投诉计数（按「吃到的日子」切区间） |
+| `ab_dish_rating` | `idx_dish_rating_user` (user_id) | 个人评价历史 |
 
 ---
 
@@ -951,17 +1060,36 @@ INSERT INTO ab_distribution_center (name, address, contact_name, contact_phone) 
 | 商家域 | 2（supplier、dish） |
 | 套餐域 | 3（set_meal、set_meal_item、meal_assignment） |
 | 供应商生产域 | 2（supplier_dish_daily、supplier_dish_center_daily） |
-| 订单与支付域 | 4（order、payment_log、refund、delivery_record） |
+| 订单与支付域 | 5（order、payment_log、refund、delivery_record、**dish_rating**） |
 | 财务域 | 5（commission、supplier_share、balance、balance_log、withdraw） |
 | 集散中心域 | 1（distribution_center） |
 | 系统域 | 5（admin_user、operation_log、config、message、message_template） |
-| **合计** | **27 张表** |
+| **合计** | **28 张表** |
 
-> 张数说明：较 v1.0 删除 3 张（address / company / floor_leader）、新增 9 张、修改 8 张、沿用 9 张。
+> 张数说明：较 v1.0 删除 3 张（address / company / floor_leader）、新增 **11** 张、修改 8 张、沿用 9 张
+> —— 沿用 9 + 修改 8 = v1.0 保留下来的 17 张，17 + 新增 11 = **28**。
+> ⚠️ 2026-09-25 顺带更正：本行原写「新增 9 张」，与 §1.2 清单（当时 10 张）**对不上**，属既有笔误
+> （按上式 N 应为 10）；计入本次新增的 `ab_dish_rating` 后为 **11**。
+>
+> ⚠️⚠️ **2026-09-25 复核：上式只把「总数」凑平了，三份清单本身并不构成 28 的划分**
+> （机械验算，非目测 —— `§1.2 + §1.3 + §五` 三份清单逐行取表名后做集合运算）：
+> ① 行数之和 = 11 + 7 + 9 = **27**，而**去重并集只有 26**；
+> ② `ab_balance_log` **重复列** —— 既在 §1.2「新增」、又在 §1.3「修改」；
+> ③ `ab_order` 与 `ab_leader_invite` **三份清单均未列**（后者 §九 正文下一行已自述「阶段二已补」）；
+> ④ 上式用「修改 **8** 张」，与 §1.3 实际 **7** 行不符 —— 即 28 是「17 + 11」**凑**出来的，不是**加**出来的。
+>
+> ⇒ 按排除法，唯一自洽的划分是 **新增 12 / 修改 6 / 沿用 10**（`ab_order` 归入沿用、
+> `ab_leader_invite` 归入新增、`ab_balance_log` 的「增加出款字段」属**新增表的后续补列**，
+> 不是 v1.0 → v2.1 的「修改」）。三者之和 = 28，且**无重复、无遗漏**。
+>
+> ⚠️ **本节未据此改动三份清单**：v1.0 原件已不可得，无法机械验证 `ab_order` / `ab_leader_invite`
+> 在 v1.0 中的真实归属 —— 上列划分是**排除法的解**，不是**史料**。故此处只如实标注、**待裁定**，
+> 不在证据不足时把推论写成事实（同 M3-10「给了输入框却没接上线」的如实标注纪律）。
 > ⚠️ 阶段二已补 `ab_leader_invite`（支撑 C2 晋级审计）与 `ab_withdraw`（C11 提现单）；
 > M3-7 **零新表**（仅 `ab_building` 增 `population` 列）、**M3-8 补 `ab_supplier_dish_center_daily`**（出餐确认明细）、
 > **M3-10 / M3-11 零新表**（配置走 `ab_config`、看板纯聚合）、**M3-12 补 `ab_message_template`**（通知模板），
-> **合计 27 张表** —— 与 `apps/api-server/src/database/entities/index.ts` 的 `ALL_ENTITIES` 逐张对齐，
+> **P1-U2 补 `ab_dish_rating`**（2026-09-25 · 口味评价），
+> **合计 28 张表** —— 与 `apps/api-server/src/database/entities/index.ts` 的 `ALL_ENTITIES` 逐张对齐，
 > 并由 `tests/baseline_manifest.py` 在门禁中校验。
 > ⚠️ **表数对齐 ≠ 结构对齐**（M5-2 的教训）：上面这句原本只保证**表名张数**一致，
 > 而 `ab_message_template` / `ab_supplier_dish_center_daily` 虽在此列名，**迁移里却从未建过**
@@ -972,4 +1100,5 @@ INSERT INTO ab_distribution_center (name, address, contact_name, contact_phone) 
 *文档结束 · ABox 一盒 · ER v2.1（回填 C2/C3/C4/C6/C9；阶段一基线一致性修补）· 2026-09-14*
 *2026-09-15 增补：`ab_withdraw` 提现申请单（C11）· `ab_balance_log` 出款字段 · `ab_team_leader` 收款方式三字段 + `floor` 恢复*
 *2026-09-16 增补：`ab_supplier_dish_center_daily`（M3-8 出餐确认明细 · 26 张）· `ab_message_template`（M3-12 通知模板 · **27 张**）*
-*2026-09-17 增补（M5-2 · 《缺陷与陷阱》#76）：⚠️ §5.3 `ab_refund.order_status_before` 类型由 `tinyint` **更正为 `VARCHAR(16)`**（与代码逐行核对后确认）· 新增 §5.8 **迁移 ↔ 实体 结构对齐**（补 2 表 9 列 1 索引 + 门禁 `schema:parity`）· 表数仍 **27***
+*2026-09-17 增补（M5-2 · 《缺陷与陷阱》#76）：⚠️ §5.3 `ab_refund.order_status_before` 类型由 `tinyint` **更正为 `VARCHAR(16)`**（与代码逐行核对后确认）· 新增 §5.8 **迁移 ↔ 实体 结构对齐**（补 2 表 9 列 1 索引 + 门禁 `schema:parity`）· 表数仍 **27**（当时）*
+*2026-09-25 增补（P1-U2 / U20）：新增 §3.10 **`ab_dish_rating` 口味评价**（第 28 张表 · 逐菜三键 · 只增 · 一次提交定稿；实体 `DishRating` 与迁移 `1700000000003-dish-rating.ts` 同期落库，不计入 §5.8 缺口）· **表数 27 → 28**（§二总览 / 图注 / §1.2 / §5.8 / §六 / §九 同步）· **`ab_message_template` 场景数 5 → 7**（补 M4-3 `commission_settled` 与 F5 `cutoff_remind`）*
