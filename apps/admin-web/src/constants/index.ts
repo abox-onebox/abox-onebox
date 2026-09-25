@@ -319,7 +319,14 @@ export const ADMIN_NAV = [
         module: 'M36-02',
         icon: 'medal',
       },
-      { path: '/stats/dish-heat', title: '菜品热度', page: 'P35', module: 'M36-03', icon: 'flame' },
+      // P1-U2：本页第二个 Tab「口味评价」= D69 口味红黑榜（同页双视角：热度=卖得多，口味=评价好）
+      {
+        path: '/stats/dish-heat',
+        title: '菜品热度',
+        page: 'P35',
+        module: 'M36-03 · D69',
+        icon: 'flame',
+      },
       {
         path: '/stats/retention',
         title: '留存分析',
@@ -351,7 +358,7 @@ export const ADMIN_NAV = [
         path: '/system/message-template',
         title: '通知模板',
         page: '—',
-        module: 'D59/D60',
+        module: 'D59/D60 · D67/D68',
         icon: 'send',
       },
       // M5-12：跑批时刻表（D64/D65）—— 8 个定时任务的时刻 / 目标日期 / 实装状态 + 手动补跑

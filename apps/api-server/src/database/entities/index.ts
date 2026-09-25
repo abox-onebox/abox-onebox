@@ -1,18 +1,19 @@
 /**
- * 实体统一出口（25 张表）
+ * 实体统一出口（28 张表）
  *
  * 依据：《数据库 ER 设计 v2.1》+《表结构评审意见 v1.0》（P0-1 ~ P0-6、P1-4、P2-1、P2-5、P2-6）
  *   + 2026-09-15 增补：`ab_withdraw` 提现申请单（M2 · 数据层缺口补齐）
+ *   + 2026-09-25 增补：`ab_dish_rating` 口味评价（P1-U2 · 逐菜三键 · 只增表）
  *
  * 用户与角色域（4）：User / TeamLeader / Building / LeaderInvite
  * 楼群域（1）：BuildingGroup
  * 商家域（2）：Supplier / Dish
  * 套餐域（3）：SetMeal / SetMealItem / MealAssignment
  * 供应商生产域（2）：SupplierDishDaily / SupplierDishCenterDaily（M3-8 新增）
- * 订单与支付域（4）：Order / PaymentLog / Refund / DeliveryRecord
+ * 订单与支付域（5）：Order / PaymentLog / Refund / DeliveryRecord / DishRating（P1-U2 新增）
  * 财务域（6）：Commission / SupplierShare / Balance / BalanceLog / DistributionCenter / Withdraw
  * 系统域（5）：AdminUser / OperationLog / SysConfig / Message / MessageTemplate（M3-12 新增）
- * 合计 27 张
+ * 合计 28 张
  */
 export * from './user.entity';
 export * from './leader.entity';
@@ -29,7 +30,7 @@ import { TeamLeader, LeaderInvite } from './leader.entity';
 import { Building, BuildingGroup } from './building.entity';
 import { Supplier, Dish, SupplierDishDaily, SupplierDishCenterDaily } from './supplier.entity';
 import { SetMeal, SetMealItem, MealAssignment } from './meal.entity';
-import { Order, PaymentLog, Refund, DeliveryRecord } from './order.entity';
+import { Order, PaymentLog, Refund, DeliveryRecord, DishRating } from './order.entity';
 import {
   Commission,
   SupplierShare,
@@ -58,6 +59,7 @@ export const ALL_ENTITIES = [
   PaymentLog,
   Refund,
   DeliveryRecord,
+  DishRating,
   Commission,
   SupplierShare,
   Balance,

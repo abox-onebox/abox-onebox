@@ -76,6 +76,28 @@ export enum ErrorCode {
    * 审计链上就分不清是谁停的。
    */
   LEADER_STATUS_ILLEGAL = 20013,
+  /**
+   * 扩展（M5-20）：账号已注销（`ab_user.status = 3`）—— 登录与后续调用一律拦下
+   *
+   * ⚠️ **刻意不复用 `20006 USER_DISABLED`（黑名单）**：两者都是「账号不能用」，
+   *    但**用户可见的动作完全不同** —— 黑名单是**平台侧处罚**，用户只能申诉；
+   *    注销是**用户自己发起的**，他需要知道「是我注销的、我能怎么恢复」。
+   *    合成一个码会让注销过的人看到「账号已被停用」，以为被封号了。
+   *    （与 40015/40002、40017/40013 的取舍同源：形态相似、**排查入口不同**。）
+   */
+  ACCOUNT_CANCELED = 20014,
+  /**
+   * 扩展（M5-20）：暂不能注销 —— 存在未结清事项
+   *
+   * 附 `data.reasons: string[]`（`leader` 在职团长 / `balance` 有余额或冻结 /
+   * `orders` 有在途订单），供端上逐条列出**为什么现在不能注销**。
+   *
+   * ⚠️ 为什么必须拦而不是「连余额一起清掉」：注销是不可逆动作，而余额与订单
+   *    是**钱**。一期没有「余额清零/退款到微信」的自动通道（出款走灵活用工，
+   *    见佣金口径），自动清掉就等于**用户的钱被系统吞了**，且**不会有任何报错**。
+   *    fail-closed 在这里的正确含义是把用户挡在一次失败上，而不是让他安静地损失。
+   */
+  ACCOUNT_CANCEL_BLOCKED = 20015,
 
   /** ---- 3xxxx 套餐与下单 ---- */
   /** 截单窗口外下单（U6 校验第 1 步） */
@@ -172,6 +194,33 @@ export enum ErrorCode {
    *    （改名不影响任何人的备料与价格）。
    */
   MEAL_TEMPLATE_IN_USE = 30019,
+
+  /**
+   * 扩展（U2 口味评价）：订单当前状态不可评价（U20）
+   *
+   * 判据：`status ∉ { delivered, completed }`。
+   * 只有「已送达 / 已完成」的单才允许评价 —— 没吃到饭就评价，红黑榜会被
+   * 「预期不满」而不是「口味反馈」污染（那该走客服/退款通道）。
+   *
+   * ⚠️ **刻意不复用 `30003`（订单状态机拒绝）**：那是「取消/改单」类操作对状态机的话术；
+   * 评价的排查入口是「订单走到哪一步了」，回带 `data.allowed`（可评状态集）与
+   * `data.status`（当前状态），端上据此给出「送达后可评价」的引导而不是干报错。
+   */
+  RATING_NOT_ALLOWED = 30020,
+  /**
+   * 扩展（U2 口味评价）：该订单已评价过，不可修改（U20）
+   *
+   * ⚠️ **裁决（2026-09-25 · P1-U2）**：评价**一次提交即定稿、不可改** ——
+   *   ① 聚合口径要稳：允许改评就得处理「改评迁移」（旧分撤回、新分入账），
+   *      红黑榜与月投诉计数都得多一套「以哪个为准」的口径；
+   *   ② 极简：真源《系统地图》U2 的量级是「一个评价按钮 + 一张聚合表」；
+   *   ③ 后悔的极端个案走客服（与「改价/改单」同一兜底路径）。
+   *
+   * ⚠️ **刻意不复用 `10006`（幂等重放）**：重放返回首次**成功结果**（HTTP 语义上是成功），
+   * 而这里是**拒绝**新提交 —— 两者对端上的处理方式完全不同（前者可以当成功吞掉）。
+   * 回带 `data.ratedAt`，端上直接切「已评价」终态展示。
+   */
+  RATING_ALREADY_SUBMITTED = 30021,
 
   /** ---- 4xxxx 支付 / 退款 / 出款 ---- */
   PAY_CREATE_FAILED = 40001,
@@ -347,6 +396,8 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.LEADER_APPOINT_USER_INVALID]: '被任命的用户不存在或不可用',
   [ErrorCode.BUILDING_LEADER_OCCUPIED]: '该办公楼已有在职团长，转交需确认',
   [ErrorCode.LEADER_STATUS_ILLEGAL]: '团长当前状态不支持该操作',
+  [ErrorCode.ACCOUNT_CANCELED]: '该账号已注销，如需恢复请联系客服',
+  [ErrorCode.ACCOUNT_CANCEL_BLOCKED]: '存在未结清事项，暂不能注销',
   [ErrorCode.ORDER_CUTOFF]: '今日 24:00 已截单，明日请早',
   [ErrorCode.QUANTITY_EXCEED]: '份数超出单次上限',
   [ErrorCode.ORDER_STATUS_ILLEGAL]: '当前订单状态不支持该操作',
@@ -365,6 +416,20 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.MEAL_PUBLISH_AFTER_CUTOFF]: '已过截单时刻，不能再上架',
   [ErrorCode.ORDER_ADJUST_AFTER_CUTOFF]: '已过截单时刻，不能再改单',
   [ErrorCode.ORDER_ADJUST_CROSS_GROUP]: '目标办公楼与订单不在同一楼群',
+  /**
+   * 30016 / 30017 此前**没有文案**（与 30020 / 30021 同族，由同一次覆盖度机算扫出）。
+   * 现有抛点都自带 `message` 覆写（`delivery.service.ts` 647/987/653/710/993/1069），
+   * 故兜底文案平时**看不到** —— 但它守的是「下一次新增抛点忘了带文案」：
+   * 那一次用户会直接落到 `biz.exception.ts:24` 的「业务异常」四个字。
+   */
+  [ErrorCode.DELIVERY_CONFLICT]: '配送单已被他人修改，请刷新后重试',
+  [ErrorCode.DELIVERY_NOT_FOUND]: '配送单不存在',
+  /**
+   * U20 评价：这两条此前**没有文案** ⇒ 落到 `biz.exception.ts:24` 的兜底，
+   * 用户只看到「业务异常」四个字（既没说清能不能评价，也没说清为什么）。
+   */
+  [ErrorCode.RATING_NOT_ALLOWED]: '当前订单状态不允许评价',
+  [ErrorCode.RATING_ALREADY_SUBMITTED]: '该订单已评价过，不能重复提交',
   [ErrorCode.PAY_CREATE_FAILED]: '支付单创建失败，请稍后重试',
   [ErrorCode.BALANCE_NOT_ENOUGH]: '余额不足',
   [ErrorCode.WITHDRAW_BELOW_MIN]: '提现金额低于最低限额',

@@ -44,6 +44,25 @@ export interface OrderPickupInfo {
   expectAt: string;
 }
 
+/**
+ * 订单的口味评价状态（U10 详情新增 · P1-U2）
+ *
+ * `canRate` / `rated` 互补但**不是互斥全集**（还有「未送达不可评」这一段）：
+ *   · `rated=true`  ⇒ `canRate=false`，`items` 非空（已评内容，回显用）
+ *   · `rated=false && canRate=true` ⇒ 可评（端上出评价卡）
+ *   · `rated=false && canRate=false` ⇒ 尚未送达（或该单无菜品明细）—— 端上不出卡
+ */
+export interface OrderRatingView {
+  /** 当前状态可评价（已送达/已完成 且 未评过 且 有菜品明细） */
+  canRate: boolean;
+  /** 已提交过评价（一次提交即定稿，不可改 —— 2026-09-25 裁决） */
+  rated: boolean;
+  /** 首次提交时刻（ISO 8601 +08:00）；未评为 null */
+  ratedAt: string | null;
+  /** 已评内容（按提交顺序；未评为空数组 —— 「没评」与「评了零个菜」不同态） */
+  items: Array<{ dishId: number; rating: number; reason: string | null }>;
+}
+
 /** 订单详情（U10） */
 export interface OrderDetailResult {
   orderNo: string;
@@ -56,7 +75,13 @@ export interface OrderDetailResult {
   balanceUsedFen: number;
   payAmountFen: number;
   remark: string | null;
-  dishes: Array<{ name: string; slot: number; supplierName: string | null }>;
+  /**
+   * ⚠️ `dishId`（P1-U2 新增）：评价提交按 `dishId` 定位菜品 ——
+   * `ab_dish.name` 无唯一约束（A3），按名字定位会把评价记到别家同名菜头上。
+   */
+  dishes: Array<{ dishId: number; name: string; slot: number; supplierName: string | null }>;
+  /** 口味评价状态（P1-U2 新增；端上据此决定出不出评价卡） */
+  rating: OrderRatingView;
   timeline: OrderTimelineNode[];
   pickup: OrderPickupInfo;
   createdAt: string;

@@ -14,6 +14,7 @@ import type {
   OrderDetailResult,
   OrderListItem,
   PageResult,
+  RatingSubmitResult,
 } from '@abox/shared-types';
 
 import { http, query } from './request';
@@ -48,4 +49,19 @@ export function fetchOrderDetail(orderNo: string): Promise<OrderDetailResult> {
  */
 export function cancelOrder(orderNo: string): Promise<CancelOrderResult> {
   return http.post<CancelOrderResult>(`/orders/${encodeURIComponent(orderNo)}/cancel`);
+}
+
+/**
+ * U20 · 提交口味评价（P1-U2 · 逐菜三键 · 一次定稿不可改）
+ *
+ * ⚠️ 只有 `detail.rating.canRate === true` 时才该调（服务端另有闸门：
+ *    状态不可评 → 30020；已评过 → 30021）。允许跳过 —— 只提交用户选了的菜。
+ */
+export function submitOrderRating(
+  orderNo: string,
+  items: Array<{ dishId: number; rating: number; reason?: string }>,
+): Promise<RatingSubmitResult> {
+  return http.post<RatingSubmitResult>(`/orders/${encodeURIComponent(orderNo)}/rating`, {
+    items,
+  } as Record<string, unknown>);
 }

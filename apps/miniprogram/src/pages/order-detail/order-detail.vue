@@ -162,6 +162,69 @@
         </view>
       </view>
 
+      <!-- 口味评价（P1-U2 · U20：送达后逐菜三键，一次定稿） -->
+      <view v-if="detail.rating.canRate || detail.rating.rated" class="card">
+        <view class="card__hd">
+          <text class="card__title"
+            ><text class="abi abi-16">{{ I.edit }}</text> 口味评价</text
+          >
+          <text v-if="detail.rating.rated" class="card__sub">已提交 · 不可修改</text>
+          <text v-else class="card__sub">好吃吗？帮我们把菜单越做越对</text>
+        </view>
+
+        <!-- 已评：只读回显（内容由服务端下发，端上不自存第二份） -->
+        <template v-if="detail.rating.rated">
+          <view v-for="it in ratedItems" :key="it.dishId" class="rated">
+            <text class="rated__name">{{ it.name }}</text>
+            <text class="rated__tag" :class="`rated__tag--${it.rating}`">{{
+              ratingLabel(it.rating)
+            }}</text>
+            <text v-if="it.reason" class="rated__reason">{{ it.reason }}</text>
+          </view>
+        </template>
+
+        <!-- 未评：逐菜三键 + 可选原因 -->
+        <template v-else>
+          <view v-for="dish in detail.dishes" :key="dish.dishId" class="rate">
+            <view class="rate__row">
+              <text class="rate__name">{{ dish.name }}</text>
+              <view class="rate__opts">
+                <button
+                  v-for="lv in 3"
+                  :key="lv"
+                  class="rate__opt"
+                  :class="{ 'is-on': ratingPick[dish.dishId] === lv }"
+                  hover-class="rate__opt--hover"
+                  @tap="pick(dish.dishId, lv)"
+                >
+                  {{ ratingLabel(lv) }}
+                </button>
+              </view>
+            </view>
+            <!-- 只在选了「不好」时展开原因输入（十秒评价优先，投诉才需要细节） -->
+            <input
+              v-if="ratingPick[dish.dishId] === 3"
+              v-model="ratingReasons[dish.dishId]"
+              class="rate__reason"
+              type="text"
+              maxlength="128"
+              placeholder="可选：哪里不满意（帮后厨改进）"
+            />
+          </view>
+          <view class="rate__acts">
+            <button
+              class="btn-primary rate__submit"
+              hover-class="btn-primary--hover"
+              :disabled="!canSubmit"
+              @tap="submitRating"
+            >
+              提交评价{{ pickedCount ? `（已选 ${pickedCount} 道菜）` : '' }}
+            </button>
+            <text class="rate__hint">没选的菜视为跳过；提交后不可修改</text>
+          </view>
+        </template>
+      </view>
+
       <!-- 动作 -->
       <view class="acts">
         <template v-if="abnormal">
@@ -209,12 +272,13 @@ import { onLoad, onShow } from '@dcloudio/uni-app';
 import { OrderStatus } from '@abox/shared-types';
 import type { OrderDetailResult, OrderTimelineNode } from '@abox/shared-types';
 
-import { fetchOrderDetail } from '@/api/order';
+import { fetchOrderDetail, submitOrderRating } from '@/api/order';
 import { ApiError } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { SLOT_LABEL, fenToYuanText, formatDateTime, formatMealDate } from '@/utils/format';
 import { buildUrl, navigateTo, pageQuery, switchTab } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
+import { RATING_LEVEL_LABELS } from '@abox/shared-types';
 
 const { run, loading } = useRequest();
 
@@ -308,6 +372,65 @@ async function load(): Promise<void> {
   } catch (e) {
     if (detail.value === null && e instanceof ApiError) errorHint.value = e.message;
     toastApiError(e);
+  }
+}
+
+/* ---------------- P1-U2 · 口味评价（U20 逐菜三键 · 一次定稿） ---------------- */
+
+/** 档位文案来自共享契约（RATING_LEVEL_LABELS），端上不自建映射 */
+function ratingLabel(lv: number): string {
+  return RATING_LEVEL_LABELS[lv] ?? '—';
+}
+
+/** dishId → 档位（1/2/3）；未选不在对象里 */
+const ratingPick = ref<Record<number, number>>({});
+/** dishId → 「不好」的可选原因 */
+const ratingReasons = ref<Record<number, string>>({});
+const ratingSubmitting = ref(false);
+
+/** 已评回显行：把服务端的 rating.items 与 dishes 的名字拼起来（名字仍以详情为准） */
+const ratedItems = computed(() => {
+  const d = detail.value;
+  if (!d?.rating.rated) return [];
+  const nameOf = new Map(d.dishes.map((x) => [x.dishId, x.name]));
+  return d.rating.items.map((it) => ({
+    dishId: it.dishId,
+    name: nameOf.get(it.dishId) ?? `菜品#${it.dishId}`,
+    rating: it.rating,
+    reason: it.reason,
+  }));
+});
+
+const pickedCount = computed(() => Object.keys(ratingPick.value).length);
+const canSubmit = computed(() => pickedCount.value > 0 && !ratingSubmitting.value);
+
+function pick(dishId: number, lv: number): void {
+  // 再点一次同一档 = 取消选择（允许「误选后反悔」而不必提交跳过）
+  if (ratingPick.value[dishId] === lv) delete ratingPick.value[dishId];
+  else ratingPick.value[dishId] = lv;
+}
+
+async function submitRating(): Promise<void> {
+  if (!canSubmit.value || !detail.value) return;
+  ratingSubmitting.value = true;
+  try {
+    const items = Object.entries(ratingPick.value).map(([dishId, rating]) => ({
+      dishId: Number(dishId),
+      rating,
+      ...(rating === 3 && ratingReasons.value[Number(dishId)]?.trim()
+        ? { reason: ratingReasons.value[Number(dishId)].trim() }
+        : {}),
+    }));
+    await submitOrderRating(detail.value.orderNo, items);
+    uni.showToast({ title: '评价已提交，感谢反馈', icon: 'none' });
+    // 重拉详情：canRate → rated 的状态切换由服务端口径驱动，端上不本地造终态
+    await load();
+  } catch (e) {
+    toastApiError(e);
+    // 30021（已评过）等服务端口径：重拉一次让 UI 与事实对齐
+    if (e instanceof ApiError) await load();
+  } finally {
+    ratingSubmitting.value = false;
   }
 }
 
@@ -792,6 +915,129 @@ onShow(() => {
 
   &--hover {
     opacity: 0.85;
+  }
+}
+
+// ---- 口味评价（P1-U2 · U20） ----
+.rate {
+  margin-top: $space-3;
+
+  &__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: $space-2;
+  }
+
+  &__name {
+    flex: 1;
+    font-size: $fs-body;
+    color: $c-text;
+  }
+
+  &__opts {
+    display: flex;
+    gap: $space-1;
+  }
+
+  &__opt {
+    // 与 button 默认样式解耦：小胶囊三键
+    height: 56rpx;
+    line-height: 56rpx;
+    padding: 0 $space-3;
+    margin: 0;
+    font-size: $fs-caption;
+    color: $c-text-weak;
+    background: $c-surface-3;
+    border: 1px solid $c-border;
+    border-radius: $radius-pill;
+
+    &::after {
+      border: none;
+    }
+
+    &--hover {
+      opacity: 0.8;
+    }
+
+    &.is-on {
+      color: #ffffff;
+      background: $c-gold-deep;
+      border-color: $c-gold-deep;
+    }
+  }
+
+  &__reason {
+    margin-top: $space-2;
+    height: 72rpx;
+    padding: 0 $space-2;
+    font-size: $fs-caption;
+    color: $c-text;
+    background: $c-surface-3;
+    border: 1px solid $c-border;
+    border-radius: $radius-sm;
+  }
+
+  &__acts {
+    margin-top: $space-4;
+    display: flex;
+    flex-direction: column;
+    gap: $space-2;
+  }
+
+  &__submit {
+    &[disabled] {
+      opacity: 0.5;
+      color: #ffffff;
+    }
+  }
+
+  &__hint {
+    font-size: $fs-caption;
+    color: $c-text-weak;
+    text-align: center;
+  }
+}
+
+// 已评回显（只读）
+.rated {
+  display: flex;
+  align-items: baseline;
+  gap: $space-2;
+  margin-top: $space-2;
+  flex-wrap: wrap;
+
+  &__name {
+    font-size: $fs-body;
+    color: $c-text;
+  }
+
+  &__tag {
+    padding: 2rpx $space-2;
+    font-size: $fs-caption;
+    border-radius: $radius-sm;
+
+    // 状态原色只用于色块底，文字用白（设计替换纪律：等级/状态色不当文字色）
+    &--1 {
+      color: #ffffff;
+      background: $c-success;
+    }
+
+    &--2 {
+      color: #ffffff;
+      background: $c-info;
+    }
+
+    &--3 {
+      color: #ffffff;
+      background: $c-warning;
+    }
+  }
+
+  &__reason {
+    flex-basis: 100%;
+    font-size: $fs-caption;
+    color: $c-text-weak;
   }
 }
 </style>

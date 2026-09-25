@@ -405,3 +405,73 @@ export class DeliveryRecord {
   @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
   updatedAt!: Date;
 }
+
+/**
+ * ab_dish_rating 口味评价（P1-U2 · 第 28 张表 · **只增表**）
+ *
+ * 真源：《创业系统地图与开发路线 v1.0》U2「口味评价与菜品迭代闭环」——
+ * 「每餐后一键评价（好吃/一般/不好，可选填原因）→ 按菜品聚合 → 菜品红黑榜
+ *   + 这道菜本月第几次被投诉的红线告警」。P1 验收判据：「能说出本周最差的三道菜」。
+ *
+ * ## 设计要点（四项裁决 · 2026-09-25）
+ * - **粒度 = 逐菜一行**：一单一菜一行（`uk_dish_rating_order_dish`）；
+ *   「整餐一键」无法按菜聚合，红黑榜不成立。允许跳过（未评的菜不落行）。
+ * - **一次提交即定稿、不可改**（无 UPDATE 路径；`version` 列刻意不设 ——
+ *   与 `ab_message` 同为只增表，写上 version 反而暗示「会改」）。
+ * - **快照列**：`dish_name` / `supplier_name` 落库时快照 —— 菜品/供应商事后改名、
+ *   下架甚至软删，红黑榜的**历史行**必须保持「当时吃到的那个名字」
+ *   （聚合不回查 `ab_dish`，改名不改史）。
+ * - **无 `order_status` 冗余**：可评状态（delivered/completed）在下单后只会
+ *   沿状态机**远离**可评窗口（refunded 除外）—— 评价后订单退款不影响已评价的
+ *   历史事实（「当时觉得难吃」与「后来退了钱」是两件事，都该留）。
+ */
+@Entity('ab_dish_rating')
+@Index('uk_dish_rating_order_dish', ['orderId', 'dishId'], { unique: true })
+@Index('idx_dish_rating_dish_date', ['dishId', 'mealDate'])
+@Index('idx_dish_rating_user', ['userId'])
+export class DishRating {
+  @PkColumn()
+  id!: number;
+
+  @Column({ name: 'order_id', type: 'bigint', transformer: bigintTransformer })
+  orderId!: number;
+
+  @Column({ name: 'order_no', type: 'varchar', length: 32 })
+  orderNo!: string;
+
+  @Column({ name: 'user_id', type: 'bigint', transformer: bigintTransformer })
+  userId!: number;
+
+  /** 出餐日（红黑榜按「吃到的日子」切区间，不按「评价提交的日子」） */
+  @Column({ name: 'meal_date', type: 'date' })
+  mealDate!: string;
+
+  @Column({ name: 'dish_id', type: 'bigint', transformer: bigintTransformer })
+  dishId!: number;
+
+  /** 菜品名快照（落库时的 ab_dish.name） */
+  @Column({ name: 'dish_name', type: 'varchar', length: 64 })
+  dishName!: string;
+
+  @Column({ name: 'supplier_id', type: 'bigint', transformer: bigintTransformer })
+  supplierId!: number;
+
+  /** 供应商名快照（落库时的 ab_supplier.name） */
+  @Column({ name: 'supplier_name', type: 'varchar', length: 64 })
+  supplierName!: string;
+
+  /** 档位快照：1主荤 2半荤 3素菜 4汤 5主食（与 ab_set_meal_item.slot 同值域） */
+  @Column({ type: 'tinyint' })
+  slot!: number;
+
+  /** 1好吃 2一般 3不好（「不好」= 投诉，红线分子） */
+  @Column({ type: 'tinyint' })
+  rating!: number;
+
+  /** 可选原因（自由文本，上限 128 字） */
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  reason?: string | null;
+
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
+  createdAt!: Date;
+}

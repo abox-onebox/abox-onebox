@@ -18,12 +18,10 @@ import {
   DISH_HEAT_MAX_TOP_N,
   PURCHASE_VOID_STATUSES,
   RETENTION_DEFAULT_COHORT_WEEKS,
-  STATS_DEFAULT_RANGE,
-  STATS_RANGE_DAYS,
-  STATS_RANGE_LABELS,
   STATS_REFUND_STATUSES,
   STATS_VALID_STATUSES,
   StatsRange,
+  resolveStatsRange,
 } from './stats.constants';
 import type { DishHeatQueryDto, StatsQueryDto } from './dto/stats.dto';
 
@@ -217,16 +215,10 @@ export class StatsService {
    *    财务期末复核对账时才传 `date` 把终点锚到已过完的那一天。
    */
   private resolveRange(range?: string, date?: string): StatsRangeView {
-    const key = (range ?? STATS_DEFAULT_RANGE) as StatsRange;
-    const days = STATS_RANGE_DAYS[key] ?? STATS_RANGE_DAYS[STATS_DEFAULT_RANGE];
-    const endDate = date?.trim() || shiftBizDate(new Date(), 0);
-    return {
-      range: key,
-      label: STATS_RANGE_LABELS[key],
-      startDate: shiftBizDate(endDate, -(days - 1)),
-      endDate,
-      days,
-    };
+    // ⭐ P1-U2（2026-09-25）：实现上提到 stats.constants 的 `resolveStatsRange` 单一实现 ——
+    //    D69 口味红黑榜与 D47–D50 必须同一套区间语义（缺省锚、终点锚、含端点）。
+    //    本方法保留为私有薄委托（调用点不动），语义零变化。
+    return resolveStatsRange(range, date);
   }
 
   /* ------------------------------------------------------------------ *

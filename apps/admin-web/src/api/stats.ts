@@ -155,5 +155,38 @@ export const fetchBuildingRank = (params: StatsQuery = {}) =>
 export const fetchDishHeat = (params: StatsQuery & { topN?: number } = {}) =>
   http.get<StatsDishHeatResult>('/admin/stats/dish-heat', params);
 
+/** D69 口味红黑榜行（P1-U2 · 菜品热度页第二 Tab） */
+export interface StatsDishRatingRow {
+  dishId: number;
+  dishName: string;
+  supplierId: number;
+  supplierName: string;
+  ratedCount: number;
+  goodCount: number;
+  okCount: number;
+  /** 「不好」次数 = 投诉次数 */
+  badCount: number;
+  /** 差评率（0–1；进了列表的菜恒有分母） */
+  badRate: number;
+  /** 锚点月被投诉次数（红线分子） */
+  monthBadCount: number;
+  redLine: boolean;
+  recentReasons: string[];
+}
+
+export interface StatsDishRatingResult {
+  range: StatsRangeView;
+  /** 红线阈值（服务端下发，端上不写死） */
+  redLineThreshold: number;
+  totalRatings: number;
+  dishCount: number;
+  /** 本周最差三道菜（P1 验收判据的直接答案） */
+  worstThree: Array<{ dishId: number; dishName: string; badCount: number }>;
+  items: StatsDishRatingRow[];
+}
+
+export const fetchDishRating = (params: StatsQuery & { date?: string } = {}) =>
+  http.get<StatsDishRatingResult>('/admin/stats/dish-rating', params);
+
 export const fetchRetention = (params: StatsQuery = {}) =>
   http.get<StatsRetentionResult>('/admin/stats/retention', params);

@@ -1,4 +1,5 @@
 import { OrderStatus } from '@abox/shared-types';
+import { shiftBizDate } from '@abox/shared-utils';
 
 /**
  * D47–D50 数据看板 · 统计口径**单一真相**
@@ -102,3 +103,40 @@ export const DISH_HEAT_MAX_TOP_N = 50;
 
 /** 留存分析默认观察的 cohort 周数 */
 export const RETENTION_DEFAULT_COHORT_WEEKS = 4;
+
+/**
+ * ⭐ **区间解析的单一实现**（2026-09-25 自 StatsService 私有方法上提 · P1-U2）
+ *
+ * ## 为什么上提
+ * D69（口味红黑榜）与 D47–D50 用**同一套**区间语义（`range` 定长度、`date` 定终点锚、
+ * 缺省今日）。此前 `resolveRange` 是 `StatsService` 的私有方法，D69 要么注入 StatsService
+ * （把整张看板服务拖进来，只为一个纯函数），要么**抄一份** —— 抄一份的后果是
+ * 「缺省锚 = 今日」这类语义在两处各自演化（口径只允许声明一次）。
+ * 上提为纯函数：`StatsService.resolveRange` 委托到它，D69 直接 import。
+ *
+ * ## 语义（与 D47–D50 既有行为逐字一致 · 不改任何口径）
+ * - `range` 缺省 = `STATS_DEFAULT_RANGE`（今日锚 + 7 日）；
+ * - `date` 是**终点锚点**不是自由起止 —— 期末复核要看已过完的那几天；
+ * - `startDate` = 终点往前推 `days − 1` 天（含端点）。
+ */
+export function resolveStatsRange(
+  range?: string,
+  date?: string,
+): {
+  range: StatsRange;
+  label: string;
+  startDate: string;
+  endDate: string;
+  days: number;
+} {
+  const key = (range ?? STATS_DEFAULT_RANGE) as StatsRange;
+  const days = STATS_RANGE_DAYS[key] ?? STATS_RANGE_DAYS[STATS_DEFAULT_RANGE];
+  const endDate = date?.trim() || shiftBizDate(new Date(), 0);
+  return {
+    range: key,
+    label: STATS_RANGE_LABELS[key],
+    startDate: shiftBizDate(endDate, -(days - 1)),
+    endDate,
+    days,
+  };
+}
