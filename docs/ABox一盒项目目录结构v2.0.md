@@ -382,7 +382,7 @@ apps/api-server/
 │   │   ├── data-source.ts              ← TypeORM data source（`synchronize: driver === 'sqlite'`）
 │   │   ├── schema-parity.ts            ← ⭐ M5-2「迁移推演 ≡ 实体真库」机械对账（`gate.mjs` 门禁 `schema:parity`）—— M5-13 补**尺寸维度**（长度 / 精度+标度 / 小数秒精度，见 v2.0.21）
 │   │   ├── index-parity.ts             ← ⭐ M5-6「迁移索引 ≡ 实体索引」机械对账（门禁 `index:parity`）—— 补 `schema:parity` 自述的**不比索引**边界（比索引名 + 列有序 + 唯一性）
-│   │   ├── migrations/                 ← 数据库迁移（**三支合并推演才等于实体结构**）
+│   │   ├── migrations/                 ← 数据库迁移（**四支合并推演才等于实体结构**）
 │   │   │   ├── 1700000000000-init.ts           25 张表（基础结构）
 │   │   │   ├── 1700000000001-parity-fix.ts     ⭐ M5-2 补 2 表 + 9 列 + 1 索引（#76 修复载体，幂等可重入）
 │   │   │   └── 1700000000002-index-commission-meal.ts  ⭐ M5-6 补 `ab_commission` 的 `idx_commission_meal`（`meal_date` 打头查询的索引缺口，幂等可重入）

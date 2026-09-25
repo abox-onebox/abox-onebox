@@ -561,6 +561,384 @@ async function main() {
     fail('M5-17 团长归属断言', `找不到数据库文件 ${DB_PATH}`);
   }
 
+  // ---------- 9. M5-20 · 账号注销 U19（提审硬要求 · 零 DDL） ----------
+  //
+  // ## 这条为什么必须进常驻套件
+  // 《提审自检清单 v1.2》第 10 条：小程序**必须**提供账号注销入口，缺失即不通过。
+  // 在此之前这个能力**一行代码都没有**，而当时的 22 道门禁 + 上千条断言**全绿** ——
+  // 因为现有门禁检的是「已实现的功能对不对」，不是「合规要求有没有做」。
+  // 于是本段就是这条合规项的**机械证据**：删掉入口，这里立刻红。
+  //
+  // ## 测什么
+  //   ① 二次确认词由**服务端**裁定（端上自绘弹窗不构成证据）
+  //   ② 三个 fail-closed 闸门各单独验证一次 —— 团长 / 未终态订单，且**互不误报**
+  //   ③ 注销 = 匿名化 + 停用，**不是删行**（`openid` 必须留，否则同一个人再登录
+  //      会注册成一个全新账号 —— 同一微信两套账，比留一行匿名数据更糟）
+  //   ④ 注销后同一微信再登录 → 20014，**不是**重新注册、也**不是**幂等成功
+  //
+  // ## 为什么用「全新账号」而不是种子用户
+  // 种子里的 5 个用户**本身全是团长**（`ab_user` ←→ `ab_team_leader` 一一对应），
+  // 拿他们做「成功注销」的样本会**必然**撞上「在职团长」闸门 —— 那就变成了
+  // 「换个方式测闸门①」，永远测不到成功路径。故用 `dev:qa-cancel-<时间戳>`
+  // 现造一个干净账号（mock provider 把 `dev:x` 直接映射成稳定 openid，见
+  // `providers/wx-mini/mock-wx-mini.provider.ts`）。
+  if (existsSync(DB_PATH)) {
+    const cdb = new DatabaseSync(DB_PATH);
+    try {
+      const freshCode = `dev:qa-cancel-${Date.now()}`;
+      const fl = await call('POST', '/auth/login', { body: { code: freshCode } });
+      const fToken = fl.body?.data?.token;
+      const fId = fl.body?.data?.user?.id;
+      assert(
+        fl.body?.code === 0 && !!fToken && !!fId,
+        'M5-20 U19 前置：现造一个干净账号（种子用户全是团长，测不到成功路径）',
+        `userId=${fId} isNewUser=${fl.body?.data?.isNewUser}`,
+      );
+
+      // ---- 9a. 二次确认词 ----
+      const wrongWord = await call('POST', '/me/cancel', {
+        token: fToken,
+        body: { confirmText: '注销' },
+      });
+      assert(
+        wrongWord.body?.code === 10001,
+        'U19 确认词不符 → 10001（「注销」不够，必须逐字是「注销账号」）',
+        `code=${wrongWord.body?.code} msg=${wrongWord.body?.message}`,
+      );
+      const notCanceled = await call('GET', '/auth/me', { token: fToken });
+      assert(
+        notCanceled.body?.code === 0 && notCanceled.body?.data?.nickname !== '已注销用户',
+        'U19 确认词被拒后**账号未被误注销**（fail-closed 不能「拒了但顺手办了」）',
+        `nickname=${notCanceled.body?.data?.nickname}`,
+      );
+
+      // ---- 9b. 闸门①：在职团长（`dev:1001` = 李明 = 团长#1 · status=1） ----
+      const leaderBlocked = await call('POST', '/me/cancel', {
+        token,
+        body: { confirmText: '注销账号' },
+      });
+      assert(
+        leaderBlocked.body?.code === 20015,
+        'U19 闸门① 在职团长不能注销 → 20015',
+        `code=${leaderBlocked.body?.code} msg=${leaderBlocked.body?.message}`,
+      );
+      assert(
+        (leaderBlocked.body?.data?.reasons ?? []).includes('leader'),
+        'U19 `data.reasons` 含原因**码** `leader`（可机械判读，端上不靠中文反推）',
+        `reasons=${JSON.stringify(leaderBlocked.body?.data?.reasons)}`,
+      );
+      assert(
+        (await call('GET', '/auth/me', { token })).body?.code === 0,
+        'U19 被闸门拦下 ≠ 账号被停用：该账号**仍可正常使用**（拦的是注销这一个动作）',
+        '',
+      );
+
+      // ---- 9c. 闸门②：有未终态订单 ----
+      // 全新账号没有楼 → 先挂一栋（与第 8 段「直改库构造样本」同一手法）。
+      // 不挂楼的话下单会先在「无分配/无楼」那一步就失败，测到的是别的东西。
+      const assigned = cdb
+        .prepare('UPDATE ab_user SET building_id = 1 WHERE id = ?')
+        .run(fId);
+      assert(
+        assigned.changes === 1,
+        'U19 构造样本：给干净账号挂楼（`building_id = 1`）',
+        `userId=${fId}`,
+      );
+
+      const co = await call('POST', '/orders', {
+        token: fToken,
+        idem: `e2e-cancel-order-${Date.now()}`,
+        body: { mealDate, quantity: 1 },
+      });
+      const cOrderNo = co.body?.data?.orderNo;
+      assert(
+        co.body?.code === 0 && !!cOrderNo,
+        'U19 构造样本：该账号下一笔未付款订单（`pending_pay` 属非终态）',
+        `orderNo=${cOrderNo}`,
+      );
+
+      const orderBlocked = await call('POST', '/me/cancel', {
+        token: fToken,
+        body: { confirmText: '注销账号' },
+      });
+      assert(
+        orderBlocked.body?.code === 20015,
+        'U19 闸门② 有未完成订单不能注销 → 20015',
+        `code=${orderBlocked.body?.code} msg=${orderBlocked.body?.message}`,
+      );
+      assert(
+        JSON.stringify(orderBlocked.body?.data?.reasons ?? []) === JSON.stringify(['orders']),
+        'U19 两道闸门**互不误报**：该账号既非团长也无余额 → `reasons` 恰为 ["orders"]（把 reason 判据写成「有任意一条就报全部」会在这里露馅）',
+        `reasons=${JSON.stringify(orderBlocked.body?.data?.reasons)}`,
+      );
+      assert(
+        (orderBlocked.body?.data?.pendingOrders ?? 0) >= 1,
+        'U19 `data.pendingOrders` 给出在途单数（让端上能说清「还有几单」，而不是只能反复点）',
+        `pendingOrders=${orderBlocked.body?.data?.pendingOrders}`,
+      );
+
+      // ---- 9d. 放开闸门 → 成功注销 ----
+      const released = await call('POST', `/orders/${cOrderNo}/cancel`, { token: fToken });
+      assert(
+        released.body?.code === 0,
+        'U19 构造样本：取消那笔在途订单（闸门随即放开 —— 也证明拦的是「在途」而非「下过单」）',
+        `status=${released.body?.data?.status}`,
+      );
+
+      const done = await call('POST', '/me/cancel', {
+        token: fToken,
+        body: { confirmText: '注销账号', reason: 'e2e 自动化注销' },
+      });
+      assert(done.body?.code === 0, 'U19 注销成功（三道闸门全过）', `code=${done.body?.code}`);
+      assert(
+        done.body?.data?.status === 3,
+        'U19 注销后 `status = 3`（新增 `UserStatus.CANCELED`）',
+        `status=${done.body?.data?.status}`,
+      );
+      const cleared = done.body?.data?.clearedFields ?? [];
+      assert(
+        cleared.length === 7 &&
+          ['nickname', 'avatarUrl', 'phone', 'phoneHash', 'buildingId', 'teamLeaderId', 'subscribeFlag'].every(
+            (k) => cleared.includes(k),
+          ),
+        'U19 `clearedFields` 恰为 7 项且覆盖全部可识别字段（端上照服务端下发的清单展示，不写第二份）',
+        `cleared=${cleared.join(',')}`,
+      );
+      assert(
+        /依法|法律/.test(done.body?.data?.note ?? ''),
+        'U19 `note` 明写「订单/资金记录依法保留」—— 否则用户以为数据全没了，而客服在后台仍看得到他的历史订单 = **虚假告知**',
+        `note=${done.body?.data?.note}`,
+      );
+
+      // ---- 9e. 落库事实（不看接口自述，直接查库） ----
+      const row = cdb
+        .prepare(
+          'SELECT status, deleted_at, nickname, phone, avatar_url, building_id, team_leader_id, openid FROM ab_user WHERE id = ?',
+        )
+        .get(fId);
+      assert(
+        row?.status === 3 && !!row?.deleted_at,
+        'U19 落库：`status = 3` + 软删时间（一次 UPDATE 写完，不留「改了状态没清资料」的半截态）',
+        `status=${row?.status} deleted_at=${row?.deleted_at}`,
+      );
+      assert(
+        row?.nickname === '已注销用户' &&
+          row?.phone === null &&
+          row?.avatar_url === null &&
+          row?.building_id === null &&
+          row?.team_leader_id === null,
+        'U19 落库：资料已匿名化（昵称覆写 + 5 个可识别字段清空）',
+        `nickname=${row?.nickname} phone=${row?.phone} building=${row?.building_id} leader=${row?.team_leader_id}`,
+      );
+      assert(
+        !!row?.openid,
+        'U19 落库：`openid` **刻意保留** —— 删掉它，同一个人下次登录会再注册成一个**全新账号**（同一微信两套账，比留一行匿名数据更糟）',
+        `openid=${row?.openid ? 'kept' : 'MISSING'}`,
+      );
+      assert(
+        (cdb.prepare('SELECT COUNT(*) AS c FROM ab_order WHERE user_id = ?').get(fId)?.c ?? 0) >= 1,
+        'U19 不碰事实：订单行**未被删除**（财务凭证留存优先于「删除个人数据」，注销是**身份层**动作）',
+        '',
+      );
+
+      // ---- 9f. 注销之后 ----
+      const relogin = await call('POST', '/auth/login', { body: { code: freshCode } });
+      assert(
+        relogin.body?.code === 20014,
+        'U19 同一微信号再登录 → 20014（**不是**重新注册成新账号、**不是** 20006）',
+        `code=${relogin.body?.code} msg=${relogin.body?.message}`,
+      );
+      assert(
+        relogin.body?.code !== 20006,
+        'U19 与黑名单**必须分码**：注销是**用户自己发起的**、黑名单是**平台处罚** —— 混成一个码，客服就无法从错误码判断该走「恢复账号」还是「解封」',
+        `code=${relogin.body?.code}`,
+      );
+
+      const repeat = await call('POST', '/me/cancel', {
+        token: fToken,
+        body: { confirmText: '注销账号' },
+      });
+      assert(
+        repeat.body?.code === 20014,
+        'U19 重复注销 → 20014（**不是幂等成功** —— 静默成功会让用户以为「刚刚才注销」，与 `20013` / `40013` 同一哲学）',
+        `code=${repeat.body?.code}`,
+      );
+
+      const oldToken = await call('GET', '/auth/me', { token: fToken });
+      assert(
+        oldToken.body?.code === 0 && oldToken.body?.data?.nickname === '已注销用户',
+        'U19 ⚠️ **已知边界（写成断言而非遗漏）**：已签发的旧 token 在过期前仍可用，但读到的是**已匿名化**的资料 —— 与 `20006` 黑名单同口径（状态只在**登录时**判，不做每请求查库）。改成每请求查库要付全站一次 DB 往返，属**待裁定**项',
+        `nickname=${oldToken.body?.data?.nickname}`,
+      );
+    } finally {
+      cdb.close();
+    }
+  } else {
+    fail('M5-20 账号注销断言', `找不到数据库文件 ${DB_PATH}`);
+  }
+
+  // ---------- 10. P1-U2 · 口味评价 U20（逐菜三键 · 一次定稿） ----------
+  // 夹具：再造一单走完支付后**直改状态为 delivered** —— e2e 环境没有配送/取餐回调，
+  // 与 §7「meal_date 回拨」同一夹具形态（直写 DB 只作前置，断言全部走 HTTP 回读）。
+  // 首单已在 §6 取消，而重复下单判据排除 cancelled ⇒ 同用户同出餐日可再造一单。
+  const ratedCreate = await call('POST', '/orders', {
+    token,
+    idem: 'e2e-order-key-rating',
+    body: { mealDate, quantity: 1 },
+  });
+  const ratingOrderNo = ratedCreate.body?.data?.orderNo;
+  assert(!!ratingOrderNo, 'U20 前置：再造一单（取消单不占重复下单名额）', `orderNo=${ratingOrderNo}`);
+
+  await call('POST', `/orders/${ratingOrderNo}/pay`, { token, idem: 'e2e-pay-key-rating' });
+  let ratingPaid = null;
+  for (let i = 0; i < 12; i += 1) {
+    await sleep(400);
+    const r = await call('GET', `/orders/${ratingOrderNo}/pay-result`, { token });
+    ratingPaid = r.body?.data;
+    if (ratingPaid?.paid) break;
+  }
+  assert(ratingPaid?.paid === true, 'U20 前置：新单已支付', `status=${ratingPaid?.status}`);
+
+  if (ratingOrderNo && existsSync(DB_PATH)) {
+    const rdb = new DatabaseSync(DB_PATH);
+    try {
+      const fix = rdb
+        .prepare("UPDATE ab_order SET status = 'delivered' WHERE order_no = ?")
+        .run(ratingOrderNo);
+      assert(fix.changes === 1, 'U20 夹具：状态直改 delivered（无配送回调环境的等价前置）');
+
+      // 评价前详情：canRate=true、dishes 带 dishId（U20 的菜键来源）
+      const before = (await call('GET', `/orders/${ratingOrderNo}`, { token })).body?.data;
+      const rv = before?.rating;
+      assert(
+        rv?.canRate === true && rv?.rated === false && rv?.ratedAt === null,
+        'U10 详情带评价状态块：delivered 未评单 canRate=true',
+        `canRate=${rv?.canRate} rated=${rv?.rated}`,
+      );
+      const dishes = before?.dishes ?? [];
+      assert(
+        dishes.length === 4 && dishes.every((d) => typeof d.dishId === 'number'),
+        'U10 详情 dishes 下发 dishId（端上评价卡的菜键 · 一饭四菜=4 位）',
+        `count=${dishes.length}`,
+      );
+
+      // 状态闸门：cancelled 单（首单）→ 30020，且回带 status/allowed 供端上引导
+      const gate = await call('POST', `/orders/${orderNo}/rating`, {
+        token,
+        body: { items: [{ dishId: dishes[0].dishId, rating: 1 }] },
+      });
+      assert(
+        gate.body?.code === 30020 && gate.body?.data?.status === 'cancelled',
+        'U20 状态闸门：未送达单 → 30020（非 5xx），回带 status',
+        `code=${gate.body?.code} status=${gate.body?.data?.status}`,
+      );
+      assert(
+        gate.body?.message === '当前订单状态不允许评价',
+        'U20 30020 的 message 是**专属文案**（只断言 code 会恒绿：文案缺失时落到「业务异常」兜底，用户看不到原因）',
+        `message=${JSON.stringify(gate.body?.message)}`,
+      );
+      assert(
+        Array.isArray(gate.body?.data?.allowed) && gate.body?.data?.allowed.length === 2,
+        'U20 30020 回带 allowed 可评状态集（端上据此引导「送达后可评价」）',
+        `allowed=${JSON.stringify(gate.body?.data?.allowed)}`,
+      );
+
+      // 菜不在本单 → 10001（请求与订单事实不符，不是业务态）
+      const foreign = await call('POST', `/orders/${ratingOrderNo}/rating`, {
+        token,
+        body: { items: [{ dishId: 999999, rating: 1 }] },
+      });
+      assert(foreign.body?.code === 10001, 'U20 菜不在本单套餐 → 10001', `code=${foreign.body?.code}`);
+
+      // 合法提交：2 好吃 + 1 一般 + 1 不好（带首尾空格的原因，验证 trim）
+      const submit = await call('POST', `/orders/${ratingOrderNo}/rating`, {
+        token,
+        body: {
+          items: [
+            { dishId: dishes[0].dishId, rating: 1 },
+            { dishId: dishes[1].dishId, rating: 1 },
+            { dishId: dishes[2].dishId, rating: 2 },
+            { dishId: dishes[3].dishId, rating: 3, reason: '  送到时已经凉了  ' },
+          ],
+        },
+      });
+      assert(
+        submit.body?.code === 0 && submit.body?.data?.ratedCount === 4,
+        'U20 逐菜三键提交成功（ratedCount=4，未评的菜被跳过是端上事，服务端照单全收）',
+        `code=${submit.body?.code} ratedCount=${submit.body?.data?.ratedCount}`,
+      );
+      assert(!!submit.body?.data?.ratedAt, 'U20 回带 ratedAt（端上直接切已评终态）');
+
+      // 一次定稿：重复提交 → 30021（非幂等成功 —— 与 20013/20014 同哲学）
+      const again = await call('POST', `/orders/${ratingOrderNo}/rating`, {
+        token,
+        body: { items: [{ dishId: dishes[0].dishId, rating: 1 }] },
+      });
+      assert(
+        again.body?.code === 30021 && !!again.body?.data?.ratedAt,
+        'U20 重复提交 → 30021（裁决④一次定稿，不是 10006 幂等成功）',
+        `code=${again.body?.code}`,
+      );
+      assert(
+        again.body?.message === '该订单已评价过，不能重复提交',
+        'U20 30021 的 message 是**专属文案**（只断言 code 会恒绿：文案缺失时落到「业务异常」兜底）',
+        `message=${JSON.stringify(again.body?.message)}`,
+      );
+
+      // 终态回显
+      const afterD = (await call('GET', `/orders/${ratingOrderNo}`, { token })).body?.data;
+      const ra = afterD?.rating;
+      assert(
+        ra?.rated === true && ra?.canRate === false && ra?.items?.length === 4,
+        'U10 详情终态：rated=true / canRate=false / 回显 4 条',
+        `rated=${ra?.rated} items=${ra?.items?.length}`,
+      );
+
+      // 落库快照：dish_name / supplier_name 为真实快照（非兜底占位），reason 已 trim
+      const rows = rdb
+        .prepare(
+          'SELECT dish_name, supplier_name, rating, reason FROM ab_dish_rating WHERE order_no = ? ORDER BY slot',
+        )
+        .all(ratingOrderNo);
+      assert(rows.length === 4, 'U20 落库恰 4 行（整批单事务）', `rows=${rows.length}`);
+      const badRow = rows.find((x) => x.rating === 3);
+      assert(
+        badRow?.reason === '送到时已经凉了',
+        'U20 落库 reason 已 trim（首尾空格不入库）',
+        `reason=${JSON.stringify(badRow?.reason)}`,
+      );
+      assert(
+        rows.every((x) => x.dish_name && !/^菜品#/.test(x.dish_name)),
+        'U20 落库 dish_name 为真实快照（菜改名/下架不影响历史行）',
+      );
+      assert(
+        rows.every((x) => x.supplier_name && !/^供应商#/.test(x.supplier_name)),
+        'U20 落库 supplier_name 为真实快照',
+      );
+
+      // 还原夹具：删评价行 + 订单 + 支付流水。⚠️ 必须删干净 —— 本套之后还有 m2/m3，
+      // 两者的开篇夹具都要用 dev:1001 在**同一出餐日**下单，而重复下单判据只排除
+      // cancelled —— 留一张 delivered 单会让后续两套的开篇夹具全部红在 30004
+      // （本轮实测：组合套跑 m2/m3 双红，单跑却全绿 —— 顺序效应，非产品缺陷）。
+      const delR40 = rdb
+        .prepare('DELETE FROM ab_dish_rating WHERE order_no = ?')
+        .run(ratingOrderNo);
+      const delP40 = rdb
+        .prepare('DELETE FROM ab_payment_log WHERE order_no = ?')
+        .run(ratingOrderNo);
+      const delO40 = rdb.prepare('DELETE FROM ab_order WHERE order_no = ?').run(ratingOrderNo);
+      assert(
+        delR40.changes === 4 && delO40.changes === 1,
+        'U20 夹具还原：评价 4 行 + 订单 1 行已删（不留半截态给后续套件）',
+        `rating=${delR40.changes} order=${delO40.changes} payLog=${delP40.changes}`,
+      );
+    } finally {
+      rdb.close();
+    }
+  } else {
+    fail('U20 口味评价断言', `缺少前置（orderNo=${ratingOrderNo} / DB=${DB_PATH}）`);
+  }
+
   // ---------- 汇总 ----------
   // 连根回收（Windows 下 shell:true 只起一层 cmd.exe，必须 taskkill /T 才能收掉 ts-node）
   await stopApiServer(server, PORT);

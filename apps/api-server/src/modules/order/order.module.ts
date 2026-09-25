@@ -10,6 +10,7 @@ import { Dish, Supplier } from '../../database/entities/supplier.entity';
 import { OperationLog } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
 import { FinanceModule } from '../finance/finance.module';
+import { RatingModule } from '../rating/rating.module';
 import { TeamLeaderModule } from '../team-leader/team-leader.module';
 import { LeaderOrderController } from './leader-order.controller';
 import { LeaderOrderService } from './leader-order.service';
@@ -54,6 +55,8 @@ import { OrderService } from './order.service';
     ]),
     FinanceModule,
     TeamLeaderModule,
+    // P1-U2：detail() 借 RatingService 组装 U10 详情的 rating 块（canRate/rated/回显）
+    RatingModule,
   ],
   controllers: [OrderController, LeaderOrderController, OrderAdminController],
   providers: [OrderService, LeaderOrderService, OrderAdminService],

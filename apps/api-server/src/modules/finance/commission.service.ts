@@ -9,6 +9,7 @@ import { BALANCE_LOG_TYPE_LABEL } from '../../common/constants/balance-log';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { BizConfigService } from '../../common/services/biz-config.service';
 import { LeaderMoneyService } from '../../common/services/leader-money.service';
+import { UserPayeeService } from '../../common/services/user-payee.service';
 import { QueueService } from '../../common/queue/queue.service';
 import { monthRangeOf, todayBj } from '../../common/utils/time';
 import { money, round2 } from '../../common/utils/money';
@@ -144,6 +145,8 @@ export class CommissionService {
     private readonly message: MessageService,
     // M4-4：余额 / 冻结 / 待入账佣金 / 累计已提现的**唯一真源**读取口（#69）
     private readonly leaderMoney: LeaderMoneyService,
+    /** F-10：写余额前判「收款人身份状态」（全仓唯一实现 `canReceiveMoney`） */
+    private readonly payee: UserPayeeService,
   ) {}
 
   /**
@@ -564,6 +567,17 @@ export class CommissionService {
    * ⚠️ **本方法是把佣金写进余额的唯一实现** —— `accrueForOrders`（计佣）刻意不调用它。
    *   任何时候要「入账」，都走 `settlePending`，不要在别处另写一遍余额加法，
    *   否则同一笔佣金经不同路径会得出不同的 `balanceAfter`（本项目头号顽疾「两个真相」）。
+   *
+   * ⚠️ **F-10 收款人闸门**：写余额前先判 `leader.userId` 还收不收得了钱
+   *   （`UserPayeeService.canReceiveMoney`）。已注销用户的佣金一旦进余额就**永远提不出来**
+   *   —— 提现是唯一的出钱口且必须过 `LeaderGuard`，注销身份过不去 ⇒ 钱永久悬空且**零提示**。
+   *   ⭐ **正常业务流不会走到这里的失败分支**：唯一调用方 `settlePending` 在**构建
+   *   credits 之前**就用同一函数前置跳过并记入 `skippedReasons`（佣金行留在 `pending`
+   *   ⇒ 补跑可再拾起），故本处的 `throw` 只是一道**兜底的后墙**：
+   *   「**明明有人绕过了前置闸门却还想写钱**」本身就是必须停下的态。
+   *   ⚠️ 也因此它**绝不能被当成常规跳过手段** —— 抛错会让 `settlePending` 的
+   *   「整批单事务」回滚，当天**所有团长**的佣金一起退回 `pending`（可重入，重跑即可补齐，
+   *   与同方法内乐观锁冲突的处理同哲学）。
    */
   private async creditCommissions(
     m: EntityManager,
@@ -571,6 +585,15 @@ export class CommissionService {
     credits: CommissionCredit[],
   ): Promise<{ amountFen: number; quantity: number; orderNos: string[] }> {
     if (!credits.length) return { amountFen: 0, quantity: 0, orderNos: [] };
+
+    const leaderUser = Number(leader.userId);
+    if (!(await this.payee.canReceiveMoney(leaderUser, m))) {
+      throw new BizException(
+        ErrorCode.ACCOUNT_CANCELED,
+        `团长 #${leader.id}（用户 #${leaderUser}）已注销，${credits.length} 条佣金不能入账` +
+          '（钱一旦进余额就永远提不出来）—— 本批结算已回滚，请核对前置闸门后重跑（结算可重入）',
+      );
+    }
 
     const account = await m.findOne(Balance, { where: { userId: Number(leader.userId) } });
 
@@ -687,6 +710,10 @@ export class CommissionService {
    *
    * `settledAt` 取**系统当前时间**（跑批/补跑时刻）而非业务时点 —— 对账要诚实的时间戳，
    * 且 `ab_commission.meal_date` 已记录业务归属日，两者语义不冲突。
+   *
+   * ⚠️ **F-10**：团长所属用户已注销时，该团长的佣金**整批留在 `pending` 跳过**
+   * （见循环内的注释）—— 故 `skipped > 0` 不再只意味着「并发已入账」，
+   * 也可能是「这笔钱现在没有可交付的收款人」，原因一律进 `skippedReasons`。
    */
   async settlePending(dto: AdminSettleCommissionsDto): Promise<CommissionSettleView> {
     const date = dto.date?.trim() || null;
@@ -734,6 +761,26 @@ export class CommissionService {
           // 记进 `skippedReasons` 让运营看见（多半是脏数据，需要人工核）。
           skipped += list.length;
           skippedReasons.push(`团长 #${leaderId} 档案不存在，${list.length} 条佣金跳过`);
+          continue;
+        }
+
+        /**
+         * ⭐ **F-10 前置闸门（写钱最后一道的前一道）**：这个团长还收不收得了钱
+         *
+         * ⚠️ 必须在**构建 credits 之前**判定 —— 一旦进了下面的循环，佣金行就被
+         *    置成 `settled`；此时再判「不可收款」，钱要么沉默地丢（记 settled 不入账），
+         *    要么抛错把 `settlePending` 的**整批单事务**回滚、连累当天的**所有团长**。
+         *    这里提前 `continue` ⇒ 佣金行**留在 `pending`** ⇒ 下一次跑批/补跑自动再拾起
+         *    （本方法天然可重入），同时把原因推进 `skippedReasons` 交运营人工处理
+         *    ——「留待人工队列」的具体形态就是这条 pending 队列本身，不需要新表。
+         */
+        const leaderUser = Number(leader.userId);
+        if (!(await this.payee.canReceiveMoney(leaderUser, m))) {
+          skipped += list.length;
+          skippedReasons.push(
+            `团长 #${leaderId}（用户 #${leaderUser}）已注销，` +
+              `${list.length} 条佣金留在 pending 未入账（入账即成为永远提不出来的钱，请人工核实）`,
+          );
           continue;
         }
 

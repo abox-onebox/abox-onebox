@@ -340,6 +340,21 @@ const GATES = {
     cwd: 'apps/api-server',
     cmd: 'ts-node -r tsconfig-paths/register src/modules/order/order-state-audit.ts',
   },
+  /**
+   * 2026-09-25：**错误码文案覆盖率**（`ErrorCode` 声明 ↔ `ERROR_MESSAGE` 映射）——
+   * 缺陷「30020/30021 只显示『业务异常』」的防复发门禁
+   *
+   * 报告的定性是**别按笔误修**：那是**覆盖率缺口**，只补两行文案，下次新增错误码还会再犯。
+   * 声明与文案是同一件事的两份表述，而不被自动化执行的那一份（`ERROR_MESSAGE`）必然悄悄错。
+   * 补完那两条后机算全枚举（82 个码），又扫出同形的 `30016` / `30017` —— 结构性缺口坐实。
+   *
+   * 判据：① 枚举声明的**每个码**都必须有一条映射，缺了**逐个点名**（只报「缺 N 条」等于没报）；
+   *      ② 反向：文案表里的键必须是声明过的码（幽灵表述）；③ 同一个码不得被映射两次。
+   * **自带自证**：11 条合成样本「必报的报得出 / 必不报的不报」，不符即 exit 2；
+   * 另在**真文件**上做过实证：删掉 `[ErrorCode.DELIVERY_NOT_FOUND]` 那条 ⇒
+   * **必红并点名 `DELIVERY_NOT_FOUND = 30017`**，恢复 ⇒ 必绿（两种自证都跑过）。
+   */
+  'errcode:message': { cwd: '.', cmd: 'node scripts/check-error-code-message.mjs' },
   // outDir：构建前先改名挪走，避免构建工具自己 bulk-rm 被宿主守卫拦截（见文件头说明）
   'build:api': { cwd: 'apps/api-server', cmd: 'nest build', outDir: 'dist' },
   'build:admin': { cwd: 'apps/admin-web', cmd: 'vite build', outDir: 'dist' },
@@ -401,6 +416,8 @@ const ALIASES = {
     'schema:parity',
     'index:parity',
     'state:audit',
+    // 2026-09-25：错误码文案覆盖率（声明 ↔ 映射，防「业务异常」兜底）—— 纯静态、毫秒级
+    'errcode:message',
     'route:audit',
     'security:scan',
     // M5-15：菜单「授权 ↔ 入口」一致性（导航断链防复发）—— 纯静态、秒级
@@ -474,6 +491,7 @@ const REPORT_RE = {
   'e2e:m1': [/^通过\s+\d+\/\d+.*$/m],
   'e2e:m2': [/^通过\s+\d+\/\d+.*$/m],
   'e2e:m3': [/^通过\s+\d+\/\d+.*$/m],
+  'errcode:message': [/^✔ 错误码文案全覆盖.*$/m],
 };
 
 function reportOf(r) {

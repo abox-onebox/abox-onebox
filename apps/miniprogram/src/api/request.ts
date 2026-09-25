@@ -30,6 +30,10 @@ export const CODE_FORBIDDEN = 10003;
 export const CODE_TOO_MANY_REQUESTS = 10005;
 /** U11 截单后自助取消被拒 → 需团长代退（payload 带 leaderContact） */
 export const CODE_REFUND_NOT_ALLOWED = 40004;
+/** U19 账号已注销（M5-20）—— 登录与任何调用都会命中，端上要给**终态页**而不是 toast */
+export const CODE_ACCOUNT_CANCELED = 20014;
+/** U19 暂不能注销（M5-20）—— payload 带 `reasons: string[]`，端上逐条列出即可 */
+export const CODE_ACCOUNT_CANCEL_BLOCKED = 20015;
 
 /** 业务异常（携带服务端 code / data / requestId，便于端上分支与排障） */
 export class ApiError extends Error {
@@ -163,8 +167,12 @@ export async function request<T>(options: RequestOptions): Promise<T> {
 
   if (code === CODE_OK) return payload as T;
 
-  // token 失效：清理本地登录态，交由上层（useRequest / 页面）重新登录后重试
-  if (code === CODE_UNAUTHORIZED || res.statusCode === 401) {
+  // 要清本地登录态的两种码：
+  //   · `10002` token 失效 —— 交上层（`useRequest`）重新登录后**重试一次**
+  //   · `20014` 账号已注销（M5-20）—— ⚠️ **不能**走重试那条路：登录本身就会被
+  //     `20014` 挡回，重试就变成「登录 → 被拒 → 跳登录页 → 再登录」的**死循环**。
+  //     故这里只清态，由页面就地进入「已注销」终态（不跳登录页）。
+  if (code === CODE_UNAUTHORIZED || res.statusCode === 401 || code === CODE_ACCOUNT_CANCELED) {
     clearAuthStorage();
   }
 

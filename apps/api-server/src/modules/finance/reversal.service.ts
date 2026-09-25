@@ -3,6 +3,7 @@ import { EntityManager } from 'typeorm';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
+import { UserPayeeService } from '../../common/services/user-payee.service';
 import { money, round2, toFen } from '../../common/utils/money';
 import { Balance, BalanceLog, Commission } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
@@ -43,6 +44,11 @@ import { Order, Refund } from '../../database/entities/order.entity';
 @Injectable()
 export class ReversalService {
   private readonly logger = new Logger('ReversalService');
+
+  constructor(
+    /** F-10：退款退余额前判「收款人身份状态」（全仓唯一实现 `canReceiveMoney`） */
+    private readonly payee: UserPayeeService,
+  ) {}
 
   /**
    * 退款落地后的全部账务影响（幂等）
@@ -95,6 +101,23 @@ export class ReversalService {
    * ⚠️ 这段钱**从不进微信退款通道** —— 它当初就没走微信收，原路退回余额才对得上账。
    *    与 `OrderService.refundBalance` 同口径（截单前自助取消走那条，
    *    截单后退款走这条），两处都写 `ab_balance_log(type='refund', direction=1)`。
+   *
+   * ⭐ **F-10 收款人闸门（本方法是退款链路里唯一把钱写回余额的地方）**
+   *
+   * 这是本次回归里**最容易触发**的一条：`REFUNDABLE_STATUS` 含 `OrderStatus.COMPLETED`，
+   * 而账号注销的闸门要求「没有非终态订单」⇒ 已注销用户的历史单**必然都是 `completed`**
+   * ⇒ 客服一句「帮我退他上个月那单」就能把钱打回一个已注销账号的余额，
+   * 从此**提不出来**（提现必须过 `LeaderGuard`）、也**无人知晓**。
+   *
+   * ⚠️ **为什么是整个退款中断而不是跳过退余额**：退余额是这一次退款的**一半标的**，
+   *    若只跳过它、继续执行后面的佣金冲销与订单收口，出参会写成「退款成功」，
+   *    而用户的钱既没回微信（本段从不走微信）也没回余额 —— 「三处同时错且对账无痕」，
+   *    正是缺陷 #82 的形状。故这里沿用本文件已定的 fail-closed：**停下来报明确的错**，
+   *    由运营转 D11 兜底通道人工处理。
+   *
+   * ⚠️ **闸门刻意放在 `amountFen > 0` 之后**：订单没用过余额抵扣时，退款金额走
+   *    微信**原路退回**（那笔钱从来就在用户的微信里，不进平台余额 ⇒ 不存在悬空），
+   *    一口气把整条退款拦掉反而会让已注销用户拿不回自己实付的钱。
    */
   private async refundBalancePart(
     m: EntityManager,
@@ -103,6 +126,15 @@ export class ReversalService {
   ): Promise<number> {
     const amountFen = toFen(Number(order.balanceUsed));
     if (amountFen <= 0) return 0;
+
+    const target = Number(order.userId);
+    if (!(await this.payee.canReceiveMoney(target, m))) {
+      throw new BizException(
+        ErrorCode.ACCOUNT_CANCELED,
+        `订单 ${order.orderNo} 所属用户 #${target} 已注销，退款无法退回余额` +
+          `（¥${order.balanceUsed} 既不到账也不提示，等于平台吞了这笔钱）—— 本次退款已中止（请转人工处理）`,
+      );
+    }
 
     const account = await m.findOne(Balance, { where: { userId: Number(order.userId) } });
     if (!account) {

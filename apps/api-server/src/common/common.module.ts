@@ -5,6 +5,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Balance, BalanceLog, Commission } from '../database/entities/finance.entity';
 import { TeamLeader } from '../database/entities/leader.entity';
 import { OperationLog } from '../database/entities/system.entity';
+import { User } from '../database/entities/user.entity';
 import { Withdraw } from '../database/entities/withdraw.entity';
 import { KvService } from './cache/kv.service';
 import { QueueService } from './queue/queue.service';
@@ -17,6 +18,7 @@ import { ResponseInterceptor } from './interceptors/response.interceptor';
 import { BizConfigService } from './services/biz-config.service';
 import { LeaderLookupService } from './services/leader-lookup.service';
 import { LeaderMoneyService } from './services/leader-money.service';
+import { UserPayeeService } from './services/user-payee.service';
 
 /**
  * 全局公共能力：统一响应 / 全局异常 / 全局鉴权 / 业务参数 / KV / 操作日志 / 队列（M4-3）
@@ -42,6 +44,11 @@ import { LeaderMoneyService } from './services/leader-money.service';
  *    四处共用同一份口径。⚠️ 它能被全局注入，靠的是**本模块 `exports` 了这个服务**，
  *    不是靠 `@Global()` 传递仓储：`@Global()` 只让本模块 `exports` 的东西全局可见，
  *    故本服务自己的 `forFeature` 也已在此补齐（#66 的教训反向使用）。
+ *
+ * ⭐ **F-10 `UserPayeeService`**（「这个人还能不能收钱」的**唯一判定**）同样全局导出：
+ *    写钱路径分散在 order（计佣）/ finance（入账、退款退余额）两个模块，
+ *    而verdict 必须在三处**逐字一致**（否则「其中一处开始拦了」就会变成新的拔河），
+ *    故按 `LeaderLookupService` / `LeaderMoneyService` 同款做法入驻 `common/`。
  */
 @Global()
 @Module({
@@ -54,6 +61,8 @@ import { LeaderMoneyService } from './services/leader-money.service';
       BalanceLog,
       Commission,
       Withdraw,
+      /** F-10：写钱路径要判「收款人身份状态」，故本模块也需持有 `ab_user` 仓储 */
+      User,
     ]),
   ],
   providers: [
@@ -62,6 +71,7 @@ import { LeaderMoneyService } from './services/leader-money.service';
     BizConfigService,
     LeaderMoneyService,
     LeaderLookupService,
+    UserPayeeService,
     LeaderGuard,
     AdminGuard,
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
@@ -75,6 +85,7 @@ import { LeaderMoneyService } from './services/leader-money.service';
     BizConfigService,
     LeaderMoneyService,
     LeaderLookupService,
+    UserPayeeService,
     LeaderGuard,
     AdminGuard,
   ],

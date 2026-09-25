@@ -18,6 +18,7 @@ import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { BizConfigService } from '../../common/services/biz-config.service';
 import { LeaderLookupService } from '../../common/services/leader-lookup.service';
+import { UserPayeeService } from '../../common/services/user-payee.service';
 import { maskPhone } from '../../common/utils/crypto';
 // ⚠️ M4-3：`genRefundNo` 已随「退款单建单下沉到 `RefundService.buildRefundRow`」一并移除
 //    —— 本模块不再自己造退款单号（第二份实现必然漂移）
@@ -43,6 +44,7 @@ import { Dish, Supplier } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
 import { WX_PAY_PROVIDER, WxPayProvider } from '../../providers/wx-pay/wx-pay.provider';
 import { RefundApplyPayload } from '../../queues/queue-payloads';
+import { RatingService } from '../rating/rating.service';
 import { CommissionService } from '../finance/commission.service';
 import { RefundService } from '../finance/refund.service';
 import { LeaderPromotionService } from '../team-leader/promotion.service';
@@ -97,6 +99,21 @@ export interface AutoConfirmByDateResult {
    * 故**不猜团长**（不按楼栋反推），只计数并告警 —— 佣金归零比佣金错付安全。
    */
   orphanConfirmed: number;
+  /**
+   * ⭐ F-10：**「订单照收口、钱没计」的原因清单**（不静默跳过）
+   *
+   * 团长所属用户已注销（`ab_user.status = 3`）时，佣金一旦计出（甚至只是写 `pending`）
+   * 就会在次日 02:00 变成一笔**提不出来的钱** —— 而提现是唯一的出钱口且必须过
+   * `LeaderGuard`，注销身份过不去 ⇒ 钱永久悬空且**零提示**。
+   *
+   * ⚠️ 此时的处理是「**履约照记、佣金停住**」而不是「整批跳过、订单不收口」：
+   *    这些单货已经送到（事实已经发生），不推 `completed` 会让它们**永久停在
+   *    `delivered`** —— 与 #79「三个状态零写入点、订单永久停在 `cut_off`」同一形状，
+   *    且每一轮跑批都会再跳过一次，永远自愈不了。这与本方法既有的
+   *    `orphanConfirmed`（无归属团长：收口但不计佣）是同一个处置，只是原因不同，
+   *    故**如实把原因报出来**让运营看得见，而不是混进 `orphanConfirmed` 里稀释掉。
+   */
+  skippedReasons: string[];
   /** 本次确认后触发晋级的团长（C2），供日志与端上展示 */
   promotions: Array<{ leaderId: number; from: string; to: string; rate: number }>;
 }
@@ -146,6 +163,10 @@ export class OrderService {
      *    建单（事务内）与通道调用（事务外，失败入队重试）只有一处实现。
      */
     private readonly refundService: RefundService,
+    /** P1-U2：U10 详情的 `rating` 块（canRate/rated/已评回显）由评价域组装 */
+    private readonly ratingService: RatingService,
+    /** F-10：写钱前判「收款人是否还是个能收钱的人」（`ab_user.status` —— 全仓唯一实现） */
+    private readonly payee: UserPayeeService,
   ) {}
 
   /**
@@ -404,10 +425,21 @@ export class OrderService {
       payAmountFen: toFen(order.payAmount),
       remark: order.remark ?? null,
       dishes: items.map((i) => ({
+        /**
+         * ⭐ `dishId`（P1-U2 新增）：评价提交按 id 定位菜品 ——
+         * `ab_dish.name` 无唯一约束（A3 批次不变量），按名字定位会把评价
+         * 记到别家同名菜头上。
+         */
+        dishId: Number(i.dishId),
         name: dishNames.get(i.dishId) ?? `菜品 ${i.dishId}`,
         slot: i.slot,
         supplierName: supNames.get(i.supplierId) ?? null,
       })),
+      /** P1-U2：口味评价状态（canRate/rated/已评回显）—— 评价域组装，口径单点 */
+      rating: await this.ratingService.orderRatingView(
+        { id: Number(order.id), status: order.status },
+        items,
+      ),
       timeline,
       pickup: {
         point: building ? `${building.name} 1 楼大堂` : '待确认',
@@ -880,6 +912,8 @@ export class OrderService {
 
     const leaders: AutoConfirmByDateResult['leaders'] = [];
     const promotions: AutoConfirmByDateResult['promotions'] = [];
+    /** ⭐ F-10：「钱停住了」的原因一律进这里（与 `settlePending` 的 `skippedReasons` 同名同义） */
+    const skippedReasons: string[] = [];
     let confirmedCount = 0;
     let confirmedQuantity = 0;
     let commissionFen = 0;
@@ -892,6 +926,25 @@ export class OrderService {
         this.logger.warn(`自动确认：团长档案 #${leaderId} 不存在，${orders.length} 单转无归属处理`);
         orphans.push(...orders);
         continue;
+      }
+
+      /**
+       * ⭐ F-10 闸门（写钱第一道）：这个团长**还是不是个能收钱的人**
+       *
+       * 放在事务**外**、且**不抛异常**（与写钱款 `settlePending` 同款纪律）：
+       *   · 不抛 —— `byLeader` 是**逐团长**处理的，抛错会连带把**后面所有团长**的
+       *     确认与计佣一起中断，而它们与这笔坏账毫无关系；
+       *   · 判定用全局唯一实现 `UserPayeeService.canReceiveMoney`，不在此自写 if。
+       * `false` ⇒ 订单**照常收口**（货已送到，事实照记），但**不计佣**，
+       * 并把原因推进 `skippedReasons` 让运营看见。
+       */
+      const leaderUser = Number(leader.userId);
+      const canReceive = await this.payee.canReceiveMoney(leaderUser);
+      if (!canReceive) {
+        this.logger.warn(
+          `自动确认：团长 #${leaderId}（用户 #${leaderUser}）已注销或不具备收款资格，` +
+            `${orders.length} 单收口但**不计佣**（不产生取不出来的钱，请人工核实这笔佣金的归属）`,
+        );
       }
 
       const outcome = await this.dataSource.transaction(async (m: EntityManager) => {
@@ -930,7 +983,11 @@ export class OrderService {
         if (logs.length) await logRepoOf(m).insert(logs);
 
         // 计佣：只对**本次真正推进**的单计（口径与 L9 共用 `accrueForOrders`，写 pending）
-        const acc = await this.commission.accrueForOrders(leader, transitioned, 'FLEX_MANUAL', m);
+        // ⚠️ F-10：团长不可收款 ⇒ 一分钱都不计（也不写 pending），避免次日自动变成悬空钱
+        const acc: { count: number; quantity: number; amountFen: number; orderNos: string[] } =
+          canReceive
+            ? await this.commission.accrueForOrders(leader, transitioned, 'FLEX_MANUAL', m)
+            : { count: 0, quantity: 0, amountFen: 0, orderNos: [] };
         return { transitioned, acc };
       });
 
@@ -946,6 +1003,15 @@ export class OrderService {
           quantity: outcome.acc.quantity,
           commissionFen: outcome.acc.amountFen,
         });
+      }
+
+      // ⭐ F-10 留痕：**只有真正收口了单却一分没计**才值得报（否则只是空跑）
+      //    这里刻意带上单号数量与出餐日，运营能直接拿着去后台核这一个团长。
+      if (!canReceive && outcome.transitioned.length) {
+        skippedReasons.push(
+          `团长 #${leaderId}（用户 #${leaderUser}）已注销，` +
+            `${outcome.transitioned.length} 单已收口但未计佣（佣金悬空，请人工核实这笔钱的归属）`,
+        );
       }
 
       // C2 晋级审计（事务外，与 L9 一致）：计佣即改变「月单」，故必须重算。
@@ -1010,6 +1076,10 @@ export class OrderService {
         `· 履约异常 ${notDeliveredCount} 单${notDeliveredCount ? '（需人工处理）' : ''}` +
         (operatorId ? `（操作人#${operatorId}）` : '（跑批）'),
     );
+    // ⭐ F-10：钱被拦下的原因必须进 WARN（与 `commission-settle.task.ts:83` 同款）
+    if (skippedReasons.length) {
+      this.logger.warn(`自动确认 date=${date} 有跳过项：${skippedReasons.join('；')}`);
+    }
     if (notDeliveredCount) {
       this.logger.warn(
         `自动确认 date=${date} 有 ${notDeliveredCount} 单到 14:00 仍未送达` +
@@ -1031,6 +1101,7 @@ export class OrderService {
         orderNos: abnormal.map((o) => o.orderNo),
       },
       orphanConfirmed,
+      skippedReasons,
       promotions,
     };
   }

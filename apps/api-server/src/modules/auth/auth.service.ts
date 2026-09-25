@@ -9,6 +9,7 @@ import { LeaderStatus } from '@abox/shared-types';
 import { KvService } from '../../common/cache/kv.service';
 import { ROLE_LABEL, menusOf } from '../../common/constants/admin-role';
 import { ErrorCode } from '../../common/constants/error-code';
+import { UserStatus } from '../../common/constants/user-status';
 import { JwtPayload } from '../../common/decorators/auth.decorator';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { money, toYuan } from '../../common/utils/money';
@@ -80,7 +81,17 @@ export class AuthService {
       );
       isNewUser = true;
       this.logger.log(`新用户注册 id=${user.id}（${this.wxMini.isMock ? 'mock' : 'real'} 通道）`);
-    } else if (user.status === 2) {
+    } else if (user.status === UserStatus.CANCELED) {
+      /**
+       * M5-20 · 已注销（U19）—— **必须排在黑名单之前判**
+       *
+       * 两个分支都让账号不可用，但对用户是两件事：注销是**他自己发起的**
+       * （要告诉他「是我注销的 + 怎么恢复」），黑名单是平台处罚。
+       * 顺序反了不影响结果（status 是单值），但把注销写成 20006
+       * 会让注销过的人以为被封号 —— 故两码分开，且文案各自成句。
+       */
+      throw new BizException(ErrorCode.ACCOUNT_CANCELED);
+    } else if (user.status === UserStatus.BLACKLIST) {
       throw new BizException(ErrorCode.USER_DISABLED);
     }
 

@@ -238,6 +238,11 @@ async function main() {
     'M2-② 非团长访问 /leader/profile 返回 10003（HTTP 403，端上可做拦截分支）',
     `code=${beforeApply.body?.code} http=${beforeApply.status}`,
   );
+  assert(
+    typeof beforeApply.body?.message === 'string' && beforeApply.body.message !== '' && beforeApply.body.message !== '业务异常',
+    "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(beforeApply.body?.message)}`,
+  );
 
   const noAgree = await call('POST', '/leader/apply', {
     token: applicant.token,
@@ -359,6 +364,16 @@ async function main() {
     '手机号已被其他团长占用 → 20004',
     `code=${taken.body?.code} msg=${taken.body?.message}`,
   );
+  assert(
+    typeof taken.body?.message === 'string' && taken.body.message !== '' && taken.body.message !== '业务异常',
+    "错误码 20004 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(taken.body?.message)}`,
+  );
+  assert(
+    typeof again.body?.message === 'string' && again.body.message !== '' && again.body.message !== '业务异常',
+    "错误码 20007 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(again.body?.message)}`,
+  );
 
   const badBuilding = await call('POST', '/leader/apply', {
     token: other.token,
@@ -374,6 +389,11 @@ async function main() {
     '办公楼不存在 → 10004',
     `code=${badBuilding.body?.code} msg=${badBuilding.body?.message}`,
   );
+  assert(
+    typeof badBuilding.body?.message === 'string' && badBuilding.body.message !== '' && badBuilding.body.message !== '业务异常',
+    "错误码 10004 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(badBuilding.body?.message)}`,
+  );
 
   const closedBuilding = await call('POST', '/leader/apply', {
     token: other.token,
@@ -388,6 +408,11 @@ async function main() {
     closedBuilding.body?.code === 10004,
     '办公楼未开通（status≠1）→ 10004 拒绝申请',
     `code=${closedBuilding.body?.code} msg=${closedBuilding.body?.message}`,
+  );
+  assert(
+    typeof closedBuilding.body?.message === 'string' && closedBuilding.body.message !== '' && closedBuilding.body.message !== '业务异常',
+    "错误码 10004 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(closedBuilding.body?.message)}`,
   );
 
   const badFloor = await call('POST', '/leader/apply', {
@@ -607,6 +632,11 @@ async function main() {
     'L9 幂等重放 → 10006（返回首次结果，不重复计佣）',
     `code=${replayConfirm.body?.code}`,
   );
+  assert(
+    typeof replayConfirm.body?.message === 'string' && replayConfirm.body.message !== '' && replayConfirm.body.message !== '业务异常',
+    "错误码 10006 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(replayConfirm.body?.message)}`,
+  );
   const commCount = readDb('SELECT COUNT(*) n FROM ab_commission WHERE order_id = (SELECT id FROM ab_order WHERE order_no = ?)', [orderNo]);
   assert(Number(commCount?.n) === 1, 'L9 幂等：同一订单只产生一条佣金流水', `rows=${commCount?.n}`);
 
@@ -778,6 +808,11 @@ async function main() {
     'L12 幂等重放 → 10006 + 首次结果（资金零副作用）',
     `code=${wdReplay.body?.code} no=${wdReplay.body?.data?.withdrawNo}`,
   );
+  assert(
+    typeof wdReplay.body?.message === 'string' && wdReplay.body.message !== '' && wdReplay.body.message !== '业务异常',
+    "错误码 10006 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(wdReplay.body?.message)}`,
+  );
 
   const wds = await call('GET', '/leader/withdrawals', { token: lming.token });
   assert(
@@ -922,6 +957,16 @@ async function main() {
     'L7 跨楼代退被拒 → 10003（越权防护先于状态判定）',
     `code=${crossRefund.body?.code}`,
   );
+  assert(
+    typeof crossRefund.body?.message === 'string' && crossRefund.body.message !== '' && crossRefund.body.message !== '业务异常',
+    "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(crossRefund.body?.message)}`,
+  );
+  assert(
+    typeof dupRefund.body?.message === 'string' && dupRefund.body.message !== '' && dupRefund.body.message !== '业务异常',
+    "错误码 40008 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(dupRefund.body?.message)}`,
+  );
 
   // ==========================================================================
   // 5. M2 遗留补遗：U17 客服入口 · L21 我的推荐 · L22 晋级审计 · L20 退出团长
@@ -954,6 +999,11 @@ async function main() {
     supportAnon.body?.code === 10002 && supportAnon.status === 401,
     'U17 未登录 → 10002 / HTTP 401（全局 JwtAuthGuard，未标 @Public）',
     `code=${supportAnon.body?.code} http=${supportAnon.status}`,
+  );
+  assert(
+    typeof supportAnon.body?.message === 'string' && supportAnon.body.message !== '' && supportAnon.body.message !== '业务异常',
+    "错误码 10002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(supportAnon.body?.message)}`,
   );
 
   // ---- 5.2 L21 我的推荐（「我的邀请」可见面）
@@ -1164,6 +1214,16 @@ async function main() {
     'L20 退出后全量 /leader/* → 20003（非单端点特例；只信 token 的 isLeader 会漏放）',
     `profile=${afterQuitProfile.body?.code} qrcode=${afterQuitQr.body?.code}`,
   );
+  assert(
+    typeof afterQuitQr.body?.message === 'string' && afterQuitQr.body.message !== '' && afterQuitQr.body.message !== '业务异常',
+    "错误码 20003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(afterQuitQr.body?.message)}`,
+  );
+  assert(
+    typeof afterQuitProfile.body?.message === 'string' && afterQuitProfile.body.message !== '' && afterQuitProfile.body.message !== '业务异常',
+    "错误码 20003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(afterQuitProfile.body?.message)}`,
+  );
   const quitReplay = await call('POST', '/leader/quit', {
     token: applicant.token,
     idem: 'e2e-m2-quit-0001',
@@ -1173,6 +1233,11 @@ async function main() {
     quitReplay.body?.code === 20003,
     'L20 重复退出 → 20003（守卫先于幂等拦截器：状态已不可逆，无需回放首次结果）',
     `code=${quitReplay.body?.code}`,
+  );
+  assert(
+    typeof quitReplay.body?.message === 'string' && quitReplay.body.message !== '' && quitReplay.body.message !== '业务异常',
+    "错误码 20003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(quitReplay.body?.message)}`,
   );
 
   // (d) 退出不是终点：可再次申请，复职时重置为见习（C2 阶梯从头走）
