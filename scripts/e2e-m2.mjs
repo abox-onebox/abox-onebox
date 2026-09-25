@@ -425,6 +425,13 @@ async function main() {
     },
   });
   assert(badFloor.body?.code === 10001, '手机号格式非法 → 10001（DTO 白名单）', `code=${badFloor.body?.code}`);
+  assert(
+    typeof badFloor.body?.message === 'string' &&
+      badFloor.body.message !== '' &&
+      badFloor.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(badFloor.body?.message)}`,
+  );
 
   // ==========================================================================
   // 3. L16 等级规则 / L18 补签 / L15 改资料
@@ -488,6 +495,13 @@ async function main() {
     tryBuilding.body?.code === 10001,
     'L15 办公楼变更本期不开放（DTO 白名单拒绝 buildingId → 10001）',
     `code=${tryBuilding.body?.code}`,
+  );
+  assert(
+    typeof tryBuilding.body?.message === 'string' &&
+      tryBuilding.body.message !== '' &&
+      tryBuilding.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(tryBuilding.body?.message)}`,
   );
 
   // ==========================================================================
@@ -729,6 +743,13 @@ async function main() {
     'L12 低于最低额 → 40003（data 附 minFen）',
     `code=${lowW.body?.code} minFen=${lowW.body?.data?.minFen}`,
   );
+  assert(
+    typeof lowW.body?.message === 'string' &&
+      lowW.body.message !== '' &&
+      lowW.body.message !== '业务异常',
+    "错误码 40003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(lowW.body?.message)}`,
+  );
   // 回归 · 幂等键必须在**业务失败后释放**：否则键停在 __pending__，
   //       同键重试会被误判为「请勿重复提交」10006，端上网络重试直接卡死。
   const lowRetry = await call('POST', '/leader/withdraw', {
@@ -741,6 +762,13 @@ async function main() {
     '回归 · 失败后同幂等键可立即重试（40003，而非 10006 卡死）',
     `code=${lowRetry.body?.code}`,
   );
+  assert(
+    typeof lowRetry.body?.message === 'string' &&
+      lowRetry.body.message !== '' &&
+      lowRetry.body.message !== '业务异常',
+    "错误码 40003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(lowRetry.body?.message)}`,
+  );
 
   const noBind = await call('POST', '/leader/withdraw', {
     token: applicant.token,
@@ -748,6 +776,13 @@ async function main() {
     body: { amount: 10 },
   });
   assert(noBind.body?.code === 40007, 'L12 未绑定收款方式 → 40007', `code=${noBind.body?.code}`);
+  assert(
+    typeof noBind.body?.message === 'string' &&
+      noBind.body.message !== '' &&
+      noBind.body.message !== '业务异常',
+    "错误码 40007 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(noBind.body?.message)}`,
+  );
 
   const bindLm = await call('PUT', '/leader/profile', {
     token: lming.token,
@@ -777,6 +812,13 @@ async function main() {
     bindApp.body?.code === 0 && noBal.body?.code === 50004,
     'L12 已绑卡但可提现余额不足 → 50004',
     `code=${noBal.body?.code}`,
+  );
+  assert(
+    typeof noBal.body?.message === 'string' &&
+      noBal.body.message !== '' &&
+      noBal.body.message !== '业务异常',
+    "错误码 50004 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(noBal.body?.message)}`,
   );
 
   const wd = await call('POST', '/leader/withdraw', {
@@ -1147,6 +1189,13 @@ async function main() {
     'L20 余额/冻结/在途提现任一未清 → 20008（data.blockers 逐条下发，端上照单引导）',
     `code=${quitBlocked.body?.code} blockers=${blockerCodes.join(',') || '无'}`,
   );
+  assert(
+    typeof quitBlocked.body?.message === 'string' &&
+      quitBlocked.body.message !== '' &&
+      quitBlocked.body.message !== '业务异常',
+    "错误码 20008 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(quitBlocked.body?.message)}`,
+  );
   const quitBlockedRetry = await call('POST', '/leader/quit', {
     token: lming.token,
     idem: 'e2e-m2-quit-blocked',
@@ -1158,6 +1207,13 @@ async function main() {
     `code=${quitBlockedRetry.body?.code}`,
   );
   assert(
+    typeof quitBlockedRetry.body?.message === 'string' &&
+      quitBlockedRetry.body.message !== '' &&
+      quitBlockedRetry.body.message !== '业务异常',
+    "错误码 20008 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(quitBlockedRetry.body?.message)}`,
+  );
+  assert(
     Number(readDb('SELECT status FROM ab_team_leader WHERE id = 1')?.status) === 1,
     'L20 拦截时未触碰团长状态（资金闸门先于状态变更，事务零副作用）',
   );
@@ -1166,6 +1222,13 @@ async function main() {
     quitNoKey.body?.code === 10001,
     'L20 缺幂等键 → 10001（状态变更类写操作强制带键）',
     `code=${quitNoKey.body?.code}`,
+  );
+  assert(
+    typeof quitNoKey.body?.message === 'string' &&
+      quitNoKey.body.message !== '' &&
+      quitNoKey.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(quitNoKey.body?.message)}`,
   );
 
   // (b) 资金已清可退出：e2e 新团长（可用 0 / 无在途提现 / 无待结算佣金）

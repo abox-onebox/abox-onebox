@@ -324,6 +324,13 @@ async function main() {
     'U5 缺 buildingId → 10001（免登录下服务端**不猜**楼群：猜错就把 A 楼的出品方给 B 楼看）',
     `code=${u5NoBuilding.body?.code}`,
   );
+  assert(
+    typeof u5NoBuilding.body?.message === 'string' &&
+      u5NoBuilding.body.message !== '' &&
+      u5NoBuilding.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(u5NoBuilding.body?.message)}`,
+  );
 
   // ---------- 3. U6 下单（幂等） ----------
   const K1 = 'e2e-order-key-0001';
@@ -356,6 +363,13 @@ async function main() {
     'M1-④ 同一幂等键重复下单只产生一单',
     `code=${replay.body?.code} orderNo=${replay.body?.data?.orderNo}`,
   );
+  assert(
+    typeof replay.body?.message === 'string' &&
+      replay.body.message !== '' &&
+      replay.body.message !== '业务异常',
+    "错误码 10006 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(replay.body?.message)}`,
+  );
   assert(replay.status === 200, '§1.4 幂等回放走 HTTP 200', `status=${replay.status}`);
 
   // 缺幂等键 → 10001
@@ -364,6 +378,13 @@ async function main() {
     noKey.body?.code === 10001 && noKey.status === 200,
     '§1.7 下单缺 Idempotency-Key → 10001（HTTP 200）',
     `code=${noKey.body?.code} status=${noKey.status}`,
+  );
+  assert(
+    typeof noKey.body?.message === 'string' &&
+      noKey.body.message !== '' &&
+      noKey.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(noKey.body?.message)}`,
   );
 
   // 同用户同出餐日重复下单（换键）→ 30004
@@ -385,6 +406,13 @@ async function main() {
     body: { mealDate, quantity: 999 },
   });
   assert(overQty.body?.code === 30002, '份数超上限 → 30002', `code=${overQty.body?.code}`);
+  assert(
+    typeof overQty.body?.message === 'string' &&
+      overQty.body.message !== '' &&
+      overQty.body.message !== '业务异常',
+    "错误码 30002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(overQty.body?.message)}`,
+  );
 
   // ---------- 4. U7 / U8 支付 ----------
   const prepay = await call('POST', `/orders/${orderNo}/pay`, { token, idem: 'e2e-pay-key-0001' });
@@ -474,6 +502,13 @@ async function main() {
       late.body?.code === 40004,
       'M1-③b 截单后调取消接口返回 40004',
       `code=${late.body?.code} status=${late.status}`,
+    );
+    assert(
+      typeof late.body?.message === 'string' &&
+        late.body.message !== '' &&
+        late.body.message !== '业务异常',
+      "错误码 40004 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(late.body?.message)}`,
     );
     assert(
       !!late.body?.data?.leaderContact,
@@ -763,6 +798,13 @@ async function main() {
         'U19 重复注销 → 20014（**不是幂等成功** —— 静默成功会让用户以为「刚刚才注销」，与 `20013` / `40013` 同一哲学）',
         `code=${repeat.body?.code}`,
       );
+      assert(
+        typeof repeat.body?.message === 'string' &&
+          repeat.body.message !== '' &&
+          repeat.body.message !== '业务异常',
+        "错误码 20014 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(repeat.body?.message)}`,
+      );
 
       const oldToken = await call('GET', '/auth/me', { token: fToken });
       assert(
@@ -849,6 +891,13 @@ async function main() {
         body: { items: [{ dishId: 999999, rating: 1 }] },
       });
       assert(foreign.body?.code === 10001, 'U20 菜不在本单套餐 → 10001', `code=${foreign.body?.code}`);
+      assert(
+        typeof foreign.body?.message === 'string' &&
+          foreign.body.message !== '' &&
+          foreign.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(foreign.body?.message)}`,
+      );
 
       // 合法提交：2 好吃 + 1 一般 + 1 不好（带首尾空格的原因，验证 trim）
       const submit = await call('POST', `/orders/${ratingOrderNo}/rating`, {

@@ -643,6 +643,13 @@ async function main() {
     'D52 纯数字弱口令（12345678）→ 10001（口令需同时含字母与数字）',
     `code=${weakPwd.body?.code}`,
   );
+  assert(
+    typeof weakPwd.body?.message === 'string' &&
+      weakPwd.body.message !== '' &&
+      weakPwd.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(weakPwd.body?.message)}`,
+  );
 
   const hashRow = readDb('SELECT password_hash FROM ab_admin_user WHERE username = ?', [userA]);
   assert(
@@ -686,6 +693,13 @@ async function main() {
     lockedWithRightPwd.code === 20005,
     'A2 锁定期内**即使口令正确**也拒绝（锁定闸门先于口令校验，否则响应差异会变成密码 oracle）',
     `code=${lockedWithRightPwd.code}`,
+  );
+  assert(
+    typeof lockedWithRightPwd?.message === 'string' &&
+      lockedWithRightPwd.message !== '' &&
+      lockedWithRightPwd.message !== '业务异常',
+    "错误码 20005 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(lockedWithRightPwd?.message)}`,
   );
 
   // ==========================================================================
@@ -753,6 +767,13 @@ async function main() {
     'A2 被停用账号登录 → 20005（该账号因前面的锁定用例仍在锁定期，锁定闸门先命中）',
     `code=${disabledLogin.code}`,
   );
+  assert(
+    typeof disabledLogin?.message === 'string' &&
+      disabledLogin.message !== '' &&
+      disabledLogin.message !== '业务异常',
+    "错误码 20005 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(disabledLogin?.message)}`,
+  );
 
   // 另起一个账号单独验证「停用 → 20006」
   const createdB = await call('POST', '/admin/system/accounts', {
@@ -782,6 +803,13 @@ async function main() {
     'D53 停用自己 → 20010（当场自锁在门外，只能改库救场）',
     `code=${selfDisable.body?.code}`,
   );
+  assert(
+    typeof selfDisable.body?.message === 'string' &&
+      selfDisable.body.message !== '' &&
+      selfDisable.body.message !== '业务异常',
+    "错误码 20010 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(selfDisable.body?.message)}`,
+  );
 
   const selfDemote = await call('PUT', `/admin/system/accounts/${seedAdmin.id}`, {
     token: adminToken,
@@ -791,6 +819,13 @@ async function main() {
     selfDemote.body?.code === 20010,
     'D53 降级自己 → 20010（改完连账号管理菜单都没了）',
     `code=${selfDemote.body?.code}`,
+  );
+  assert(
+    typeof selfDemote.body?.message === 'string' &&
+      selfDemote.body.message !== '' &&
+      selfDemote.body.message !== '业务异常',
+    "错误码 20010 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(selfDemote.body?.message)}`,
   );
 
   // 注：第 ③ 条「不能动最后一个启用的 super_admin」在**当前种子下不可独立触发** ——
@@ -987,6 +1022,13 @@ async function main() {
     d55.body?.code === 10001,
     'D55 一期**明确不支持** → 10001（而非返回「保存成功」的假象：权限改了却不生效最危险）',
     `code=${d55.body?.code}`,
+  );
+  assert(
+    typeof d55.body?.message === 'string' &&
+      d55.body.message !== '' &&
+      d55.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(d55.body?.message)}`,
   );
 
   // ==========================================================================
@@ -1287,6 +1329,13 @@ async function main() {
     'D3 已截单的分配不可修改 → 30003（订单已产生，改套餐会让「用户买到的」≠「后台记的」）',
     `code=${editPast.body?.code}`,
   );
+  assert(
+    typeof editPast.body?.message === 'string' &&
+      editPast.body.message !== '' &&
+      editPast.body.message !== '业务异常',
+    "错误码 30003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(editPast.body?.message)}`,
+  );
 
   const editMissing = await call('PUT', '/admin/meal/assignments/999999', {
     token: adminToken,
@@ -1312,6 +1361,13 @@ async function main() {
     pubPast.body?.code === 30013,
     'D4 **已过截单时刻不许上架** → 30013（放行 = 运营亲手造一个「看得见点不动」的套餐）',
     `code=${pubPast.body?.code}`,
+  );
+  assert(
+    typeof pubPast.body?.message === 'string' &&
+      pubPast.body.message !== '' &&
+      pubPast.body.message !== '业务异常',
+    "错误码 30013 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(pubPast.body?.message)}`,
   );
 
   const pubOk = await call('POST', `/admin/meal/assignments/${pId}/publish`, {
@@ -1342,6 +1398,13 @@ async function main() {
     badAction.body?.code === 10001,
     'D4 action 只接受 publish / unpublish → 其他值 10001',
     `code=${badAction.body?.code}`,
+  );
+  assert(
+    typeof badAction.body?.message === 'string' &&
+      badAction.body.message !== '' &&
+      badAction.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(badAction.body?.message)}`,
   );
 
   // 上架 → 用户端可见（U1）。dPlus3 距离现在 ≥2 天，尚未到 T-1 14:00 开团时刻，
@@ -1973,6 +2036,13 @@ async function main() {
       'D8 tab 只接受 all / abnormal → 其它值 10001（枚举白名单）',
       `code=${badTab.body?.code}`,
     );
+    assert(
+      typeof badTab.body?.message === 'string' &&
+        badTab.body.message !== '' &&
+        badTab.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(badTab.body?.message)}`,
+    );
 
     const page2 = await call('GET', `/admin/orders?${LIST_Q}&page=2&pageSize=2`, {
       token: adminToken,
@@ -2095,6 +2165,13 @@ async function main() {
       'D10 份数超出 DTO 硬顶（100）→ 10001：**两层闸门各司其职**（白名单拦荒唐值，业务闸门拦超配）',
       `code=${adjDtos.body?.code}`,
     );
+    assert(
+      typeof adjDtos.body?.message === 'string' &&
+        adjDtos.body.message !== '' &&
+        adjDtos.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(adjDtos.body?.message)}`,
+    );
 
     const adjShort = await call('POST', '/admin/orders/manual-adjust', {
       token: adminToken,
@@ -2104,6 +2181,13 @@ async function main() {
       adjShort.body?.code === 10001,
       'D10 改单原因过短 → 10001（DTO 白名单，不给「无理由改单」留口子）',
       `code=${adjShort.body?.code}`,
+    );
+    assert(
+      typeof adjShort.body?.message === 'string' &&
+        adjShort.body.message !== '' &&
+        adjShort.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(adjShort.body?.message)}`,
     );
 
     const adjPaidQty = await call('POST', '/admin/orders/manual-adjust', {
@@ -2222,6 +2306,13 @@ async function main() {
       'D11 可退金额不符 → 40011（这是「防看错订单」的二次确认参数，**不是部分退款**）',
       `code=${badAmt.body?.code}`,
     );
+    assert(
+      typeof badAmt.body?.message === 'string' &&
+        badAmt.body.message !== '' &&
+        badAmt.body.message !== '业务异常',
+      "错误码 40011 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(badAmt.body?.message)}`,
+    );
 
     const refundUnpaid = await call('POST', `/admin/orders/${noA}/force-refund`, {
       token: adminToken,
@@ -2231,6 +2322,13 @@ async function main() {
       refundUnpaid.body?.code === 30003,
       'D11 未支付订单强制退款 → 30003（没有钱可退）',
       `code=${refundUnpaid.body?.code}`,
+    );
+    assert(
+      typeof refundUnpaid.body?.message === 'string' &&
+        refundUnpaid.body.message !== '' &&
+        refundUnpaid.body.message !== '业务异常',
+      "错误码 30003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(refundUnpaid.body?.message)}`,
     );
 
     // B 单先走完 L9 计佣 —— 没有佣金行，「反向冲销」无从验证
@@ -2794,6 +2892,13 @@ async function main() {
       'D42 已终态的单也不可驳回 → 40013（终态不可逆，状态位是唯一依据）',
       `code=${rejAgain.body?.code}`,
     );
+    assert(
+      typeof rejAgain.body?.message === 'string' &&
+        rejAgain.body.message !== '' &&
+        rejAgain.body.message !== '业务异常',
+      "错误码 40013 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(rejAgain.body?.message)}`,
+    );
     const apMissing = await call('POST', '/admin/finance/refunds/99999999/approve', {
       token: adminToken,
       body: {},
@@ -2847,6 +2952,13 @@ async function main() {
       appr2Again.body?.code === 40013,
       'D41 财务审批后 admin 重复审批同样被拦（幂等与角色无关）',
       `code=${appr2Again.body?.code}`,
+    );
+    assert(
+      typeof appr2Again.body?.message === 'string' &&
+        appr2Again.body.message !== '' &&
+        appr2Again.body.message !== '业务异常',
+      "错误码 40013 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(appr2Again.body?.message)}`,
     );
 
     // ======================================================== D · D42 驳回
@@ -2942,6 +3054,13 @@ async function main() {
       apOnRejected.body?.code === 40013,
       'D42 已驳回的单**不可再通过** → 40013（终态不可逆：要退就重新申请，留痕才清楚）',
       `code=${apOnRejected.body?.code}`,
+    );
+    assert(
+      typeof apOnRejected.body?.message === 'string' &&
+        apOnRejected.body.message !== '' &&
+        apOnRejected.body.message !== '业务异常',
+      "错误码 40013 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(apOnRejected.body?.message)}`,
     );
 
     // 第三张：驳回**不消耗申请次数**，最终收口为已退款
@@ -3042,6 +3161,13 @@ async function main() {
       finApproveDone.body?.code === 40013,
       'finance 有审批权限：拿到的是**业务层**的 40013（守卫放行，状态闸门拦下）—— 与 operator 的 10003 区分开',
       `code=${finApproveDone.body?.code}`,
+    );
+    assert(
+      typeof finApproveDone.body?.message === 'string' &&
+        finApproveDone.body.message !== '' &&
+        finApproveDone.body.message !== '业务异常',
+      "错误码 40013 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(finApproveDone.body?.message)}`,
     );
 
     // ======================================================== G · 操作日志
@@ -3263,6 +3389,27 @@ async function main() {
     'D19 DTO 白名单：status / level / view 非法值一律 10001（挡在业务层之前）',
     `status=${badStatus.body?.code} level=${badLevel.body?.code} view=${badView.body?.code}`,
   );
+  assert(
+    typeof badStatus.body?.message === 'string' &&
+      badStatus.body.message !== '' &&
+      badStatus.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(badStatus.body?.message)}`,
+  );
+  assert(
+    typeof badLevel.body?.message === 'string' &&
+      badLevel.body.message !== '' &&
+      badLevel.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(badLevel.body?.message)}`,
+  );
+  assert(
+    typeof badView.body?.message === 'string' &&
+      badView.body.message !== '' &&
+      badView.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(badView.body?.message)}`,
+  );
 
   const opts = await call('GET', '/admin/leaders/filter-options', { token: lAdmin });
   assert(
@@ -3482,6 +3629,13 @@ async function main() {
     'D20 目标楼已有在职团长且未确认 → 20012 并回带 occupiedBy（先让端上弹出「现任是谁」）',
     `code=${apOccupy.body?.code} occupiedBy=${JSON.stringify(apOccupy.body?.data?.occupiedBy)}`,
   );
+  assert(
+    typeof apOccupy.body?.message === 'string' &&
+      apOccupy.body.message !== '' &&
+      apOccupy.body.message !== '业务异常',
+    "错误码 20012 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(apOccupy.body?.message)}`,
+  );
 
   const apStale = await call('POST', '/admin/leaders', {
     token: lAdmin,
@@ -3498,6 +3652,13 @@ async function main() {
     apStale.body?.code === 20012,
     'D20 转交确认传**旧值 / 错值** → 仍 20012（防「看到的是 A、确认时已变成 B」）',
     `code=${apStale.body?.code}`,
+  );
+  assert(
+    typeof apStale.body?.message === 'string' &&
+      apStale.body.message !== '' &&
+      apStale.body.message !== '业务异常',
+    "错误码 20012 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(apStale.body?.message)}`,
   );
 
   const apTransfer = await call('POST', '/admin/leaders', {
@@ -3612,6 +3773,13 @@ async function main() {
     'D21 换到已有在职团长的楼 → 20012（与 D20 同一闸门同一错误码，提示改走转交）',
     `code=${upOccupied.body?.code} target=${occupied?.bid}(${occupied?.name}) occupiedBy=${upOccupied.body?.data?.occupiedBy?.leaderId}`,
   );
+  assert(
+    typeof upOccupied.body?.message === 'string' &&
+      upOccupied.body.message !== '' &&
+      upOccupied.body.message !== '业务异常',
+    "错误码 20012 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(upOccupied.body?.message)}`,
+  );
 
   const upNoop = await call('PUT', `/admin/leaders/${lyLeaderId}`, {
     token: lAdmin,
@@ -3622,6 +3790,13 @@ async function main() {
     'D21 空变更 → 10001（不写库也不写日志，否则审计里全是「改了但什么都没改」）',
     `code=${upNoop.body?.code}`,
   );
+  assert(
+    typeof upNoop.body?.message === 'string' &&
+      upNoop.body.message !== '' &&
+      upNoop.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(upNoop.body?.message)}`,
+  );
 
   const upStatusAttempt = await call('PUT', `/admin/leaders/${lyLeaderId}`, {
     token: lAdmin,
@@ -3631,6 +3806,13 @@ async function main() {
     upStatusAttempt.body?.code === 10001,
     'D21 **刻意不吃 status**：停用/复职只有 D22 一个入口（forbidNonWhitelisted 直接拒，不给第二个入口）',
     `code=${upStatusAttempt.body?.code}`,
+  );
+  assert(
+    typeof upStatusAttempt.body?.message === 'string' &&
+      upStatusAttempt.body.message !== '' &&
+      upStatusAttempt.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(upStatusAttempt.body?.message)}`,
   );
 
   // ==================================================== F · D22 资质补录
@@ -3666,6 +3848,13 @@ async function main() {
     auSignNoVer.body?.code === 10001,
     'D22 协议补签缺版本号 → 10001（参数缺失，与「状态不支持」的 20013 区分开）',
     `code=${auSignNoVer.body?.code}`,
+  );
+  assert(
+    typeof auSignNoVer.body?.message === 'string' &&
+      auSignNoVer.body.message !== '' &&
+      auSignNoVer.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(auSignNoVer.body?.message)}`,
   );
 
   // 「停用要清 user.team_leader_id」——先造出「他归属于某位团长」这一事实（真实场景：团长由上级推荐加入）
@@ -3706,6 +3895,13 @@ async function main() {
     'D22 对已停职者再停 → 20013（**不是幂等成功**：审计链上要能分清「是谁停的」）',
     `code=${auSuspendAgain.body?.code}`,
   );
+  assert(
+    typeof auSuspendAgain.body?.message === 'string' &&
+      auSuspendAgain.body.message !== '' &&
+      auSuspendAgain.body.message !== '业务异常',
+    "错误码 20013 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(auSuspendAgain.body?.message)}`,
+  );
 
   const auRestore = await call('POST', `/admin/leaders/${lyLeaderId}/audit`, {
     token: lAdmin,
@@ -3731,6 +3927,13 @@ async function main() {
     auRestoreAgain.body?.code === 20013,
     'D22 对已在职者再恢复 → 20013（两个方向都拦，不只是单向）',
     `code=${auRestoreAgain.body?.code}`,
+  );
+  assert(
+    typeof auRestoreAgain.body?.message === 'string' &&
+      auRestoreAgain.body.message !== '' &&
+      auRestoreAgain.body.message !== '业务异常',
+    "错误码 20013 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(auRestoreAgain.body?.message)}`,
   );
 
   // ======================================================== G · 权限边界
@@ -4271,6 +4474,13 @@ async function main() {
     'D26 驳回但未填审核意见 → 10001（驳回要能给商家一个理由）',
     `code=${rejectNoRemark.body?.code}`,
   );
+  assert(
+    typeof rejectNoRemark.body?.message === 'string' &&
+      rejectNoRemark.body.message !== '' &&
+      rejectNoRemark.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(rejectNoRemark.body?.message)}`,
+  );
   const rejectOk = await call('POST', `/admin/suppliers/${supBId}/audit`, {
     token: adminToken,
     body: { result: 'rejected', remark: 'e2e 营业执照与线上主体不一致' },
@@ -4406,6 +4616,13 @@ async function main() {
     '外卖链接：不存在的平台作为推荐 → 10001（枚举白名单）',
     `code=${tkBad.body?.code}`,
   );
+  assert(
+    typeof tkBad.body?.message === 'string' &&
+      tkBad.body.message !== '' &&
+      tkBad.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(tkBad.body?.message)}`,
+  );
   const supplierTakeout = readDb('SELECT takeout_links FROM ab_supplier WHERE id = ?', [supAId]);
   assert(
     !!supplierTakeout?.takeout_links &&
@@ -4503,6 +4720,13 @@ async function main() {
     batchNoReason.body?.code === 10001,
     '批量下架**必填原因** → 缺原因 10001（批量下架是「一道菜在多个楼群同时消失」，复盘要能回答为什么）',
     `code=${batchNoReason.body?.code}`,
+  );
+  assert(
+    typeof batchNoReason.body?.message === 'string' &&
+      batchNoReason.body.message !== '' &&
+      batchNoReason.body.message !== '业务异常',
+    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    `message=${JSON.stringify(batchNoReason.body?.message)}`,
   );
   const batchUp = await call('POST', '/admin/dishes/batch-status', {
     token: adminToken,
@@ -5063,6 +5287,13 @@ async function main() {
       'D14 楼名重复 → 60005（同名楼会让「按楼筛选」变成歧义操作）',
       `code=${bDup.body?.code}`,
     );
+    assert(
+      typeof bDup.body?.message === 'string' &&
+        bDup.body.message !== '' &&
+        bDup.body.message !== '业务异常',
+      "错误码 60005 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(bDup.body?.message)}`,
+    );
     const bBadGroup = await call('POST', '/admin/buildings', {
       token: adminToken,
       body: { name: `e2e楼C_${stamp}`, address: 'e2e 测试路 3 号', buildingGroupId: 999999 },
@@ -5071,6 +5302,13 @@ async function main() {
       bBadGroup.body?.code === 60002,
       'D14 楼群不存在 → 60002（不静默落成「未归群」：运营以为挂上了，实际没挂）',
       `code=${bBadGroup.body?.code}`,
+    );
+    assert(
+      typeof bBadGroup.body?.message === 'string' &&
+        bBadGroup.body.message !== '' &&
+        bBadGroup.body.message !== '业务异常',
+      "错误码 60002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(bBadGroup.body?.message)}`,
     );
 
     // ---------------------------------------------------------- C · D15 编辑
@@ -5082,6 +5320,13 @@ async function main() {
       bNoop.body?.code === 10001,
       'D15 空变更 → 10001（不写库、不写日志；否则审计里全是「改了但什么都没改」）',
       `code=${bNoop.body?.code}`,
+    );
+    assert(
+      typeof bNoop.body?.message === 'string' &&
+        bNoop.body.message !== '' &&
+        bNoop.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(bNoop.body?.message)}`,
     );
     assert(
       bNoop.body?.code === 10001 ||
@@ -5098,6 +5343,13 @@ async function main() {
       bLeaderField.body?.code === 10001,
       'D15 **刻意不收 leaderId** → 10001（改团长只有 D20/D21 一个入口，避免绕过 20012 撞车闸门）',
       `code=${bLeaderField.body?.code}`,
+    );
+    assert(
+      typeof bLeaderField.body?.message === 'string' &&
+        bLeaderField.body.message !== '' &&
+        bLeaderField.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(bLeaderField.body?.message)}`,
     );
 
     const bRename = await call('PUT', `/admin/buildings/${bldAId}`, {
@@ -5143,6 +5395,13 @@ async function main() {
       body: { population: 1 },
     });
     assert(bMissing.body?.code === 60001, 'D15 楼栋不存在 → 60001', `code=${bMissing.body?.code}`);
+    assert(
+      typeof bMissing.body?.message === 'string' &&
+        bMissing.body.message !== '' &&
+        bMissing.body.message !== '业务异常',
+      "错误码 60001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(bMissing.body?.message)}`,
+    );
 
     // ---------------------------------------------------------- D · D16 楼群列表
     const gList = await call('GET', `/admin/building-groups?${qs({ pageSize: 100 })}`, {
@@ -5198,6 +5457,13 @@ async function main() {
       body: { name: grpA },
     });
     assert(gDup.body?.code === 60004, 'D17 楼群名重复 → 60004', `code=${gDup.body?.code}`);
+    assert(
+      typeof gDup.body?.message === 'string' &&
+        gDup.body.message !== '' &&
+        gDup.body.message !== '业务异常',
+      "错误码 60004 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(gDup.body?.message)}`,
+    );
 
     const gBadMember = await call('POST', '/admin/building-groups', {
       token: adminToken,
@@ -5207,6 +5473,13 @@ async function main() {
       gBadMember.body?.code === 60001,
       'D17 `buildingIds` 含不存在的楼 → 60001（不静默跳过：运营以为挂上了 3 栋，实际只挂上 2 栋）',
       `code=${gBadMember.body?.code}`,
+    );
+    assert(
+      typeof gBadMember.body?.message === 'string' &&
+        gBadMember.body.message !== '' &&
+        gBadMember.body.message !== '业务异常',
+      "错误码 60001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(gBadMember.body?.message)}`,
     );
 
     const gBCreate = await call('POST', '/admin/building-groups', {
@@ -5233,6 +5506,13 @@ async function main() {
       gStopNonEmpty.body?.code === 60003,
       'D18 停用**仍有成员楼**的楼群 → 60003 —— 停用会让成员楼静默失去开团能力，而楼自身状态仍是「营业中」，列表上看不出异常（fail-closed）',
       `code=${gStopNonEmpty.body?.code} remaining=${gStopNonEmpty.body?.data?.remaining}`,
+    );
+    assert(
+      typeof gStopNonEmpty.body?.message === 'string' &&
+        gStopNonEmpty.body.message !== '' &&
+        gStopNonEmpty.body.message !== '业务异常',
+      "错误码 60003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(gStopNonEmpty.body?.message)}`,
     );
     assert(
       readDb('SELECT status FROM ab_building_group WHERE id = ?', [grpBId])?.status === 1,
@@ -5262,6 +5542,13 @@ async function main() {
       body: { name: 'e2e 不存在群' },
     });
     assert(gMissing.body?.code === 60002, 'D18 楼群不存在 → 60002', `code=${gMissing.body?.code}`);
+    assert(
+      typeof gMissing.body?.message === 'string' &&
+        gMissing.body.message !== '' &&
+        gMissing.body.message !== '业务异常',
+      "错误码 60002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(gMissing.body?.message)}`,
+    );
 
     // ---------------------------------------------------------- F · 派生联动 + 视图聚合
     // 给 grpA 挂一个**新建**集散中心 → 覆盖状态应由 uncovered 翻成 covered（跨批次联动：M3-6 D30/D31 → M3-7 派生）
@@ -5810,6 +6097,13 @@ async function main() {
       'S2 当日无该菜品生产计划 → 50010（不属于本供应商 / 该日无计划，都不能默默接受）',
       `code=${noPlan.body?.code}`,
     );
+    assert(
+      typeof noPlan.body?.message === 'string' &&
+        noPlan.body.message !== '' &&
+        noPlan.body.message !== '业务异常',
+      "错误码 50010 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(noPlan.body?.message)}`,
+    );
     const overdue = await call('POST', '/supplier/meal/cook-confirm', {
       token: supToken,
       body: { date: YST, items: [{ dishId: 1, distributionCenterId: 1 }] },
@@ -5857,6 +6151,13 @@ async function main() {
       'S2 `items=[]` → 10001（至少一项；空数组静默成功会让「确认了」与「什么都没做」不可区分）',
       `code=${emptyItems.body?.code}`,
     );
+    assert(
+      typeof emptyItems.body?.message === 'string' &&
+        emptyItems.body.message !== '' &&
+        emptyItems.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(emptyItems.body?.message)}`,
+    );
     const badDate = await call('POST', '/supplier/meal/cook-confirm', {
       token: supToken,
       body: { date: '2026/09/16', items: [{ dishId: 1, distributionCenterId: 1 }] },
@@ -5866,6 +6167,13 @@ async function main() {
       'S2 日期格式非法 → 10001（服务端不猜日期）',
       `code=${badDate.body?.code}`,
     );
+    assert(
+      typeof badDate.body?.message === 'string' &&
+        badDate.body.message !== '' &&
+        badDate.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(badDate.body?.message)}`,
+    );
     const withSupplierId = await call('POST', '/supplier/meal/cook-confirm', {
       token: supToken,
       body: { date: TMR, supplierId: 2, items: [{ dishId: 1, distributionCenterId: 1 }] },
@@ -5874,6 +6182,13 @@ async function main() {
       withSupplierId.body?.code === 10001,
       'S2 请求体带 `supplierId` → 10001（**主体由 token 决定**，收下这个字段就等于允许「A 供应商改 B 的计划」）',
       `code=${withSupplierId.body?.code}`,
+    );
+    assert(
+      typeof withSupplierId.body?.message === 'string' &&
+        withSupplierId.body.message !== '' &&
+        withSupplierId.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(withSupplierId.body?.message)}`,
     );
   }
 
@@ -6071,6 +6386,13 @@ async function main() {
       'S9 付款登记：应付单不存在 → 50012（不存在的单不能「付」）',
       `code=${badIdPay.body?.code}`,
     );
+    assert(
+      typeof badIdPay.body?.message === 'string' &&
+        badIdPay.body.message !== '' &&
+        badIdPay.body.message !== '业务异常',
+      "错误码 50012 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(badIdPay.body?.message)}`,
+    );
     const noVoucher = await call('POST', `/admin/supplier-shares/${createdA?.id}/payment`, {
       token: adminToken,
       body: {},
@@ -6079,6 +6401,13 @@ async function main() {
       noVoucher.body?.code === 10001,
       'S9 付款登记**缺银行回单号** → 10001（入参层就拦 —— 回单号是「这笔钱确实付了」的唯一凭证）',
       `code=${noVoucher.body?.code}`,
+    );
+    assert(
+      typeof noVoucher.body?.message === 'string' &&
+        noVoucher.body.message !== '' &&
+        noVoucher.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(noVoucher.body?.message)}`,
     );
 
     const voucher = `E2E${stamp}-V1`;
@@ -6118,6 +6447,13 @@ async function main() {
       dupVoucher.body?.code === 10001,
       'S9 同一银行回单号用于两笔应付 → 10001（一个回单只能对应一笔付款，否则两笔支出挂同一凭证，对账时分不清哪笔真付了）',
       `code=${dupVoucher.body?.code}`,
+    );
+    assert(
+      typeof dupVoucher.body?.message === 'string' &&
+        dupVoucher.body.message !== '' &&
+        dupVoucher.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(dupVoucher.body?.message)}`,
     );
 
     // ---------------------------------------------------------- H. 列表 / 汇总
@@ -6365,11 +6701,25 @@ async function main() {
       'S9 日期格式非法 → 10001（服务端不猜日期）',
       `code=${s9BadDate.body?.code}`,
     );
+    assert(
+      typeof s9BadDate.body?.message === 'string' &&
+        s9BadDate.body.message !== '' &&
+        s9BadDate.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(s9BadDate.body?.message)}`,
+    );
     const s9NoDate = await call('GET', '/admin/supplier-shares/exceptions', { token: adminToken });
     assert(
       s9NoDate.body?.code === 10001,
       'S9 异常清单 **date 必填** → 10001（不给日期等于问「历史上所有没出单的原因」，那不是一份可执行的清单）',
       `code=${s9NoDate.body?.code}`,
+    );
+    assert(
+      typeof s9NoDate.body?.message === 'string' &&
+        s9NoDate.body.message !== '' &&
+        s9NoDate.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(s9NoDate.body?.message)}`,
     );
     const s9BadStatus = await call('GET', '/admin/supplier-shares?status=paid', {
       token: adminToken,
@@ -6378,6 +6728,13 @@ async function main() {
       s9BadStatus.body?.code === 10001,
       'S9 状态过滤值域收口 → 10001（`paid` 不是本表状态；用错值静默返回空列表会让人以为「今天没单」）',
       `code=${s9BadStatus.body?.code}`,
+    );
+    assert(
+      typeof s9BadStatus.body?.message === 'string' &&
+        s9BadStatus.body.message !== '' &&
+        s9BadStatus.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(s9BadStatus.body?.message)}`,
     );
   }
 
@@ -6481,6 +6838,13 @@ async function main() {
       '⭐⭐ **跨键矛盾被拦下**：把开团配到 `23:50`（晚于当时的截单 `23:30`）→ `10001` 且点名「开团必须早于截单」—— 逐项校验全过、系统照跑、**没有任何报错**才是这类配置的真危险（下单窗口成了空区间，谁都下不了单）',
       `code=${badPair.body?.code} fields=${JSON.stringify(badPair.body?.data?.fields ?? [])}`,
     );
+    assert(
+      typeof badPair.body?.message === 'string' &&
+        badPair.body.message !== '' &&
+        badPair.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(badPair.body?.message)}`,
+    );
 
     // ⭐⭐ `24:00` 是合法截单时刻（= T 日 0 点）：模型必须能表达它
     const tlBack = await call('PUT', '/admin/system/configs', {
@@ -6546,6 +6910,13 @@ async function main() {
       '⭐ D58 **白名单**：未知键 → 10001（静默忽略更糟 —— 运营以为改了，实际什么都没发生）',
       `code=${unknownKey.body?.code}`,
     );
+    assert(
+      typeof unknownKey.body?.message === 'string' &&
+        unknownKey.body.message !== '' &&
+        unknownKey.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(unknownKey.body?.message)}`,
+    );
 
     const unwiredWrite = await call('PUT', '/admin/system/configs', {
       token: adminToken,
@@ -6555,6 +6926,13 @@ async function main() {
       unwiredWrite.body?.code === 10001,
       '⭐ 未接线项**拒绝写入**（而非「写了但不生效」）—— 后者等于给假承诺（`distribution_center.default_count` 是表驱动之前的遗留计数，无消费方）',
       `code=${unwiredWrite.body?.code}`,
+    );
+    assert(
+      typeof unwiredWrite.body?.message === 'string' &&
+        unwiredWrite.body.message !== '' &&
+        unwiredWrite.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(unwiredWrite.body?.message)}`,
     );
 
     const policyWrite = await call('PUT', '/admin/system/configs', {
@@ -6566,6 +6944,13 @@ async function main() {
       'D58 策略标识不可写 → 10001',
       `code=${policyWrite.body?.code}`,
     );
+    assert(
+      typeof policyWrite.body?.message === 'string' &&
+        policyWrite.body.message !== '' &&
+        policyWrite.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(policyWrite.body?.message)}`,
+    );
 
     const emptyItems = await call('PUT', '/admin/system/configs', {
       token: adminToken,
@@ -6575,6 +6960,13 @@ async function main() {
       emptyItems.body?.code === 10001,
       'D58 空 items → 10001（「什么都不改」不该走成功分支，否则日志里全是无意义记录）',
       `code=${emptyItems.body?.code}`,
+    );
+    assert(
+      typeof emptyItems.body?.message === 'string' &&
+        emptyItems.body.message !== '' &&
+        emptyItems.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(emptyItems.body?.message)}`,
     );
 
     const blankMoney = await call('PUT', '/admin/system/configs', {
@@ -6586,6 +6978,13 @@ async function main() {
       '⭐ 清空金额输入 → 10001（`Number("")` 是 0，若不拦会被**静默存成 0.00** —— 对成本项就是「悄悄变回未登记」且毫无提示）',
       `code=${blankMoney.body?.code}`,
     );
+    assert(
+      typeof blankMoney.body?.message === 'string' &&
+        blankMoney.body.message !== '' &&
+        blankMoney.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(blankMoney.body?.message)}`,
+    );
 
     const outOfRange = await call('PUT', '/admin/system/configs', {
       token: adminToken,
@@ -6596,6 +6995,13 @@ async function main() {
       'D58 超范围取值 → 10001（售价不得为 0）',
       `code=${outOfRange.body?.code}`,
     );
+    assert(
+      typeof outOfRange.body?.message === 'string' &&
+        outOfRange.body.message !== '' &&
+        outOfRange.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(outOfRange.body?.message)}`,
+    );
 
     const badEnum = await call('PUT', '/admin/system/configs', {
       token: adminToken,
@@ -6605,6 +7011,13 @@ async function main() {
       badEnum.body?.code === 10001,
       'D58 枚举取值收口 → 10001（`WECHAT_TRANSFER` 是预留值；放行会让出款走进没有实现的分支）',
       `code=${badEnum.body?.code}`,
+    );
+    assert(
+      typeof badEnum.body?.message === 'string' &&
+        badEnum.body.message !== '' &&
+        badEnum.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(badEnum.body?.message)}`,
     );
 
     // ⭐ 整批原子：1 合法 + 1 非法 → 合法的那项**也不得写入**
@@ -6627,6 +7040,13 @@ async function main() {
       mixed.body?.code === 10001 && siteFeeAfterMixed === siteFeeBefore,
       '⭐ D58 **整批原子**：一批里有一项不合法 → 整批不写入（部分成功会让「二次确认」失去意义：确认 5 项、只生效 3 项且看不出是哪 3 项）',
       `code=${mixed.body?.code} before=${siteFeeBefore} after=${siteFeeAfterMixed}`,
+    );
+    assert(
+      typeof mixed.body?.message === 'string' &&
+        mixed.body.message !== '' &&
+        mixed.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(mixed.body?.message)}`,
     );
 
     // ---------------------------------------------------------- F. 成功写入 + 即时生效
@@ -6927,6 +7347,13 @@ async function main() {
         rBad.body?.code === 10001,
         '⭐ 非法 `range` → **10001**，不静默回落默认档 —— 否则运营以为在看 90 天，实际看的是 7 天',
         `code=${rBad.body?.code}`,
+      );
+      assert(
+        typeof rBad.body?.message === 'string' &&
+          rBad.body.message !== '' &&
+          rBad.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(rBad.body?.message)}`,
       );
 
       // ---------------------------------------------------------- B. 夹具：7 单（4 有效 / 3 无效）
@@ -7287,6 +7714,13 @@ async function main() {
         'D49 `topN` 上限收口 → 10001（不放开的话一次查询就能拉全量菜品）',
         `code=${badTop.body?.code}`,
       );
+      assert(
+        typeof badTop.body?.message === 'string' &&
+          badTop.body.message !== '' &&
+          badTop.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(badTop.body?.message)}`,
+      );
 
       const heatFull = (
         await call('GET', '/admin/stats/dish-heat?range=7d&topN=50', { token: adminToken })
@@ -7461,22 +7895,45 @@ async function main() {
         '',
       );
       const guest23 = await userLogin(`e2e_s23_${stamp}`);
+      const probeMsg7464 = await call('GET', '/admin/stats/dashboard', { token: guest23.token });
       assert(
-        (await call('GET', '/admin/stats/dashboard', { token: guest23.token })).body?.code ===
-          10003,
+        probeMsg7464.body?.code === 10003,
         '双主体隔离：小程序 token 打 `/admin/stats/*` → 10003（C 端与后台 id 各自自增，不隔离即静默越权）',
         '',
       );
-      const sup23 = await adminLogin('sanweiwu', 'supplier123');
       assert(
-        (await call('GET', '/admin/stats/dashboard', { token: sup23.token })).body?.code === 10003,
+        typeof probeMsg7464.body?.message === 'string' &&
+          probeMsg7464.body.message !== '' &&
+          probeMsg7464.body.message !== '业务异常',
+        "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg7464.body?.message)}`,
+      );
+      const sup23 = await adminLogin('sanweiwu', 'supplier123');
+      const probeMsg7471 = await call('GET', '/admin/stats/dashboard', { token: sup23.token });
+      assert(
+        probeMsg7471.body?.code === 10003,
         '双主体隔离：供应商 token 打 `/admin/stats/*` → 10003 —— 不变量 I1（供应商端不得出现终端定价信息）在看板上同样成立：GMV / 佣金 / 毛利一个都不能漏给供应商',
         '',
       );
       assert(
-        (await call('GET', '/admin/stats/dashboard')).body?.code === 10002,
+        typeof probeMsg7471.body?.message === 'string' &&
+          probeMsg7471.body.message !== '' &&
+          probeMsg7471.body.message !== '业务异常',
+        "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg7471.body?.message)}`,
+      );
+      const probeMsg7476 = await call('GET', '/admin/stats/dashboard');
+      assert(
+        probeMsg7476.body?.code === 10002,
         '未登录 → 10002',
         '',
+      );
+      assert(
+        typeof probeMsg7476.body?.message === 'string' &&
+          probeMsg7476.body.message !== '' &&
+          probeMsg7476.body.message !== '业务异常',
+        "错误码 10002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg7476.body?.message)}`,
       );
 
       // ---------------------------------------------------------- M. 夹具还原
@@ -7662,6 +8119,13 @@ async function main() {
       `code=${enableNoId.body?.code}`,
     );
     assert(
+      typeof enableNoId.body?.message === 'string' &&
+        enableNoId.body.message !== '' &&
+        enableNoId.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(enableNoId.body?.message)}`,
+    );
+    assert(
       JSON.stringify(enableNoId.body?.data ?? {}).includes('微信订阅消息模板 ID'),
       '⭐ 拒绝理由点名**缺哪个字段**（不是一个笼统的「参数错误」）—— 运营据此直接知道去填什么',
       `data=${JSON.stringify(enableNoId.body?.data ?? {}).slice(0, 120)}`,
@@ -7690,6 +8154,13 @@ async function main() {
       '⭐⭐ **不能「先启用、再单独拆掉条件」**：已启用状态下清空模板 ID → 10001 —— 否则可以绕过闸门，得到一个「启用但发不出」的场景',
       `code=${tearDownWhileOn.body?.code}`,
     );
+    assert(
+      typeof tearDownWhileOn.body?.message === 'string' &&
+        tearDownWhileOn.body.message !== '' &&
+        tearDownWhileOn.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(tearDownWhileOn.body?.message)}`,
+    );
     const restoreCook = await call('PUT', `${TPL}/${snap.merchant_cook.id}`, {
       token: adminToken,
       body: { enabled: 0, wechatTemplateId: null },
@@ -7709,6 +8180,13 @@ async function main() {
       'D60 空请求（三个可编辑字段一个都没传）→ 10001 —— 无意义的调用不是幂等成功，回一句「已更新」会让调用方以为改了什么',
       `code=${emptyPatch.body?.code}`,
     );
+    assert(
+      typeof emptyPatch.body?.message === 'string' &&
+        emptyPatch.body.message !== '' &&
+        emptyPatch.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(emptyPatch.body?.message)}`,
+    );
 
     // ---------------------------------------------------------- E. 变量白名单
     const badVar = await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
@@ -7719,6 +8197,13 @@ async function main() {
       badVar.body?.code === 10001,
       '⭐ 文案里的 `{{变量}}` 必须在**白名单**内：`{{bulidingName}}`（拼错的 `buildingName`）→ 10001 —— 写错的变量在发送时不会被替换，用户会直接看到 `{{bulidingName}}` 原文',
       `code=${badVar.body?.code}`,
+    );
+    assert(
+      typeof badVar.body?.message === 'string' &&
+        badVar.body.message !== '' &&
+        badVar.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(badVar.body?.message)}`,
     );
     const okVar = await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
       token: adminToken,
@@ -7752,6 +8237,13 @@ async function main() {
       '⭐⭐ **只读字段拒绝而非静默忽略**：传 `scene` → 10001（`forbidNonWhitelisted`）—— `scene` 是代码分派投递的键，改了这条模板就再也投不出去；静默忽略更糟：调用方以为改成功了',
       `code=${writeScene.body?.code}`,
     );
+    assert(
+      typeof writeScene.body?.message === 'string' &&
+        writeScene.body.message !== '' &&
+        writeScene.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(writeScene.body?.message)}`,
+    );
     const writeChannels = await call('PUT', `${TPL}/${snap.leader_delivery.id}`, {
       token: adminToken,
       body: { channels: ['wechat_subscribe'] },
@@ -7760,6 +8252,13 @@ async function main() {
       writeChannels.body?.code === 10001,
       'D60 渠道组合同样不可改（渠道是**代码事实**：代码按它决定走哪条通道）',
       `code=${writeChannels.body?.code}`,
+    );
+    assert(
+      typeof writeChannels.body?.message === 'string' &&
+        writeChannels.body.message !== '' &&
+        writeChannels.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(writeChannels.body?.message)}`,
     );
 
     // ---------------------------------------------------------- G. 目标不存在
@@ -7963,20 +8462,44 @@ async function main() {
     const t24View = (await adminLogin(ok24View, PWD)).token;
     const t24Fin = (await adminLogin('finance', 'finance123')).token;
 
+    const probeMsg7966 = await call('GET', TPL, { token: t24Op });
     assert(
-      (await call('GET', TPL, { token: t24Op })).body?.code === 10003,
+      probeMsg7966.body?.code === 10003,
       'D59 `operator` → 10003（`admin-role.ts` 里 operator 的菜单**不含 `/system/*`**；接口白名单与菜单矩阵一致，否则「菜单看不到、接口却能调」）',
       '',
     );
     assert(
-      (await call('GET', TPL, { token: t24Fin })).body?.code === 10003,
+      typeof probeMsg7966.body?.message === 'string' &&
+        probeMsg7966.body.message !== '' &&
+        probeMsg7966.body.message !== '业务异常',
+      "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg7966.body?.message)}`,
+    );
+    const probeMsg7971 = await call('GET', TPL, { token: t24Fin });
+    assert(
+      probeMsg7971.body?.code === 10003,
       'D59 `finance` → 10003（通知模板属系统管理，不在财务职责内）',
       '',
     );
     assert(
-      (await call('GET', TPL, { token: t24View })).body?.code === 10003,
+      typeof probeMsg7971.body?.message === 'string' &&
+        probeMsg7971.body.message !== '' &&
+        probeMsg7971.body.message !== '业务异常',
+      "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg7971.body?.message)}`,
+    );
+    const probeMsg7976 = await call('GET', TPL, { token: t24View });
+    assert(
+      probeMsg7976.body?.code === 10003,
       '⭐ D59 `viewer` → 10003 —— 这是**反向**的「两个真相」检查：viewer 的菜单只有 4 个看板页，若他在这里被放行，说明白名单比菜单更宽（M3-11 遇到的镜像问题）',
       '',
+    );
+    assert(
+      typeof probeMsg7976.body?.message === 'string' &&
+        probeMsg7976.body.message !== '' &&
+        probeMsg7976.body.message !== '业务异常',
+      "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg7976.body?.message)}`,
     );
     assert(
       (
@@ -7989,18 +8512,42 @@ async function main() {
       '',
     );
     const sup24 = await adminLogin('sanweiwu', 'supplier123');
+    const probeMsg7992 = await call('GET', TPL, { token: sup24.token });
     assert(
-      (await call('GET', TPL, { token: sup24.token })).body?.code === 10003,
+      probeMsg7992.body?.code === 10003,
       '双主体隔离：供应商 token 打 `/admin/system/*` → 10003',
       '',
     );
-    const guest24 = await userLogin(`e2e_s24_${stamp}`);
     assert(
-      (await call('GET', TPL, { token: guest24.token })).body?.code === 10003,
+      typeof probeMsg7992.body?.message === 'string' &&
+        probeMsg7992.body.message !== '' &&
+        probeMsg7992.body.message !== '业务异常',
+      "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg7992.body?.message)}`,
+    );
+    const guest24 = await userLogin(`e2e_s24_${stamp}`);
+    const probeMsg7998 = await call('GET', TPL, { token: guest24.token });
+    assert(
+      probeMsg7998.body?.code === 10003,
       '双主体隔离：小程序 token 打 `/admin/system/*` → 10003（C 端与后台 id 各自自增，不隔离即静默越权）',
       '',
     );
-    assert((await call('GET', TPL)).body?.code === 10002, 'D59 未登录 → 10002', '');
+    assert(
+      typeof probeMsg7998.body?.message === 'string' &&
+        probeMsg7998.body.message !== '' &&
+        probeMsg7998.body.message !== '业务异常',
+      "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg7998.body?.message)}`,
+    );
+    const probeMsg8003 = await call('GET', TPL);
+    assert(probeMsg8003.body?.code === 10002, 'D59 未登录 → 10002', '');
+    assert(
+      typeof probeMsg8003.body?.message === 'string' &&
+        probeMsg8003.body.message !== '' &&
+        probeMsg8003.body.message !== '业务异常',
+      "错误码 10002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg8003.body?.message)}`,
+    );
 
     // ---------------------------------------------------------- K. 夹具还原（模板是全局的）
     const restoreFail = [];
@@ -8249,11 +8796,18 @@ async function main() {
         `end=${ovAnchor?.range?.endDate} start=${ovAnchor?.range?.startDate}`,
       );
 
+      const probeMsg8252 = await call('GET', `${FIN25}/overview?range=90d`, { token: adminToken });
       assert(
-        (await call('GET', `${FIN25}/overview?range=90d`, { token: adminToken })).body?.code ===
-          10001,
+        probeMsg8252.body?.code === 10001,
         'D33 非法 `range` → 10001（**不静默回落到默认档** —— 静默回落会让运营以为看的是 90 天）',
         '',
+      );
+      assert(
+        typeof probeMsg8252.body?.message === 'string' &&
+          probeMsg8252.body.message !== '' &&
+          probeMsg8252.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg8252.body?.message)}`,
       );
 
       // ---------------------------------------------------------- C. D34 佣金明细
@@ -8343,11 +8897,18 @@ async function main() {
         `count=${cmLeader?.list?.length}`,
       );
 
+      const probeMsg8346 = await call('GET', `${FIN25}/commissions?date=${D0}&status=bad`, { token: adminToken });
       assert(
-        (await call('GET', `${FIN25}/commissions?date=${D0}&status=bad`, { token: adminToken }))
-          .body?.code === 10001,
+        probeMsg8346.body?.code === 10001,
         'D34 非法 `status` → 10001（枚举白名单，不静默忽略成「全部」）',
         '',
+      );
+      assert(
+        typeof probeMsg8346.body?.message === 'string' &&
+          probeMsg8346.body.message !== '' &&
+          probeMsg8346.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg8346.body?.message)}`,
       );
 
       // ---------------------------------------------------------- D. D35 佣金入账
@@ -8484,22 +9045,45 @@ async function main() {
         `action=${d35Log?.action ?? '未落库'}`,
       );
 
+      const probeMsg8487 = await call('POST', `${FIN25}/commissions/settle`, { body: { date: D0 } });
       assert(
-        (await call('POST', `${FIN25}/commissions/settle`, { body: { date: D0 } })).body?.code ===
-          10002,
+        probeMsg8487.body?.code === 10002,
         'D35 未登录 → 10002',
         '',
       );
       assert(
-        (await call('GET', `${FIN25}/overview`, { token: t25View })).body?.code === 10003,
+        typeof probeMsg8487.body?.message === 'string' &&
+          probeMsg8487.body.message !== '' &&
+          probeMsg8487.body.message !== '业务异常',
+        "错误码 10002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg8487.body?.message)}`,
+      );
+      const probeMsg8493 = await call('GET', `${FIN25}/overview`, { token: t25View });
+      assert(
+        probeMsg8493.body?.code === 10003,
         '⭐ D33 `viewer` → 10003 —— `admin-role.ts` 里 viewer 的菜单只有 4 个看板页（财务页不在其中）。白名单比菜单宽，就会造出「菜单看不到、接口却能调」',
         '',
       );
-      const sup25 = await adminLogin('sanweiwu', 'supplier123');
       assert(
-        (await call('GET', `${FIN25}/overview`, { token: sup25.token })).body?.code === 10003,
+        typeof probeMsg8493.body?.message === 'string' &&
+          probeMsg8493.body.message !== '' &&
+          probeMsg8493.body.message !== '业务异常',
+        "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg8493.body?.message)}`,
+      );
+      const sup25 = await adminLogin('sanweiwu', 'supplier123');
+      const probeMsg8499 = await call('GET', `${FIN25}/overview`, { token: sup25.token });
+      assert(
+        probeMsg8499.body?.code === 10003,
         '双主体隔离：供应商 token 打 `/admin/finance/*` → 10003',
         '',
+      );
+      assert(
+        typeof probeMsg8499.body?.message === 'string' &&
+          probeMsg8499.body.message !== '' &&
+          probeMsg8499.body.message !== '业务异常',
+        "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg8499.body?.message)}`,
       );
 
       // ---------------------------------------------------------- E. 夹具还原
@@ -8643,21 +9227,45 @@ async function main() {
         '⭐ D38 类级白名单含 `operator`（运营要能看「这个用户余额为什么异常」），但 `actions.canAdjust=false` —— 它**不准调账**。`actions` 与服务端 `@Roles(...BALANCE_ADJUST_ROLES)` **共用同一角色常量**，结构上不会出现「按钮亮着、点了 10003」或反之',
         `code=${opGet26.body?.code} canAdjust=${opGet26.body?.data?.actions?.canAdjust}`,
       );
+      const probeMsg8646 = await call('GET', `${FIN26}/balances`, { token: t26View });
       assert(
-        (await call('GET', `${FIN26}/balances`, { token: t26View })).body?.code === 10003,
+        probeMsg8646.body?.code === 10003,
         '⭐ D38 `viewer` → 10003 —— `admin-role.ts` 里 viewer 的菜单只有 4 个看板页（财务页不在其中）。白名单比菜单宽，就会造出「菜单看不到、接口却能调」',
         '',
       );
       assert(
-        (await call('GET', `${FIN26}/balances`, {})).body?.code === 10002,
+        typeof probeMsg8646.body?.message === 'string' &&
+          probeMsg8646.body.message !== '' &&
+          probeMsg8646.body.message !== '业务异常',
+        "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg8646.body?.message)}`,
+      );
+      const probeMsg8651 = await call('GET', `${FIN26}/balances`, {});
+      assert(
+        probeMsg8651.body?.code === 10002,
         'D38 未登录 → 10002',
         '',
       );
-      const sup26 = await adminLogin('sanweiwu', 'supplier123');
       assert(
-        (await call('GET', `${FIN26}/balances`, { token: sup26.token })).body?.code === 10003,
+        typeof probeMsg8651.body?.message === 'string' &&
+          probeMsg8651.body.message !== '' &&
+          probeMsg8651.body.message !== '业务异常',
+        "错误码 10002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg8651.body?.message)}`,
+      );
+      const sup26 = await adminLogin('sanweiwu', 'supplier123');
+      const probeMsg8657 = await call('GET', `${FIN26}/balances`, { token: sup26.token });
+      assert(
+        probeMsg8657.body?.code === 10003,
         '双主体隔离：供应商 token 打 `/admin/finance/balances` → 10003',
         '',
+      );
+      assert(
+        typeof probeMsg8657.body?.message === 'string' &&
+          probeMsg8657.body.message !== '' &&
+          probeMsg8657.body.message !== '业务异常',
+        "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg8657.body?.message)}`,
       );
 
       // ---------------------------------------------------- E. D39 四动作
@@ -8742,6 +9350,13 @@ async function main() {
         '⭐ D39 扣减超出可用额 → `40002`（fail-closed：**余额不得为负**），余额一分未动 —— 越界不是「扣到 0 为止」，且 `data.availableFen` 把「实际有多少」明确告知',
         `code=${overD26?.code} bal=${fenOf26(b5?.balance)}`,
       );
+      assert(
+        typeof overD26?.message === 'string' &&
+          overD26.message !== '' &&
+          overD26.message !== '业务异常',
+        "错误码 40002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(overD26?.message)}`,
+      );
       const overF26 = await adj26(
         { userId: uid26, action: 'freeze', amountFen: 99900, reason: 'e2e 越界冻结' },
         adminToken,
@@ -8753,6 +9368,13 @@ async function main() {
         'D39 冻结超出可用额 → `40002`（冻结也只能从**可用余额**里挪，不能凭空冻；用冻结掩盖「钱不够」会造出账面上有钱、实际调不动的账户）',
         `code=${overF26?.code} frozen=${fenOf26(b6?.frozen)}`,
       );
+      assert(
+        typeof overF26?.message === 'string' &&
+          overF26.message !== '' &&
+          overF26.message !== '业务异常',
+        "错误码 40002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(overF26?.message)}`,
+      );
       const overU26 = await adj26(
         { userId: uid26, action: 'unfreeze', amountFen: 99900, reason: 'e2e 越界解冻' },
         adminToken,
@@ -8763,6 +9385,13 @@ async function main() {
         overU26?.code === 40015 && fenOf26(b7?.balance) === 5500 && fenOf26(b7?.frozen) === 1500,
         '⭐⭐ D39 解冻超出冻结额 → **`40015`**（而非复用 `40002`）—— 两者运维含义完全不同：`40002` 是「钱不够花」（充值 / 等回款即可），`40015` 是「**冻结账对不上**」的账实不符信号，要查的是数据结构而不是让人去充钱。合成一个码就把这条线索埋掉了',
         `code=${overU26?.code} bal=${fenOf26(b7?.balance)} frozen=${fenOf26(b7?.frozen)}`,
+      );
+      assert(
+        typeof overU26?.message === 'string' &&
+          overU26.message !== '' &&
+          overU26.message !== '业务异常',
+        "错误码 40015 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(overU26?.message)}`,
       );
 
       // ---------------------------------------------------- G. ⭐ 幂等
@@ -8780,6 +9409,13 @@ async function main() {
           fenOf26(bIdem2?.balance) === fenOf26(bIdem1?.balance),
         '⭐⭐ D39 **幂等**：同一 `Idempotency-Key` 重复提交 → `10006` + **首次结果原样返回**（`adjustNo` 相同），余额**不再增加** —— 调账没有业务单号可供判重，网络超时后重试若再加一次就是真金白银的事故',
         `code1=${idem1?.code} code2=${idem2?.code} sameNo=${idem2?.data?.adjustNo === idem1?.data?.adjustNo} Δbal=${fenOf26(bIdem2?.balance) - fenOf26(bIdem1?.balance)}`,
+      );
+      assert(
+        typeof idem2?.message === 'string' &&
+          idem2.message !== '' &&
+          idem2.message !== '业务异常',
+        "错误码 10006 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(idem2?.message)}`,
       );
       assert(
         (
@@ -8832,6 +9468,13 @@ async function main() {
         'D39 `userId` 不存在 → `10004`（余额只能挂在真实用户上，不静默建号）',
         `code=${nou26?.code}`,
       );
+      assert(
+        typeof nou26?.message === 'string' &&
+          nou26.message !== '' &&
+          nou26.message !== '业务异常',
+        "错误码 10004 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(nou26?.message)}`,
+      );
 
       // ---------------------------------------------------- I. 无账户用户的非充值动作
       writeDb(
@@ -8857,6 +9500,20 @@ async function main() {
           !readDb('SELECT id FROM ab_balance WHERE user_id = ?', [gid26]),
         '⭐ D39 无账户用户做「扣减 / 解冻」→ `40002` / `40015`，且 `data.hasAccount=false` 点明原因**不是**「余额不足」而是「还没有账户」；**不会**先建一个 0 余额账户再报错（否则库里会积一堆空账户）',
         `deduct=${gDeduct26?.code} unfreeze=${gUnf26?.code} 建户=${!!readDb('SELECT id FROM ab_balance WHERE user_id = ?', [gid26])}`,
+      );
+      assert(
+        typeof gDeduct26?.message === 'string' &&
+          gDeduct26.message !== '' &&
+          gDeduct26.message !== '业务异常',
+        "错误码 40002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(gDeduct26?.message)}`,
+      );
+      assert(
+        typeof gUnf26?.message === 'string' &&
+          gUnf26.message !== '' &&
+          gUnf26.message !== '业务异常',
+        "错误码 40015 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(gUnf26?.message)}`,
       );
 
       // ---------------------------------------------------- J. 操作日志与账本
@@ -8945,17 +9602,31 @@ async function main() {
         'D38 `accountType=leader` / `user` 分流正确（`leader` 侧每行 `isLeader=true`），且**两种筛选下的 `liability` 相同** —— 它按全量算，不随账户类型缩放',
         `leader=${leaderOnly26?.list?.length}(全真=${leaderAll26}) user=${userOnly26?.list?.length}(全假=${userAll26}) liab=${leaderOnly26?.liability?.balanceFen}/${p100_26?.liability?.balanceFen}`,
       );
+      const probeMsg8948 = await call('GET', `${FIN26}/balances?accountType=staff`, { token: adminToken });
       assert(
-        (await call('GET', `${FIN26}/balances?accountType=staff`, { token: adminToken })).body
-          ?.code === 10001,
+        probeMsg8948.body?.code === 10001,
         'D38 非法 `accountType` → `10001`（不静默回落成 `all` —— 静默回落会让「筛选没生效」看起来像「没有这类账户」）',
         '',
       );
       assert(
-        (await call('GET', `${FIN26}/balances?userId=99999999`, { token: adminToken })).body
-          ?.code === 10004,
+        typeof probeMsg8948.body?.message === 'string' &&
+          probeMsg8948.body.message !== '' &&
+          probeMsg8948.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg8948.body?.message)}`,
+      );
+      const probeMsg8954 = await call('GET', `${FIN26}/balances?userId=99999999`, { token: adminToken });
+      assert(
+        probeMsg8954.body?.code === 10004,
         'D38 `userId` 不存在 → `10004`（不是「返回一行空账户」—— 查无此人要能被区分出来）',
         '',
+      );
+      assert(
+        typeof probeMsg8954.body?.message === 'string' &&
+          probeMsg8954.body.message !== '' &&
+          probeMsg8954.body.message !== '业务异常',
+        "错误码 10004 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg8954.body?.message)}`,
       );
 
       const kwRes26 = await call('GET', `${FIN26}/balances?keyword=${PREFIX26}`, {
@@ -9371,28 +10042,58 @@ async function main() {
         'D43 类级白名单含 `operator`（运营要能跟进「今天哪几笔对不上」）—— 且它是**纯读**接口，不额外收窄（不改一分钱）',
         '',
       );
+      const probeMsg9374 = await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: t27View });
       assert(
-        (await call('GET', `${FIN27}/reconciliation?date=${D27}`, { token: t27View })).body
-          ?.code === 10003,
+        probeMsg9374.body?.code === 10003,
         'D43 `viewer` → 10003（`admin-role.ts` 里 viewer 的菜单只有 4 个看板页）',
         '',
       );
       assert(
-        (await call('GET', `${FIN27}/reconciliation`, {})).body?.code === 10002,
+        typeof probeMsg9374.body?.message === 'string' &&
+          probeMsg9374.body.message !== '' &&
+          probeMsg9374.body.message !== '业务异常',
+        "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg9374.body?.message)}`,
+      );
+      const probeMsg9380 = await call('GET', `${FIN27}/reconciliation`, {});
+      assert(
+        probeMsg9380.body?.code === 10002,
         'D43 未登录 → 10002',
         '',
       );
-      const sup27 = await adminLogin('sanweiwu', 'supplier123');
       assert(
-        (await call('GET', `${FIN27}/reconciliation`, { token: sup27.token })).body?.code === 10003,
+        typeof probeMsg9380.body?.message === 'string' &&
+          probeMsg9380.body.message !== '' &&
+          probeMsg9380.body.message !== '业务异常',
+        "错误码 10002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg9380.body?.message)}`,
+      );
+      const sup27 = await adminLogin('sanweiwu', 'supplier123');
+      const probeMsg9386 = await call('GET', `${FIN27}/reconciliation`, { token: sup27.token });
+      assert(
+        probeMsg9386.body?.code === 10003,
         '双主体隔离：供应商 token 打 `/admin/finance/reconciliation` → 10003',
         '',
       );
       assert(
-        (await call('GET', `${FIN27}/reconciliation?date=2026-13-01`, { token: adminToken })).body
-          ?.code === 10001,
+        typeof probeMsg9386.body?.message === 'string' &&
+          probeMsg9386.body.message !== '' &&
+          probeMsg9386.body.message !== '业务异常',
+        "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg9386.body?.message)}`,
+      );
+      const probeMsg9391 = await call('GET', `${FIN27}/reconciliation?date=2026-13-01`, { token: adminToken });
+      assert(
+        probeMsg9391.body?.code === 10001,
         'D43 非法日期（`2026-13-01`）→ 10001（**不是**静默当成今天 —— 那样运营会以为自己在看 13 月的数据）',
         '',
+      );
+      assert(
+        typeof probeMsg9391.body?.message === 'string' &&
+          probeMsg9391.body.message !== '' &&
+          probeMsg9391.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg9391.body?.message)}`,
       );
 
       // ================================================== F. D44 发票三态
@@ -9466,22 +10167,61 @@ async function main() {
         'D44 `status` 是**派生值**（库里只有 pending/success），故**必须先聚合后筛**：C 月筛 `partial` → 0 行、B 月筛 `partial` → 1 行',
         '',
       );
+      const probeMsg9469 = await call('GET', `${FIN27}/invoices?status=nope`, { token: adminToken });
+      const probeMsg9469b = await call('GET', `${FIN27}/invoices?month=2026-13`, { token: adminToken });
       assert(
-        (await call('GET', `${FIN27}/invoices?status=nope`, { token: adminToken })).body?.code ===
+        probeMsg9469.body?.code ===
           10001 &&
-          (await call('GET', `${FIN27}/invoices?month=2026-13`, { token: adminToken })).body
-            ?.code === 10001,
+          probeMsg9469b.body?.code === 10001,
         'D44 非法枚举 / 非法月份 → 10001（**不静默回落成「全部」** —— 回落会让运营以为自己看的是「未开票」，实际是全部，从而漏催一批票）',
         '',
       );
       assert(
+        typeof probeMsg9469.body?.message === 'string' &&
+          probeMsg9469.body.message !== '' &&
+          probeMsg9469.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg9469.body?.message)}`,
+      );
+      assert(
+        typeof probeMsg9469b.body?.message === 'string' &&
+          probeMsg9469b.body.message !== '' &&
+          probeMsg9469b.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg9469b.body?.message)}`,
+      );
+      const probeMsg9477 = await call('GET', `${FIN27}/invoices`, { token: t27View });
+      const probeMsg9477b = await call('GET', `${FIN27}/invoices`, {});
+      const probeMsg9477c = await call('GET', `${FIN27}/invoices`, { token: sup27.token });
+      assert(
         (await call('GET', `${FIN27}/invoices`, { token: t27Fin })).body?.code === 0 &&
           (await call('GET', `${FIN27}/invoices`, { token: t27Op })).body?.code === 0 &&
-          (await call('GET', `${FIN27}/invoices`, { token: t27View })).body?.code === 10003 &&
-          (await call('GET', `${FIN27}/invoices`, {})).body?.code === 10002 &&
-          (await call('GET', `${FIN27}/invoices`, { token: sup27.token })).body?.code === 10003,
+          probeMsg9477.body?.code === 10003 &&
+          probeMsg9477b.body?.code === 10002 &&
+          probeMsg9477c.body?.code === 10003,
         'D44 权限矩阵与 D43 一致（finance / operator 可读 · viewer 10003 · 未登录 10002 · 供应商 10003）—— 催票是 `finance` 角色的日常工作，故 `/finance/invoices` 同时进了 `ADMIN_MENU_KEYS` 与 finance 角色菜单',
         '',
+      );
+      assert(
+        typeof probeMsg9477.body?.message === 'string' &&
+          probeMsg9477.body.message !== '' &&
+          probeMsg9477.body.message !== '业务异常',
+        "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg9477.body?.message)}`,
+      );
+      assert(
+        typeof probeMsg9477b.body?.message === 'string' &&
+          probeMsg9477b.body.message !== '' &&
+          probeMsg9477b.body.message !== '业务异常',
+        "错误码 10002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg9477b.body?.message)}`,
+      );
+      assert(
+        typeof probeMsg9477c.body?.message === 'string' &&
+          probeMsg9477c.body.message !== '' &&
+          probeMsg9477c.body.message !== '业务异常',
+        "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(probeMsg9477c.body?.message)}`,
       );
 
       // ================================================== G. 夹具还原
@@ -10331,6 +11071,13 @@ async function main() {
         '⭐⭐ §29 #52 守卫**自 M4-2 才真正会触发**：有 `pending` 佣金时退团被拒（且此时余额为 0，故**唯一**阻碍就是待入账佣金）—— 此前佣金在确认时就即时入账，生产链路里 `pending` 恒为 0，这条守卫是**从未被执行过的死代码**',
         `code=${quit29a.body?.code} blockers=${blk29a.join(',') || '无'}`,
       );
+      assert(
+        typeof quit29a.body?.message === 'string' &&
+          quit29a.body.message !== '' &&
+          quit29a.body.message !== '业务异常',
+        "错误码 20008 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(quit29a.body?.message)}`,
+      );
 
       // -------------------------------------------------------- D. 4.4 幂等
       const conf29b = await call('POST', `${SCH29}/auto-confirm/run`, {
@@ -10425,6 +11172,13 @@ async function main() {
           blk29b.includes('BALANCE_NOT_CLEARED'),
         '⭐ §29 #52 守卫**随入账自动解除**：`COMMISSION_PENDING` 消失、转为 `BALANCE_NOT_CLEARED`（钱已入账但未清零）—— 守卫不是「永久拉黑」，而是精确表达「资金链路还没走完」',
         `blockers=${blk29b.join(',') || '无'}`,
+      );
+      assert(
+        typeof quit29b.body?.message === 'string' &&
+          quit29b.body.message !== '' &&
+          quit29b.body.message !== '业务异常',
+        "错误码 20008 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(quit29b.body?.message)}`,
       );
 
       // -------------------------------------------------------- H. monthOrders 口径（含 pending · 排冲销）
@@ -11475,6 +12229,13 @@ async function main() {
           '⭐⭐ 在途提现**确实把「退出团长」挡住**（`20008` + `blockers[].code=WITHDRAW_IN_FLIGHT`）—— 这正是 M4-4 之前那条死锁：单子永远推不动 → 这道闸门永远不放手，团长的账户被自己的余额困住',
           `code=${qa.body?.code} blockers=${qaCodes.join(',') || '无'}`,
         );
+        assert(
+          typeof qa.body?.message === 'string' &&
+            qa.body.message !== '' &&
+            qa.body.message !== '业务异常',
+          "错误码 20008 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+          `message=${JSON.stringify(qa.body?.message)}`,
+        );
 
         // ---------------------------------------------------- E. D45 待审批行 + 按钮口径
         const rev31 = await list31('?tab=review&keyword=' + encodeURIComponent(PREFIX31));
@@ -11581,6 +12342,13 @@ async function main() {
           '⭐ 未知单号 → `40016`（**不复用 `404`/`10001`**）：提现审批的所有失败都必须能区分「单子不存在」与「状态不对」，否则运营在深夜排查时只能靠猜',
           `code=${notFound31?.code}`,
         );
+        assert(
+          typeof notFound31?.message === 'string' &&
+            notFound31.message !== '' &&
+            notFound31.message !== '业务异常',
+          "错误码 40016 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+          `message=${JSON.stringify(notFound31?.message)}`,
+        );
 
         // ---------------------------------------------------- G. D46 批准（不动钱）
         const ap31 = await act31('approve', w1Id, { remark: 'e2e §31 批准' });
@@ -11619,6 +12387,13 @@ async function main() {
           rejAp31?.code === 40017,
           '⭐⭐ 对 `approved` 单子驳回 → `40017`（驳回只收 `pending`）—— 否则会在「已批准」语义下把钱解冻，出现「批准了但钱回来了」的幽灵单',
           `code=${rejAp31?.code}`,
+        );
+        assert(
+          typeof rejAp31?.message === 'string' &&
+            rejAp31.message !== '' &&
+            rejAp31.message !== '业务异常',
+          "错误码 40017 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+          `message=${JSON.stringify(rejAp31?.message)}`,
         );
 
         // ---------------------------------------------------- H. D45 待打款 Tab
@@ -11676,6 +12451,13 @@ async function main() {
           failOnRejected31?.code === 40017,
           '⭐ 对 `rejected` 单子登记打款失败 → `40017` —— 驳回与失败**都解冻**，但两者**刻意分开**（成因不同：前者「平台认为不该发」，后者「尝试发了没成功」）；若能互相覆盖，运营就再也看不出问题出在审批口径还是收款信息',
           `code=${failOnRejected31?.code}`,
+        );
+        assert(
+          typeof failOnRejected31?.message === 'string' &&
+            failOnRejected31.message !== '' &&
+            failOnRejected31.message !== '业务异常',
+          "错误码 40017 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+          `message=${JSON.stringify(failOnRejected31?.message)}`,
         );
 
         // ---------------------------------------------------- J. D46c 打款失败（原路解冻）
@@ -11822,6 +12604,13 @@ async function main() {
             qbCodes.includes('BALANCE_NOT_CLEARED'),
           '⭐⭐⭐ **守卫的提现腿真的闭合了**：全部提现单到终态后 `WITHDRAW_IN_FLIGHT` 消失，只剩「可用余额未清零」（他确实还有 ¥55.00）—— 这一对「同一接口、同一键、两种结果」才是 M4-4 的**真正交付物**：钱推得动了，C3 退出团长的死锁随之解除',
           `blockers=${qbCodes.join(',') || '无'}`,
+        );
+        assert(
+          typeof qb.body?.message === 'string' &&
+            qb.body.message !== '' &&
+            qb.body.message !== '业务异常',
+          "错误码 20008 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+          `message=${JSON.stringify(qb.body?.message)}`,
         );
 
         // ---------------------------------------------------- N. 终态行 + 汇总
@@ -12099,6 +12888,13 @@ async function main() {
         '⭐ §32 D61 状态筛选生效（`pending` 1 条 / `arrived` 0 条），未知 `status` → `10001` —— **不静默忽略筛选条件**：静默忽略会让运营以为「筛过了」，实际看到的是全量',
         `p=${f32a.body?.data?.list?.length} a=${f32b.body?.data?.list?.length} bad=${bad32.body?.code}`,
       );
+      assert(
+        typeof bad32.body?.message === 'string' &&
+          bad32.body.message !== '' &&
+          bad32.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(bad32.body?.message)}`,
+      );
       const list32d = await call('GET', DEL32, { token: adminToken });
       assert(
         list32d.body?.code === 0 &&
@@ -12185,6 +12981,13 @@ async function main() {
           p2.body?.data?.current?.totalQuantity === 3,
         '⭐⭐ §32 D62 乐观锁：用**过期 `version`** 重提 → `30016` 且出参带 `data.current`（当前值 + 当前版本）—— 两个运营先后改同一张单时，后写者用旧快照会把前者的修改**静默覆盖**，双方都不报错，直到装错货；带 `current` 才能让端上刷新后重提',
         `code=${p2.body?.code} curV=${p2.body?.data?.current?.version} curQty=${p2.body?.data?.current?.totalQuantity}`,
+      );
+      assert(
+        typeof p2.body?.message === 'string' &&
+          p2.body.message !== '' &&
+          p2.body.message !== '业务异常',
+        "错误码 30016 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(p2.body?.message)}`,
       );
 
       const p3 = await call('PUT', `${DEL32}/${id32}`, {
@@ -12276,6 +13079,41 @@ async function main() {
         '⭐⭐ §32 D62 入参闸门：`reason` 缺失 / 太短（少于 2 个字）/ `version` 缺失 / 份数负数 / 超上限（9999）一律 `10001` —— 份数误输一位（5 → 99999）会让整条配送链按错误的量装货；`reason` 是审计的必填项，不是可选项',
         `noReason=${noReason32.body?.code} short=${shortReason32.body?.code} neg=${negQty32.body?.code} big=${bigQty32.body?.code} noVer=${noVer32.body?.code}`,
       );
+      assert(
+        typeof noReason32.body?.message === 'string' &&
+          noReason32.body.message !== '' &&
+          noReason32.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(noReason32.body?.message)}`,
+      );
+      assert(
+        typeof shortReason32.body?.message === 'string' &&
+          shortReason32.body.message !== '' &&
+          shortReason32.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(shortReason32.body?.message)}`,
+      );
+      assert(
+        typeof negQty32.body?.message === 'string' &&
+          negQty32.body.message !== '' &&
+          negQty32.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(negQty32.body?.message)}`,
+      );
+      assert(
+        typeof bigQty32.body?.message === 'string' &&
+          bigQty32.body.message !== '' &&
+          bigQty32.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(bigQty32.body?.message)}`,
+      );
+      assert(
+        typeof noVer32.body?.message === 'string' &&
+          noVer32.body.message !== '' &&
+          noVer32.body.message !== '业务异常',
+        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(noVer32.body?.message)}`,
+      );
       const notFound32 = await call('PUT', `${DEL32}/99999999`, {
         token: adminToken,
         body: { version: 0, reason: 'e2e 不存在的配送单', totalQuantity: 1 },
@@ -12284,6 +13122,13 @@ async function main() {
         notFound32.body?.code === 30017,
         '⭐ §32 D62 目标 id 不存在 → `30017`（而不是「保存成功」）—— 静默成功会让运营以为改好了，实际什么都没发生；与 30010（订单不存在）/ 40012（退款单不存在）同族：每张单有自己的排查入口',
         `code=${notFound32.body?.code}`,
+      );
+      assert(
+        typeof notFound32.body?.message === 'string' &&
+          notFound32.body.message !== '' &&
+          notFound32.body.message !== '业务异常',
+        "错误码 30017 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        `message=${JSON.stringify(notFound32.body?.message)}`,
       );
 
       // ---------------------------------------------------- F. 操作日志留痕
@@ -13155,6 +14000,13 @@ async function main() {
             '—— 这一步若放行，T8 被跳过 ⇒ 订单还在 `cooked` 而 T9 只条件更新 `delivering` ⇒ **一单都不动且不报错**（正是 #79 的形状，不能在刚补好它的同一批里重开）',
           `code=${jump35.body?.code} allowed=${JSON.stringify(jump35.body?.data?.allowed)}`,
         );
+        assert(
+          typeof jump35.body?.message === 'string' &&
+            jump35.body.message !== '' &&
+            jump35.body.message !== '业务异常',
+          "错误码 30018 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+          `message=${JSON.stringify(jump35.body?.message)}`,
+        );
 
         const env35 = await call('PATCH', `/admin/deliveries/${row35a.id}/status`, {
           token: adminToken,
@@ -13216,6 +14068,13 @@ async function main() {
           '⭐ §35 D63 闸门 ③ **回退**（arrived → called）→ `30018`，且 `allowed=[]` 明确回答「已是终态、无处可去」—— 履约流在物理世界不可逆，接口也不该允许回退',
           `code=${back35.body?.code} allowed=${JSON.stringify(back35.body?.data?.allowed)}`,
         );
+        assert(
+          typeof back35.body?.message === 'string' &&
+            back35.body.message !== '' &&
+            back35.body.message !== '业务异常',
+          "错误码 30018 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+          `message=${JSON.stringify(back35.body?.message)}`,
+        );
         const same35 = await call('PATCH', `/admin/deliveries/${row35a.id}/status`, {
           token: adminToken,
           body: { to: 'arrived', version: 3 },
@@ -13224,6 +14083,13 @@ async function main() {
           same35.body?.code === 30018,
           '⭐ §35 D63 闸门 ③ **原地**（arrived → arrived）→ `30018`（已终态 ⇒ `allowed=[]`）—— 否则重复点击会一路刷出假的操作日志',
           `code=${same35.body?.code}`,
+        );
+        assert(
+          typeof same35.body?.message === 'string' &&
+            same35.body.message !== '' &&
+            same35.body.message !== '业务异常',
+          "错误码 30018 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+          `message=${JSON.stringify(same35.body?.message)}`,
         );
         const stale35 = await call('PATCH', `/admin/deliveries/${row35a.id}/status`, {
           token: adminToken,
@@ -13234,6 +14100,13 @@ async function main() {
           '⭐ §35 D63 闸门 ② **版本不符** → `30016` 且附 `current`（两位运营先后推同一张单时，后写者若用旧快照会把前者一起覆盖，且双方都不报错）',
           `code=${stale35.body?.code} current=${JSON.stringify(stale35.body?.data?.current)}`,
         );
+        assert(
+          typeof stale35.body?.message === 'string' &&
+            stale35.body.message !== '' &&
+            stale35.body.message !== '业务异常',
+          "错误码 30016 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+          `message=${JSON.stringify(stale35.body?.message)}`,
+        );
         const missing35 = await call('PATCH', '/admin/deliveries/99999999/status', {
           token: adminToken,
           body: { to: 'called', version: 0 },
@@ -13242,6 +14115,13 @@ async function main() {
           missing35.body?.code === 30017,
           '⭐ §35 D63 闸门 ① **不存在** → `30017`（不静默成功 —— 静默成功会让运营以为已经推进了）',
           `code=${missing35.body?.code}`,
+        );
+        assert(
+          typeof missing35.body?.message === 'string' &&
+            missing35.body.message !== '' &&
+            missing35.body.message !== '业务异常',
+          "错误码 30017 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+          `message=${JSON.stringify(missing35.body?.message)}`,
         );
         const mini35 = await call('PATCH', `/admin/deliveries/${row35a.id}/status`, {
           token: buyer35.token,
@@ -13558,6 +14438,13 @@ async function main() {
         s2.byTask.cutoff?.registeredCron === cronOf(APPLIED['set_meal.cutoff_time']),
       '⭐⭐ §36(D·非法值 fail-closed) 写入 `25:00` → `10001` 且**两处都还是旧值**（D57 读回旧值 · 时刻表的 `effectiveAt` 与 `registeredCron` 也都没动）—— 「拒绝了、但已经改了一半」比直接接受更难查：运营会看到一条报错、然后发现时刻**其实变了**',
       `code=${bad.body?.code} cfg=${c2.byKey['set_meal.cutoff_time']?.value} eff=${s2.byTask.cutoff?.effectiveAt} cron=${s2.byTask.cutoff?.registeredCron}`,
+    );
+    assert(
+      typeof bad.body?.message === 'string' &&
+        bad.body.message !== '' &&
+        bad.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(bad.body?.message)}`,
     );
 
     // ---------------------------------------------------------- E. 复原（并断言复原）
@@ -13998,21 +14885,45 @@ async function main() {
         '',
       );
     }
+    const probeMsg14001 = await call('GET', '/admin/dashboard/todos', { token: sup38.token });
     assert(
-      (await call('GET', '/admin/dashboard/todos', { token: sup38.token })).body?.code === 10003,
+      probeMsg14001.body?.code === 10003,
       '§38(角色) 供应商 token 打 `/admin/dashboard/*` → 10003 —— `/dashboard` 这个 key 在 `SUPPLIER_MENU_KEYS` 里**也有**，' +
         '但那是**供应商侧的概览**（另一个页面、另一套菜单），不是「同一个页面开了两个角色」',
       '',
     );
     assert(
-      (await call('GET', '/admin/dashboard/todos', { token: guest38.token })).body?.code === 10003,
+      typeof probeMsg14001.body?.message === 'string' &&
+        probeMsg14001.body.message !== '' &&
+        probeMsg14001.body.message !== '业务异常',
+      "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg14001.body?.message)}`,
+    );
+    const probeMsg14007 = await call('GET', '/admin/dashboard/todos', { token: guest38.token });
+    assert(
+      probeMsg14007.body?.code === 10003,
       '§38(角色) 小程序 token 打 `/admin/dashboard/*` → 10003（双主体隔离）',
       '',
     );
     assert(
-      (await call('GET', '/admin/dashboard/todos')).body?.code === 10002,
+      typeof probeMsg14007.body?.message === 'string' &&
+        probeMsg14007.body.message !== '' &&
+        probeMsg14007.body.message !== '业务异常',
+      "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg14007.body?.message)}`,
+    );
+    const probeMsg14012 = await call('GET', '/admin/dashboard/todos');
+    assert(
+      probeMsg14012.body?.code === 10002,
       '§38(角色) 未登录 → 10002',
       '',
+    );
+    assert(
+      typeof probeMsg14012.body?.message === 'string' &&
+        probeMsg14012.body.message !== '' &&
+        probeMsg14012.body.message !== '业务异常',
+      "错误码 10002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg14012.body?.message)}`,
     );
   }
 
@@ -14176,6 +15087,13 @@ async function main() {
       '⭐ 自造场景键 → `10001`（场景是**代码事实**，不是可传参数）',
       `code=${badScene39.body?.code}`,
     );
+    assert(
+      typeof badScene39.body?.message === 'string' &&
+        badScene39.body.message !== '' &&
+        badScene39.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(badScene39.body?.message)}`,
+    );
     const badAud39 = await call('POST', ORCH39, {
       token: adminToken,
       body: { scene: SCENE39, audience: 'no_such_audience' },
@@ -14184,6 +15102,13 @@ async function main() {
       badAud39.body?.code === 10001,
       '⭐ 未知受众选择器 → `10001`（**不接受任意用户列表** —— 收了它，编排端点就成了「给谁都能发」的群发后门）',
       `code=${badAud39.body?.code}`,
+    );
+    assert(
+      typeof badAud39.body?.message === 'string' &&
+        badAud39.body.message !== '' &&
+        badAud39.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(badAud39.body?.message)}`,
     );
     const mism39 = await call('POST', ORCH39, {
       token: adminToken,
@@ -14194,6 +15119,13 @@ async function main() {
       '⭐⭐ **受众选择器与场景强绑定**：拿「截单受众」去发「退款场景」→ `10001` —— ' +
         '防的是「用一个场景的模板给另一个场景的受众群发」这类串用',
       `code=${mism39.body?.code}`,
+    );
+    assert(
+      typeof mism39.body?.message === 'string' &&
+        mism39.body.message !== '' &&
+        mism39.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(mism39.body?.message)}`,
     );
 
     // ---------------------------------------------------------- D. 真发（临时启用 + 假模板 ID）→ 落日志
@@ -14301,6 +15233,13 @@ async function main() {
         '「答的不是他问题」的报表，而没有任何一处提示「你的入参被忽略了」）',
       `code=${badDate39.body?.code}`,
     );
+    assert(
+      typeof badDate39.body?.message === 'string' &&
+        badDate39.body.message !== '' &&
+        badDate39.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(badDate39.body?.message)}`,
+    );
     const huge39 = await call('GET', `${REACH39}?from=2026-01-01&to=${D039}`, {
       token: adminToken,
     });
@@ -14311,17 +15250,33 @@ async function main() {
     );
 
     // ---------------------------------------------------------- F. 权限
+    const probeMsg14314 = await call('GET', REACH39);
     assert(
-      (await call('GET', REACH39)).body?.code === 10002,
+      probeMsg14314.body?.code === 10002,
       '§39(角色) 未登录打到达率 → `10002`',
       '',
     );
-    const guest39 = await userLogin(`e2e_s39_${stamp}`);
     assert(
-      guest39?.token && (await call('GET', REACH39, { token: guest39.token })).body?.code === 10003,
+      typeof probeMsg14314.body?.message === 'string' &&
+        probeMsg14314.body.message !== '' &&
+        probeMsg14314.body.message !== '业务异常',
+      "错误码 10002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg14314.body?.message)}`,
+    );
+    const guest39 = await userLogin(`e2e_s39_${stamp}`);
+    const probeMsg14320 = await call('GET', REACH39, { token: guest39.token });
+    assert(
+      guest39?.token && probeMsg14320.body?.code === 10003,
       '§39(角色) 小程序用户 token 打后台消息端点 → `10003`（双主体隔离；编排是**对外产生影响的动作**，' +
         '不能由用户侧触发）',
       '',
+    );
+    assert(
+      typeof probeMsg14320.body?.message === 'string' &&
+        probeMsg14320.body.message !== '' &&
+        probeMsg14320.body.message !== '业务异常',
+      "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg14320.body?.message)}`,
     );
 
     // ---------------------------------------------------------- G. 还原与清理
@@ -14522,22 +15477,46 @@ async function main() {
     );
 
     // ---------------------------------------------------------- E. 参数与权限
+    const probeMsg14525 = await call('GET', `${RATING40}?range=abc`, { token: adminToken });
     assert(
-      (await call('GET', `${RATING40}?range=abc`, { token: adminToken })).body?.code === 10001,
+      probeMsg14525.body?.code === 10001,
       '§40(E) 非法 range → 10001（不静默回落 —— 同 §39 非法日期的哲学）',
       '',
     );
     assert(
-      (await call('GET', RATING40)).body?.code === 10002,
+      typeof probeMsg14525.body?.message === 'string' &&
+        probeMsg14525.body.message !== '' &&
+        probeMsg14525.body.message !== '业务异常',
+      "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg14525.body?.message)}`,
+    );
+    const probeMsg14530 = await call('GET', RATING40);
+    assert(
+      probeMsg14530.body?.code === 10002,
       '§40(E) 未登录 → 10002',
       '',
     );
+    assert(
+      typeof probeMsg14530.body?.message === 'string' &&
+        probeMsg14530.body.message !== '' &&
+        probeMsg14530.body.message !== '业务异常',
+      "错误码 10002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg14530.body?.message)}`,
+    );
     const guest40 = await userLogin(`e2e_s40_${stamp}`);
+    const probeMsg14536 = await call('GET', RATING40, { token: guest40.token });
     assert(
       guest40?.token &&
-        (await call('GET', RATING40, { token: guest40.token })).body?.code === 10003,
+        probeMsg14536.body?.code === 10003,
       '§40(E) 小程序用户 token → 10003（后台报表不暴露给用户侧 —— 差评明细含他人自由文本，属内部经营数据）',
       '',
+    );
+    assert(
+      typeof probeMsg14536.body?.message === 'string' &&
+        probeMsg14536.body.message !== '' &&
+        probeMsg14536.body.message !== '业务异常',
+      "错误码 10003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      `message=${JSON.stringify(probeMsg14536.body?.message)}`,
     );
 
     // ---------------------------------------------------------- F. 还原（只删本节夹具）
