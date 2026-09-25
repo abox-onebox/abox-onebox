@@ -1,9 +1,13 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { Order } from '../../database/entities/order.entity';
 import { Message as MessageLog, MessageTemplate } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
+import { MessageAdminController } from './message-admin.controller';
 import { MessageSubscribeController } from './message.controller';
+import { MessageOrchestratorService } from './message-orchestrator.service';
+import { MessageReachService } from './message-reach.service';
 import { MessageSubscribeService } from './message-subscribe.service';
 import { MessageService } from './message.service';
 
@@ -15,6 +19,8 @@ import { MessageService } from './message.service';
  * | | 谁管 | 干什么 |
  * |---|---|---|
  * | **管理侧** | `admin/template/message-template.service.ts` | D59/D60 读改模板（后台页面用） |
+ * | **触达侧（F5）** | 本模块 `MessageAdminController` +
+ *   `MessageOrchestratorService` / `MessageReachService` | D67/D68 到达率回看 + 编排群发（后台同一页面的第二个 Tab） |
  * | **投递侧** | 本模块 `MessageService` | 业务动作触发时按场景投递 + 落 `ab_message` 日志 |
  * | **订阅侧** | 本模块 `MessageSubscribeService`（M4-3） | 用户端读「该请求哪些模板授权」（`GET /me/subscribe/templates`） |
  *
@@ -39,9 +45,16 @@ import { MessageService } from './message.service';
  * `wechat-template.service.ts` 两个空占位已在 M3-12 删除。
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([MessageLog, MessageTemplate, User])],
-  controllers: [MessageSubscribeController],
-  providers: [MessageService, MessageSubscribeService],
-  exports: [MessageService],
+  imports: [TypeOrmModule.forFeature([MessageLog, MessageTemplate, User, Order])],
+  controllers: [MessageSubscribeController, MessageAdminController],
+  providers: [
+    MessageService,
+    MessageSubscribeService,
+    MessageOrchestratorService,
+    MessageReachService,
+  ],
+  // `MessageOrchestratorService` 对外导出：未来的「截单提醒自动跑批」在 `tasks` 模块，
+  // 需直接调用同一执行口（与「跑批与手动补跑共用同一服务方法」的纪律一致）。
+  exports: [MessageService, MessageOrchestratorService],
 })
 export class MessageModule {}

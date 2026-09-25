@@ -66,6 +66,14 @@ export const NOTIFY_PAGES = {
    * 佣金规则入口都在工作台），而不是一个身份展示页。
    */
   leaderWorkbench: 'pages/leader/workbench',
+  /**
+   * 下单页（截单提醒的落地页 · F5）
+   *
+   * 选下单页而非首页：截单提醒的唯一目的是**促单**，用户点开通知后应当**立刻能下单**，
+   * 而不是先落到首页再自己找入口 —— 每多一步就多一层流失，而这条通知的成本
+   * （一次订阅消息授权额度）已经花掉了。
+   */
+  orderCreate: 'pages/order-create/order-create',
 } as const;
 
 /**
@@ -150,18 +158,25 @@ export interface MessageTemplateSpec {
 }
 
 /**
- * 6 个场景
+ * 7 个场景
  *
  * ## ⚠️ 与原型 P36 的关系（必须如实说明，别让它变成「两个真相」）
  *
  * 前 5 行与原型 P36「消息推送策略」的 5 行**逐一对应**（`user_order_status` /
  * `leader_delivery` / `merchant_cook` / `leader_apply` / `refund_result`）。
+ *
  * 第 6 行 `commission_settled` 是 **M4-3 新增**：原型没写这一行，但它对应
  * 已实现的两段式佣金链路（T 日确认计佣 → T+1 02:00 入账，见 M4-2 定稿），
  * 入账后**必须通知团长**（否则团长只能自己去小程序翻余额，两段式会变成投诉源）。
  *
- * → 后台 P36 页面会显示 **6 行**。这不是页面写错了，是代码事实比原型多了 1 行；
+ * 第 7 行 `cutoff_remind` 是 **F5 新增**：对应真源《系统地图》F5 点名的「忘了下单」，
+ * 与 `leader_delivery`（=「忘了取餐」）配成一对。二者同属「原型没写、但业务上必需」的行。
+ *
+ * → 后台 P36 页面会显示 **7 行**。这不是页面写错了，是代码事实比原型多了 2 行；
  *   若运营问「为什么多了」，答案在本段。
+ *
+ * ⚠️ **新增行一律追加在末尾**（保持「前 5 行 = 原型」这一结构的可核对性）——
+ *    插在中间会让「前 5 行与原型逐一对应」当场失效，而这句话已被 e2e §24 锚定。
  *
  * ⚠️ 增删场景必须同时改这里 **和** 种子（`seeds/seed.ts`）——
  *    种子由本清单派生，不存在第二份场景列表。
@@ -314,6 +329,43 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
       wechatTemplateId: null,
       groupContent:
         '【ABox 佣金】你 {{mealDate}} 的佣金 ¥{{amount}}（{{settledCount}} 笔）已入账，可在小程序查看明细。',
+    },
+  },
+  {
+    scene: 'cutoff_remind',
+    label: '截单提醒',
+    audience: '近 14 天下过单、且目标出餐日尚未下单的用户',
+    channels: ['wechat_subscribe'],
+    // ⚠️ 触发时机**不写具体时刻**（同 `leader_delivery` 的 PR-02 收口纪律）：时刻的唯一真相是
+    //    `common/utils/order-timeline.ts` 的 `DEFAULT_TIMELINE.cutoff`，此处只描述**事件**。
+    trigger: '截单前（由编排端点触发；自动跑批待微信模板审核通过后接入）',
+    mandatory: false,
+    // `cutoffTime` 的值由服务端按**生效时间轴**填充（`formatTimeOfDay(currentTimeline().cutoff)`），
+    // 不是端上写的第二份时刻。
+    variables: ['mealDate', 'cutoffTime'],
+    /**
+     * ⭐ `true`：本场景面向**用户小程序身份**、走订阅消息渠道、且 `wiring='live'`（编排端点是
+     * 真实投递点）—— 三条全中，故用户端应当请求授权（判据见 `subscribeTemplateOf`）。
+     */
+    requestSubscribe: true,
+    consumedBy: 'message/message-orchestrator.service.ts → orchestrate()（F5 接线）',
+    wiring: 'live',
+    note:
+      '⭐ **F5 新增（全清单第 7 行）**：真源《系统地图》F5 点名「忘了下单」是最冤的两笔损失之一' +
+      '（另一笔「忘了取餐」由 `leader_delivery` 承载）。' +
+      '⚠️ 与 `user_order_status` **不是同一件事，别混**：后者是「订单状态流转」' +
+      '（已支付 / 已出餐 / 配送中）的推送，收件人是**已经下单的人**，对他们是打扰，' +
+      '故原型按「简化原则」刻意不推；本场景面向**还没下单的人**做促单，与该原则不冲突。' +
+      '⚠️ 一期触达入口是**编排端点**（`POST /admin/messages/orchestrate`）——' +
+      '自动跑批待微信订阅消息模板审核通过后接入（真源 F5 已注明「依赖：订阅消息模板审核（微信侧流程）」）；' +
+      '在此之前由运营在截单前手动触发，编排端点与未来的跑批**共用同一执行口**，接入时不改业务逻辑。',
+    seed: {
+      // 与其余订阅消息场景同理：一期没有微信订阅消息模板 ID，**启用闸门**会拦住启用
+      // → 如实显示「未启用（缺模板 ID）」，而不是假装在发。
+      enabled: 0,
+      wechatTemplateId: null,
+      groupContent:
+        '【ABox 提醒】{{mealDate}} 的午餐将于 {{cutoffTime}} 截单，还没下单的话记得尽快。',
     },
   },
 ];

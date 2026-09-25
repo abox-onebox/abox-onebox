@@ -299,3 +299,95 @@ export function updateMessageTemplate(
 ): Promise<MessageTemplateUpdateResult> {
   return http.put<MessageTemplateUpdateResult>(`/admin/system/templates/${id}`, patch);
 }
+
+// ---------------------------------------------------------------------------
+// F5 消息触达（D67 到达率 + D68 编排）
+// ---------------------------------------------------------------------------
+
+/**
+ * 到达率：单场景汇总行
+ *
+ * ⚠️ `reachRate` 为 `null` 表示「区间内**没有任何尝试投递**」，与「0%」（发了全失败）
+ *    **语义不同** —— 页面上必须分开渲染，否则一期会把「没发过」显示成「全失败」。
+ */
+export interface MessageReachSceneRow {
+  scene: string;
+  label: string;
+  /** `live` = 有代码投递点；`pending` = 一期无投递点；`unknown` = 已下线场景的历史记录 */
+  wiring: string;
+  /** 场景当前是否启用 —— **它解释「为什么这条 attempted 是 0」** */
+  enabled: boolean;
+  attempted: number;
+  success: number;
+  failed: number;
+  reachRate: number | null;
+}
+
+export interface MessageReachView {
+  range: { from: string; to: string; days: number };
+  /** 按场景汇总（**含 0 投递的场景**，顺序与「模板配置」页一致） */
+  scenes: MessageReachSceneRow[];
+  /** 按北京日汇总（只含有记录的日子） */
+  daily: Array<{
+    date: string;
+    attempted: number;
+    success: number;
+    failed: number;
+    reachRate: number | null;
+  }>;
+  summary: {
+    attempted: number;
+    success: number;
+    failed: number;
+    reachRate: number | null;
+    scenesWithTraffic: number;
+  };
+  note: string;
+}
+
+/** D67 到达率（按场景 / 按北京日 · F5） */
+export function fetchMessageReach(params?: {
+  from?: string;
+  to?: string;
+}): Promise<MessageReachView> {
+  return http.get<MessageReachView>('/admin/messages/reach', params);
+}
+
+/** D68 编排出参（F5） */
+export interface OrchestrateResult {
+  scene: string;
+  label: string;
+  audience: string;
+  audienceLabel: string;
+  mealDate: string;
+  /** 命中的受众总数（**`dryRun` 也为真值** —— 一期最有用的就是它） */
+  audienceSize: number;
+  attempted: number;
+  delivered: number;
+  ok: number;
+  failed: number;
+  /** 被跳过的条数**按原因分组**（未启用 / 缺模板 ID / 找不到 openid…） */
+  skipped: Array<{ reason: string; count: number }>;
+  reachRate: number | null;
+  truncated: boolean;
+  limit: number;
+  dryRun: boolean;
+  note: string;
+}
+
+/**
+ * D68 编排一次批量触达（F5）
+ *
+ * ⚠️ `dryRun` **缺省 true**（服务端安全默认）：只解析受众、不投递。
+ *    要真发必须显式传 `false` —— 本函数**不代填默认值**，把「必须显式声明」
+ *    这一层留在调用点（页面在二次确认之后才传 `false`）。
+ */
+export function orchestrateMessage(payload: {
+  scene: string;
+  audience: string;
+  mealDate?: string;
+  dryRun?: boolean;
+  limit?: number;
+}): Promise<OrchestrateResult> {
+  return http.post<OrchestrateResult>('/admin/messages/orchestrate', payload);
+}
