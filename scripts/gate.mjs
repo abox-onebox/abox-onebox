@@ -355,6 +355,31 @@ const GATES = {
    * **必红并点名 `DELIVERY_NOT_FOUND = 30017`**，恢复 ⇒ 必绿（两种自证都跑过）。
    */
   'errcode:message': { cwd: '.', cmd: 'node scripts/check-error-code-message.mjs' },
+  /**
+   * 2026-09-25：**e2e「断言了 code 就必须配套断言 message」**（只能为准没能力）——
+   * 缺陷「只断言错误码、不断言文案」的防复发门禁
+   *
+   * 背景：本轮《整体回归》查出 e2e 里大量 `assert(x.body?.code === 10001, '…')` 这种
+   * **只断言 code** 的断言点。它是**恒绿**的 —— 后端 `ERROR_MESSAGE` 缺映射时，
+   * `code` 照样返回 ⇒ 测试照样通过，用户却只看到兜底的「业务异常」四个字。
+   * **代码里绿着、用户那里坏着，中间没有任何一条失败路径**（与 #76/#79 同族：
+   * 所有机械证据都是绿的，而对应的能力从未被验过一次）。
+   * 本轮已手工补齐 m3 136 处 / m2 9 处 / m1 7 处，三份脚本残留归零 —— 但「补完」不是终态，
+   * 下次新增用例最顺手的写法仍然是不带 message 的那一种，故必须固化成门禁。
+   *
+   * 与 `errcode:message` 是**互补的两端**：那边治「后端**没给**文案」（声明 ↔ 映射），
+   * 这边治「前端**没验**文案」（测试 ↔ 断言）。只做前者，文案缺失仍能绕过 e2e ——
+   * 因为 e2e 从未问过这个问题。
+   *
+   * 判据：凡 `.body?.code ===|!== <非 0>`，**同一处**必须有 `.body?.message` 断言
+   *      （后 1600 字符 / 前 400 字符 —— 前置窗口为的是容纳被 hoist 到断言之前的
+   *       `const probeXxx = await call(...)`）；残留逐条点名到 `文件:行号`。
+   * ⚠️ 刻意**不放宽**成「整个文件出现过 message 就算覆盖」—— 那样立刻恒绿，等于没有。
+   * **自带自证**（18 条，主流程每次自动先跑）：三份**真实**脚本的内存副本注入一处
+   * 必报 / 磁盘未改动的真文件必不报 / 比较点数不得为 0（0 点 ⇒ 恒绿陷阱），不符即 exit 1。
+   * ⭐ 自证本身做过**变异验证**：把窗口放宽到整文件 ⇒ **必红**；把正则改到失配 ⇒ **必红**。
+   */
+  'e2e:msg': { cwd: '.', cmd: 'node scripts/check-e2e-message-assert.mjs' },
   // outDir：构建前先改名挪走，避免构建工具自己 bulk-rm 被宿主守卫拦截（见文件头说明）
   'build:api': { cwd: 'apps/api-server', cmd: 'nest build', outDir: 'dist' },
   'build:admin': { cwd: 'apps/admin-web', cmd: 'vite build', outDir: 'dist' },
@@ -418,6 +443,8 @@ const ALIASES = {
     'state:audit',
     // 2026-09-25：错误码文案覆盖率（声明 ↔ 映射，防「业务异常」兜底）—— 纯静态、毫秒级
     'errcode:message',
+    // 2026-09-25：e2e 断言了 code 必须配套断言 message（防「恒绿断言」）—— 纯静态、毫秒级
+    'e2e:msg',
     'route:audit',
     'security:scan',
     // M5-15：菜单「授权 ↔ 入口」一致性（导航断链防复发）—— 纯静态、秒级
@@ -492,6 +519,8 @@ const REPORT_RE = {
   'e2e:m2': [/^通过\s+\d+\/\d+.*$/m],
   'e2e:m3': [/^通过\s+\d+\/\d+.*$/m],
   'errcode:message': [/^✔ 错误码文案全覆盖.*$/m],
+  // e2e:msg：先看自证是否通过，再看判据结果与覆盖规模（比较点数）
+  'e2e:msg': [/^✔ 自证 \d+\/\d+.*$/m, /^✔ e2e message 断言全覆盖.*$/m],
 };
 
 function reportOf(r) {
