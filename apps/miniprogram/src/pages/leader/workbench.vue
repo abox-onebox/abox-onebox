@@ -51,7 +51,10 @@
           <text class="war__sub">{{ war.sub }}</text>
           <text v-if="war.kind === 'open'" class="war__foot">
             <text class="abi abi-16">{{ I.info }}</text>
-            截单后不可自助取消；分享给同事可提升本月单量
+            <!-- ⚠️ 原句后半截「分享给同事可提升本月单量」把「分享」与「收益」直接挂钩，
+                 属诱导分享红线表述，已删除。前半截「截单后不可自助取消」是对用户权利的
+                 如实告知，必须保留。 -->
+            截单后不可自助取消
           </text>
         </block>
       </view>
@@ -63,7 +66,8 @@
             <text class="level__label">我的团长等级</text>
             <text class="level__name">{{ levelLabel }}团长</text>
             <text class="level__rate">
-              分佣 {{ ratePercent }}%{{ isTopLevel ? ' · 已达最高等级' : '' }}
+              <!-- ⚠️ 原写「分佣」——「分佣」是分销语境词，改用项目正式口径「佣金」 -->
+              佣金 {{ ratePercent }}%{{ isTopLevel ? ' · 已达最高等级' : '' }}
             </text>
           </view>
           <text class="abi abi-deco-34 level__icon">{{ I[isTopLevel ? 'crown' : 'medal'] }}</text>

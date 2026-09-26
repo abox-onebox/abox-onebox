@@ -56,8 +56,11 @@ probe_once() {
   if [ -n "$URL" ]; then
     full="${URL%/}${PATH_SUFFIX}"
     if command -v curl >/dev/null 2>&1; then
-      code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$full" || true)"
-      body="$(curl -s --max-time 5 "$full" || true)"
+      # ⚠️ `--noproxy '*'` 不可省：宿主若设了 http_proxy / https_proxy，探本机地址会
+      #    经代理拿回 502 —— 与「服务真挂了」**同形**，会把环境问题误判成服务故障。
+      #    （同款坑见 ops-daily.sh:115 的 `env -u http_proxy` 包法，这里从源头堵住。）
+      code="$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 5 "$full" || true)"
+      body="$(curl -s --noproxy '*' --max-time 5 "$full" || true)"
     else
       printf '     WARN 宿主无 curl，请用 --url 之外的方式（本机自带容器内探测）\n'
       return 1

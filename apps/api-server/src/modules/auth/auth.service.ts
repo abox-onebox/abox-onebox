@@ -19,7 +19,7 @@ import {
   LeaderMoneyService,
 } from '../../common/services/leader-money.service';
 import { durationToSeconds } from '../../common/utils/time';
-import { verifyPassword } from '../../common/utils/password';
+import { isDevPlainHash, verifyPassword } from '../../common/utils/password';
 import { Building } from '../../database/entities/building.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { AdminUser } from '../../database/entities/system.entity';
@@ -329,6 +329,18 @@ export class AuthService {
     }
 
     const admin = await this.adminRepo.findOne({ where: { username } });
+
+    // ⚠️ 种子明文口令（`dev_plain:<明文>`）在开发期可用、生产被 `verifyPassword`
+    //    fail-closed 拒绝。此处只是让「为什么登不进」在日志里说得出来 —— 否则运维
+    //    只会看到一句「账号或密码错误」，而真因是「这个账号还是种子口令」。
+    if (admin && isDevPlainHash(admin.passwordHash)) {
+      this.logger.error(
+        `后台账号 ${username} 仍是种子明文口令（dev_plain:）` +
+          `${process.env.NODE_ENV === 'production' ? ' —— 生产已拒绝登录' : ''}` +
+          '，上线前必须改为 scrypt 哈希',
+      );
+    }
+
     const passwordOk = !!admin && verifyPassword(dto.password, admin.passwordHash);
 
     if (!admin || !passwordOk) {

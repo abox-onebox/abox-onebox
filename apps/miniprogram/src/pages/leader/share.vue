@@ -20,7 +20,9 @@
       <view class="hero">
         <text class="abi abi-deco-40 hero__icon">{{ I.share }}</text>
         <text class="hero__title">分享给同事</text>
-        <text class="hero__sub">每天顺路帮同事带餐，顺手赚点零花钱</text>
+        <!-- ⚠️ 原文案是「顺手赚点零花钱」—— 属收益诱导表述（提审红线）。
+             改中性：只讲场景便利，不承诺收益。 -->
+        <text class="hero__sub">每天顺路帮同事带餐，省一趟跑腿</text>
 
         <view class="hero__link">
           <text class="hero__link-text">{{ shareLink }}</text>
@@ -67,7 +69,9 @@
         <view class="reward">
           <text class="reward__level">{{ levelLabel }}团长</text>
           <text class="reward__rate">{{ ratePercent }}%</text>
-          <text class="reward__desc">订单分佣（同事每订 1 单 = {{ ratePercent }}% 进账）</text>
+          <!-- ⚠️ 原文案是「订单分佣（同事每订 1 单 = X% 进账）」——「分佣」「进账」
+               都是收益诱导表述（提审红线）。改为中性陈述比例，不写成「每单赚多少」。 -->
+          <text class="reward__desc">订单佣金比例 {{ ratePercent }}%（按实发份数计）</text>
         </view>
 
         <view class="rule">
@@ -78,8 +82,11 @@
           </text>
         </view>
 
+        <!-- ⚠️ 原按钮名「推荐新团长」：既踩「发展下线」的表述红线，又与**实际行为不符**
+             —— 它调的是 shareToWechat()，做的事是复制「拼饭群」邀请文案发给同事，
+             与「招新团长」无关。改为与行为一致、且无发展人员含义的说法。 -->
         <button class="btn btn--gold" hover-class="btn--hover" @tap="shareToWechat">
-          <text class="abi abi-20">{{ I.share }}</text> 推荐新团长
+          <text class="abi abi-20">{{ I.share }}</text> 邀请同事拼饭
         </button>
       </view>
 

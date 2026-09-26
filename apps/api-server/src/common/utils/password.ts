@@ -13,9 +13,18 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
  *
  * ⚠️ 未知前缀一律返回 false（fail-closed），避免格式漂移导致「谁都登不进」被
  *    误判成「密码正确」。
+ *
+ * ⚠️ `dev_plain:` 在生产一律拒绝（2026-09-25 补 · 与 `PROVIDER_MODE` 同族）：
+ *    原实现**生产也照常放行**，即种子里的 `dev_plain:admin123` 在上线后是一个
+ *    真实可用的后台登录口令；而同文件导出的 `isDevPlainHash()` 全仓**零调用**
+ *    （注释写「供上线前扫描」，但没有任何地方扫）⇒ 该风险无人拦。
+ *    安全相关的默认值必须「生产无兜底」——漏配要响亮失败，不能静默放行。
  */
 const SCRYPT_PREFIX = 'scrypt:';
 const DEV_PLAIN_PREFIX = 'dev_plain:';
+
+/** `dev_plain:` 是否可用 —— 仅非生产 */
+const DEV_PLAIN_ALLOWED = process.env.NODE_ENV !== 'production';
 
 /** scrypt 参数：N=16384 / r=8 / p=1（Node 默认），keyLen=32 */
 const KEY_LEN = 32;
@@ -39,6 +48,8 @@ export function verifyPassword(plain: string, stored: string): boolean {
   if (!stored) return false;
 
   if (stored.startsWith(DEV_PLAIN_PREFIX)) {
+    // 生产一律拒绝（fail-closed）—— 不静默放行种子里的明文口令
+    if (!DEV_PLAIN_ALLOWED) return false;
     const expect = Buffer.from(stored.slice(DEV_PLAIN_PREFIX.length), 'utf8');
     return safeEqual(Buffer.from(plain, 'utf8'), expect);
   }

@@ -46,6 +46,15 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 
 # 先只拷清单文件：源码变动不会让「依赖安装」这一层缓存失效
+#
+# ⚠️ `.npmrc` 必须在这里一起拷，且**必须在 `pnpm install` 之前**：
+#    里面的 `shamefully-hoist=true` 决定了 `/app/node_modules/typeorm` 是否存在
+#    （typeorm 只声明在 apps/api-server/package.json，不在根 package.json；
+#     没有 hoist，pnpm 默认隔离布局下它只会出现在 .pnpm 里）。
+#    而 deploy.sh / rollback.sh 的迁移命令正是 `node node_modules/typeorm/cli.js`
+#    —— 少了这一行，镜像内该路径不存在，首次部署会在「执行数据库迁移」那一步
+#    `Cannot find module` 而中止（deploy.sh 有 set -euo pipefail，会报错，不静默）。
+COPY .npmrc ./
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/shared-types/package.json packages/shared-types/
 COPY packages/shared-utils/package.json packages/shared-utils/

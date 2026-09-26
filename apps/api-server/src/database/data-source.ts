@@ -61,7 +61,13 @@ const options: DataSourceOptions =
         host: process.env.DB_HOST ?? '127.0.0.1',
         port: Number(process.env.DB_PORT ?? 3306),
         username: process.env.DB_USER ?? 'root',
-        password: process.env.DB_PASSWORD ?? 'root123',
+        // ⚠️ 内置口令 'root123' **只在非生产**兜底（与 `PROVIDER_MODE` 同一条分岔规则）：
+        //    旧写法是恒默认 `'root123'` —— 生产一旦漏配 `DB_PASSWORD`，服务会
+        //    **静默连上一个弱口令库**，而这件事没有任何症状（接口照常通、健康检查照常绿）。
+        //    与安全相关的默认值必须是「生产无兜底」：漏了就连不上，响亮失败。
+        password:
+          process.env.DB_PASSWORD ??
+          (process.env.NODE_ENV === 'production' ? undefined : 'root123'),
         database: process.env.DB_DATABASE ?? 'abox_onebox',
         charset: 'utf8mb4',
         timezone: '+08:00',

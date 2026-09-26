@@ -14,6 +14,24 @@ export type QueueDriver = 'redis' | 'memory';
 export type StorageDriver = 'cos' | 'minio' | 'local';
 export type ProviderMode = 'mock' | 'real';
 
+/**
+ * `PROVIDER_MODE` 的默认值 —— **按环境分岔，绝不能写死 `'mock'`**
+ *
+ * ⚠️ 这里曾是一处真缺陷：默认值恒为 `'mock'`。生产若漏配 `PROVIDER_MODE`，
+ *    服务会以「**任意 code 免密登录任意身份** + **支付自动置为已支付**」的形态跑起来，
+ *    而且**服务照常起、接口照常通、健康检查照常绿、没有任何报错**
+ *    —— 典型的「做完了，但生产一跑就出事，且没有任何症状」。
+ *
+ * 所以分岔：
+ *   · 非生产 → `mock`：本地零依赖开发与 e2e 全链路都依赖它，**不能动**；
+ *   · 生产   → `real`：漏配时去连真实微信通道，会**响亮失败**，
+ *              而不是静默放行免密登录与自动支付。
+ *
+ * 另有第二道保险：`main.ts` 的 `REQUIRED_IN_PROD` 要求生产**显式配置**本变量
+ * （漏配即启动中止），两道一起才把这个口子堵住。
+ */
+const DEFAULT_PROVIDER_MODE: ProviderMode = process.env.NODE_ENV === 'production' ? 'real' : 'mock';
+
 export interface AppConfig {
   env: string;
   /**
@@ -103,7 +121,7 @@ export default registerAs('app', (): AppConfig => ({
     db: str(process.env.DB_DRIVER, 'mysql') as DbDriver,
     queue: str(process.env.QUEUE_DRIVER, 'redis') as QueueDriver,
     storage: str(process.env.STORAGE_DRIVER, 'local') as StorageDriver,
-    providerMode: str(process.env.PROVIDER_MODE, 'mock') as ProviderMode,
+    providerMode: str(process.env.PROVIDER_MODE, DEFAULT_PROVIDER_MODE) as ProviderMode,
   },
   tasksEnabled: bool(process.env.TASKS_ENABLED, true),
   queue: {
@@ -124,6 +142,6 @@ export function readDrivers() {
     db: str(process.env.DB_DRIVER, 'mysql') as DbDriver,
     queue: str(process.env.QUEUE_DRIVER, 'redis') as QueueDriver,
     storage: str(process.env.STORAGE_DRIVER, 'local') as StorageDriver,
-    providerMode: str(process.env.PROVIDER_MODE, 'mock') as ProviderMode,
+    providerMode: str(process.env.PROVIDER_MODE, DEFAULT_PROVIDER_MODE) as ProviderMode,
   };
 }

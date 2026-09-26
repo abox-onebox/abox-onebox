@@ -34,8 +34,17 @@ import { clockShiftMs, isClockShifted, now, toBjIso } from './common/utils/time'
  * 只放**无条件下必然需要**的项。按驱动条件才需要的密钥（如 `MINIO_SECRET_KEY`
  * 仅在 `STORAGE_DRIVER=minio` 时）不放这里 —— 误判「没配就退出」比漏判更糟，
  * 会让运维学会「随便塞个值绕过」。
+ *
+ * ## `PROVIDER_MODE` 为什么在这里（2026-09-25 补）
+ *
+ * 它**不是密钥**，但漏配的后果比漏配密钥更隐蔽：默认值是 `mock`，而 mock 意味着
+ * 「任意 code 免密登录任意身份」+「支付自动置为已支付」。也就是说——
+ * **服务照常起、接口照常通、健康检查照常绿，但整条登录与支付链是假的**。
+ *
+ * （`app.config.ts` 已把生产的默认值改成 `real`，这里再要求**显式配置**，
+ *   两道保险：即便将来有人又动了默认值，漏配仍然起不来。）
  */
-const REQUIRED_IN_PROD = ['JWT_SECRET'] as const;
+const REQUIRED_IN_PROD = ['JWT_SECRET', 'PROVIDER_MODE'] as const;
 
 function assertProdSecrets(): void {
   if (process.env.NODE_ENV !== 'production') return;
@@ -43,10 +52,17 @@ function assertProdSecrets(): void {
   if (!missing.length) return;
   Logger.error(
     `启动中止：生产环境必须显式配置 ${missing.join(' / ')}。` +
-      '这些值有内置默认值，漏配的后果是「用公开字符串签发管理员令牌」，且不会随时间减轻。' +
-      '宁可起不来，不可带着公开密钥上线。',
+      '这些项都有内置默认值，漏配的后果是「服务看起来一切正常，但安全模型是假的」，' +
+      '且不会随时间减轻。宁可起不来，不可带着假安全上线。',
     'Bootstrap',
   );
+  if (missing.includes('PROVIDER_MODE')) {
+    Logger.error(
+      '尤其 `PROVIDER_MODE`：漏配会落到 mock —— 任意 code 免密登录任意身份、' +
+        '下单后支付自动置为已支付。请在 .env.prod 里显式写 `PROVIDER_MODE=real`。',
+      'Bootstrap',
+    );
+  }
   process.exit(1);
 }
 
