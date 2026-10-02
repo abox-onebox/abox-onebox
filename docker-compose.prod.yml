@@ -157,6 +157,45 @@ services:
     networks: [abox-net]
     logging: *default-logging
 
+  # ------------------------------------------------------------
+  # 用户端 H5（**人工测试专用**，不是上线形态）
+  # ------------------------------------------------------------
+  # 存在的理由：小程序真机（预览 / 体验版）会校验 request 合法域名，
+  #   必须 HTTPS + 已备案域名；域名备案未完成前，同事异地扫码会被微信拦掉。
+  #   H5 是同一份 uni-app 源码编出的网页，手机浏览器直接开，不走域名校验。
+  #
+  # ⚠️⚠️ 安全边界（详见 apps/miniprogram/Dockerfile 头部）：
+  #   本镜像以 `--mode development` 构建 ⇒ `?devCode=<任意>` 可切换成任意用户身份。
+  #   ⇒ **只能在人工测试期间临时开放**，测完必须 `docker compose stop h5`
+  #     （或撤掉端口映射），绝不能带进正式上线形态。
+  h5:
+    image: ${REGISTRY:-abox}/h5:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/miniprogram/Dockerfile
+    container_name: abox-h5-prod
+    restart: unless-stopped
+    init: true
+    ports:
+      - '${H5_PORT:-8081}:80'
+    depends_on:
+      # 同 admin：只等 started，不等 healthy —— api 起不来时 H5 至少还能开，
+      # 页面会显示接口错误，比整个站点打不开更容易定位
+      api:
+        condition: service_started
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1/ || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    networks: [abox-net]
+    logging: *default-logging
+
 networks:
   abox-net:
     driver: bridge
