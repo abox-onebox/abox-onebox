@@ -55,6 +55,13 @@ COPY apps/api-server/package.json apps/api-server/
 COPY apps/admin-web/package.json apps/admin-web/
 COPY apps/miniprogram/package.json apps/miniprogram/
 
+# ⚠️ 必须拷 scripts/：根 package.json 的 `prepare` = `node scripts/setup-husky.mjs`。
+#    不拷会**模块找不到**直接崩（不是 husky 报错，是 node 解析阶段就失败，
+#    setup-husky.mjs 内部那层 try/catch 根本来不及兜住）⇒ pnpm install 非零退出。
+#    脚本本身设计为「非 git 环境 warn 后退出 0」，拷进来即可安全通过。
+#    注：服务端旧镜像之所以没踩到，是因为它那份代码早于 prepare 的引入。
+COPY scripts ./scripts
+
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
