@@ -10,6 +10,33 @@
 import { http, query } from './request';
 
 // ---------------------------------------------------------------------------
+// U-B2 自助绑定 / 更换办公楼（`PUT /me/building`）
+// ---------------------------------------------------------------------------
+
+export interface BindBuildingResult {
+  buildingId: number;
+  buildingName: string;
+  /** `false` = 选的还是原来那栋（服务端不写库，也不是错误） */
+  changed: boolean;
+  /** 口径说明（服务端下发） */
+  note: string;
+}
+
+/**
+ * U-B2 · 自助绑定 / 更换办公楼
+ *
+ * ⚠️ 成功后调用方**必须重新拉一次 A2 `GET /auth/me`**（`fetchMe`）：
+ *    本出参刻意不含团长信息 —— 换楼会清空 `team_leader_id`，跟随团长由服务端
+ *    按新楼重算。端上若在这里自己算一份 leaderName，就是第二份归属判据
+ *    （M5-17 缺陷 ⑫ 正是两处判据不一致造成的）。
+ *
+ * ⚠️ 在职团长调用会被拒（10003）：更换服务办公楼需运营审核，走客服。
+ */
+export function bindBuilding(buildingId: number): Promise<BindBuildingResult> {
+  return http.put<BindBuildingResult>('/me/building', { buildingId });
+}
+
+// ---------------------------------------------------------------------------
 // U13 余额 / U14 余额明细（M5-10）
 // ---------------------------------------------------------------------------
 

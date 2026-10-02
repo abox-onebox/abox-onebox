@@ -148,6 +148,16 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/supplier/dishes.vue'),
       },
 
+      // C 端用户管理（M33 用户域 · 调 `/admin/users`）
+      //
+      // ⚠️ 与 `system/admin-user` 是两件事：后者管**后台运营账号**（`ab_admin_user`），
+      //    本页管**小程序 C 端用户**（`ab_user`）。两者都叫「用户」但无外键关系，
+      //    故路径也刻意分家（`/user/list` vs `/system/admin-user`）。
+      // ⚠️ 本页此前**完全不存在**：全仓 83 个 `/admin/*` 端点没有一个 C 端用户的，
+      //    运营查不到人、代绑不了楼、也拉不黑（`status=2` 有语义、登录侧有拦截，
+      //    但没有任何入口能把它置上）。
+      { path: 'user/list', name: 'UserList', component: () => import('@/views/user/list.vue') },
+
       // 办公楼管理 M33 · P37（5 视图）
       {
         path: 'building/overview',
@@ -280,6 +290,16 @@ export const routes: RouteRecordRaw[] = [
         path: 'system/schedule',
         name: 'SystemSchedule',
         component: () => import('@/views/system/schedule.vue'),
+      },
+      // 队列状态（`GET /admin/queue`）—— 自 M4-3 就存在但**全仓 0 引用**（无页面）。
+      //   队列的典型故障是「静默失效」：任务进不去 / 没人消费 / 重试耗尽只剩一条
+      //   会轮转掉的日志 —— 三种都**不会让接口报错**，没有页面就只能等用户投诉倒推。
+      //   ⚠️ 与 schedule 同因不同命名空间：本页调 `/admin/queue`，不在 `modules/admin/` 下
+      //   （控制器在 `src/queues/`，放 `AdminModule` 会造成反向依赖）。
+      {
+        path: 'system/queue',
+        name: 'SystemQueue',
+        component: () => import('@/views/system/queue.vue'),
       },
     ],
   },

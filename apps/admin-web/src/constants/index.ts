@@ -71,14 +71,15 @@ export function calcSettlement(
  * | 套餐 | M31 | 3 |
  * | 订单 | M32 | 3 |
  * | 团长与楼宇 | M33 | 6 |
+ * | 用户 | C 端 `ab_user`（与「系统 → 账号管理」两张表，故独立成组） | 1 |
  * | 供应商与出餐 | M34 | 3 |
  * | 财务 | M35 | 8 |
  * | 数据 | M36 | 4 |
- * | 系统 | M37 | 6 |
+ * | 系统 | M37 | 7 |
  *
- * 刻意**不折叠**（保持平铺 + 组标题）：一期后台总共 34 个入口，
- * 运营要的是「一眼扫完今天该开哪几页」；8 个折叠面板会把这件事
- * 变成 8 次点击 + 记住每个面板里装了什么。
+ * 刻意**不折叠**（保持平铺 + 组标题）：一期后台总共 36 个入口，
+ * 运营要的是「一眼扫完今天该开哪几页」；9 个折叠面板会把这件事
+ * 变成 9 次点击 + 记住每个面板里装了什么。
  *
  * ⚠️ 本次只动 `group` 字段，**path 一个字都不能改** —— path 是服务端 menu key，
  *    `scripts/check-nav-consistency.mjs` 会双向对账（改 path 会让该页对所有人消失）。
@@ -141,6 +142,22 @@ export const ADMIN_NAV = [
       // M5-1：配送单管理（D61/D62）。原型无对应页，故 `page` 记 `—`；
       //   `module` 列记**接口编号**而不是原型模块号 —— 不编造一个并不存在的原型页。
       { path: '/order/delivery', title: '配送单管理', page: '—', module: 'D61/D62', icon: 'truck' },
+    ],
+  },
+  {
+    // ⚠️ C 端用户（`ab_user`）—— 与「系统 → 账号管理」（`ab_admin_user`）是两张表、
+    //    两套体系，故独立成组而不是塞进系统组。
+    //    放在「团长与楼宇」之后：三者都是「人」的域（团长 / 用户 / 楼宇），
+    //    运营排查「这单是谁下的、他跟哪个团长、在哪个楼」是同一条链。
+    // ⚠️ 本项此前**完全不存在**（后端无 `/admin/users`、前端无页、api 层是空壳）。
+    //    后果：运营查不到人、代绑不了楼、也拉不黑 —— `ab_user.status = 2` 有语义、
+    //    登录侧有 20006 拦截，但没有任何入口能把它置上（有锁没钥匙）。
+    //    `page` 记 `—`（原型无对应页，不编造原型号）；`module` 记后端端点。
+    group: '用户',
+    // ⚠️ `icon` 必须是 `ABOX_ICON_NAMES`（82 名 Tabler 子集）之一；图标库里没有
+    //    单数的 `user`，故复用 `users`（跨组复用是允许的，本表头注已写明）。
+    items: [
+      { path: '/user/list', title: '用户管理', page: '—', module: 'admin/users', icon: 'users' },
     ],
   },
   {
@@ -368,6 +385,21 @@ export const ADMIN_NAV = [
         page: '—',
         module: 'D64/D65',
         icon: 'clock',
+      },
+      // 队列状态（`GET /admin/queue`）—— 自 M4-3 就有端点，**一直没有页面**。
+      //   队列的典型故障是「静默失效」（任务进不去 / 没人消费 / 重试耗尽），
+      //   三种都**不会让接口报错** —— 没有页面就没地方看积压与死信。
+      //   ⚠️ 服务端 `QueueAdminController` 的角色白名单是 super_admin/admin/**operator**
+      //   （不含 viewer/finance：这是运行态实现细节，不是业务数据），
+      //   而 `operator` 的菜单由 `ADMIN_MENU_KEYS.filter(!startsWith('/system/'))` 派生
+      //   ⇒ 必须在本文件 `admin-role.ts` 里把它显式加回 operator，否则会出现
+      //   「控制器放行、菜单看不见」的诡异状态（菜单矩阵与 API 白名单必须同向）。
+      {
+        path: '/system/queue',
+        title: '队列状态',
+        page: '—',
+        module: 'admin/queue',
+        icon: 'refresh',
       },
     ],
   },

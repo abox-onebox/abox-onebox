@@ -1,17 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 
-import { LeaderStatus, ORDER_TERMINAL_STATUS } from '@abox/shared-types';
+import { BuildingStatus, LeaderStatus, ORDER_TERMINAL_STATUS } from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { CANCELED_NICKNAME, UserStatus } from '../../common/constants/user-status';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { LeaderMoneyService } from '../../common/services/leader-money.service';
+import { Building } from '../../database/entities/building.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { Order } from '../../database/entities/order.entity';
 import { User } from '../../database/entities/user.entity';
 import { ACCOUNT_CANCEL_CONFIRM_TEXT, UserCancelDto } from './dto/user-cancel.dto';
+import { BindBuildingDto } from './dto/user-building.dto';
 
 /** 闸门原因 → 中文（端上不再自造第二份文案；`data.reasons` 给出机器可读的键） */
 const REASON_TEXT: Record<string, string> = {
@@ -70,9 +72,92 @@ export class UserService {
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectRepository(TeamLeader) private readonly leaderRepo: Repository<TeamLeader>,
     @InjectRepository(Order) private readonly orderRepo: Repository<Order>,
+    /** U-B2 自助绑定办公楼：要判「楼是否存在 / 是否营业中」，故借实体而非依赖 BuildingModule */
+    @InjectRepository(Building) private readonly buildingRepo: Repository<Building>,
     /** 复用全局余额真源（`ab_balance` 只此一处读）—— 不自己 `SUM` 一次（#69 的形状） */
     private readonly leaderMoney: LeaderMoneyService,
   ) {}
+
+  /**
+   * U-B2 · 自助绑定 / 更换办公楼（`PUT /me/building`）
+   *
+   * ## 为什么必须补这一支
+   *
+   * `ab_user.building_id` 此前**只有团长邀请链接一个写入口**
+   * （`pages/leader-invite` → `MealService` 落地）。于是：
+   *   · 没有链接的人（同事扫码进来联调、老用户换楼）永远停在首页空态；
+   *   · 更糟的是首页 `emptyText` 对**任何**错误码都显示「本楼今日未开团」，
+   *     真实原因（「你还未绑定办公楼」）只在 `emptyHint` 里，用户看不见。
+   * 本支 + `GET /building` 把这条链路补成自助闭环。
+   *
+   * ## ⚠️ 换楼**同时清空 `team_leader_id`**
+   *
+   * `MealService.resolveLeader` / `OrderService.resolveLeader` 的顺序都是：
+   * ① `team_leader_id` 指向且在任 → 用；② 否则本楼 id 最小的在任团长 → 用。
+   * 若换楼时保留旧的 `team_leader_id`，用户在新楼下单，佣金却记给**旧楼**的团长
+   * —— 两栋楼的团长都不是自己选的错，但钱确实走错了，且没有任何报错。
+   * 故楼一变，归属就重算（清 `team_leader_id` 即让 ② 生效）。
+   *
+   * ## ⚠️ 在职团长**不允许**自助换楼（与 L15 同一口径）
+   *
+   * `UpdateLeaderDto` 刻意不收 `buildingId`（管理楼栋归属属运营审核事项，
+   * 端上 `pages/leader/profile` 的「切换」按钮就是一句「联系客服」）。
+   * 若这里放行，一个在职团长就能把 `ab_user.building_id` 改成与
+   * `ab_team_leader.building_id` 不一致的楼 —— 两份「他服务哪栋楼」的答案互相矛盾。
+   *
+   * ## ⚠️ 出参**不带**团长信息
+   *
+   * 端上要展示的「跟随团长」由换楼后重新拉一次 A2 `GET /auth/me` 得到。
+   * 此处若自己算一遍 leaderName，就是**第二份归属判据**
+   * （M5-17 缺陷 ⑫ 恰恰是两处判据不一致造成的），故刻意只回楼栋本身。
+   */
+  async bindBuilding(userId: number, dto: BindBuildingDto) {
+    const building = await this.buildingRepo.findOne({
+      where: { id: dto.buildingId, deletedAt: IsNull() },
+    });
+    if (!building) throw new BizException(ErrorCode.BUILDING_NOT_FOUND);
+    // 「待开通 / 已暂停」的楼没有开团资格 —— 不给用户一个必然下不了单的选项
+    if (building.status !== BuildingStatus.ACTIVE) {
+      throw new BizException(
+        ErrorCode.BUILDING_NOT_FOUND,
+        `「${building.name}」暂未开通，请选择列表中的其他办公楼`,
+      );
+    }
+
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new BizException(ErrorCode.USER_NOT_FOUND);
+    if (user.status === UserStatus.CANCELED) throw new BizException(ErrorCode.ACCOUNT_CANCELED);
+
+    const leader = await this.leaderRepo.findOne({ where: { userId } });
+    if (leader && leader.status === LeaderStatus.ACTIVE) {
+      throw new BizException(
+        ErrorCode.FORBIDDEN,
+        '你是该楼的在职团长，更换服务办公楼需运营审核，请联系客服处理',
+      );
+    }
+
+    const changed = Number(user.buildingId ?? 0) !== dto.buildingId;
+    if (changed) {
+      await this.userRepo.update(
+        { id: userId },
+        { buildingId: dto.buildingId, teamLeaderId: null },
+      );
+      this.logger.log(
+        `自助绑定办公楼 user=${userId} building=${dto.buildingId}（原 building=${user.buildingId ?? 'null'}）· 已清空 team_leader_id 待重算`,
+      );
+    }
+
+    return {
+      buildingId: dto.buildingId,
+      buildingName: building.name,
+      /** `false` = 选的还是原来那栋（不写库，也不是错误） */
+      changed,
+      /** 口径说明由服务端下发 —— 端上不复制一份文案 */
+      note: changed
+        ? '已切换办公楼，你的跟随团长按新楼重新匹配。请回到首页刷新次日套餐。'
+        : '你已在该办公楼，无需切换。',
+    };
+  }
 
   /**
    * 注销当前登录账号

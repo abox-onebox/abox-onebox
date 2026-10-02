@@ -380,9 +380,20 @@ function goSupport(): void {
   navigateTo('/pages/support/contact');
 }
 
-/** MVP 无「切换办公楼/团长」能力（进入方式 = 邀请链接绑定），如实告知 */
+/**
+ * 自助切换办公楼（`pages/building/switch`）
+ *
+ * ⚠️ 此前这里只有一句 toast「请通过该楼团长邀请链接进入」—— 那句话在
+ *    `building_id` **只能由邀请链接写入**时是诚实的，但它同时意味着
+ *    「没有链接的人永远绑不上楼」（同事扫码联调就是这个形状）。
+ *    现在有 `GET /building` + `PUT /me/building` 自助链路，故这里改为直达选楼页。
+ *
+ *    ⚠️ 在职团长进入该页后点任何楼都会被服务端拒（10003，换服务楼需运营审核）——
+ *    这是**刻意的**，与 `pages/leader/profile` 的「切换 → 联系客服」同一口径，
+ *    不是本页的 bug。
+ */
 function tapSwitchLeader(): void {
-  uni.showToast({ title: '更换楼栋请通过该楼团长邀请链接进入', icon: 'none', duration: 2400 });
+  navigateTo('/pages/building/switch');
 }
 
 /**

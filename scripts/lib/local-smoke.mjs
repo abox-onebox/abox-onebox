@@ -47,7 +47,7 @@ async function pickAccount(h5Url) {
 
     const daily = await json(`${h5Url}/api/v1/home/daily`, { headers: auth(token) });
     const d = daily.body?.data;
-    // 10004 = NOT_FOUND：该账号所属楼栋/楼群暂无可用团（新用户即如此），换下一个
+    // 非 0 即跳过换下一个（未绑楼新用户是 20016、楼群未开团是 30005 —— 都属预期，不关心具体码）
     if (daily.body?.code !== 0 || d?.canOrder !== true) continue;
 
     const list = await json(`${h5Url}/api/v1/orders?page=1&pageSize=20`, { headers: auth(token) });

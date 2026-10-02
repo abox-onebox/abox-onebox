@@ -371,7 +371,8 @@ async function main() {
   say('    dev:1001  李明 · 首席团长  12%   ← 标杆账号（自检**不会**占用）');
   say('    dev:1002  王芳 · 金牌团长  10%   dev:1003  张磊 · 正式团长  9%');
   say('    dev:1004  赵静 · 正式团长   9%   dev:1005  陈强 · 见习团长  8%');
-  say('    dev:newbie / 任意新 code → **拿不到团**（未绑楼栋，/home/daily 回 10004，属预期）');
+  say('    dev:newbie / 任意新 code → 未绑楼新用户：首页出现「选择办公楼」，选完即可看团');
+  say('      （/home/daily 对未绑楼回 20016 —— 属预期；仍显示「本楼今日未开团」才是开团口径）');
   say('  运营后台账号');
   say('    admin / admin123（超管）  finance / finance123  sanweiwu / supplier123');
   line();

@@ -101,6 +101,10 @@
     {
       "path": "pages/account-cancel/account-cancel",
       "style": { "navigationBarTitleText": "账号注销" }
+    },
+    {
+      "path": "pages/building/switch",
+      "style": { "navigationBarTitleText": "选择办公楼" }
     }
   ],
   "globalStyle": {

@@ -36,6 +36,11 @@ export const ADMIN_MENU_KEYS = [
   '/order/delivery',
   '/leader/list',
   '/leader/apply',
+  // C 端用户（`ab_user`）· 调 `/admin/users`。
+  //   ⚠️ **不要与 `/system/admin-user` 混淆**：后者管后台运营账号（`ab_admin_user`）。
+  //   ⚠️ 本 key 落在非 `/system/` 命名空间下，故 `operator`（客服）**可见** ——
+  //     代绑楼栋、拉黑恶意用户是客服的日常，不给入口就没人干得了。
+  '/user/list',
   '/building/overview',
   '/building/list',
   '/building/groups',
@@ -88,7 +93,26 @@ export const ADMIN_MENU_KEYS = [
   //   但这只是**视觉**：真正的闸门是控制器的 `@Roles`（补跑会改写历史数据，
   //   刻意不给 operator / finance / viewer）。
   '/system/schedule',
+  // 队列状态（`/admin/queue`）—— 同 schedule，落在 `/system/` 命名空间下即被
+  //   operator 的派生规则挡在菜单外，但 `QueueAdminController` 的 `@Roles` **含 operator**
+  //   （运维要第一时间知道「退款任务在重试」）。菜单矩阵与 API 白名单必须同向，
+  //   故在下方 `ROLE_MENUS.operator` 里显式加回（见 `OPERATOR_EXTRA_MENUS`）。
+  '/system/queue',
 ] as const;
+
+/**
+ * `operator` 在 `ADMIN_MENU_KEYS` 之外的**额外**可见菜单
+ *
+ * ⚠️ 为什么需要这个口子：`operator` 的菜单是
+ *    `ADMIN_MENU_KEYS.filter(k => !k.startsWith('/system/'))` 派生的 ——
+ *    一条规则同时表达「系统管理不给运营」与「`/system/` 下的一切都不给运营」。
+ *    而 `/system/queue` 恰好是 `/system/` 下**唯一**运营该看的页
+ *    （控制器 `@Roles('super_admin','admin','operator')` 已放行）。
+ *    没有本数组就会出现「能调但进不去」—— 菜单矩阵与 API 白名单不同向，
+ *    正是 `admin-role.ts` 头注反复警告的形态。
+ *    ⚠️ 新增条目前先确认**服务端 `@Roles` 也放行了该角色**，只加菜单没用（反之亦然）。
+ */
+export const OPERATOR_EXTRA_MENUS = ['/system/queue'] as const;
 
 /**
  * 供应商侧菜单 key（与 `admin-web/src/constants/index.ts` 的 `SUPPLIER_NAV` 逐项一致 · P21–P26）
@@ -122,8 +146,8 @@ export const SUPPLIER_MENU_KEYS = [
 export const ROLE_MENUS: Record<string, readonly string[]> = {
   super_admin: [MENU_WILDCARD],
   admin: ADMIN_MENU_KEYS,
-  /** 运营专员：不开放系统管理与角色权限 */
-  operator: ADMIN_MENU_KEYS.filter((k) => !k.startsWith('/system/')),
+  /** 运营专员：不开放系统管理与角色权限（`/system/queue` 例外，见 `OPERATOR_EXTRA_MENUS`） */
+  operator: [...ADMIN_MENU_KEYS.filter((k) => !k.startsWith('/system/')), ...OPERATOR_EXTRA_MENUS],
   /** 财务：财务 + 订单/套餐只读 + 看板，不碰团长与系统 */
   finance: [
     '/dashboard',

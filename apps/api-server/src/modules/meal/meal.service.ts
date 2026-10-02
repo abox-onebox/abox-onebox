@@ -231,7 +231,14 @@ export class MealService {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new BizException(ErrorCode.USER_NOT_FOUND);
     if (!user.buildingId) {
-      throw new BizException(ErrorCode.NOT_FOUND, '你还未绑定办公楼，请通过团长邀请链接进入');
+      // ⚠️ 20016 而不是 10004：两者用户可执行的动作不同（自助选楼 / 找运营），
+      //    合成一码端上就只能给一句两可的兜底文案 —— 见 ErrorCode.USER_BUILDING_UNBOUND。
+      //    文案也改了：「请通过团长邀请链接进入」是**唯一绑楼途径**时的说法，
+      //    现在有 `GET /building` + `PUT /me/building` 自助链路了。
+      throw new BizException(
+        ErrorCode.USER_BUILDING_UNBOUND,
+        '你还没有选择办公楼，选好即可查看次日套餐',
+      );
     }
 
     const building = await this.buildingRepo.findOne({ where: { id: user.buildingId } });

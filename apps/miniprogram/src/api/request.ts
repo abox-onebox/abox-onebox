@@ -34,6 +34,14 @@ export const CODE_REFUND_NOT_ALLOWED = 40004;
 export const CODE_ACCOUNT_CANCELED = 20014;
 /** U19 暂不能注销（M5-20）—— payload 带 `reasons: string[]`，端上逐条列出即可 */
 export const CODE_ACCOUNT_CANCEL_BLOCKED = 20015;
+/**
+ * U-B1 未绑定办公楼（`ab_user.building_id` 为空）
+ *
+ * ⭐ 端上收到本码 → 空态主按钮换成「选择办公楼」直达自助选楼页；
+ *    它与 `10004 NOT_FOUND`（如「所属办公楼未配置楼群」）是**两件事** ——
+ *    前者用户能自己解决，后者只能找运营。合成一码时端上就只能给一句两可的兜底文案。
+ */
+export const CODE_BUILDING_UNBOUND = 20016;
 
 /** 业务异常（携带服务端 code / data / requestId，便于端上分支与排障） */
 export class ApiError extends Error {

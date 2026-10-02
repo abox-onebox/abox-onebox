@@ -98,6 +98,21 @@ export enum ErrorCode {
    *    fail-closed 在这里的正确含义是把用户挡在一次失败上，而不是让他安静地损失。
    */
   ACCOUNT_CANCEL_BLOCKED = 20015,
+  /**
+   * 扩展：用户未绑定办公楼（`ab_user.building_id` 为空）→ 无法解析楼群与次日套餐
+   *
+   * ⚠️ **为什么不能继续复用 `10004 NOT_FOUND`**：`MealService.resolveUserGroup`
+   *    有两处抛 10004 —— 「未绑定办公楼」与「所属办公楼未配置楼群」。
+   *    前者**用户可以自己解决**（自助选楼），后者**只能找运营**（配楼群）。
+   *    合成一个码，端上就只能给一句两可的兜底文案，结果是：
+   *    首页 `emptyText` 对任何错误都显示「本楼今日未开团」，
+   *    「你还没选楼」这件本可自助的事被彻底藏起来（真实联调里表现为
+   *    「扫码进来一片空白 + 重新加载」，没有任何出口）。
+   *
+   *    端上收到本码 → 空态主按钮换成「选择办公楼」直达 `pages/building/switch`；
+   *    收到 10004 → 仍是「重新加载」，提示语用服务端 message（此时它讲的是楼群）。
+   */
+  USER_BUILDING_UNBOUND = 20016,
 
   /** ---- 3xxxx 套餐与下单 ---- */
   /** 截单窗口外下单（U6 校验第 1 步） */
@@ -398,6 +413,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.LEADER_STATUS_ILLEGAL]: '团长当前状态不支持该操作',
   [ErrorCode.ACCOUNT_CANCELED]: '该账号已注销，如需恢复请联系客服',
   [ErrorCode.ACCOUNT_CANCEL_BLOCKED]: '存在未结清事项，暂不能注销',
+  [ErrorCode.USER_BUILDING_UNBOUND]: '你还没有选择办公楼，选好即可查看次日套餐',
   [ErrorCode.ORDER_CUTOFF]: '今日 24:00 已截单，明日请早',
   [ErrorCode.QUANTITY_EXCEED]: '份数超出单次上限',
   [ErrorCode.ORDER_STATUS_ILLEGAL]: '当前订单状态不支持该操作',

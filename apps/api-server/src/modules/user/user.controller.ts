@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { CurrentUser, JwtPayload } from '../../common/decorators/auth.decorator';
@@ -6,6 +6,7 @@ import { BizConfigService } from '../../common/services/biz-config.service';
 import { LeaderMoneyService } from '../../common/services/leader-money.service';
 import { UserBalanceLogQueryDto } from './dto/user-balance.dto';
 import { UserCancelDto } from './dto/user-cancel.dto';
+import { BindBuildingDto } from './dto/user-building.dto';
 import { UserService } from './user.service';
 
 /**
@@ -145,6 +146,38 @@ export class UserController {
   })
   async balanceLogs(@CurrentUser() user: JwtPayload, @Query() q: UserBalanceLogQueryDto) {
     return this.leaderMoney.logsOf(user.sub, q);
+  }
+
+  /**
+   * U-B2 · 自助绑定 / 更换办公楼（`PUT /me/building`）
+   *
+   * 与 `GET /building`（`BuildingController`）配成一对，补的是同一个洞：
+   * 在此之前 `ab_user.building_id` **只能由团长邀请链接写入**，
+   * 没有链接的人（同事扫码联调、老用户换楼）在首页只能看到一个
+   * 被 `emptyText` 吞掉真实原因的空态，且**没有任何自助出口**。
+   *
+   * ## ⚠️ 为什么是 `PUT` 而不是 `POST`
+   *
+   * 语义是「设置当前身份的所属楼」—— **幂等**（重复提交同一楼 → `changed=false`，
+   * 不写库也不是错误），且不需要 `Idempotency-Key`。
+   * 与 L15 `PUT /leader/profile`（改团长档案）同一形态。
+   *
+   * ## ⚠️ 端上拿到成功回执后要**重新拉 A2 `GET /auth/me`**
+   *
+   * 本出参刻意**不含团长信息**（避免端上出现第二份归属判据，见
+   * `UserService.bindBuilding` 的注释）。「跟随团长」以 A2 为准。
+   */
+  @Put('building')
+  @ApiOperation({
+    summary: 'U-B2 自助绑定 / 更换办公楼（换楼即按新楼重算跟随团长）',
+    description:
+      '只接受营业中（`status = 1`）的楼；在职团长调用会被拒（换服务楼需运营审核，走客服）。\n\n' +
+      '换楼会**清空 `team_leader_id`**，随后由 `MealService.resolveLeader` ' +
+      '按新楼重新匹配在任团长 —— 否则会出现「在新楼下单、佣金记给旧楼团长」且不报错。\n\n' +
+      '重复提交同一栋楼返回 `changed=false`，不写库，也不是错误。',
+  })
+  bindBuilding(@CurrentUser() user: JwtPayload, @Body() dto: BindBuildingDto) {
+    return this.userService.bindBuilding(user.sub, dto);
   }
 
   /**

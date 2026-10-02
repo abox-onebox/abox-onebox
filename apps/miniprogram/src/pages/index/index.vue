@@ -154,8 +154,8 @@
       :text="emptyText"
       :hint="emptyHint"
       illustration="box"
-      action-text="重新加载"
-      @action="load"
+      :action-text="emptyActionText"
+      @action="onEmptyAction"
     />
 
     <ab-bottom-bar active="index" />
@@ -194,7 +194,7 @@ import type { HomeDailyResult, MealDishView } from '@abox/shared-types';
 import { LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
 
 import { fetchDaily } from '@/api/meal';
-import { ApiError } from '@/api/request';
+import { ApiError, CODE_BUILDING_UNBOUND } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
 import { buildUrl, navigateTo } from '@/utils/router';
@@ -212,16 +212,31 @@ const loadError = ref<ApiError | null>(null);
 /** 份数（原型 P1 的 stepper；带入 P3 下单确认） */
 const quantity = ref(1);
 
+/**
+ * ⭐ 空态**按错误码分级**，不再一句「本楼今日未开团」兜全部
+ *
+ * 此前 `emptyText` 对**任何** `loadError.code` 都返回同一句，于是
+ * 「你还没绑定办公楼」（本可自助）与「本楼今日真的没开团」（只能等）
+ * 在界面上长得一模一样 —— 用户能做的只有反复点「重新加载」。
+ * 服务端已把前者拆成独立码 `20016`（见 `ErrorCode.USER_BUILDING_UNBOUND`），
+ * 这里据此把**主按钮也换掉**：能自己解决的事，按钮就该指向解决办法。
+ */
+const needsBuilding = computed(() => loadError.value?.code === CODE_BUILDING_UNBOUND);
+
 const emptyText = computed(() => {
-  const code = loadError.value?.code;
-  if (code === undefined) return '今日暂无开团';
-  // 30005 未开团 / 其余按提示语兜底
-  return '本楼今日未开团';
+  if (loadError.value?.code === undefined) return '今日暂无开团';
+  return needsBuilding.value ? '你还没有选择办公楼' : '本楼今日未开团';
 });
 
-const emptyHint = computed(
-  () => loadError.value?.message ?? '请通过楼长的邀请链接进入，或稍后再试',
-);
+const emptyHint = computed(() => loadError.value?.message ?? '选好办公楼后即可查看次日套餐');
+
+/** 空态主按钮：未绑楼 → 去选楼；其余 → 重新加载 */
+const emptyActionText = computed(() => (needsBuilding.value ? '选择办公楼' : '重新加载'));
+
+function onEmptyAction(): void {
+  if (needsBuilding.value) tapSwitchLeader();
+  else void load();
+}
 
 const countdownText = computed(() => {
   const s = Math.max(0, remainSec.value);
@@ -348,9 +363,16 @@ function goLeaderApply(): void {
   navigateTo('/pages/leader-apply/leader-apply');
 }
 
-/** MVP 无「切换办公楼/团长」能力（进入方式 = 邀请链接绑定），如实告知 */
+/**
+ * 自助切换办公楼
+ *
+ * ⚠️ 此前这里只有一句 toast「请通过该楼团长邀请链接进入」——
+ *    那句话在 `building_id` **只能由邀请链接写入**时是诚实的，但它同时意味着
+ *    「没有链接的人永远绑不上楼」。现在有 `GET /building` + `PUT /me/building`，
+ *    故点「点此切换 ›」与空态主按钮都直达选楼页。
+ */
 function tapSwitchLeader(): void {
-  uni.showToast({ title: '更换楼栋请通过该楼团长邀请链接进入', icon: 'none' });
+  navigateTo('/pages/building/switch');
 }
 
 onShow(() => {
