@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { Public } from '../../common/decorators/auth.decorator';
@@ -42,5 +42,37 @@ export class TraceabilityController {
   })
   today(@Query() q: TraceabilityTodayQueryDto) {
     return this.traceability.today(q.buildingId, q.mealDate);
+  }
+
+  @Public()
+  @Get('suppliers')
+  @ApiOperation({
+    summary: '供应商资质墙 · 列表（免登录只读）',
+    description:
+      '**2026-10-03 新增**：取代原「跳转外卖平台看店铺」的信任路径。\n\n' +
+      '出参分两组：`serving` = 正在供应（合作中 ∧ 资质已通过 ∧ 证照未过期，' +
+      '判据与 S1 出餐前置 `canServe` 同一处实现）；`inactive` = 暂未供应，' +
+      '**只给名字与品类、不带资质**（把过期证照摆上资质墙比不摆更糟）。\n\n' +
+      '⚠️ C8 红线不变：不下发合作状态、联系方式、供价、分账、审核意见。\n\n' +
+      '⚠️ 本接口**不含任何第三方平台**的名称 / 标识 / 链接 / 跳转入口 —— ' +
+      '《运营规范》5.10（互推，下架）· 5.20（利用剪切板诱导跳转 APP）' +
+      '· 5.15.4 / 5.16（滥用剪切板，封禁至封号）均不允许。',
+  })
+  supplierList() {
+    return this.traceability.supplierList();
+  }
+
+  @Public()
+  @Get('suppliers/:id')
+  @ApiOperation({
+    summary: '供应商资质墙 · 详情（免登录只读）',
+    description:
+      '逐条给出该出品方的证照（名称 / 编号 / 有效期）与在册菜品名。\n\n' +
+      '⚠️ **不在供时 `entries` 为空数组，原因写在 `note` 里** —— ' +
+      '既不能把过期证照摆出来（用户会当成仍然有效），也不能让用户对着空白页发愣。\n\n' +
+      '`id` 非法时 400（`PARAM_INVALID`），不存在时 404（`NOT_FOUND`）。',
+  })
+  supplierDetail(@Param('id') id: string) {
+    return this.traceability.supplierDetail(Number(id));
   }
 }

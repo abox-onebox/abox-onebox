@@ -20,17 +20,6 @@
       <text v-if="extra" class="supplier-card__extra">{{ extra }}</text>
 
       <text v-if="verified" class="supplier-card__verified">{{ verified }}</text>
-
-      <view v-if="showPlatforms" class="platforms">
-        <text
-          v-for="l in links"
-          :key="l.platform"
-          class="platforms__tag"
-          :class="[`platforms__tag--${l.platform}`, { 'is-off': !l.configured }]"
-        >
-          {{ shortLabel(l.platform) }}
-        </text>
-      </view>
     </view>
 
     <text v-if="clickable" class="supplier-card__arrow"
@@ -44,24 +33,25 @@
  * ab-supplier-card —— 溯源出品方卡片（C8 · 原型 P38）
  *
  * ## 一个组件、两种卡片
- * 原型 P38 的 5 张卡是同一种版式：**4 家菜品供应商**（带资质行与外卖平台角标）
- * 与**1 个集散中心**（带地址行、无外卖平台）。若拆成两个组件，卡片的圆角 / 间距 /
+ * 原型 P38 的 5 张卡是同一种版式：**4 家菜品供应商**（带资质行）与
+ * **1 个集散中心**（带地址行、不可点）。若拆成两个组件，卡片的圆角 / 间距 /
  * 头像块就会各写一份 —— 那种「同一视觉两份实现」迟早会在某次改版里只改一边。
  * 故此处用一组**扁平入参**承载两种数据（页面负责把 DTO 映射成文案），
  * 组件只管把它画出来。
  *
  * ## 为什么入参是字符串而不是 DTO
  * 组件不依赖 `TraceabilityDishView` / `TraceabilityCenterView` 中的任何一个 ——
- * 两种数据的形状本就不同（一个带外卖链接、一个带地址）。改用扁平字符串后，
- * 「供应商名怎么拼」「资质行怎么写」这类决策留在页面，组件的职责只剩渲染。
+ * 两种数据的形状本就不同。改用扁平字符串后，「供应商名怎么拼」「资质行怎么写」
+ * 这类决策留在页面，组件的职责只剩渲染。
  *
- * ## ⚠️ 平台角标一律**恒显三条**
- * 未入驻的画成灰色而不是删掉：卡片上「缺京东」是**要被人看见**的信息
- * （运营据此去谈），隐藏它会把这件事实一起藏掉。
+ * ## ⚠️ 2026-10-03：平台角标行**已整行删除**
+ * 原先卡片底部恒显美团 / 淘宝 / 京东三个角标，点卡片弹出平台层。
+ * 逐字复核《微信小程序平台运营规范》后确认该形态不合规：
+ * 5.10 互推（对其他 APP 推荐、推广或提供协助便利 → **下架**）、
+ * 5.20（利用剪切板诱导跳转 APP）、5.15.4 / 5.16（滥用剪切板 → 封禁至封号）。
+ * ⇒ 卡片的点击去向改为**该出品方的资质详情**，平台角标与 `links` 入参一并删除
+ *   （不是「留着不用」—— 留着就是等着被人加回来）。
  */
-import { computed } from 'vue';
-import { TAKEOUT_PLATFORM_SHORT, TakeoutPlatform } from '@abox/shared-types';
-import type { TraceabilityTakeoutLink } from '@abox/shared-types';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 import type { AboxIconName } from '@abox/shared-utils';
 
@@ -79,9 +69,11 @@ const props = withDefaults(
     extra?: string | null;
     /** 核验行（绿色，如「已核验 · 食品经营许可证 · 营业执照」）；空则不显示 */
     verified?: string | null;
-    /** 三个平台入口（**恒三条**）；无任何已入驻平台时整行不渲染 */
-    links?: TraceabilityTakeoutLink[];
-    /** 是否可点开跳转弹层（无任何已入驻平台时为 false，不显示 › ） */
+    /**
+     * 是否可点开资质详情
+     *
+     * 供应商卡恒为 true；集散中心卡为 false（它没有资质页，连 › 也不显示）。
+     */
     clickable?: boolean;
     /**
      * 高亮这张卡（M5-17 · 「定位到某一家」）
@@ -101,21 +93,12 @@ const props = withDefaults(
     category: null,
     extra: null,
     verified: null,
-    links: () => [],
     clickable: false,
     highlight: false,
   },
 );
 
 const emit = defineEmits<{ tap: [] }>();
-
-/** 是否渲染平台角标行 —— 一家都没入驻时整行不显示（原型即如此处理集散中心） */
-const showPlatforms = computed(() => props.links.some((l) => l.configured));
-
-/** 平台短名（共享枚举，端上不另写一份映射） */
-function shortLabel(platform: string): string {
-  return TAKEOUT_PLATFORM_SHORT[platform as TakeoutPlatform] ?? platform;
-}
 
 function onTap(): void {
   if (!props.clickable) return;
@@ -139,7 +122,7 @@ function onTap(): void {
     background: $c-surface-3;
   }
 
-  // 被「定位」的那一张（M5-17）：描金圈 + 浅金底，与平台弹层的「推荐」同一种强调语言。
+  // 被「定位」的那一张（M5-17）：描金圈 + 浅金底。
   // 底色用已登记的金色浅底 token（`$c-trace-card-from`）而非再写一个 rgba —— 请勿新增裸色值。
   &.is-highlight {
     background: $c-trace-card-from;
@@ -211,41 +194,6 @@ function onTap(): void {
     flex: none;
     align-self: center;
     color: $c-text-weak;
-  }
-}
-
-.platforms {
-  display: flex;
-  flex-wrap: wrap;
-  gap: $space-1;
-  margin-top: $space-2;
-
-  &__tag {
-    padding: 2rpx $space-2;
-    font-size: $fs-caption;
-    border-radius: $radius-sm;
-
-    &--meituan {
-      color: $c-brand-meituan-text;
-      background: $c-brand-meituan;
-    }
-
-    &--taobao {
-      color: $c-brand-on-color;
-      background: $c-brand-taobao;
-    }
-
-    &--jd {
-      color: $c-brand-on-color;
-      background: $c-brand-jd;
-    }
-
-    // 未入驻：同色系去饱和 + 降透明度，保留平台身份但明确不可点
-    &.is-off {
-      color: $c-text-weak;
-      background: $c-bg;
-      border: 1px dashed $c-border;
-    }
   }
 }
 </style>

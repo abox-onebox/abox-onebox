@@ -4,7 +4,6 @@ import type { QueryDeepPartialEntity } from 'typeorm';
 import { DataSource, EntityManager, In, IsNull, Repository } from 'typeorm';
 
 import {
-  LICENSE_EXPIRING_DAYS,
   LicenseState,
   OrderStatus,
   SUPPLIER_AUDIT_STATUS_LABEL,
@@ -16,7 +15,11 @@ import {
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { toFen } from '../../common/utils/money';
-import { addDays, bjDateTime, toBjIso, todayBj, tomorrowBj } from '../../common/utils/time';
+import {
+  canServeSupplier,
+  licenseStateOf as sharedLicenseStateOf,
+} from '../../common/utils/supplier-qualification';
+import { bjDateTime, toBjIso, todayBj, tomorrowBj } from '../../common/utils/time';
 import { Building, BuildingGroup } from '../../database/entities/building.entity';
 import { DistributionCenter } from '../../database/entities/finance.entity';
 import { MealAssignment, SetMealItem } from '../../database/entities/meal.entity';
@@ -1021,20 +1024,14 @@ export class SupplierService {
   }
 
   private canServe(s: Supplier): boolean {
-    return (
-      s.status === SupplierStatus.ACTIVE &&
-      s.auditStatus === SupplierAuditStatus.APPROVED &&
-      this.licenseStateOf(s.licenseExpireAt) !== LicenseState.EXPIRED
-    );
+    // ⭐ 真源已抽到 `common/utils/supplier-qualification.ts`（资质墙与此处共用同一判据，
+    //    否则会出现「这家今天在出餐、资质墙里却查不到它」的静默矛盾）
+    return canServeSupplier(s);
   }
 
   /** 证照有效期档位（派生值，不落库）—— 与 D23/D25 同一口径 */
   private licenseStateOf(expire?: string | null): LicenseState {
-    if (!expire) return LicenseState.UNKNOWN;
-    const today = todayBj();
-    if (expire < today) return LicenseState.EXPIRED;
-    if (expire <= addDays(today, LICENSE_EXPIRING_DAYS)) return LicenseState.EXPIRING;
-    return LicenseState.NORMAL;
+    return sharedLicenseStateOf(expire);
   }
 
   /** `date` 缺省：该供应商「最近一个有生产计划的出餐日」，无则明日 */

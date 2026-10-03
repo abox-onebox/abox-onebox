@@ -9,7 +9,11 @@
  * ⚠️ `auth: false`：溯源是**免登录只读**端点（《接口规范》§1.1「首页、溯源可匿名只读」）。
  *    不携带 token 也能取数 —— 这一页的说服力正来自「不必登录也能查」。
  */
-import type { TraceabilityTodayResult } from '@abox/shared-types';
+import type {
+  SupplierQualificationDetail,
+  SupplierQualificationListResult,
+  TraceabilityTodayResult,
+} from '@abox/shared-types';
 
 import { http, query } from './request';
 
@@ -27,4 +31,19 @@ export function fetchTraceabilityToday(
     `/traceability/today${query({ buildingId, mealDate })}`,
     { auth: false },
   );
+}
+
+/**
+ * 供应商资质墙 · 列表（**免登录只读** · 2026-10-03 新增）
+ *
+ * 取代原「跳转外卖平台看店铺」的信任路径 —— 那条路撞《运营规范》
+ * 5.10 / 5.20 / 5.15.4 / 5.16，处理是下架乃至封禁剪切板能力。
+ */
+export function fetchSupplierQualifications(): Promise<SupplierQualificationListResult> {
+  return http.get<SupplierQualificationListResult>('/traceability/suppliers', { auth: false });
+}
+
+/** 供应商资质墙 · 详情（**免登录只读**） */
+export function fetchSupplierQualification(id: number): Promise<SupplierQualificationDetail> {
+  return http.get<SupplierQualificationDetail>(`/traceability/suppliers/${id}`, { auth: false });
 }

@@ -1,17 +1,26 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 
 import type {
+  SupplierQualificationDetail,
+  SupplierQualificationEntry,
+  SupplierQualificationItem,
+  SupplierQualificationListResult,
   TraceabilityDishView,
   TraceabilityQualification,
   TraceabilitySupplierView,
   TraceabilityTodayResult,
 } from '@abox/shared-types';
-import { SupplierAuditStatus, TRACEABILITY_QUALIFICATION_LABEL } from '@abox/shared-types';
+import {
+  SUPPLIER_AUDIT_STATUS_LABEL,
+  SupplierAuditStatus,
+  TRACEABILITY_QUALIFICATION_LABEL,
+} from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
+import { canServeSupplier } from '../../common/utils/supplier-qualification';
 import { readTakeoutLinks } from '../../common/utils/takeout';
 import { tomorrowBj } from '../../common/utils/time';
 import { Building } from '../../database/entities/building.entity';
@@ -46,6 +55,12 @@ import { Dish, Supplier } from '../../database/entities/supplier.entity';
  * **低频只读**且查询已收敛为常数条。引入缓存层要连带处理失效与一致性，
  * 收益不抵成本。待真有缓存基础设施时再补（已在《接口规范》变更记录登记）。
  */
+/** 详情页最多展示几个在册菜品（规模陈述用，不做分页） */
+const MAX_DETAIL_DISHES = 6;
+
+/** `ab_dish.status` = 1 上架（与实体头注同值；此处具名只为可读性） */
+const DISH_ON_SALE = 1;
+
 @Injectable()
 export class TraceabilityService {
   constructor(
@@ -149,6 +164,95 @@ export class TraceabilityService {
       dishes,
       distributionCenter: center ? { name: center.name, address: center.address } : null,
       traceNote: this.buildTraceNote(dishes, center),
+    };
+  }
+
+  /**
+   * 供应商资质墙 · 列表（**免登录只读** · 2026-10-03 新增）
+   *
+   * ## 为什么不再给外卖跳转
+   * 原先「这家店靠不靠谱」是由**跳去美团 / 京东 / 淘宝的店铺页**来证明的。
+   * 2026-10-03 逐字复核《微信小程序平台运营规范》确认此路不通：
+   *   · 5.10 互推行为（对其他 APP 推荐、推广或提供协助便利 → **下架**）；
+   *   · 5.20 诱导下载行为（含「利用剪切板能力达到诱导跳转 / 下载 APP 目的」）；
+   *   · 5.15.4 / 5.16（滥用剪切板 → 封禁剪切板能力直至封号）。
+   * 故信任证据改由**自持证照**承载 —— 这恰好也是用户真正要看的东西
+   * （有没有证、过没过期、审没审过），且完全落在自己域内。
+   *
+   * ## 分组判据
+   * `serving` 与 S1 出餐前置 `canServe` **共用同一处实现**
+   * （`common/utils/supplier-qualification.ts`）—— 不在本文件另写一份，
+   * 否则会出现「这家今天在出餐、资质墙里却查不到它」的静默矛盾。
+   */
+  async supplierList(): Promise<SupplierQualificationListResult> {
+    const rows = await this.supplierRepo.find({
+      where: { deletedAt: IsNull() },
+      order: { id: 'ASC' },
+    });
+
+    const serving: SupplierQualificationItem[] = [];
+    const inactive: SupplierQualificationItem[] = [];
+
+    for (const s of rows) {
+      const ok = canServeSupplier(s);
+      const item: SupplierQualificationItem = {
+        id: Number(s.id),
+        name: s.name,
+        category: s.category ?? null,
+        // 暂未供应组一律不带资质与有效期：把过期 / 未核验证照摆上资质墙比不摆更糟
+        qualifications: ok ? this.qualificationsOf(s) : [],
+        licenseExpireAt: ok ? (s.licenseExpireAt ?? null) : null,
+        serving: ok,
+        totalServed: s.totalServed ?? 0,
+      };
+      (ok ? serving : inactive).push(item);
+    }
+
+    return { serving, inactive, note: this.buildQualificationNote(serving.length) };
+  }
+
+  /**
+   * 供应商资质墙 · 详情（**免登录只读**）
+   *
+   * ⚠️ 不在供时**不下发证照**（`entries` 为空）：用户会把摆出来的证照当成仍然有效。
+   *    但**必须给一句话说明**原因 —— 点进一家却看到空白页，只会以为程序坏了。
+   */
+  async supplierDetail(id: number): Promise<SupplierQualificationDetail> {
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new BizException(ErrorCode.PARAM_INVALID, '出品方 id 不合法');
+    }
+
+    const s = await this.supplierRepo.findOne({ where: { id, deletedAt: IsNull() } });
+    if (!s) {
+      throw new BizException(ErrorCode.NOT_FOUND, `出品方 #${id} 不存在`);
+    }
+
+    const serving = canServeSupplier(s);
+    const qualifications = this.qualificationsOf(s);
+
+    const entries: SupplierQualificationEntry[] = serving
+      ? qualifications.map((q) => ({
+          key: q,
+          label: TRACEABILITY_QUALIFICATION_LABEL[q],
+          code: q === 'business_license' ? (s.businessLicense ?? null) : (s.foodLicense ?? null),
+          expireAt: s.licenseExpireAt ?? null,
+        }))
+      : [];
+
+    const dishRows = await this.dishRepo.find({
+      where: { supplierId: id, status: DISH_ON_SALE, deletedAt: IsNull() },
+      order: { saleCount: 'DESC' },
+      take: MAX_DETAIL_DISHES,
+    });
+
+    return {
+      id: Number(s.id),
+      name: s.name,
+      category: s.category ?? null,
+      serving,
+      entries,
+      dishes: dishRows.map((d) => d.name),
+      note: this.buildDetailNote(serving, qualifications.length, s.auditStatus),
     };
   }
 
@@ -265,5 +369,41 @@ export class TraceabilityService {
     }
 
     return parts.join('');
+  }
+
+  /**
+   * 资质墙列表说明（**由本次真实数据生成**，不写死文案）
+   *
+   * 与 `buildTraceNote` 同一条纪律：硬编码的合规声明与真实资质是**两份表述**，
+   * 数据一变（某家被驳回、只登记了一个证）声明就会继续说着旧话。
+   */
+  private buildQualificationNote(servingCount: number): string {
+    if (servingCount === 0) {
+      return '当前没有正在供应的出品方，资质信息暂不可查。';
+    }
+    return `以下 ${servingCount} 家出品方的证照均已通过平台核验且在有效期内，可点开查看证照编号与有效期。`;
+  }
+
+  /**
+   * 详情页说明（**无资质时必须说清是哪一种事实**）
+   *
+   * 「资质尚在核验中」「证照已过期」「暂未合作」是三种不同的事实，
+   * 合成一句「暂无资质」会把责任推给供应商 —— 用户只会以为这家有问题。
+   */
+  private buildDetailNote(
+    serving: boolean,
+    qualificationCount: number,
+    auditStatus: string,
+  ): string {
+    if (serving && qualificationCount > 0) {
+      return `该出品方已通过平台核验，下列 ${qualificationCount} 项证照在有效期内。`;
+    }
+    if (serving) {
+      return '该出品方当前可在供，但尚未登记任何证照，平台正在补齐核验材料。';
+    }
+    const label =
+      SUPPLIER_AUDIT_STATUS_LABEL[auditStatus as keyof typeof SUPPLIER_AUDIT_STATUS_LABEL] ??
+      auditStatus;
+    return `该出品方当前未在供应名单中（资质状态：${label}），暂不展示其证照。`;
   }
 }

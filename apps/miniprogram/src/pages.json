@@ -51,6 +51,14 @@
       "style": { "navigationBarTitleText": "今日这盒 · 溯源" }
     },
     {
+      "path": "pages/supplier/list",
+      "style": { "navigationBarTitleText": "出品方资质" }
+    },
+    {
+      "path": "pages/supplier/detail",
+      "style": { "navigationBarTitleText": "资质详情" }
+    },
+    {
       "path": "pages/leader/workbench",
       "style": { "navigationBarTitleText": "团长工作台" }
     },
