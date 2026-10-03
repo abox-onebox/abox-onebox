@@ -665,11 +665,22 @@ async function main() {
     'D52 新账号可立即登录（scrypt 校验通路打通）',
     `code=${opLogin.code}`,
   );
+  /**
+   * ⚠️ 判据修正（2026-10-03）：原判据是「不含**任何** `/system/`」，随 10-02 的
+   *    `OPERATOR_EXTRA_MENUS` 引入 `/system/queue` 后**恒红** —— 那条断言写在 09-15，
+   *    当时还没有这个例外。
+   *
+   *    代码侧是对的：`QueueAdminController` 的 `@Roles` 本就含 `operator`
+   *    （运维要第一时间知道退款任务在重试），菜单必须跟着放行，否则「能调但进不去」。
+   *    故正确判据不是「一个 /system/ 都没有」，而是「**只有**那个刻意放行的例外」——
+   *    这样既守住「运营不进系统管理」，又能盯住将来有人把别的 /system/* 漏给运营。
+   */
+  const opMenus = opLogin.account?.menus ?? [];
+  const opSystemMenus = opMenus.filter((m) => m.startsWith('/system/'));
   assert(
-    (opLogin.account?.menus ?? []).length > 0 &&
-      !(opLogin.account?.menus ?? []).some((m) => m.startsWith('/system/')),
-    'D52 operator 菜单 = 运营菜单去掉 /system/*（角色矩阵按代码定义）',
-    `menus=${opLogin.account?.menus?.length} 项`,
+    opMenus.length > 0 && opSystemMenus.length === 1 && opSystemMenus[0] === '/system/queue',
+    'D52 operator 菜单 = 运营菜单去掉 /system/*，仅保留刻意放行的 /system/queue',
+    `menus=${opMenus.length} 项 · /system/ 命中=${JSON.stringify(opSystemMenus)}`,
   );
   const opToken = opLogin.token;
 

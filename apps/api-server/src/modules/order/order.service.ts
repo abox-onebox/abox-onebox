@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, In, Not, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import type { QueryDeepPartialEntity } from 'typeorm';
 
 import type {
@@ -232,17 +232,20 @@ export class OrderService {
       throw new BizException(ErrorCode.MEAL_NOT_PUBLISHED, `${mealDate} 该办公楼未开团`);
     }
 
-    // ⑥ 同用户同出餐日重复下单 → 30004（业务层幂等兜底）
-    const duplicated = await this.orderRepo.findOne({
-      where: { userId, mealDate, status: Not(OrderStatus.CANCELLED) },
-      order: { id: 'DESC' },
-    });
-    if (duplicated) {
-      throw new BizException(
-        ErrorCode.DUPLICATE_ORDER,
-        `你已提交过 ${mealDate} 的订单（${duplicated.orderNo}），请勿重复下单`,
-      );
-    }
+    /**
+     * ⑥ ~~同用户同出餐日重复下单 → 30004~~ —— **2026-10-03 起移除**
+     *
+     * ⭐ 口径变更：**一人一日可多单**。原判据把「重复下单」与「追加一单」混为一谈，
+     *    于是办公室下午加订三份这种最常见的事，被逼成「先取消上午那单、再下一单」——
+     *    等于让用户把已成交的订单退掉再赌一次，既伤成交也伤体验。
+     *
+     * ⚠️ **移除它不等于丢掉幂等**：真正的重复提交由 `Idempotency-Key` 拦（M1 验收标准 4，
+     *    回放同一个键返回 10006 且回吐原 `orderNo`），与「同日允许多少单」是两件事。
+     *    换键再下单是用户的新意图，不是重复提交。
+     *
+     * ⚠️ `ErrorCode.DUPLICATE_ORDER`(30004) **保留不删**：错误码是契约的一部分，
+     *    删常量会牵动错误码表与文档；它当前无触发点，留作后续场景（如同日累计份数上限）。
+     */
 
     // ⑦ 金额计算：元为业务口径，落库 DECIMAL(10,2)
     const unitPriceStr = unitPriceYuan.toFixed(2);

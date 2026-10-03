@@ -130,23 +130,30 @@
 
       <text class="max-hint">单笔最多 {{ ORDER_MAX_QUANTITY }} 份</text>
 
+      <!-- 已订概览：一人一日可多单（2026-10-03），这里只做「你已经订了多少」的告知，
+           不再当拦截条件 —— 否则用户看到份数控件消失会以为不能订了 -->
+      <view v-if="hasOrder" class="guide">
+        <text class="guide__text"> {{ orderedSummary }} · 可继续追加 </text>
+      </view>
+
       <button
-        v-if="daily.canOrder && !daily.existingOrderNo"
+        v-if="daily.canOrder"
         class="btn-primary"
         hover-class="btn-primary--hover"
         @tap="goCreate"
       >
-        立即预订 ¥{{ totalText }}
+        {{ orderBtnText }} ¥{{ totalText }}
       </button>
+      <button v-else class="btn-primary btn-primary--disabled" disabled>本场已截单</button>
+
       <button
-        v-else-if="daily.existingOrderNo"
+        v-if="hasOrder"
         class="btn-primary btn-primary--ghost"
         hover-class="btn-primary--hover"
         @tap="goDetail"
       >
-        查看订单（{{ daily.existingOrderNo }}）
+        查看今日订单
       </button>
-      <button v-else class="btn-primary btn-primary--disabled" disabled>本场已截单</button>
     </template>
 
     <ab-empty-state
@@ -298,10 +305,33 @@ const totalText = computed(() =>
   (((daily.value?.priceFen ?? 0) * quantity.value) / 100).toFixed(2),
 );
 
-/** 已下单 / 已截单时不给改份数（下一步只有「查看订单」） */
-const canPickQuantity = computed(
-  () => Boolean(daily.value?.canOrder) && !daily.value?.existingOrderNo,
-);
+/**
+ * 份数控件可见性（2026-10-03 变更）
+ *
+ * ⚠️ 原判据是 `canOrder && !existingOrderNo`：在「一人一日一单」下成立，放开多单后
+ *    它会把「已订一单」误判成「不能再订」—— 份数控件整块消失，用户看到的现象正是
+ *    「25.8 还在、按钮没了」。多单后能否加订只取决于是否截单，故只看 `canOrder`。
+ */
+const canPickQuantity = computed(() => Boolean(daily.value?.canOrder));
+
+/** 今日是否已有未取消订单（跳「查看订单」需要 `existingOrderNo`） */
+const hasOrder = computed(() => Boolean(daily.value?.existingOrderNo));
+
+/** 主按钮文案：已订过 → 「再来一单」，否则「立即预订」 */
+const orderBtnText = computed(() => (hasOrder.value ? '再来一单' : '立即预订'));
+
+/**
+ * 已订概览文案
+ *
+ * ⚠️ 后端未下发聚合字段时（如线上仍是旧版 API）退化成只报单数 —— 直接插值
+ *    `existingQuantity` 会在旧后端上渲染出「今日已订 份（ 单）」这种空档。
+ */
+const orderedSummary = computed(() => {
+  const n = daily.value?.existingOrderCount ?? 0;
+  const q = daily.value?.existingQuantity ?? 0;
+  if (q > 0) return `今日已订 ${q} 份（${n} 单）`;
+  return '今日已订 1 单';
+});
 
 function decQty(): void {
   if (quantity.value > 1) quantity.value -= 1;

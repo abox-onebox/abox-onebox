@@ -120,8 +120,13 @@ export async function smoke({ h5Url, adminUrl, apiPort, log = console.log }) {
         `orderNo=${targetNo} 应付=${created.body?.data?.payAmountFen}分`,
       );
     } else if (created.body?.code === 30004) {
-      // 自检重跑会走到这里，属**预期**，不是故障
-      check('重复下单被拦（当日已有单 · 自检重跑的正常路径）', true, created.body?.message ?? '');
+      // 2026-10-03 起一人一日可多单，重跑不再命中本分支（会直接建成新单）。
+      // 保留作防御：若将来重新引入「同日限单」，这里要能立刻报出来，而不是静默放行。
+      check(
+        '重复下单被拦（当日已有单 · 现行口径已放开多单，命中即为回退）',
+        false,
+        created.body?.message ?? '',
+      );
     } else {
       check('下单成功（等待支付）', false, `code=${created.body?.code} ${created.body?.message ?? ''}`);
     }

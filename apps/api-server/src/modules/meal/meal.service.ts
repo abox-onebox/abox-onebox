@@ -86,11 +86,16 @@ export class MealService {
       throw new BizException(ErrorCode.MEAL_NOT_PUBLISHED, `${targetDate} 该办公楼未开团`);
     }
 
-    const [setMeal, dishes, leader, existing] = await Promise.all([
+    const [setMeal, dishes, leader, existingOrders] = await Promise.all([
       this.setMealRepo.findOne({ where: { id: assignment.setMealId } }),
       this.dishesOfSetMeal(assignment.setMealId),
       this.resolveLeader(userId),
-      this.orderRepo.findOne({
+      /**
+       * ⭐ 一人一日**可多单**（2026-10-03 口径变更）：故这里必须 `find` 全量未取消单，
+       *    不能再用 `findOne`。已取消的不计入 —— 否则用户取消后首页仍显示「已订」，
+       *    而后端其实已经放他重新下单了，两边会对不上。
+       */
+      this.orderRepo.find({
         where: { userId, mealDate: targetDate, status: Not(OrderStatus.CANCELLED) },
         order: { id: 'DESC' },
       }),
@@ -134,7 +139,9 @@ export class MealService {
       // MVP 不设总份数上限（供应商按备料量生产），故返回 null 表示不限量；
       // 后续若启用产能上限，改读 ab_supplier.capacity_per_day 汇总。
       stockLeft: null,
-      existingOrderNo: existing?.orderNo ?? null,
+      existingOrderNo: existingOrders[0]?.orderNo ?? null,
+      existingOrderCount: existingOrders.length,
+      existingQuantity: existingOrders.reduce((n, o) => n + (o.quantity || 0), 0),
       leader,
     };
   }

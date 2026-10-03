@@ -22,7 +22,7 @@
       <view class="card">
         <view class="card__hd">
           <text class="card__title">明日套餐（{{ quantity }} 份）</text>
-          <view v-if="!daily.existingOrderNo" class="stepper">
+          <view class="stepper">
             <view class="stepper__btn" :class="{ 'is-disabled': quantity <= 1 }" @tap="decQuantity">
               <text>−</text>
             </view>
@@ -50,14 +50,19 @@
         </view>
       </view>
 
-      <!-- 已有订单：不再允许下单，直接引导查看 -->
-      <view v-if="daily.existingOrderNo" class="guide guide--warn">
+      <!-- 已订过 → 必须说清「本单是新增的一单」
+           ⚠️ 不说的话，从首页「再来一单」进来的人会以为自己在改上一单的份数，
+              付完款才发现是两张单。多单放开后这个误会是新出现的，故在这里堵。 -->
+      <view v-if="daily.existingOrderNo" class="guide">
         <text class="guide__text">
-          你已提交过本场订单（{{ daily.existingOrderNo }}），请勿重复下单
+          {{ orderedSummary }}，本单是新增的一单，单独支付，不会修改已有订单
         </text>
       </view>
 
-      <template v-else>
+      <!-- ⚠️ 用 `<block>` 而非 `<template>`：此处原本是 `v-else` 分支，放开多单后不再需要
+           条件，但直接写成裸 `<template>` 会触发 `vue/no-lone-template`（门禁 max-warnings=0）。
+           `<block>` 在 uni-app 各端编译为无节点，语义等价。 -->
+      <block>
         <!-- 取餐信息（M5-17：把「这一单的团长是谁 / 佣金归谁」写清楚） -->
         <view class="card">
           <text class="card__title">
@@ -128,7 +133,7 @@
         >
           {{ submitting ? '提交中…' : daily.canOrder ? `确认支付 ¥${totalText}` : '本场已截单' }}
         </button>
-      </template>
+      </block>
 
       <button
         v-if="daily.existingOrderNo"
@@ -204,9 +209,27 @@ const countdownText = computed(() => {
 const unitPriceText = computed(() => fenToYuan(daily.value?.priceFen ?? 0));
 const totalFen = computed(() => (daily.value?.priceFen ?? 0) * quantity.value);
 const totalText = computed(() => fenToYuan(totalFen.value));
-const canSubmit = computed(
-  () => !!daily.value?.canOrder && !daily.value.existingOrderNo && !submitting.value,
-);
+/**
+ * 能否提交（2026-10-03 变更）
+ *
+ * ⚠️ 原判据含 `!existingOrderNo`：一人一日一单时用来堵重复提交。放开多单后它会导致
+ *    「已订一单的人永远付不了第二单」，故移除 —— 重复提交改由 `Idempotency-Key`
+ *    拦（同一键回放 → 10006），换键下单是用户的新意图。
+ */
+const canSubmit = computed(() => !!daily.value?.canOrder && !submitting.value);
+
+/**
+ * 已订概览文案（与首页 P1 同一口径）
+ *
+ * ⚠️ 后端未下发聚合字段时（如线上仍是旧版 API）退化成只报单数 —— 直接插值
+ *    `existingQuantity` 会渲染出「已订 份」这种空档。
+ */
+const orderedSummary = computed(() => {
+  const n = daily.value?.existingOrderCount ?? 0;
+  const q = daily.value?.existingQuantity ?? 0;
+  if (q > 0) return `你今日已订 ${q} 份（${n} 单）`;
+  return '你今日已订 1 单';
+});
 
 function decQuantity(): void {
   if (quantity.value > 1) quantity.value -= 1;

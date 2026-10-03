@@ -387,17 +387,31 @@ async function main() {
     `message=${JSON.stringify(noKey.body?.message)}`,
   );
 
-  // 同用户同出餐日重复下单（换键）→ 30004
-  const dup = await call('POST', '/orders', {
+  // 同用户同出餐日**换键**再下单 → 成功建单（2026-10-03 口径变更：一人一日可多单）
+  //
+  // ⚠️ 原断言是「→ 30004」，随「一人一日一单」口径一并移除。重复提交**不靠这条**拦，
+  //    它靠上面的 M1-④：同一 Idempotency-Key 回放 → 10006 且回吐原 orderNo。
+  //    换键 = 用户的新意图（下午加订三份这种最常见的情况），必须放行。
+  const second = await call('POST', '/orders', {
     token,
     idem: 'e2e-order-key-0002',
     body: { mealDate, quantity: 1 },
   });
   assert(
-    dup.body?.code === 30004,
-    '业务层幂等：同用户同出餐日重复下单 → 30004',
-    `code=${dup.body?.code} msg=${dup.body?.message}`,
+    second.body?.code === 0 &&
+      !!second.body?.data?.orderNo &&
+      second.body?.data?.orderNo !== orderNo,
+    '一人一日可多单：同出餐日换键再下单成功建单（且不是幂等回放）',
+    `code=${second.body?.code} first=${orderNo} second=${second.body?.data?.orderNo}`,
   );
+
+  // 清理第二单（非断言动作）：后续 §10 等夹具按当日单量取数，多留一单会改变取数结果
+  if (second.body?.data?.orderNo) {
+    await call('POST', `/orders/${second.body.data.orderNo}/cancel`, {
+      token,
+      idem: 'e2e-cancel-key-0002',
+    });
+  }
 
   // 超份数 → 30002
   const overQty = await call('POST', '/orders', {
@@ -822,7 +836,8 @@ async function main() {
   // ---------- 10. P1-U2 · 口味评价 U20（逐菜三键 · 一次定稿） ----------
   // 夹具：再造一单走完支付后**直改状态为 delivered** —— e2e 环境没有配送/取餐回调，
   // 与 §7「meal_date 回拨」同一夹具形态（直写 DB 只作前置，断言全部走 HTTP 回读）。
-  // 首单已在 §6 取消，而重复下单判据排除 cancelled ⇒ 同用户同出餐日可再造一单。
+  // 首单已在 §6 取消；2026-10-03 起一人一日可多单，故这里再造一单不受「是否已有单」影响
+  // （原注释依赖的「重复下单判据排除 cancelled」已随该判据一并移除）。
   const ratedCreate = await call('POST', '/orders', {
     token,
     idem: 'e2e-order-key-rating',
@@ -966,9 +981,10 @@ async function main() {
       );
 
       // 还原夹具：删评价行 + 订单 + 支付流水。⚠️ 必须删干净 —— 本套之后还有 m2/m3，
-      // 两者的开篇夹具都要用 dev:1001 在**同一出餐日**下单，而重复下单判据只排除
-      // cancelled —— 留一张 delivered 单会让后续两套的开篇夹具全部红在 30004
-      // （本轮实测：组合套跑 m2/m3 双红，单跑却全绿 —— 顺序效应，非产品缺陷）。
+      // 两者的开篇夹具都要用 dev:1001 在**同一出餐日**下单。
+      // 2026-10-03 起一人一日可多单，故风险**不再是**「红在 30004」（原注释结论已随该
+      // 判据一并移除），但留一张 delivered 单仍会让后续两套按当日单量取数时多出一单
+      // —— 污染依旧存在，只是换了个表现，删除动作不能省。
       const delR40 = rdb
         .prepare('DELETE FROM ab_dish_rating WHERE order_no = ?')
         .run(ratingOrderNo);
