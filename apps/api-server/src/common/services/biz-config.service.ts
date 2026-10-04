@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 
+import { CustomerServiceMode, SUPPORT_CS_MODES } from '@abox/shared-types';
 import { BIZ, SETTLEMENT_DEFAULTS, SettlementCostItems } from '@abox/shared-utils';
 import type { SettlementCostRegistration } from '@abox/shared-utils';
 import { summarizeCostRegistration } from '@abox/shared-utils';
@@ -182,13 +183,21 @@ export class BizConfigService {
   }
 
   /**
-   * U17 · 客服入口配置（人工兜底通道）
+   * U17 · 客服入口配置（在线客服 + 人工兜底通道）
    *
-   * 2026-09-15 口径：一期**不做在线客服**，统一引导用户添加**客服微信**人工解决
-   * （退出团长、余额争议、提现异常等）。因此这里只需给出微信号与提示文案，
-   * 端上「联系客服」一律跳本配置渲染的页面，不内置任何硬编码联系方式。
+   * ## 三档模式（`service.cs_mode`）
+   * `none`（缺省）复制微信号人工加好友 · `contact` 小程序原生客服消息 ·
+   * `wechat_kf` **微信客服**（企业微信承接，2026-10-04 定为终态）。
    *
-   * ⚠️ 微信号由运营在后台系统配置页维护（`ab_config`），代码**不得写死** ——
+   * ⭐ **为什么默认 `none`**：`wechat_kf` 需要运营先在企微开通微信客服、完成企业验证、
+   * 并在小程序后台绑定**同主体**企业 ID，三件事没做完就切过去，用户会点到一个**唤不起会话**的
+   * 按钮。缺省 `none` 保证「任何时刻都有一个能用的通道」。
+   *
+   * ⭐ **单一真相纪律**：`csCorpId` / `csUrl` **只在 `cs_mode=wechat_kf` 时下发**，
+   * 其余模式一律 `null`。否则运营「配了一半」（填了企业 ID 但模式没切）会得到一个
+   * 看起来配置齐全、点了却没反应的按钮 —— 端上以 `csMode` 为准，这里先断掉歧义。
+   *
+   * ⚠️ 联系方式与客服账号**全部由后台配置页维护**（`ab_config`），代码不得写死 ——
    *    与「成本项不得写死」同一条纪律；`wechatId` 缺省值为演示占位。
    */
   async supportContact(): Promise<{
@@ -197,17 +206,33 @@ export class BizConfigService {
     phone: string | null;
     hours: string;
     tips: string;
+    csMode: CustomerServiceMode;
+    csCorpId: string | null;
+    csUrl: string | null;
   }> {
-    const [wechatId, wechatQrcodeUrl, phone, hours, tips] = await Promise.all([
-      this.getString('service.wechat_id', 'abox_service'),
-      this.getString('service.wechat_qrcode', ''),
-      this.getString('service.phone', ''),
-      this.getString('service.hours', '工作日 9:00 – 18:00'),
-      this.getString(
-        'service.tips',
-        '添加客服微信后，请备注「ABox + 你的姓名」，我们会尽快为你处理。',
-      ),
-    ]);
+    const [wechatId, wechatQrcodeUrl, phone, hours, tips, csMode, csCorpId, csUrl] =
+      await Promise.all([
+        this.getString('service.wechat_id', 'abox_service'),
+        this.getString('service.wechat_qrcode', ''),
+        this.getString('service.phone', ''),
+        this.getString('service.hours', '工作日 9:00 – 18:00'),
+        this.getString(
+          'service.tips',
+          // ⚠️ 三档模式共用同一份文案，故**不得出现「添加微信」这类只适用于 none 档的措辞**；
+          //    需要分档话术时由运营改本键（或后续拆成 per-mode 的键）。
+          '请直接说明遇到的问题（附上订单号或截图），我们会尽快为你处理，不需要重复发送。',
+        ),
+        this.getString('service.cs_mode', 'none'),
+        this.getString('service.cs_corpid', ''),
+        this.getString('service.cs_url', ''),
+      ]);
+
+    // 读侧兜底：库里可能是任意字符串（手改库 / 后台导入 / 历史数据），
+    // 落不到三档之一就按 `none` 处理 —— 宁可退回人工通道，也不让端上拿到陌生模式。
+    const mode: CustomerServiceMode = (SUPPORT_CS_MODES as readonly string[]).includes(csMode)
+      ? (csMode as CustomerServiceMode)
+      : CustomerServiceMode.NONE;
+    const isKf = mode === 'wechat_kf';
 
     return {
       wechatId,
@@ -215,6 +240,9 @@ export class BizConfigService {
       phone: phone || null,
       hours,
       tips,
+      csMode: mode,
+      csCorpId: isKf && csCorpId ? csCorpId : null,
+      csUrl: isKf && csUrl ? csUrl : null,
     };
   }
 

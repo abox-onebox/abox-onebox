@@ -6774,8 +6774,8 @@ async function main() {
       `code=${cfgList.body?.code} groups=${d57?.groups?.length}`,
     );
     assert(
-      flatItems.length === d57?.meta?.wiringSummary?.total && flatItems.length === 30,
-      'D57 出参**自洽**：明细条数 = 汇总总数（分两处算必然出现「汇总 30 项、列表 29 项」）',
+      flatItems.length === d57?.meta?.wiringSummary?.total && flatItems.length === 33,
+      'D57 出参**自洽**：明细条数 = 汇总总数（分两处算必然出现「汇总 33 项、列表 32 项」）',
       `items=${flatItems.length} total=${d57?.meta?.wiringSummary?.total}`,
     );
 

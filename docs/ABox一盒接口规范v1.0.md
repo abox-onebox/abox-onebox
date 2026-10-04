@@ -465,14 +465,15 @@
 | U14 | GET | `/me/balance/logs?type=&page=` | 余额明细（M04-03）· M5-10 实装；与 L19 `GET /leader/balance-logs` **共用同一实现**（`LeaderMoneyService.logsOf`），`summary` 按全量统计不受分页影响；**不传 `type` 即返回全部流水**（不做「用户只看退款」的默认筛选，否则大卡总额与流水对不上） |
 | U15 | POST | `/me/subscribe` | 上报订阅消息授权结果（模板 ID 列表）· ⚠️ **一期未实装**（见下方 M4-3 说明） |
 | U16 | GET | `/me/agreements?type=user\|privacy` | 用户协议 / 隐私政策正文（M04-06）· ⭐ **一期本端点不设** —— 由端上**内置原生页**承担（**M5-18**）：`pages/agreement/agreement?type=user\|privacy`，正文唯一真源 = `apps/miniprogram/src/constants/agreements.ts`，端上零网络请求、库表零新增。原「实装 or 改外链 H5」的**第三种路**已裁定：web-view 需「业务域名 + ICP 备案 + HTTPS + 校验文件」，会把**提审**绑到 M5 的外部阻塞上（审核期域名不通即不通过）；协议是静态文本，原生渲染零依赖。⚠️ 原占位目录 `pages/webview/` 已改名 `pages/agreement/`（原名会让人以为它是 web-view 容器）。⚠️ 提审前仍须**法务定稿**（现 `1.0-draft` + 页面草案提示条） |
-| U17 | GET | `/me/support` | 客服入口配置（**一期：客服微信号 + 服务时间**） |
+| U17 | GET | `/me/support` | 客服入口配置（**`csMode` 三档决定主按钮行为**：微信客服 / 原生客服消息 / 复制微信号兜底） |
 | **U18** | GET | **`/me/subscribe/templates`** | **可授权的微信订阅模板清单**（M4-3 新增 · 端上据此决定调不调 `requestSubscribeMessage`） |
 | **U19** | POST | **`/me/cancel`** | **账号注销（自助）** · ✅ **M5-20 实装** —— 提审硬要求（《提审自检清单 v1.2》第 10 条）。请求体 `{ confirmText, reason? }`；出参 `{ canceledAt, status, clearedFields[], note }`。**三个前置闸门**（团长在职 / 余额或冻结 > 0 / 未终态订单）+ **二次确认词**，任一不满足 → `20015`（`data.reasons` 逐条下发原因码）；重复注销 → `20014`（**不是幂等成功**）。详见下方「U19 一期口径」 |
 | **U20** | POST | **`/orders/{orderNo}/rating`** | **口味评价（逐菜三键 · 一次提交定稿）** · ✅ **P1-U2 实装** —— 请求体 `{ items: [{ dishId, rating: 1\|2\|3, reason? }] }`（dishId 来自 U10 详情 `dishes[].dishId`）；出参 `{ orderNo, ratedCount, ratedAt }`。**状态闸门**：仅 `delivered` / `completed` 可评（→ `30020` 回带 `status` + `allowed`）；**该单已评 → `30021` 回带 `ratedAt`（不可改 · 2026-09-25 裁决④）**；菜不在本单套餐 / 重复提交 → `10001`。**不写操作日志**（用户动作的留痕就是 `ab_dish_rating` 行本身）。详见 §6.6「U2 实现口径」表 |
 
-**U17 一期口径（2026-09-15 裁定）**
+**U17 口径（2026-10-04 改：三档在线客服 · 终态 = `wechat_kf`）**
 
-一期**不做在线客服**：所有「联系客服 / 联系运营」入口（**退出团长**、余额争议、提现异常等）统一跳「客服微信号」页面，由用户**手动添加客服微信、人工解决**。
+> 2026-09-15 的旧口径是「一期不做在线客服，一律加客服微信」。2026-10-04 改为**三档可切换** ——
+> 用户不必再「复制微信号 → 打开微信 → 加好友 → 等通过」才能说上第一句话。
 
 ```json
 {
@@ -480,12 +481,38 @@
   "wechatQrcodeUrl": null,
   "phone": null,
   "hours": "工作日 9:00 – 18:00",
-  "tips": "添加客服微信后，请备注「ABox + 你的姓名」，我们会尽快为你处理。"
+  "tips": "请直接说明遇到的问题（附上订单号或截图），我们会尽快为你处理，不需要重复发送。",
+  "csMode": "wechat_kf",
+  "csCorpId": "ww1234567890abcdef",
+  "csUrl": "https://work.weixin.qq.com/kfid/xxxxxx"
 }
 ```
 
-> ⚠️ 全部字段由 `ab_config`（`service.*`）下发，**代码不得写死任何联系方式** —— 与「成本项不得写死」同一条纪律。运营在后台系统配置页维护即可换号。
+| 出参 | 口径 |
+|---|---|
+| `csMode` | **端上主按钮行为的唯一依据**。`none` 复制微信号（**缺省 · 兜底档**）/ `contact` 小程序原生客服消息 / `wechat_kf` **微信客服**（同事在**企业微信**里接）。枚举真源 `@abox/shared-types` 的 `CustomerServiceMode` |
+| `csCorpId` / `csUrl` | ⭐ **仅 `csMode === 'wechat_kf'` 时才可能有值，其余档位一律 `null`**。杜绝「填了企业 ID 但模式没切」这种配一半的状态出现在用户面前 |
+| 读侧兜底 | 库里若是非三档的脏值（手改库 / 导入），一律按 `none` 处理 —— **宁可退回人工通道，也不让端上拿到陌生模式** |
+
+**三档是降级关系，不是并列功能**（端上必须能在高档位唤不起会话时**自动退回下一档**）：
+
+| 档位 | 端上渲染 | 触发方式 | 同事在哪接 | 前置（非开发侧） |
+|---|---|---|---|---|
+| `wechat_kf` | 普通 button | JS 调 `wx.openCustomerServiceChat`（须在用户手势内） | **企业微信 App** | 企微开通微信客服 + **企业验证** + 小程序后台绑**同主体**企业 ID |
+| `contact` | `<button open-type="contact">` | ⚠️ **只能真实按钮点击触发**，JS 调不起来 | 「客服小助手」小程序 | 后台「功能 › 客服」添加客服人员 |
+| `none` | 普通 button | 复制微信号 | 客服个人微信 | 无 |
+
+> ⭐⭐ **为什么终态选 `wechat_kf`**：`contact` 档的提醒**不可靠**（服务通知常收不到、须点进客服小助手才看到、客服要手动点「在线」），
+> 真实成本是**人力盯梢成本**且盯了仍可能漏，只能当过渡。`wechat_kf` 的消息直接进企业微信，跟同事平时收消息一样弹窗。
+
+> ⚠️ **48 小时 / 5 条**（`contact` 与 `wechat_kf` **都受此限制**，`none` 不受）：用户发 1 条，客服 48h 内**最多连回 5 条**，
+> 条数不累加，用户再发一条即刷新。这条必须写进《客服手册》，**不是代码能解决的**。
+
+> ⚠️ 全部字段由 `ab_config`（`service.*`）下发，**代码不得写死任何联系方式** —— 与「成本项不得写死」同一条纪律。运营在后台系统配置页维护即可换号 / 换客服账号。
 > ⚠️ `wechatQrcodeUrl` 未配置时**返回 `null`**，端上据此隐藏图片位；**不得用 Logo 或占位图冒充真码**（否则联调会误判已打通）。
+> ⚠️ **身份透传**：本项目 **C3 不取手机号** ⇒ 客服侧能看到的只有 `userId`（+微信昵称），**没有手机号尾号**。`wechat_kf` 用卡片直达订单页弥补。
+> ⚠️ `sendMessagePath` 的路径**必须带 `.html` 后缀**（`/pages/order-detail/order-detail.html?orderNo=…`），不带会提示「页面不存在」。
+> ⚠️ 客服会话在**开发者工具里不生效**，必须**真机 + 体验版**验证。
 
 
 **U15 / U18 一期口径（M4-3 · 2026-09-17）**
@@ -734,7 +761,7 @@ POST /leader/quit   【Idempotency-Key 必填】  body: { reason? }
 > **退出不是终点：** 再次 `POST /leader/apply` 即可复职，但**重置为见习 8%**（C2 阶梯从头走，避免停职期间白拿高费率）。
 > **退出后身份立即失效：** 全部 `/leader/*` 返回 `20003`（`LeaderGuard` 二次查库，**token 未过期也拦**）。
 > ⚠️ 由于 NestJS **守卫先于拦截器**执行，退出成功后再用同键重放会先被守卫拦成 `20003`（而非 `10006`）—— 状态已不可逆，两者对端上等价；`Idempotency-Key` 在此防的是**并发双击**与**失败后重试**（失败即释放占位键）。
-> 退出/资金争议的人工兜底通道即 **U17 客服微信号**。
+> 退出/资金争议的人工兜底通道即 **U17 客服页**（`csMode` 决定是走在线客服还是复制微信号）。
 
 ---
 
@@ -1855,7 +1882,7 @@ approve
 | P15 | 取餐确认 | M13 | L8/L9 | `ab_delivery_record`、`ab_order` |
 | P16/P17/P18 | 佣金/余额/提现 | M14 | L10–L13、**L19** | `ab_commission`、`ab_balance`、`ab_balance_log`、**`ab_withdraw`** |
 | P19/P20 | 分享/资料 | M11/M15 | L2/L3/L14–L18、**L20/L21/L22** | `ab_team_leader`、`ab_leader_invite`、`ab_balance`、`ab_withdraw` |
-| 联系客服（无 P 编号） | 客服微信号 | M04 | **U17** | `ab_config`（`service.*`） |
+| 联系客服（无 P 编号） | 在线客服 / 客服微信号（按 `csMode` 分流） | M04 | **U17** | `ab_config`（`service.*`） |
 | 账号注销（无 P 编号 · **提审硬要求**） | 我的 → 设置 → 账号注销 | M04 | **U19** | `ab_user`（`status` / 软删 / 匿名化）+ `ab_team_leader`、`ab_balance`、`ab_order`（**仅读**，用于三道闸门） |
 | P21/P22 | 商家工作台/出餐 | M21 | S1/S2（**S3 已 M4-0 迁 P39**） | `ab_supplier_dish_daily`、`ab_meal_assignment` |
 | P23/P24 | 菜品/上架申请 | M22 | S4–S7 | `ab_dish`、`ab_supplier` |

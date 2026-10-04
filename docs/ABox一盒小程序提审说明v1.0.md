@@ -190,21 +190,34 @@
 
 ## 八、客服入口（§6.2 第 8 条）
 
-**位置**：「我的」→ 设置 → 平台客服微信号；页 `pages/support/contact`。
+**位置**：「我的」→ 设置 → 联系客服；页 `pages/support/contact`（全站 5 处入口统一落地页）。
 **数据**：`GET /me/support`（U17），后台系统配置页维护。
+
+**三档模式**（`service.cs_mode`，端上主按钮行为的唯一依据）：
+
+| 档位 | 用户体验 | 同事在哪接 | 状态 |
+| --- | --- | --- | --- |
+| `none`（**缺省**） | 复制微信号 → 用户加好友 | 客服个人微信 | 兜底档 |
+| `contact` | 点按钮进客服会话 | 「客服小助手」小程序 | 提醒**不可靠**，仅过渡 |
+| `wechat_kf`（**终态**） | 点按钮进客服会话 | **企业微信 App** | 需在企微开通微信客服 + 企业验证 |
 
 ⚠️⚠️ **提审前必须做的一件事**：
 
-`service.wechat_id` 的缺省值是 **`abox_service`**（`biz-config.service.ts:202`），
-这是**演示占位**，不是真实微信号。**审核会抽查客服可达性**——填着占位值必挂。
+- 若切到 `wechat_kf`：**先在企微开通微信客服、完成企业验证、小程序后台绑定同主体企业 ID**，
+  再填 `cs_corpid` / `cs_url`，最后才切 `cs_mode`。顺序反了会出现「点了没反应」的按钮。
+- 若仍是 `none`：`service.wechat_id` 的缺省值是 **`abox_service`**，这是**演示占位**，
+  不是真实微信号。**审核会抽查客服可达性**——填着占位值必挂。
 
 | 配置项 | 缺省值 | 必须改成 |
 | --- | --- | --- |
-| `service.wechat_id` | `abox_service` | 真实客服微信号 |
+| `service.cs_mode` | `none` | 企微开通后改 `wechat_kf` |
+| `service.cs_corpid` | 空 | 微信客服企业 ID（仅 `wechat_kf` 用） |
+| `service.cs_url` | 空 | 微信客服链接（仅 `wechat_kf` 用） |
+| `service.wechat_id` | `abox_service` | 真实客服微信号（`none` 档必改） |
 | `service.wechat_qrcode` | 空 | 客服二维码（可选） |
 | `service.phone` | 空 | 真实客服电话（建议填，抽查会致电） |
 | `service.hours` | 工作日 9:00 – 18:00 | 按实际 |
-| `service.tips` | 备注「ABox + 你的姓名」 | 按实际 |
+| `service.tips` | 「请直接说明遇到的问题…」 | 按实际 |
 
 ---
 

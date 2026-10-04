@@ -61,7 +61,8 @@ export class UserController {
 
   @Get('support')
   @ApiOperation({
-    summary: 'U17 客服入口配置（一期：客服微信号 + 服务时间，人工处理）',
+    summary:
+      'U17 客服入口配置（`csMode` 决定主按钮行为：微信客服 / 原生客服消息 / 复制微信号兜底）',
   })
   support() {
     return this.bizConfig.supportContact();

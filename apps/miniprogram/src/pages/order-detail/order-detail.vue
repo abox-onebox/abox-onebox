@@ -452,8 +452,15 @@ function contactLeader(): void {
   });
 }
 
+/**
+ * 「联系客服」→ 带上本单号进客服页
+ *
+ * ⭐ 带 `orderNo` 的价值在客服侧：微信客服会自动发一张**订单卡片**给同事，
+ *    点开直达本单详情，省掉「你是哪位、订单号多少」两轮往返。
+ *    客服页在 `csMode=none` 时同样能展示「当前订单 …」，用户复制微信号时顺手带上。
+ */
 function goSupport(): void {
-  navigateTo('/pages/support/contact');
+  navigateTo(buildUrl('/pages/support/contact', { orderNo: orderNo.value }));
 }
 
 function goCancel(): void {

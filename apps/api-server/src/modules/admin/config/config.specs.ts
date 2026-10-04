@@ -450,6 +450,56 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     maxLength: 512,
     consumedBy: '`BizConfigService.supportContact()` → U17 客服页',
   },
+  {
+    key: 'service.cs_mode',
+    group: 'service',
+    label: '在线客服接入模式',
+    type: 'enum',
+    impact: 'service',
+    wiring: 'live',
+    description:
+      '⭐ **端上以本键为准**，另两个客服键（`cs_corpid` / `cs_url`）**只有本键为 `wechat_kf` 时才下发** —— ' +
+      '避免「填了企业 ID 但模式没切」这种配一半的状态出现在用户面前。\n\n' +
+      '三档是**降级关系**：`wechat_kf`（微信客服，同事在**企业微信**里接，提醒可靠）' +
+      ' > `contact`（小程序原生客服消息，提醒**不可靠**，同事须盯「客服小助手」）' +
+      ' > `none`（复制微信号人工加好友，**兜底档，缺省**）。\n\n' +
+      '⚠️ 切到 `wechat_kf` 前必须先在企微开通微信客服、完成企业验证，并在小程序后台' +
+      '绑定**与小程序主体一致**的企业 ID，否则用户会点到一个唤不起会话的按钮。',
+    options: [
+      { value: 'none', label: '复制微信号（兜底 · 缺省）' },
+      { value: 'contact', label: '小程序原生客服消息（提醒不可靠）' },
+      { value: 'wechat_kf', label: '微信客服 · 企业微信承接（推荐）' },
+    ],
+    fallbackValue: 'none',
+    consumedBy: '`BizConfigService.supportContact()` → U17 客服页主按钮分流',
+  },
+  {
+    key: 'service.cs_corpid',
+    group: 'service',
+    label: '微信客服 · 企业 ID',
+    type: 'text',
+    impact: 'service',
+    wiring: 'live',
+    description:
+      '企微「我的企业」页底部复制。⚠️ 必须与小程序主体**同属北京巡礼之年科技有限公司**，否则绑定失败。\n\n' +
+      '⚠️ 仅 `cs_mode=wechat_kf` 时生效并被下发；其余模式下即便填了，端上收到的也是 `null`。',
+    maxLength: 64,
+    consumedBy:
+      '`BizConfigService.supportContact()` → 端上 `wx.openCustomerServiceChat({ corpId })`',
+  },
+  {
+    key: 'service.cs_url',
+    group: 'service',
+    label: '微信客服 · 客服链接',
+    type: 'text',
+    impact: 'service',
+    wiring: 'live',
+    description:
+      '企微「微信客服 › 在微信内其他场景接入」里复制的链接。\n\n' +
+      '⚠️ 仅 `cs_mode=wechat_kf` 时生效并被下发。',
+    maxLength: 512,
+    consumedBy: '`BizConfigService.supportContact()` → 端上 `wx.openCustomerServiceChat({ url })`',
+  },
 
   // ------------------------------------------------------------ timeline 业务时刻
   // ⭐ 缺陷 #49（2026-09-17 接线）：这 5 个键过去是 `unwired`（配了没人读），

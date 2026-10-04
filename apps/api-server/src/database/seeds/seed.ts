@@ -157,7 +157,7 @@ async function main(): Promise<void> {
       ],
       ['order.max_quantity', '20', '单次下单上限'],
       ['supplier.settle_cycle', 'daily', '供应商结算周期（C11：日结，人工对公转账）'],
-      // —— U17 客服入口（2026-09-15 口径：一期不做在线客服，一律引导加客服微信人工处理）——
+      // —— U17 客服入口（2026-10-04 口径：三档在线客服，缺省 none 兜底）——
       // ⚠️ 演示占位值，上线前由运营在后台系统配置页替换为真实客服号
       ['service.wechat_id', 'abox_service', '客服微信号（演示占位；退出团长/资金争议等人工入口）'],
       ['service.wechat_qrcode', '', '客服微信二维码图片 URL（可空，端上按空值隐藏）'],
@@ -165,9 +165,20 @@ async function main(): Promise<void> {
       ['service.hours', '工作日 9:00 – 18:00', '客服服务时间'],
       [
         'service.tips',
-        '添加客服微信后，请备注「ABox + 你的姓名」，我们会尽快为你处理。',
+        // ⚠️ 三档共用同一份文案，故不写「添加客服微信后…」—— 那种措辞只对 none 档成立
+        '请直接说明遇到的问题（附上订单号或截图），我们会尽快为你处理，不需要重复发送。',
         '客服页提示文案（端上不自造，服务端下发）',
       ],
+      // ⭐ 在线客服三档。`none` = 复制微信号（兜底档，切到 wechat_kf 前必须先完成企微开通
+      //    与小程序后台绑定，否则用户会点到一个唤不起会话的按钮）。
+      //    `cs_corpid` / `cs_url` 留空是**如实**：一期尚未开通，填假值比留空危险得多。
+      [
+        'service.cs_mode',
+        'none',
+        '在线客服接入模式：none 复制微信号 / contact 原生客服消息 / wechat_kf 微信客服',
+      ],
+      ['service.cs_corpid', '', '微信客服企业 ID（仅 cs_mode=wechat_kf 时下发）'],
+      ['service.cs_url', '', '微信客服链接（仅 cs_mode=wechat_kf 时下发）'],
     ].map(([configKey, configValue, description]) => ({ configKey, configValue, description })),
   );
 

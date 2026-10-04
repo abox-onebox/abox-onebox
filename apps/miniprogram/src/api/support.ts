@@ -1,13 +1,21 @@
 /**
  * api/support —— 客服入口（U17 · 《接口规范》§3.5）
  *
- * 【2026-09-15 口径】一期**不做在线客服**：所有「联系运营 / 联系客服」入口
- * （退出团长、余额争议、提现异常、发票与协议问题）统一跳「客服微信号」页面，
- * 由用户手动添加客服微信、**人工解决**。
+ * ## 三档模式（2026-10-04 定为终态 = `wechat_kf`）
+ * `none` 复制微信号人工加好友（**兜底档**）· `contact` 小程序原生客服消息 ·
+ * `wechat_kf` 微信客服（同事在**企业微信**里接，提醒可靠）。
  *
- * ⚠️ 微信号 / 电话 / 服务时间**全部由服务端下发**（运营在后台 `ab_config` 维护）——
- *    端上不得内置任何硬编码联系方式，否则换号时必须重新发版。
+ * 三档是**降级关系**：高档位唤不起会话时**必须自动退回下一档**，
+ * 永远不让用户点到一个没反应的按钮（具体分流见 `use-customer-service`）。
+ *
+ * ⚠️ 微信号 / 电话 / 服务时间 / 客服账号**全部由服务端下发**（运营在后台 `ab_config` 维护）——
+ *    端上不得内置任何硬编码联系方式，否则换号或换客服账号时必须重新发版。
+ *
+ * ⭐ **`csCorpId` / `csUrl` 只在 `csMode === 'wechat_kf'` 时才可能有值**，
+ *    其余模式服务端一律下发 `null` —— 端上因此无需判断「配了一半」，只认 `csMode`。
  */
+import type { CustomerServiceMode } from '@abox/shared-types';
+
 import { http } from './request';
 
 export interface SupportContact {
@@ -21,6 +29,12 @@ export interface SupportContact {
   hours: string;
   /** 提示文案（端上不自造，服务端下发） */
   tips: string;
+  /** 在线客服接入模式（端上主按钮行为的**唯一依据**） */
+  csMode: CustomerServiceMode;
+  /** 微信客服企业 ID（仅 `wechat_kf` 有值） */
+  csCorpId: string | null;
+  /** 微信客服链接（仅 `wechat_kf` 有值） */
+  csUrl: string | null;
 }
 
 /** U17 · 客服入口配置（登录即可访问，不要求团长身份） */
