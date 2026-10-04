@@ -26,8 +26,13 @@ import type { CustomerServiceMode } from '@abox/shared-types';
 export interface OpenCustomerServiceChatOptions {
   /** 企业 ID（企微「我的企业」页底部） */
   corpId: string;
-  /** 客服链接（企微「微信客服 › 在微信内其他场景接入」） */
-  url?: string;
+  /**
+   * ⭐⭐ 客服链接 **必须放在 `extInfo` 里**，不能放顶层。
+   * 官方文档示例即 `wx.openCustomerServiceChat({ extInfo: {url: ''}, corpId: '', ... })`；
+   * 服务市场排障贴把「`fail invalid param: url`」的头号原因直接归为「`extInfo` 拼错/缺失」。
+   * （2026-10-04 彻底复查时发现本文件曾把 url 传在顶层 ⇒ 真机必 fail，已改。）
+   */
+  extInfo: { url: string };
   /** 是否自动发送小程序卡片（客服点卡片可直达订单页） */
   showMessageCard?: boolean;
   /** 卡片标题 */
@@ -125,7 +130,8 @@ export function openCustomerServiceChat(params: OpenKfParams): Promise<OpenKfRes
   return new Promise<OpenKfResult>((resolve) => {
     api({
       corpId: params.corpId,
-      url: params.url,
+      // ⭐ 见 `OpenCustomerServiceChatOptions.extInfo`：url 只能走 extInfo，顶层传会被判 invalid param
+      extInfo: { url: params.url },
       // 自动发一张卡片给客服：点开直达订单页，省掉「你是哪位、订单号多少」两轮往返
       showMessageCard: true,
       sendMessageTitle: cardTitle(params.orderNo, params.userId),

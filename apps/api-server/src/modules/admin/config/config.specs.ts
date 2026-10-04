@@ -498,7 +498,9 @@ export const CONFIG_SPECS: ConfigSpec[] = [
       '企微「微信客服 › 在微信内其他场景接入」里复制的链接。\n\n' +
       '⚠️ 仅 `cs_mode=wechat_kf` 时生效并被下发。',
     maxLength: 512,
-    consumedBy: '`BizConfigService.supportContact()` → 端上 `wx.openCustomerServiceChat({ url })`',
+    consumedBy:
+      '`BizConfigService.supportContact()` → 端上 `wx.openCustomerServiceChat({ extInfo: { url } })`' +
+      '（⚠️ url 只能放在 `extInfo` 里，放顶层会被判 `invalid param: url`）',
   },
 
   // ------------------------------------------------------------ timeline 业务时刻
