@@ -10,6 +10,7 @@ import {
   RefundReasonType,
   RefundStatus,
 } from '@abox/shared-types';
+import { CANCEL_SOURCE } from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
@@ -213,10 +214,24 @@ export class RefundService {
       const saved = await m.save(refund);
 
       // 乐观锁：仅当状态仍为申请时的状态才推进，防并发重复
+      /**
+       * 取消来源标记（2026-10-04）：团长代退 → `cancel_source = leader`。
+       *
+       * ⚠️ 理由沿用团长**既有的退款原因体系**（`RefundReasonType`，如 QUALITY），
+       *    不做转换 —— 那是给财务与供应商追责用的，语义比「用户为什么不要了」重得多，
+       *    强行并入用户那套枚举会破坏既有统计口径。三处统一的是**来源**，不是理由。
+       *
+       * ⚠️ 本标记在**驳回时必须清除**（见下方 `reject`）—— 否则订单回到 `paid`
+       *    却带着 `cancel_source=leader`，统计会把「没退成的」当成「取消了的」。
+       */
       const upd = await m
         .createQueryBuilder()
         .update(Order)
-        .set({ status: OrderStatus.REFUND_APPLYING })
+        .set({
+          status: OrderStatus.REFUND_APPLYING,
+          cancelSource: CANCEL_SOURCE.LEADER,
+          cancelReason: dto.reasonType ?? null,
+        })
         .where('id = :id AND status = :from', { id: order.id, from: order.status })
         .execute();
       if (!upd.affected) {
@@ -597,10 +612,20 @@ export class RefundService {
       const saved = await m.save(refund);
 
       // 乐观锁：仅当订单仍停在 refund_applying 时才回退（防与并发退款打架）
+      //
+      // ⚠️ 驳回 = 这笔取消**没发生**：申请时预写的 `cancel_source/cancel_reason`
+      //    必须一并清掉（与 `applyByLeader` 的写入**配对**）。不清的话，订单
+      //    明明回到了 `paid` 却带着「团长代退」标记，取消统计会凭空多出一笔。
       const upd = await m
         .createQueryBuilder()
         .update(Order)
-        .set({ status: back, version: (order.version ?? 0) + 1 })
+        .set({
+          status: back,
+          cancelSource: null,
+          cancelReason: null,
+          cancelNote: null,
+          version: (order.version ?? 0) + 1,
+        })
         .where('id = :id AND status = :from', { id: order.id, from: OrderStatus.REFUND_APPLYING })
         .execute();
       if (!upd.affected) {

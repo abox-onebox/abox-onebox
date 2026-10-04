@@ -472,7 +472,12 @@ async function main() {
   assert(det?.payAmountFen === 5160, 'U10 金额一致', `payAmountFen=${det?.payAmountFen}`);
 
   // ---------- 6. U11 截单前自助取消 ----------
-  const cancel = await call('POST', `/orders/${orderNo}/cancel`, { token });
+  // ⭐ 带取消理由（2026-10-04）：理由**可跳过**，但**传了就必须落库** ——
+  //    「端上填了、库里没有」是这类功能最典型的假回执，接口层看不出来，必须直查库。
+  const cancel = await call('POST', `/orders/${orderNo}/cancel`, {
+    token,
+    body: { reason: 'not_in_office' },
+  });
   assert(
     cancel.body?.code === 0 && cancel.body?.data?.status === 'cancelled',
     'M1-③a 截单前自助取消成功',
@@ -485,7 +490,22 @@ async function main() {
   );
 
   const after = await call('GET', `/orders/${orderNo}`, { token });
-  assert(after.body?.data?.status === 'cancelled', '取消后详情状态为 cancelled');
+  // 直查 sqlite 验证落库（接口出参不含取消理由，只看响应永远发现不了「没写进去」）
+  let cancelRow = null;
+  {
+    const db = new DatabaseSync(DB_PATH);
+    cancelRow = db
+      .prepare('SELECT cancel_reason, cancel_source FROM ab_order WHERE order_no = ?')
+      .get(orderNo);
+    db.close();
+  }
+  assert(
+    after.body?.data?.status === 'cancelled' &&
+      cancelRow?.cancel_reason === 'not_in_office' &&
+      cancelRow?.cancel_source === 'user',
+    '取消后详情状态为 cancelled，且取消理由与来源已落库',
+    `reason=${cancelRow?.cancel_reason} source=${cancelRow?.cancel_source}`,
+  );
   assert(
     after.body?.data?.timeline?.some((n) => n.node === 'cancelled' && n.done),
     '取消后时间线出现「已取消」节点',

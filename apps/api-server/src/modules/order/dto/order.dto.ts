@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -12,7 +13,7 @@ import {
 } from 'class-validator';
 
 import type { CreateOrderDto } from '@abox/shared-types';
-import { OrderStatus } from '@abox/shared-types';
+import { CANCEL_NOTE_MAX, CANCEL_REASONS, CancelReason, OrderStatus } from '@abox/shared-types';
 
 /**
  * U6 下单入参（《接口规范》§3.3 · 2026-09-15 裁定以文档为准）
@@ -82,4 +83,36 @@ export class OrderNoParamDto {
   @IsString()
   @Matches(/^AB\d{16}$/, { message: 'orderNo 格式不合法' })
   orderNo!: string;
+}
+
+/**
+ * U11 自助取消入参（2026-10-04 新增取消理由）
+ *
+ * ⚠️ **两个字段都可缺省**（用户 2026-10-04 裁定「可跳过」）：不传 = 用户选了
+ *    「不说明，直接取消」，落库 `cancel_reason = null`、来源仍记 `user`。
+ *
+ * ⚠️ `note` 只在 `reason === 'other'` 时**才落库**，其余情况一律忽略
+ *    （不报错 —— 端上多传一个字段不该打断取消这个动作）。
+ *    真正的约束是长度：超长会被 `MaxLength` 拦成 10001。
+ */
+export class CancelOrderReqDto {
+  @ApiPropertyOptional({
+    description: '取消理由（可缺省）；选 other 时可用 note 补充说明',
+    enum: CANCEL_REASONS,
+    example: 'not_in_office',
+  })
+  @IsOptional()
+  @IsIn(CANCEL_REASONS as readonly string[], {
+    message: `reason 需为：${(CANCEL_REASONS as readonly string[]).join('/')}`,
+  })
+  reason?: CancelReason;
+
+  @ApiPropertyOptional({
+    description: '补充说明（仅在 reason=other 时记录）',
+    example: '同事帮我订重了一份',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(CANCEL_NOTE_MAX, { message: `note 最长 ${CANCEL_NOTE_MAX} 字` })
+  note?: string;
 }

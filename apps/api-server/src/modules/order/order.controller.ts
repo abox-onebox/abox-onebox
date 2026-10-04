@@ -20,7 +20,12 @@ import { IdempotentInterceptor } from '../../common/interceptors/idempotent.inte
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { RefundApplyReqDto } from '../finance/dto/finance.dto';
 import { RefundService } from '../finance/refund.service';
-import { CreateOrderReqDto, OrderNoParamDto, OrdersQueryDto } from './dto/order.dto';
+import {
+  CancelOrderReqDto,
+  CreateOrderReqDto,
+  OrderNoParamDto,
+  OrdersQueryDto,
+} from './dto/order.dto';
 import { OrderService } from './order.service';
 
 @ApiTags('订单')
@@ -80,8 +85,17 @@ export class OrderController {
   @ApiOperation({
     summary: 'U11 自助取消（仅截单前 + pending_pay/paid；截单后返回 40004 + 团长联系方式）',
   })
-  cancel(@CurrentUser() user: JwtPayload, @Param() p: OrderNoParamDto) {
-    return this.orderService.cancel(user.sub, p.orderNo);
+  /**
+   * ⚠️ `dto` **可空**：不传 body = 用户选了「不说明，直接取消」（理由可跳过，
+   *    2026-10-04 裁定）。此时 `cancel_reason` 落 NULL，但 `cancel_source='user'` 照记
+   *    —— 区分「不愿说」与「系统清掉」靠的是来源，不是理由。
+   */
+  cancel(
+    @CurrentUser() user: JwtPayload,
+    @Param() p: OrderNoParamDto,
+    @Body() dto?: CancelOrderReqDto,
+  ) {
+    return this.orderService.cancel(user.sub, p.orderNo, dto);
   }
 
   /**

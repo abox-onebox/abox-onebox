@@ -13,6 +13,7 @@ import type {
 import { OrderStatus } from '@abox/shared-types';
 import { PAGE_DEFAULT } from '@abox/shared-types';
 import { LeaderStatus } from '@abox/shared-types';
+import { CANCEL_REASON_TIMEOUT_UNPAID, CANCEL_SOURCE } from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
@@ -49,7 +50,7 @@ import { CommissionService } from '../finance/commission.service';
 import { RefundService } from '../finance/refund.service';
 import { LeaderPromotionService } from '../team-leader/promotion.service';
 import { buildTimeline, explainSelfCancelBlock, userStatusText } from './order-state-machine';
-import { CreateOrderReqDto } from './dto/order.dto';
+import { CancelOrderReqDto, CreateOrderReqDto } from './dto/order.dto';
 
 /** 元 → 分（金额跨层只在 service 边界换算一次） */
 const toFen = (yuan: number | string): number => Math.round(Number(yuan) * 100);
@@ -467,7 +468,11 @@ export class OrderService {
   // ==========================================================================
   // U11 · 自助取消（T4：仅截单前 + pending_pay/paid）
   // ==========================================================================
-  async cancel(userId: number, orderNo: string): Promise<CancelOrderResult> {
+  async cancel(
+    userId: number,
+    orderNo: string,
+    dto?: CancelOrderReqDto,
+  ): Promise<CancelOrderResult> {
     const order = await this.loadOwnOrder(userId, orderNo);
     const status = order.status as OrderStatus;
 
@@ -529,12 +534,23 @@ export class OrderService {
          * ⚠️ 与跑批侧（截单 `lockPaidOrders` 的原子占位）是**同一族**，那边早已按
          *    `affected` 判归属 —— 本端点（T4 自助取消）此前是**漏网的另一个自己**。
          */
+        /**
+         * 取消理由（2026-10-04）：**可跳过** —— 不传即 `null`，来源仍记 `user`。
+         * ⚠️ `note` 只在 `reason === 'other'` 时落库，其余情况一律丢弃
+         *    （不报错：端上多传一个字段不该打断取消这个动作）。
+         */
+        const cancelReason = dto?.reason ?? null;
+        const cancelNote = dto?.reason === 'other' ? dto.note?.trim() || null : null;
+
         const claim = await m
           .createQueryBuilder()
           .update(Order)
           .set({
             status: OrderStatus.CANCELLED,
             cancelledAt: now,
+            cancelReason,
+            cancelNote,
+            cancelSource: CANCEL_SOURCE.USER,
             // ⭐ 用 SQL 表达式自增，不用内存里的 `order.version`（那是事务外快照值）
             version: () => 'version + 1',
           })
@@ -720,6 +736,13 @@ export class OrderService {
             .set({
               status: OrderStatus.CANCELLED,
               cancelledAt: now,
+              /**
+               * 系统自动取消（2026-10-04）：理由固定 `timeout_unpaid`、来源 `system`。
+               * ⭐ 这一行是「三处全记」里量最大的一块 —— 若不给它标 system，
+               * 这批「忘付款被清」的订单会混进用户主动放弃的统计里，把流失结论带偏。
+               */
+              cancelReason: CANCEL_REASON_TIMEOUT_UNPAID,
+              cancelSource: CANCEL_SOURCE.SYSTEM,
               version: () => 'version + 1',
             })
             .where('id = :id', { id: o.id })

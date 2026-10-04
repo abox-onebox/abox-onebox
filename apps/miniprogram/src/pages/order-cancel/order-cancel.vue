@@ -62,6 +62,37 @@
             </view>
           </view>
         </view>
+
+        <!-- 取消原因（2026-10-04）：用于分析「为什么不要了」，**可不选** -->
+        <view class="section">
+          <view class="section__hd">
+            <text class="section__title">取消原因</text>
+            <text class="section__hint">可不选，直接取消也行</text>
+          </view>
+          <view class="card">
+            <view class="reasons">
+              <view
+                v-for="r in reasonOptions"
+                :key="r.key"
+                class="chip"
+                :class="{ 'chip--on': reason === r.key }"
+                hover-class="chip--hover"
+                @tap="pick(r.key)"
+              >
+                <text class="chip__text">{{ r.label }}</text>
+              </view>
+            </view>
+
+            <textarea
+              v-if="reason === 'other'"
+              v-model="note"
+              class="note-input"
+              placeholder="简单说说原因（可不填）"
+              :maxlength="CANCEL_NOTE_MAX"
+              :auto-height="true"
+            />
+          </view>
+        </view>
       </template>
     </template>
 
@@ -82,7 +113,7 @@
         :disabled="submitting"
         @tap="confirm"
       >
-        {{ submitting ? '处理中…' : '确认取消订单' }}
+        {{ submitting ? '处理中…' : reason ? '确认取消订单' : '不说明，直接取消' }}
       </button>
       <button class="btn btn--ghost" hover-class="btn--hover" @tap="goBack">
         {{ cancelled || blocked ? '返回订单详情' : '先不取消' }}
@@ -105,8 +136,13 @@
  */
 import { computed, ref } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
-import { OrderStatus } from '@abox/shared-types';
-import type { OrderDetailResult } from '@abox/shared-types';
+import {
+  CANCEL_NOTE_MAX,
+  CANCEL_REASONS,
+  CANCEL_REASON_LABEL,
+  OrderStatus,
+} from '@abox/shared-types';
+import type { CancelReason, OrderDetailResult } from '@abox/shared-types';
 
 import { cancelOrder, fetchOrderDetail } from '@/api/order';
 import { ApiError, CODE_REFUND_NOT_ALLOWED } from '@/api/request';
@@ -125,6 +161,28 @@ const submitting = ref(false);
 const cancelled = ref(false);
 /** 服务端已明确拒绝（40004）/ 状态本身不可自助取消 → 降级为「联系团长」 */
 const rejectedByServer = ref(false);
+
+/**
+ * 取消原因（2026-10-04 新增）
+ *
+ * ⚠️ **可跳过**：`reason` 为 null 直接提交即可，按钮文案会跟着变成「不说明，直接取消」。
+ *    服务端此时落 `cancel_reason = null`、来源仍记 `user` —— 区分「不愿说」与
+ *    「系统清掉」靠的是来源字段，不是理由。
+ */
+const reason = ref<CancelReason | null>(null);
+const note = ref('');
+
+/** 选项列表（标签取自真源 `CANCEL_REASON_LABEL`，端上不维护第二份文案） */
+const reasonOptions = CANCEL_REASONS.map((key) => ({
+  key,
+  label: CANCEL_REASON_LABEL[key],
+}));
+
+/** 再点一次已选项 = 取消选择；换选项时清掉旧补充，避免串到别的理由上 */
+function pick(key: CancelReason): void {
+  reason.value = reason.value === key ? null : key;
+  note.value = '';
+}
 
 /** 可自助取消的状态（截单与否由服务端二次判定） */
 const cancellableStatus = computed(() => {
@@ -165,7 +223,7 @@ async function confirm(): Promise<void> {
       console.log('[subscribe] refund_result', results);
     });
 
-    const res = await run(() => cancelOrder(orderNo.value));
+    const res = await run(() => cancelOrder(orderNo.value, reason.value, note.value));
     cancelled.value = true;
     uni.showToast({
       title: res.refundInitiated ? '已取消，款项原路退回' : '订单已取消',
@@ -294,6 +352,53 @@ onLoad((options) => {
       color: $c-info-fg; // 文字位一律走加强档（原色 $c-info 只作图标/描边；二者同值时也不留口子）
     }
   }
+}
+
+/* 取消原因 —— 选项用「色块 + 文字」而非状态原色（设计替换 §六：等级/状态原色退出文字位） */
+.reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $space-2;
+  padding: $space-3 0;
+}
+
+.chip {
+  padding: $space-2 $space-3;
+  background: transparent;
+  border: 1px solid $c-border;
+  border-radius: $radius-pill;
+
+  &__text {
+    font-size: $fs-caption;
+    color: $c-text;
+  }
+
+  /* 选中 = 实心反转（暖棕底 + 米色字），不引入新色值 */
+  &--on {
+    background: $c-text;
+    border-color: $c-text;
+
+    .chip__text {
+      color: $c-surface;
+    }
+  }
+
+  &--hover {
+    opacity: 0.85;
+  }
+}
+
+.note-input {
+  width: 100%;
+  min-height: 120rpx;
+  margin-bottom: $space-3;
+  padding: $space-2 $space-3;
+  font-size: $fs-caption;
+  color: $c-text;
+  background: $c-bg;
+  border: 1px solid $c-border;
+  border-radius: $radius-sm;
+  box-sizing: border-box;
 }
 
 .actions {

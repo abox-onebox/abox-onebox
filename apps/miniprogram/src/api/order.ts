@@ -9,6 +9,7 @@
  */
 import type {
   CancelOrderResult,
+  CancelReason,
   CreateOrderDto,
   CreateOrderResult,
   OrderDetailResult,
@@ -47,8 +48,21 @@ export function fetchOrderDetail(orderNo: string): Promise<OrderDetailResult> {
  * 截单后服务端返回 `40004`，并在 `payload.leaderContact` 里带团长联系方式 ——
  * 调用方需捕获 `ApiError` 并读取 `payload`，引导用户联系团长代退。
  */
-export function cancelOrder(orderNo: string): Promise<CancelOrderResult> {
-  return http.post<CancelOrderResult>(`/orders/${encodeURIComponent(orderNo)}/cancel`);
+/**
+ * ⚠️ `reason` / `note` **都可缺省**（取消理由可跳过，2026-10-04 裁定）：
+ *    不传 = 用户选了「不说明，直接取消」，服务端仍记 `cancel_source='user'`。
+ * ⚠️ `note` 只在 `reason === 'other'` 时才提交 —— 其余理由带 note 服务端一律忽略，
+ *    这里就别发，免得网络层多传无用字段。
+ */
+export function cancelOrder(
+  orderNo: string,
+  reason?: CancelReason | null,
+  note?: string | null,
+): Promise<CancelOrderResult> {
+  const body: { reason: CancelReason; note?: string } | undefined = reason
+    ? { reason, ...(reason === 'other' && note?.trim() ? { note: note.trim() } : {}) }
+    : undefined;
+  return http.post<CancelOrderResult>(`/orders/${encodeURIComponent(orderNo)}/cancel`, body);
 }
 
 /**

@@ -135,6 +135,24 @@ export class Order {
   @Column({ name: 'cancelled_at', type: 'datetime', precision: 3, nullable: true })
   cancelledAt?: Date | null;
 
+  /**
+   * 取消理由（2026-10-04 · 第 5 支迁移 `1700000000004-cancel-reason`）
+   *
+   * 用户侧 = 预置选项枚举（`CANCEL_REASONS`）；系统截单固定 `timeout_unpaid`；
+   * 团长侧沿用其既有 `RefundReasonType`。**可空** —— 理由可跳过，且本列上线前的历史行无从回填。
+   * 分析时须先按 `cancelSource` 分层，再统计本列；NULL 属「未采集」，不要混进占比。
+   */
+  @Column({ name: 'cancel_reason', type: 'varchar', length: 32, nullable: true })
+  cancelReason?: string | null;
+
+  /** 取消理由补充说明（仅理由选「其他」时落库；接口校验上限 `CANCEL_NOTE_MAX`=100，列长留余量） */
+  @Column({ name: 'cancel_note', type: 'varchar', length: 128, nullable: true })
+  cancelNote?: string | null;
+
+  /** 取消来源：user 用户自助 / system 系统截单 / leader 团长代退（本功能的核心统计维度） */
+  @Column({ name: 'cancel_source', type: 'varchar', length: 16, nullable: true })
+  cancelSource?: string | null;
+
   @Column({ type: 'int', default: 0 })
   version!: number;
 
