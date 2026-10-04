@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, In, Repository, SelectQueryBuilder } from 'typeorm';
 
 import {
+  CANCEL_REASON_LABEL,
+  CANCEL_SOURCE_LABEL,
   ORDER_STATUS_VIEW,
   OrderStatus,
   REFUND_REASON_LABEL,
@@ -460,6 +462,14 @@ export class OrderAdminService {
         '余额抵扣(元)',
         '微信实付(元)',
         '状态',
+        /**
+         * 取消三列（2026-10-04 补）：「取消理由用于数据分析」的需求只有把这批数据
+         * **导出得到**才算闭环 —— 此前数据表里有、导出列里没有，运营只能连库写 SQL。
+         * ⚠️ 顺序刻意放在「状态」之后、备注之前：状态说「是什么」，紧接着说「为什么」。
+         */
+        '取消来源',
+        '取消理由',
+        '取消说明',
         '备注',
         '下单时间',
         '支付时间',
@@ -478,6 +488,11 @@ export class OrderAdminService {
         (Number(v.balanceUsedFen) / 100).toFixed(2),
         (Number(v.payAmountFen) / 100).toFixed(2),
         v.statusText,
+        /** 未取消的订单三列均为空串 —— 与「取消了但没填理由」在 CSV 里同样看不出区别，
+         *  所以分析时请以「取消来源」列为准：空白 = 未取消，`用户自助` 才是真正的取消样本。 */
+        (v.cancelSourceText as string) ?? '',
+        (v.cancelReasonText as string) ?? '',
+        (v.cancelNote as string) ?? '',
         v.remark ?? '',
         formatBj(v.createdAt as string),
         v.paidAt ? formatBj(v.paidAt as string) : '',
@@ -635,6 +650,29 @@ export class OrderAdminService {
         setMealName: setMealMap.get(Number(o.setMealId))?.name ?? null,
         mainDishName: mainDishMap.get(Number(o.setMealId)) ?? null,
         remark: o.remark ?? null,
+        /**
+         * 取消来源与理由（2026-10-04 补口径）
+         *
+         * ## 为什么后台必须看得见
+         * 这三个字段是应同事的建议加的：「取消订单时给取消理由，**用于数据分析**」。
+         * 但同日的深度测试实测：后台列表 / 详情 / 导出**三处都取不到它们**
+         * （`decorate` 没带、导出表头也没有）—— 数据只能连库写 SQL 捞，
+         * 功能只做了一半。这里是消费端的补口。
+         *
+         * ## 为什么三个 Text 字段缺失时给 `null` 而不是空串
+         * 空串与「未采集」在 Excel 里看不出区别，会把 `null` 的统计语义吃掉。
+         * ⚠️ 统计口径（见 CancelReason 契约）：**先按 `cancelSource` 分层**，
+         * 再看 `cancelReason` 为 null 的比例；null = 未采集，不要混进占比当分母。
+         */
+        cancelSource: o.cancelSource ?? null,
+        cancelSourceText: o.cancelSource
+          ? ((CANCEL_SOURCE_LABEL as Record<string, string>)[o.cancelSource] ?? o.cancelSource)
+          : null,
+        cancelReason: o.cancelReason ?? null,
+        cancelReasonText: o.cancelReason
+          ? (CANCEL_REASON_LABEL[o.cancelReason] ?? o.cancelReason)
+          : null,
+        cancelNote: o.cancelNote ?? null,
         createdAt: toBjIso(o.createdAt),
         paidAt: toBjIso(o.paidAt),
         completedAt: toBjIso(o.completedAt),
