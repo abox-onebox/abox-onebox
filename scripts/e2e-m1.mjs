@@ -254,29 +254,43 @@ async function main() {
     'U5 资质行取自**在册证照**（且要求 audit_status=approved —— 上传了≠核验过）',
     `quals=${JSON.stringify(sanwei?.supplier?.qualifications)}`,
   );
+  //
+  // ⚠️⭐ 2026-10-04：下面三条**整段反转** —— 原先断言的是「三平台齐全 / 缺京东看得见 /
+  // 推荐平台已配置」，即**外卖跳转存在且正确**。跳转已因《运营规范》**5.10 互推行为**
+  // （处理 = 下架）移除，`takeoutLinks` / `recommended` 两字段从契约删除，
+  // 原判据若留着就是**恒红**；而简单删掉又会变成**恒绿**（`!undefined` 恒真）。
+  // ⇒ 改成**反向断言**：出参必须**证明自己不含**任何第三方平台信息。
+  //    谁哪天把字段加回来，这三条立刻报红。
+  //
+  // ⚠️ 先保证**有样本**：下面的反向断言全部依赖 `sanwei` 存在。若三味屋这道菜查不到，
+  //    `?.takeoutLinks === undefined` 会因为"根本没这个对象"而**恒绿** —— 那是假绿。
+  //
+  // ⚠️ `!!sanwei?.supplier` 这一项**不是凑数**：反向断言全部依赖「三味屋这道菜在」。
+  //    若样本缺失，`?.takeoutLinks === undefined` 会因为"根本没有这个对象"而**恒绿**。
+  //    把它写进同一条断言里，是为了**不增加 e2e 断言总数**（R3 派生值：114 条）。
+  //
   assert(
-    sanwei?.supplier?.takeoutLinks?.length === 3 &&
-      sanwei.supplier.takeoutLinks.filter((l) => l.configured).length === 3 &&
-      sanwei?.supplier?.recommended === 'meituan',
-    'U5 三味屋三平台齐全 + 推荐美团（对齐原型 P33 配置表）',
-    `configured=${sanwei?.supplier?.takeoutLinks?.filter((l) => l.configured).length} rec=${sanwei?.supplier?.recommended}`,
+    !!sanwei?.supplier &&
+      sanwei.supplier.takeoutLinks === undefined &&
+      sanwei.supplier.recommended === undefined,
+    'U5 出参**不下发** takeoutLinks / recommended（5.10 互推 · 2026-10-04 移除）',
+    `有样本=${!!sanwei?.supplier} takeoutLinks=${typeof sanwei?.supplier?.takeoutLinks} recommended=${typeof sanwei?.supplier?.recommended}`,
   );
 
-  const sijiJd = (supOf('四季鲜蔬')?.supplier?.takeoutLinks ?? []).find((l) => l.platform === 'jd');
+  const platformMarks = ['美团', '淘宝', '京东', 'meituan', 'taobao', 'jd'];
+  const hitMarks = platformMarks.filter((m) => JSON.stringify(t ?? {}).includes(m));
   assert(
-    (supOf('四季鲜蔬')?.supplier?.takeoutLinks ?? []).length === 3 &&
-      sijiJd?.configured === false &&
-      sijiJd?.url === null,
-    'U5 「缺京东」**看得见**：三平台恒返回，未入驻的 configured=false 且 url=null（端上置灰，不是整行消失）',
-    `jd=${JSON.stringify(sijiJd)}`,
+    hitMarks.length === 0,
+    'U5 整包出参不含任何第三方平台名 / 键名（含 URL 里的域名）',
+    hitMarks.length ? `命中：${hitMarks.join(',')}` : '干净',
   );
+
+  const outboundHints = ['外卖', '点他们的', '下方店铺'];
+  const hitOut = outboundHints.filter((m) => String(t?.traceNote ?? '').includes(m));
   assert(
-    (t?.dishes ?? []).every(
-      (x) =>
-        !x.supplier?.recommended ||
-        x.supplier.takeoutLinks.some((l) => l.platform === x.supplier.recommended && l.configured),
-    ),
-    'U5 推荐平台必为**已配置**的平台（悬空推荐 = 用户点到一个没反应的入口）',
+    hitOut.length === 0,
+    'U5 traceNote 不含站外引导词（原「点进下方店铺，直接点他们的外卖」已删）',
+    hitOut.length ? `命中：${hitOut.join(',')}` : `note=${String(t?.traceNote ?? '').slice(0, 40)}…`,
   );
 
   const u5Raw = JSON.stringify(t ?? {});

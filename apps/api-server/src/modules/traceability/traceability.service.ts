@@ -21,7 +21,8 @@ import {
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { canServeSupplier } from '../../common/utils/supplier-qualification';
-import { readTakeoutLinks } from '../../common/utils/takeout';
+// ⚠️ 2026-10-04：原 `readTakeoutLinks` 导入已删除 —— 面向小程序的出参不再读取外卖链接
+//    （5.10 互推）。后台 `takeout_links` 的读写口仍在 `common/utils/takeout.ts`，留给 admin 端。
 import { tomorrowBj } from '../../common/utils/time';
 import { Building } from '../../database/entities/building.entity';
 import { DistributionCenter } from '../../database/entities/finance.entity';
@@ -32,7 +33,10 @@ import { Dish, Supplier } from '../../database/entities/supplier.entity';
  * 今日这盒 · 商家溯源服务（**U5** · 《接口规范 v1.0》§3.2 · 原型 P38 · M5-14）
  *
  * ## 职责边界
- * 只回答「今天这一盒是谁做的、我能不能直接去找他们点单」。
+ * 只回答「今天这一盒是谁做的、出品方持有哪些已核验资质」。
+ *
+ * ⚠️ 原文案是「……我能不能**直接去找他们点单**」：那是外卖平台跳转时代的描述，
+ *    跳转已于 2026-10-03/04 移除（5.10 互推，处理 = 下架），描述不得继续说着旧话。
  * **不回答**「这家是不是我们的合作伙伴」—— C8 硬约束：出参严禁包含
  * `status`（合作中 / 备选）、`commission`、`shareRate`、备选商家清单、联系方式。
  * 能跳转 ≠ 是合作伙伴；平台一旦下发「哪些是备选商家」，就等于替未合作主体背书。
@@ -40,10 +44,11 @@ import { Dish, Supplier } from '../../database/entities/supplier.entity';
  * ## 与 `MealService.dishesOfSetMeal` 的关系（为什么不复用）
  * 两者都从 `ab_set_meal_item` 出发，但**出参粒度不同**且**背的道不同**：
  *   · U1 只到「菜名 + 档位 + 图片 + 供应商展示名」，是**下单页**的菜单视图；
- *   · U5 还要带**该供应商的资质与外卖跳转**，是**溯源页**的证据视图。
+ *   · U5 还要带**该供应商的资质**，是**溯源页**的证据视图
+ *     （原「资质与外卖跳转」—— 跳转已移除，见上）。
  * 强行合并会让下单页的契约里凭空多出一组它永远不渲染的字段（而多出来的字段
  * 迟早会被人当「反正有，顺手用一下」——那时下单页就开始泄露溯源页才该有的信息）。
- * 共享的是**底层读取口**（`readTakeoutLinks` / 实体），不是出参。
+ * 共享的是**底层读取口**（实体 / 资质判据），不是出参。
  *
  * ## N+1 收敛
  * 菜品与供应商各一次 `IN` 批量取，供应商视图**按 id 缓存**（一家供两道菜时
@@ -126,7 +131,7 @@ export class TraceabilityService {
       const dishMap = new Map(dishRows.map((d) => [Number(d.id), d]));
       const supMap = new Map(supplierRows.map((s) => [Number(s.id), s]));
 
-      // 一家供应商供多道菜时复用同一份视图（含它的资质与外卖链接）
+      // 一家供应商供多道菜时复用同一份视图（含它的资质）
       const supplierViews = new Map<number, TraceabilitySupplierView>();
       const viewOf = (supplierId: number): TraceabilitySupplierView => {
         const cached = supplierViews.get(supplierId);
@@ -140,8 +145,6 @@ export class TraceabilityService {
               id: supplierId,
               name: `供应商 #${supplierId}`,
               qualifications: [],
-              recommended: null,
-              takeoutLinks: [],
             };
         supplierViews.set(supplierId, view);
         return view;
@@ -290,18 +293,21 @@ export class TraceabilityService {
    *    （`name` 无唯一约束，按名定位会弹错店）。id 不属于 C8 的任一项禁忌。
    */
   private supplierView(s: Supplier): TraceabilitySupplierView {
-    const read = readTakeoutLinks(s.takeoutLinks);
+    //
+    // ⚠️⭐ 2026-10-04：这里**不再读取** `s.takeoutLinks`（原 `readTakeoutLinks(...)`）
+    //
+    //   `TraceabilitySupplierView` 的 `recommended` / `takeoutLinks` 两字段已删除，
+    //   理由见该 DTO 的注释 —— 下发的 url 是**小程序路径**，配合 appid 即构成
+    //   《运营规范》**5.10 互推行为**（处理 = 下架）。
+    //
+    //   ⚠️ 只删「读」不删「存」：`ab_supplier.takeout_links` 与其后台配置页**保留**
+    //   （后台网页不受小程序审核约束）。但**面向小程序的出参永不读它** ——
+    //   后台能配 ≠ 小程序可以带出去。谁想在这里加回读取，先去重读那条判定。
+    //
     return {
       id: Number(s.id),
       name: s.name,
       qualifications: this.qualificationsOf(s),
-      recommended: read.recommended,
-      takeoutLinks: read.links.map((l) => ({
-        platform: l.platform,
-        label: l.label,
-        url: l.url,
-        configured: l.configured,
-      })),
     };
   }
 
@@ -362,11 +368,17 @@ export class TraceabilityService {
       parts.push(`所列出品方均已通过 ${labels.join(' · ')} 核验。`);
     }
 
-    if (dishes.some((d) => d.supplier.takeoutLinks.some((l) => l.configured))) {
-      parts.push(
-        '如果今日套餐不合口味，也可以点进下方店铺，直接点他们的外卖；用餐有任何问题都可以联系我们协助处理。',
-      );
-    }
+    //
+    // ⚠️⭐ 2026-10-04：原「如果今日套餐不合口味，也可以点进下方店铺，直接点他们的外卖」整段删除
+    //
+    //   这是**面向用户可见**的站外引导，命中《运营规范》**5.10 互推行为**（处理 = 下架）。
+    //   更要命的是它同时是**假话**：端上的店铺卡片早已随跳转一并删除，
+    //   文案说「点进下方店铺」而页面上根本没有店铺 —— 违规 + 逻辑矛盾叠在一起。
+    //
+    //   ⚠️ 删除的是「引导」，不是「售后」：用户用餐有问题仍可联系客服（客服页保留），
+    //   只是不再把他推向第三方平台。
+    //
+    parts.push('用餐有任何问题都可以联系我们协助处理。');
 
     return parts.join('');
   }
