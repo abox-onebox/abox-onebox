@@ -74,6 +74,24 @@ const FORBIDDEN = [
   { re: /(^|[\s'"/])uni\s+build(\s|$)/, why: '小程序构建应走 `gate.mjs build:mp' },
 ];
 
+/**
+ * 刻意**不**进 CI 的门禁（豁免表）
+ *
+ * ⚠️ 表内必须是「有理由不在 CI 跑」，**不是**「忘了塞进某个别名」。
+ *    2026-10-04 整体复查（报告 ⑪）：`gate:parity` 此前只拿 `all` + `verify` 两个别名
+ *    的成员做差集，**全程没有与 `truth.gates`（31 道全集）比过** ⇒
+ *    下面这三道**从第一次提交起就没在 CI 执行过**，而门禁照样打印「CI 已全覆盖」。
+ *
+ * ⇒ 补了全量差集之后，它们必须**显式登记**在这里并写明理由；
+ *    判据还会校验「表内每一项**仍存在于** `truth.gates`」—— 否则门禁改名 / 删除后，
+ *    这个豁免会变成一个**永远豁免着不存在的名字**的僵尸条目（防腐烂豁免）。
+ */
+const CI_EXEMPT = {
+  'format:write': '写命令（自动改代码）—— CI 只应**校验**格式（`format`），不应在 CI 里改文件',
+  'seed:demo': '演示数据，与 e2e 的「库里只有基础种子」前提互斥（见 gate.mjs `seed:demo` 注释）',
+  'design:docs': '语料是工作区根 `_ABox一盒*` 设计文档，**不在仓库内**，CI 里跑只会得到一次「装作绿」',
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 真源：由 `gate.mjs --json` 自报（门禁清单的唯一真源就是它）
 // ─────────────────────────────────────────────────────────────────────────────
@@ -155,6 +173,34 @@ function checkCiCoverage(ciText, truth) {
     const missing = (truth.aliases[alias] ?? []).filter((g) => !covered.has(g));
     if (missing.length) {
       out.push(`CI 未覆盖 \`${alias}\` 里的 ${missing.length} 道门禁：${missing.join(' / ')}`);
+    }
+  }
+
+  // ⭐ 全量差集（2026-10-04 整体复查 · 报告 ⑪）：上面只看「别名里声明的」有没有被覆盖，
+  //    看**不到**「定义了却不属于任何被 CI 调用的别名」的门禁 —— 后者从第一次提交起
+  //    就不会在 CI 跑，而本门禁依旧报告「已全覆盖」。两条差集方向相反，必须都做。
+  const orphan = truth.gates.filter((g) => !covered.has(g) && !Object.prototype.hasOwnProperty.call(CI_EXEMPT, g));
+  if (orphan.length) {
+    out.push(
+      `${orphan.length} 道门禁**不属于任何被 CI 调用的别名**，故永远不会在 CI 执行：` +
+        `${orphan.join(' / ')} —— 要么把它加进某个别名，要么在 check-gate-parity.mjs 的 ` +
+        `CI_EXEMPT 里登记并写明「为什么可以不在 CI 跑」`,
+    );
+  }
+  return out;
+}
+
+/**
+ * 豁免表新鲜度：表内每一项都必须**仍存在于** `truth.gates`
+ *
+ * 防腐烂豁免 —— 门禁改名或被删后，豁免项会静默变成一个豁免着**不存在的名字**的僵尸条目，
+ * 于是「真实的新增孤儿」反而可以被它掩护过去。
+ */
+function checkExemptFresh(truth) {
+  const out = [];
+  for (const g of Object.keys(CI_EXEMPT)) {
+    if (!truth.gates.includes(g)) {
+      out.push(`CI_EXEMPT 里的 \`${g}\` 已不在 gate.mjs 的 GATES 中 —— 豁免项腐烂了，请删掉它`);
     }
   }
   return out;
@@ -250,6 +296,28 @@ function selfTest() {
     checkCiCoverage(block('node scripts/gate.mjs all\nnode scripts/gate.mjs verify'), SYNTH_TRUTH).length === 0,
   );
 
+  // ① 必报：定义了却**不属于任何被 CI 调用的别名**（报告 ⑪ —— 这类门禁从未在 CI 执行，
+  //          而旧判据只做「别名成员 → CI」这一个方向，看不出来）
+  const orphanTruth = {
+    gates: ['lint', 'jest', 'b', 'c', 'e2e', 'solo'],
+    aliases: { all: ['lint', 'jest', 'b', 'c'], verify: ['e2e'] },
+  };
+  t(
+    '① 孤儿门禁应报出',
+    checkCiCoverage(runs('node scripts/gate.mjs all\nnode scripts/gate.mjs verify'), orphanTruth).some((x) =>
+      /永远不会在 CI 执行/.test(x),
+    ),
+  );
+  // ① 必不报：孤儿若在 CI_EXEMPT 里登记过，就不算违规
+  const exemptTruth = { gates: ['lint', ...Object.keys(CI_EXEMPT)], aliases: { all: ['lint'] } };
+  t('① 已登记的豁免孤儿应不报', checkCiCoverage(runs('node scripts/gate.mjs all'), exemptTruth).length === 0);
+  // ① 豁免表自身的新鲜度（防腐烂豁免）
+  t(
+    '① 豁免项腐烂（已不在 GATES 中）应报出',
+    checkExemptFresh({ gates: ['lint'] }).length === Object.keys(CI_EXEMPT).length,
+  );
+  t('① 豁免项新鲜应不报', checkExemptFresh({ gates: ['lint', ...Object.keys(CI_EXEMPT)] }).length === 0);
+
   // ② 必不报：gate.mjs + pnpm install
   t(
     '② 正规路径 + install 应不报',
@@ -294,7 +362,11 @@ if (!existsSync(CI_PATH)) {
 const truth = loadTruth();
 const ciText = readFileSync(CI_PATH, 'utf8');
 
-const findings = [...checkCiCoverage(ciText, truth), ...checkCiNoDuplicate(ciText)];
+const findings = [
+  ...checkCiCoverage(ciText, truth),
+  ...checkCiNoDuplicate(ciText),
+  ...checkExemptFresh(truth),
+];
 
 for (const rel of MARKED_DOCS) {
   const p = join(ROOT, rel);
@@ -318,7 +390,14 @@ if (findings.length) {
   process.exit(1);
 }
 
+// ⚠️ 不再无条件打印「CI 已全覆盖」—— 报告 ⑪：那句话在 3 道门禁永不在 CI 执行时照旧打印。
+//    改为**报出被 CI 覆盖的道数与豁免清单**，让人一眼能核对。
+const exemptNames = Object.keys(CI_EXEMPT);
+const nCovered = new Set([
+  ...expandNames(['all', 'verify'], truth),
+]).size;
 console.log(
   `✔ 门禁清单一致：定义 ${truth.gates.length} 道 · \`all\` ${nAll} 道 · \`verify\` ${nVerify} 道 · ` +
-    `CI 已全覆盖且无重复表述 · 文档标记 ${MARKED_DOCS.length}/${MARKED_DOCS.length} 对齐`,
+    `CI 覆盖 ${nCovered} 道（豁免 ${exemptNames.length} 道：${exemptNames.join(' / ')}）· ` +
+    `无孤儿门禁 · 无重复表述 · 文档标记 ${MARKED_DOCS.length}/${MARKED_DOCS.length} 对齐`,
 );

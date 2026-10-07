@@ -16,6 +16,9 @@ import { Idempotent } from '../../common/decorators/idempotent.decorator';
 import { OperationLog } from '../../common/decorators/operation-log.decorator';
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { IdempotentInterceptor } from '../../common/interceptors/idempotent.interceptor';
+// ⭐「谁能动钱」是财务域级概念（见该文件头注释）：订单域的两个写端点与财务域
+//    6 个资金端点共用同一份 `FUND_ACTION_ROLES`，不在这里写字面量副本。
+import { FUND_ACTION_ROLES } from '../finance/finance.constants';
 import {
   AdminOrdersQueryDto,
   ForceRefundDto,
@@ -34,8 +37,16 @@ import { OrderAdminService } from './order-admin.service';
  * ⚠️ **路由顺序**：`GET export` 必须声明在 `GET :orderNo` **之前**，
  *    否则 `/admin/orders/export` 会被当成 `orderNo='export'` 吃掉（Nest 按声明顺序匹配）。
  *
- * ⚠️ `@Roles('super_admin','admin','operator','finance')`：财务要看订单（对账要用），
- *    但 `viewer` 不在白名单 —— 只读观察者只有看板。
+ * ⚠️ **两级白名单（勿合并）**：
+ *    - **类级** `'super_admin','admin','operator','finance'` = 「谁能**看**订单」——
+ *      财务要看订单（对账要用）、运营要跟进异常，但 `viewer` 不在白名单（只读观察者只有看板）。
+ *    - **方法级** `FUND_ACTION_ROLES`（**不含 `operator`**）= 「谁能**动钱**」——
+ *      仅 D10 手动改单 / D11 强制退款两个写端点，其余端点沿用类级。
+ *
+ *    ⭐ 分级的理由写在 `finance.constants.ts:23`：operator 的职责是「看见异常并上报」，
+ *      不是「拍板把钱发出去」。2026-10-04 整体复查（报告 ②）发现这两个写端点此前
+ *      **只沿用类级白名单**，与项目自订纪律相反 ⇒ 运营专员可直接强制退款（含佣金反冲
+ *      + 应付冲减）与改单。`@Roles` 用 `getAllAndOverride` 取 ⇒ 方法级**覆盖**类级。
  */
 @ApiTags('后台·订单中心')
 @ApiBearerAuth()
@@ -91,6 +102,7 @@ export class OrderAdminController {
   // ------------------------------------------------------------ D10 手动改单
 
   @Post('manual-adjust')
+  @Roles(...FUND_ACTION_ROLES)
   @UseInterceptors(IdempotentInterceptor)
   @Idempotent({ scope: 'order-manual-adjust', required: false })
   @OperationLog({ module: 'order', action: '手动改单' })
@@ -121,6 +133,7 @@ export class OrderAdminController {
   // ------------------------------------------------------------ D11 强制退款
 
   @Post(':orderNo/force-refund')
+  @Roles(...FUND_ACTION_ROLES)
   @UseInterceptors(IdempotentInterceptor)
   @Idempotent({ scope: 'order-force-refund', required: false })
   @OperationLog({ module: 'order', action: '后台强制退款', targetParam: 'orderNo' })

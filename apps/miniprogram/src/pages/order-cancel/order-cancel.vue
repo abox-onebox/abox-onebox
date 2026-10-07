@@ -21,7 +21,7 @@
               <text class="card__label">团长</text>
               <text class="card__value">{{ leaderName || '本楼团长' }}</text>
             </view>
-            <view v-if="leaderPhone" class="card__row" @tap="callLeader">
+            <view v-if="leaderPhone" class="card__row" @tap="contactLeader">
               <text class="card__label">电话</text>
               <text class="card__value card__value--link">{{ leaderPhone }}</text>
             </view>
@@ -251,9 +251,28 @@ async function confirm(): Promise<void> {
   }
 }
 
-function callLeader(): void {
-  if (!leaderPhone.value) return;
-  uni.makePhoneCall({ phoneNumber: leaderPhone.value, fail: () => undefined });
+/**
+ * 「联系团长」→ **引导**，不拨号
+ *
+ * ⚠️ 2026-10-04 整体复查（报告 ⑩）修正：此处原为
+ *    `uni.makePhoneCall({ phoneNumber: leaderPhone.value, fail: () => undefined })`，
+ *    而 `leaderPhone` 由 `maskPhone()` 派生 —— 服务端对团长手机号**恒脱敏**
+ *    （`order.service.ts:417/451/490`），拨一个 `138****0001` **必然失败**；
+ *    更要命的是 `fail: () => undefined` 把失败**静默吞掉**：既不弹错也不打日志，
+ *    表现为「点了完全没反应」，而开发者工具里拨号本就不可用 ⇒ 测试会当工具限制放过。
+ *
+ * ⭐ 禁用依据**就写在隔壁**：`order-detail.vue:266-268`「团长手机号在出参里已脱敏…
+ *    故『联系团长』**不做 makePhoneCall**」。同一件事在两处给出了两份结论，
+ *    取消页（10-04 批次改过「取消原因」）没同步这条口径。⇒ 此处与详情页取同一写法。
+ */
+function contactLeader(): void {
+  uni.showToast({
+    title: leaderName.value
+      ? `请在楼栋微信群 @${leaderName.value}，或联系平台客服`
+      : '请在楼栋微信群联系团长，或联系平台客服',
+    icon: 'none',
+    duration: 2600,
+  });
 }
 
 function goBack(): void {

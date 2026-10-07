@@ -1042,6 +1042,16 @@ async function main() {
   // 连根回收（Windows 下 shell:true 只起一层 cmd.exe，必须 taskkill /T 才能收掉 ts-node）
   await stopApiServer(server, PORT);
 
+  // ⭐ 0 条断言必须**硬失败**（2026-10-04 整体复查 · 报告 ⑧）
+  //    此前 `通过 0/0 · 全绿 ✅` + exit 0 是一条**合法**的退出路径：某次改动让一整节
+  //    被跳过时，114 会静默掉到 0 而门禁照样绿。0 条不是「全过」，是**链路根本没执行**。
+  //    （外层 `gate.mjs` 的 `EXPECT_MIN` 另有一道规模下限，两者是同一缺陷的两层防护。）
+  if (results.length === 0) {
+    log('\n✘ 一条断言都没跑（0/0）—— 这不是「全绿」，是链路根本没执行。');
+    log('  常见原因：前置失败被异常路径吞掉 / 服务没起来 / 某一节被条件整体跳过。');
+    process.exit(1);
+  }
+
   const failed = results.filter((r) => !r.pass);
   log('\n──────── 汇总 ────────');
   log(`通过 ${results.length - failed.length}/${results.length}` + (failed.length ? ` · 失败：${failed.map((f) => f.name).join(' | ')}` : ' · 全绿 ✅'));

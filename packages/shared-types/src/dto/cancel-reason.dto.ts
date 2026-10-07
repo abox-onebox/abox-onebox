@@ -85,5 +85,13 @@ export const CANCEL_REASON_LABEL: Record<string, string> = {
   timeout_unpaid: '超时未支付（系统截单）',
 };
 
-/** 取消理由补充说明的最大长度（与 `cancel_note` 列长一致） */
+/**
+ * 取消理由补充说明的**接口校验上限**
+ *
+ * ⚠️ 2026-10-04 整体复查（报告 28）更正：此处原注释写「与 `cancel_note` 列长 **一致**」，
+ *    是**错的** —— 列是 `VARCHAR(128)`，这里卡 100，是**刻意留 28 字余量**
+ *    （迁移 `1700000000004-cancel-reason.ts` 与实体 `order.entity.ts:148-150` 均可复核）。
+ *    留余量的理由：将来若要在说明后追加「（由后台补录）」之类的后缀，不必改列。
+ *    ⇒ 两个数**不该**被拉平；校验上限只收紧到 100，落库侧容到 128。
+ */
 export const CANCEL_NOTE_MAX = 100;

@@ -519,9 +519,48 @@ const REPORT_RE = {
   'e2e:m2': [/^通过\s+\d+\/\d+.*$/m],
   'e2e:m3': [/^通过\s+\d+\/\d+.*$/m],
   'errcode:message': [/^✔ 错误码文案全覆盖.*$/m],
+  // icons:lock：先看自证汇总（无条件前置跑），再看覆盖率**分母**（0 样本 = 判据空转）
+  'icons:lock': [/^\s*\[自证\] 汇总 \d+\/\d+.*$/m, /^③ 覆盖率：\s*\d+\/\d+.*$/m],
   // e2e:msg：先看自证是否通过，再看判据结果与覆盖规模（比较点数）
   'e2e:msg': [/^✔ 自证 \d+\/\d+.*$/m, /^✔ e2e message 断言全覆盖.*$/m],
 };
+
+/**
+ * ⭐ e2e 断言数**下限**（2026-10-04 整体复查 · 报告 ⑧）
+ *
+ * 背景：三份 e2e 的收尾是 `log('通过 X/Y')` + `exit(failed.length ? 1 : 0)` ——
+ * **`Y === 0` 时会打印「通过 0/0 · 全绿 ✅」并 exit 0**。某次改动让一整节被跳过时，
+ * `1335` 会静默掉到 1300（乃至 0）而门禁照样全绿；基线 114/150/1335 此前
+ * **只写在文档里**，没有任何机械断言 —— 而文档是不会被执行的那一份。
+ *
+ * 这正是历史上「一条 e2e 断言恒红 17 天无人发现」的镜像面：那次是恒红被淹没，
+ * 这次是**缩水 / 恒绿**被淹没。
+ *
+ * ⚠️ 阈值**只允许上升**：删断言的人必须显式来改这里并写明理由，
+ *    否则「悄悄少跑 200 条」与「全绿」在汇总里完全同形。
+ */
+const EXPECT_MIN = {
+  'e2e:m1': 114,
+  'e2e:m2': 150,
+  'e2e:m3': 1335,
+};
+
+/** 返回 null = 达标；否则返回给人看的原因 */
+function checkMinAssertions(name, out) {
+  const min = EXPECT_MIN[name];
+  if (min == null) return null;
+  const m = out.match(/通过\s+(\d+)\/(\d+)/);
+  if (!m) return `未找到「通过 X/Y」汇总行 ⇒ 无法确认断言规模（下限 ${min}）`;
+  const total = Number(m[2]);
+  if (total < min) {
+    return (
+      `断言总数 ${total} < 下限 ${min}（缩水 ${min - total} 条）—— ` +
+      `覆盖面退化与「全绿」在汇总里同形，故此处必须硬失败。` +
+      `若为刻意删减，请来改 gate.mjs 的 EXPECT_MIN 并写明理由`
+    );
+  }
+  return null;
+}
 
 function reportOf(r) {
   const out = r.out ?? '';
@@ -585,15 +624,19 @@ function run(name) {
 
   const stdout = (r.stdout ?? '').trim();
   const stderr = (r.stderr ?? '').trim();
-  const ok = r.status === 0;
+  const combined = [stdout, stderr].filter(Boolean).join('\n');
+  let ok = r.status === 0;
+  // ⭐ 断言规模下限（报告 ⑧）：脚本自己 exit 0，但覆盖面缩了 ⇒ 由这里判红
+  const minErr = ok ? checkMinAssertions(name, combined) : null;
+  if (minErr) ok = false;
 
   purgeTrash(trashed);
 
   if (!ok) {
-    const combined = [stdout, stderr].filter(Boolean).join('\n');
     const tail = combined.split('\n').slice(-40).join('\n');
     console.log(`\n─── ${name} ✘ exit=${r.status} (${ms}ms) ───`);
     console.log(tail);
+    if (minErr) console.log(`\nℹ 断言规模下限未达标：${minErr}`);
     const hint = explainFailure(combined);
     if (hint) console.log(hint);
   }

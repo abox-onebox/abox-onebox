@@ -4,6 +4,7 @@ import { Brackets, In, Repository, SelectQueryBuilder } from 'typeorm';
 
 import {
   CANCEL_REASON_LABEL,
+  CANCEL_SOURCE,
   CANCEL_SOURCE_LABEL,
   ORDER_STATUS_VIEW,
   OrderStatus,
@@ -669,8 +670,24 @@ export class OrderAdminService {
           ? ((CANCEL_SOURCE_LABEL as Record<string, string>)[o.cancelSource] ?? o.cancelSource)
           : null,
         cancelReason: o.cancelReason ?? null,
+        /**
+         * ⭐ 文案表**按 `cancelSource` 分派** —— 三来源的 reason 本就不是一个枚举
+         * （理由见 `cancel-reason.dto.ts` 头注「为什么三处的 reason 不强行统一成一套枚举」）：
+         *   - `user` / `system` → `CANCEL_REASON_LABEL`（not_in_office / timeout_unpaid …）
+         *   - `leader`          → `REFUND_REASON_LABEL`（quality / missing …）—— 团长代退
+         *     沿用其既有的 `RefundReasonType`，那是给财务与供应商追责用的，语义更重。
+         *
+         * ⚠️ 2026-10-04 整体复查（报告 3.2）抓到：此前**一律**查 `CANCEL_REASON_LABEL`，
+         *    代退单的 `quality`/`missing` 查不到 ⇒ 后台列表 / 详情 / **导出**三处都显示
+         *    **英文枚举名**，而 `REFUND_REASON_LABEL` 已在本文件 import 却没被用。
+         *    「取消理由用于数据分析」的需求，导出拿到英文等于没闭环。
+         *
+         * 两张表都查不到时**回退原值**（宁可显示英文，也不要把数据吞成空）。
+         */
         cancelReasonText: o.cancelReason
-          ? (CANCEL_REASON_LABEL[o.cancelReason] ?? o.cancelReason)
+          ? ((o.cancelSource === CANCEL_SOURCE.LEADER
+              ? (REFUND_REASON_LABEL as Record<string, string>)
+              : CANCEL_REASON_LABEL)[o.cancelReason] ?? o.cancelReason)
           : null,
         cancelNote: o.cancelNote ?? null,
         createdAt: toBjIso(o.createdAt),

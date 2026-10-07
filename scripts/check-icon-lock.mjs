@@ -514,10 +514,24 @@ function selftest() {
 /* ---------------- 主流程 ---------------- */
 
 function main() {
-  if (process.argv.includes('--selftest')) {
-    console.log('---- 自证 ----');
-    return selftest() ? 0 : 2;
+  // ⭐ 2026-10-04 整体复查（报告 ⑦）：自证此前**只在 `--selftest` 下跑**，
+  //    而 `gate.mjs` 的 cmd 从不带该参数 ⇒ 这 14 条自证在 CI 里**从未执行过一次**。
+  //    头注释却写着「十四组合成样本…任一侧不符即 exit 2」—— 与实际行为矛盾。
+  //
+  //    危害形状：判据一旦失真（正则失配 / 承载变成组件 / 扫描路径变），表现为
+  //    **0 命中 + exit 0 + 「✅ 全部通过」**，与「全对」完全同形。这正是本项目
+  //    「恒 N/A 就是第三种『等于没有检查』」的老教训。
+  //
+  //    ⇒ 改为**无条件前置**：不通过就直接返回 2，不再存在「跳过自证」的路径
+  //      （同仓 `check-design-spec.py` 与 `check-e2e-message-assert.mjs` 都是这个写法）。
+  console.log('---- 自证（无条件前置） ----');
+  const selfOk = selftest();
+  if (!selfOk) {
+    console.log('\n❌ 自证未通过 —— 判据本身已失真，其后的扫描结果不可信');
+    return 2;
   }
+  // `--selftest` 仍保留为「只跑自证」的用法（人工排障用），但不再是跑自证的**唯一**入口
+  if (process.argv.includes('--selftest')) return 0;
 
   const files = walkVue(SRC);
   const results = files.map((f) => scanFile(f, relative(SRC, f).split(sep).join('/')));
@@ -552,8 +566,16 @@ function main() {
   console.log(`②-c 直取字符表：${charTable.length} 处（唯一许可形态 = import 语句）`);
   console.log(`⑥ ${ab.level === 'ok' ? 'OK' : ab.level === 'warn' ? 'WARN' : 'BAD'} ${ab.msg}`);
 
+  // ⭐ 样本下限（报告 ⑦）：上面每一条 dump 在 0 样本时都打印「0」，与「全部达标」同形。
+  //    扫描面变空（SRC 路径写错 / 文件被挪走 / 承载方式变了）必须**算未达标**，
+  //    否则本门禁会退化成一个永远说 ✅ 的空壳。
+  const noSample = [];
+  if (files.length === 0) noSample.push('扫描到 0 个 .vue 文件');
+  if (interpTotal === 0) noSample.push('模板插值图标 0 个（③ 覆盖率的分母为 0）');
+  if (noSample.length) console.log(`\n❌ 样本为 0，判据并未真正执行：${noSample.join(' / ')}`);
+
   const bad_ =
-    emoji.length + bare.length + script.length + charTable.length + bareInterp.length + badTier.length + tierIssues.length + bareArrow.length + (ab.level === 'bad' ? 1 : 0);
+    emoji.length + bare.length + script.length + charTable.length + bareInterp.length + badTier.length + tierIssues.length + bareArrow.length + (ab.level === 'bad' ? 1 : 0) + noSample.length;
   console.log(`\n${bad_ === 0 ? '✅ 全部通过' : `❌ 共 ${bad_} 项未达标`}`);
   return bad_ === 0 ? 0 : 1;
 }
