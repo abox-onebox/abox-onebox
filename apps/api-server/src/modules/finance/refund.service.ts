@@ -350,7 +350,14 @@ export class RefundService {
           orderStatusBefore: order.status,
         }),
       );
-      return this.settleRefundDb(m, order, refund);
+      // ⭐ 2026-10-07 整体复查③：D11 是取消三列**唯一的写入机会**（它没有「申请」段）。
+      //   `cancel_reason` 落 `ab_refund.reason_type` 同款取值（quality/missing/…），
+      //   `cancel_note` 落运营填的原因（列 VARCHAR(128)，`input.reason` 校验上限 256 ⇒ 须截断）。
+      return this.settleRefundDb(m, order, refund, {
+        source: CANCEL_SOURCE.ADMIN,
+        reason: refund.reasonType ?? null,
+        note: input.reason.slice(0, 128),
+      });
     });
 
     this.logger.warn(
@@ -699,6 +706,18 @@ export class RefundService {
     m: EntityManager,
     order: Order,
     refund: Refund,
+    /**
+     * ⭐ 2026-10-07 整体复查③：随「占位」一起补写的取消三列。
+     *
+     * **只有 D11 后台强制退款需要传** —— D41（代退审批）的三列早在
+     * 「团长提交代退申请」时（本文件 `:232`，与占位同一次写）就落好了，
+     * 这里再传会用二手信息**覆盖掉一手信息**。
+     *
+     * 不传的后果（即修复前的 D11）：订单推到 `refunded` + 写了 `cancelled_at`，
+     * 但 `cancel_source` 为 NULL；而 `order-admin.service.ts:491-492` 的口径是
+     * 「取消来源空白 = 未取消」⇒ **后台强制退款这一整类在运营取数时凭空消失**。
+     */
+    cancelMeta?: { source: string; reason: string | null; note: string | null },
   ): Promise<{ refund: Refund; wxFen: number; balanceFen: number; reversal: ReversalResult }> {
     const now = new Date();
     const wxFen = toFen(Number(order.payAmount));
@@ -715,6 +734,15 @@ export class RefundService {
       .set({
         status: OrderStatus.REFUNDED,
         cancelledAt: now,
+        // ⭐ 与占位同一次写：要么全写（订单终态 + 取消三列），要么一行都不写。
+        //   拆成两次更新就会出现「已退款但 cancel_source 为空」的中间态。
+        ...(cancelMeta
+          ? {
+              cancelSource: cancelMeta.source,
+              cancelReason: cancelMeta.reason,
+              cancelNote: cancelMeta.note,
+            }
+          : {}),
         version: () => 'version + 1',
       })
       .where('id = :id AND status IN (:...ok)', {
@@ -1003,7 +1031,7 @@ export class RefundService {
     if (!order) return { queued: false, reason: 'order_not_found' };
 
     const payload = await this.dataSource.transaction(async (m) => {
-      const row = await this.buildRefundRow(m, order, amountFen, reason);
+      const row = await this.buildRefundRow(m, order, reason);
       if (!row) return null;
       const p: RefundApplyPayload = {
         refundId: Number(row.id),
@@ -1045,13 +1073,20 @@ export class RefundService {
    *
    * ⚠️ **只建单、不调通道** —— 通道调用属事务外（`deliverOrQueueRefund`），
    *    这是 M4-3 的核心纪律：外部副作用绝不能与 DB 事务同生共死。
+   *
+   * ## `amount` 的口径（2026-10-07 整体复查④修正）
+   * ⭐ 记**用户实际付出去的钱**（`refundableYuan` = 总额 − 优惠），**含余额抵扣**，
+   *    不是「微信实付」。此前写成 `money(wxFen / 100)`，而代退路径 `:192` 早已用
+   *    `refundableYuan`（那里的注释还标着「M3-3 修正：此前取 payAmount 漏了余额抵扣」）。
+   *    同一笔钱、两条建单路径、两个口径 ⇒ 财务按 `ab_refund` 汇总时
+   *    **系统性少算余额抵扣部分**。
+   *    ⚠️ 这个差异被 e2e 掩盖至今：取消用例全是纯微信支付（`balanceUsed = 0`），
+   *       两口径恰好相等 —— 这不是巧合，是夹具设计的问题。
+   *
+   *    微信**实际**要退多少由调用方在 `RefundApplyPayload.wxFen` 里单独带
+   *    （微信只能退实付；余额部分走 `refundBalance` 回充，不经通道）。
    */
-  async buildRefundRow(
-    m: EntityManager,
-    order: Order,
-    wxFen: number,
-    reason: string,
-  ): Promise<Refund | null> {
+  async buildRefundRow(m: EntityManager, order: Order, reason: string): Promise<Refund | null> {
     const existed = await m.findOne(Refund, {
       where: { orderId: Number(order.id), status: Not(RefundStatus.REJECTED) },
     });
@@ -1065,7 +1100,8 @@ export class RefundService {
         userId: Number(order.userId),
         teamLeaderId: order.teamLeaderId ?? null,
         applySource: RefundApplySource.USER,
-        amount: money(wxFen / 100),
+        // ⭐ 与代退路径同口径（见本方法 JSDoc）：可退总额，含余额抵扣
+        amount: money(refundableYuan(order)),
         reasonType: RefundReasonType.OTHER,
         reason: reason.slice(0, 256),
         status: RefundStatus.REFUNDING,

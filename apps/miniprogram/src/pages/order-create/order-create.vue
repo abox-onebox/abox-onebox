@@ -119,8 +119,7 @@
                付款前 0 处说明，判定不通过（2026-09-25 补）。 -->
           <text class="pickup-row__hint">
             <text class="abi abi-16">{{ I.info }}</text>
-            截单后（T-1
-            24:00）订单进入备餐流程，不支持自助退款，需由团长发起代退申请，平台审批后原路退回。
+            {{ cutoffRefundHint }}
           </text>
         </view>
 
@@ -178,7 +177,7 @@ import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
 import { useWechatPay } from '@/composables/use-wechat-pay';
 import { ORDER_MAX_QUANTITY } from '@/constants';
-import { fenToYuan, uuid } from '@/utils/format';
+import { fenToYuan, formatTime, uuid } from '@/utils/format';
 import { buildUrl, navigateBack, navigateTo, pageQuery, redirectTo } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
@@ -224,6 +223,20 @@ const canSubmit = computed(() => !!daily.value?.canOrder && !submitting.value);
  * ⚠️ 后端未下发聚合字段时（如线上仍是旧版 API）退化成只报单数 —— 直接插值
  *    `existingQuantity` 会渲染出「已订 份」这种空档。
  */
+/**
+ * 「截单后不能自助退」的说明 —— **时刻从响应取**，端上不写死
+ *
+ * ⭐ 2026-10-07 整体复查⑰：此句原写死「截单后（T-1 24:00）」（与首页横幅同一族）。
+ *    `cutoffAt` 由服务端按生效时间轴派生且**后台可改**，写死就是第二份时刻定义。
+ *    ⚠️ 取不到时**退化成不含时刻的表述**（「截单后…」），而不是回落写死的 24:00 ——
+ *       回落值等于把同一个缺陷换个位置留下。
+ */
+const cutoffRefundHint = computed(() => {
+  const t = formatTime(daily.value?.cutoffAt);
+  const when = t && t !== '--' ? `截单后（T-1 ${t}）` : '截单后';
+  return `${when}订单进入备餐流程，不支持自助退款，需由团长发起代退申请，平台审批后原路退回。`;
+});
+
 const orderedSummary = computed(() => {
   const n = daily.value?.existingOrderCount ?? 0;
   const q = daily.value?.existingQuantity ?? 0;

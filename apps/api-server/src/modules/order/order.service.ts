@@ -576,12 +576,7 @@ export class OrderService {
             await this.refundBalance(m, userId, balanceUsedFen, order.orderNo);
           }
           if (payAmountFen > 0) {
-            const row = await this.refundService.buildRefundRow(
-              m,
-              order,
-              payAmountFen,
-              '截单前用户自助取消',
-            );
+            const row = await this.refundService.buildRefundRow(m, order, '截单前用户自助取消');
             if (row) {
               payload = {
                 refundId: Number(row.id),
@@ -1222,21 +1217,49 @@ export class OrderService {
     }
 
     const now = new Date();
+    let applied = false;
     await this.dataSource.transaction(async (m: EntityManager) => {
+      // ⭐ 先抢占状态（**带守卫**），再谈扣钱。
+      //    事务外的 `order` 只是一份**快照**：从读到写之间，订单可能已被
+      //    · 用户自助取消（U11）/ 团长代退 → `cancelled`
+      //    · 截单跑批 → `cancelled`
+      //    · 另一次重复的支付回调 → 已是 `paid`
+      //    此前这里写成 `.update({ id }, { status: PAID })` —— **WHERE 只有 id**，
+      //    于是上面的任何一种并发都会把订单**写回 paid**（已取消的单复活），
+      //    而 `version: (order.version ?? 0) + 1` 用的是内存快照值，乐观锁等于没上。
+      //    ⭐ 全仓 11 处订单写入点，本处曾是全仓**唯一**不带 status 条件的
+      //       （同文件 U11 自助取消 `:545` 即是正确范式），2026-10-07 整体复查①补齐。
+      const claim = await m
+        .createQueryBuilder()
+        .update(Order)
+        .set({
+          status: OrderStatus.PAID,
+          paidAt: now,
+          // ⭐ SQL 表达式自增，不用内存快照值
+          version: () => 'version + 1',
+        })
+        .where('id = :id AND status = :from', {
+          id: Number(order.id),
+          from: OrderStatus.PENDING_PAY,
+        })
+        .execute();
+
+      if ((claim.affected ?? 0) === 0) {
+        // 并发落空：**不扣余额、不写流水**（否则就是「订单已取消，钱还被扣了」）。
+        // 这是**幂等成功**不是错误 —— 微信会重推通知，重复到达必须安全返回。
+        return;
+      }
+      applied = true;
+
+      // ⭐ 事务内重读：`balanceUsed` 可能与快照不同（D10 改单可改抵扣额）。
+      //    本文件 `:701-710`（`cutoffByDate`）已立此纪律，此处照办。
+      const fresh = await m.findOne(Order, { where: { id: order.id } });
+
       // 余额抵扣由冻结转为实际支出（T2）
-      const balanceUsedFen = toFen(order.balanceUsed);
+      const balanceUsedFen = toFen(fresh?.balanceUsed ?? 0);
       if (balanceUsedFen > 0) {
         await this.consumeBalance(m, order.userId, balanceUsedFen, order.orderNo);
       }
-
-      await m.getRepository(Order).update(
-        { id: order.id },
-        {
-          status: OrderStatus.PAID,
-          paidAt: now,
-          version: (order.version ?? 0) + 1,
-        },
-      );
 
       // 支付流水（永久保留 · 合规要求）；uk_payment_order 保证一单一条
       const logs = m.getRepository(PaymentLog);
@@ -1265,6 +1288,19 @@ export class OrderService {
         );
       }
     });
+
+    if (!applied) {
+      // 并发落空后重读一次，把「为什么落空」说清楚 —— 对账告警要能定位。
+      // ⚠️ 这里**不**自动退款：上面的「延迟到账」分支（事务外已见 `cancelled`）已覆盖
+      //    绝大多数情况；本分支是「取消与回调**真正并发**」的窄窗口，自动退款会把
+      //    同一笔钱退两次的风险引进事务边界，故只报错日志交人工对账。
+      const after = await this.orderRepo.findOne({ where: { orderNo } });
+      this.logger.error(
+        `⚠️ 支付回调并发落空（未入账、未扣余额、未写流水）orderNo=${orderNo} ` +
+          `txn=${transactionId} 当前状态=${after?.status ?? '-'} 实收=${amountFen}分`,
+      );
+      return { changed: false, reason: `status_changed:${after?.status ?? '-'}` };
+    }
 
     this.logger.log(`订单已支付 orderNo=${orderNo} 实付=${amountFen}分 txn=${transactionId}`);
     return { changed: true };
@@ -1359,6 +1395,10 @@ export class OrderService {
       paidAt: toBjIso(order.paidAt),
       failReason:
         order.status === OrderStatus.CANCELLED ? '订单已取消（超时未支付或主动取消）' : null,
+      // ⭐ 截单时刻（2026-10-07 复查⑰）：端上支付结果页原先**写死「今晚 24:00」**，
+      //    而截单是可配的生效时间轴 ⇒ 改由服务端下发，与 `MealService.daily.cutoffAt`
+      //    同源（`cutoffAtOf` → `currentTimeline().cutoff`）。端上拿不到就整行不显示。
+      cutoffAt: toBjIso(cutoffAtOf(order.mealDate)),
     };
   }
 

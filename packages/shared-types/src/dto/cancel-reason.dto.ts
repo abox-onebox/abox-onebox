@@ -40,6 +40,16 @@ export const CANCEL_SOURCE = {
   SYSTEM: 'system',
   /** 团长代退 */
   LEADER: 'leader',
+  /**
+   * 后台强制退款（D11 · 客诉兜底通道）
+   *
+   * ⭐ 2026-10-07 整体复查③新增：此前 `settleRefundDb` 把订单推到 `refunded` 并写
+   *   `cancelled_at`，却**一列 cancel_\* 都不写**，而后台导出的口径是
+   *   「取消来源空白 = 未取消」⇒ **后台强制退款这一整类在运营取数时被当成没取消**。
+   *   ⚠️ 注意它**不是**「取消」而是「退款」，但统计上必须可区分，否则与
+   *   用户自助取消混为一谈。
+   */
+  ADMIN: 'admin',
 } as const;
 
 export type CancelSource = (typeof CANCEL_SOURCE)[keyof typeof CANCEL_SOURCE];
@@ -51,6 +61,7 @@ export const CANCEL_SOURCE_LABEL: Record<CancelSource, string> = {
   user: '用户自助',
   system: '系统截单',
   leader: '团长代退',
+  admin: '后台强制退款',
 };
 
 /**

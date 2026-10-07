@@ -514,10 +514,18 @@ onMounted(load);
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: $space-2;
     font-size: $fs-caption;
+  }
+}
 
-    @media (max-width: 1100px) {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+/**
+ * ⭐ 2026-10-07 整体复查⑱：这里原写 `@media (max-width: 1100px)` ——
+ *    那是**第二份断点**：真源是 `use-narrow.ts` 的 `NARROW_MAX = 768`（**数值还不一样**），
+ *    而 CSS 断点与 JS 断点是两份表述，**任何门禁都看不见它们的漂移**。
+ *    ⇒ 改挂 `.ab-layout.is-narrow`（由 `layouts/default-layout.vue` 挂上），断点只有一份。
+ */
+.ab-layout.is-narrow {
+  .gcard__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

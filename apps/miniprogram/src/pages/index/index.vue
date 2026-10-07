@@ -7,7 +7,8 @@
     <view v-if="daily" class="countdown">
       <text class="countdown__label">距离截单还剩</text>
       <text class="countdown__num">{{ countdownText }}</text>
-      <text class="countdown__sub">今晚 24:00 后将无法下单</text>
+      <!-- ⭐ 时刻从响应取（`daily.cutoffAt`）—— 曾写死 `24:00`（2026-10-07 复查⑰） -->
+      <text v-if="cutoffTimeText" class="countdown__sub">{{ cutoffTimeText }} 后将无法下单</text>
     </view>
 
     <!-- 首屏骨架 -->
@@ -205,7 +206,7 @@ import { ApiError, CODE_BUILDING_UNBOUND } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
 import { buildUrl, navigateTo } from '@/utils/router';
-import { dishIcon, formatMealDate } from '@/utils/format';
+import { dishIcon, formatMealDate, formatTime } from '@/utils/format';
 import { ORDER_MAX_QUANTITY } from '@/constants';
 import { useLeaderStore } from '@/stores/leader';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
@@ -236,6 +237,22 @@ const emptyText = computed(() => {
 });
 
 const emptyHint = computed(() => loadError.value?.message ?? '选好办公楼后即可查看次日套餐');
+
+/**
+ * 截单时刻（`HH:mm`）—— **从响应取**，端上不写死
+ *
+ * ⭐ 2026-10-07 整体复查⑰：本行原写死「今晚 24:00 后将无法下单」。
+ *    而 `cutoffAt` 是服务端按**生效时间轴**派生的（后台可改截单时刻），
+ *    写死就会出现「后台已把截单改成 23:00、横幅还写 24:00」——
+ *    且改 09:30 那种第二份定义时全仓门禁**一条都不红**（`dup:const` 只拦 `'11:30'`）。
+ *
+ * ⚠️ 取不到时返回空串 ⇒ **整行不显示**，而不是回落到某个写死值 ——
+ *    回落值就是新的硬编码，等于把同一个缺陷换个位置留下来。
+ */
+const cutoffTimeText = computed(() => {
+  const t = formatTime(daily.value?.cutoffAt);
+  return t && t !== '--' ? t : '';
+});
 
 /** 空态主按钮：未绑楼 → 去选楼；其余 → 重新加载 */
 const emptyActionText = computed(() => (needsBuilding.value ? '选择办公楼' : '重新加载'));

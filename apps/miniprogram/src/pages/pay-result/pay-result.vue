@@ -23,9 +23,10 @@
           <text class="info__label">支付方式</text>
           <text class="info__value">微信支付</text>
         </view>
-        <view class="info__row">
+        <!-- ⭐ 时刻从响应取（`result.cutoffAt`）—— 曾写死「今晚 24:00」（2026-10-07 复查⑰） -->
+        <view v-if="cutoffText" class="info__row">
           <text class="info__label">截单时间</text>
-          <text class="info__value">今晚 24:00</text>
+          <text class="info__value">{{ cutoffText }}</text>
         </view>
         <view class="info__row">
           <text class="info__label">订单状态</text>
@@ -90,7 +91,7 @@ import type { PayResultView } from '@abox/shared-types';
 import { ApiError } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useWechatPay } from '@/composables/use-wechat-pay';
-import { fenToYuan, formatDateTime } from '@/utils/format';
+import { fenToYuan, formatDateTime, formatTime } from '@/utils/format';
 import { buildUrl, navigateTo, pageQuery, switchTab } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
@@ -103,6 +104,17 @@ const orderNo = ref('');
 
 const paid = computed(() => result.value?.paid === true);
 const canRetry = computed(() => result.value?.status === 'pending_pay');
+
+/**
+ * 截单时刻（`HH:mm`）—— **从响应取**，端上不写死
+ *
+ * ⭐ 2026-10-07 复查⑰：本行原写死「今晚 24:00」（`cutoffAt` 是本次为此新增的下发字段）。
+ *    ⚠️ 取不到时返回空串 ⇒ **整行不显示**，绝不回落写死值。
+ */
+const cutoffText = computed(() => {
+  const t = formatTime(result.value?.cutoffAt);
+  return t && t !== '--' ? t : '';
+});
 
 const heroTitle = computed(() => {
   const r = result.value;

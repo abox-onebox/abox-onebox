@@ -36,7 +36,7 @@
  * 端口：默认 3101（`E2E_PORT` 可覆盖）。与 e2e-m1 同默认值不会互撞——`gate.mjs verify`
  *       串跑时，前一个脚本回收进程树后会**确认端口释放**才返回；详见 scripts/lib/e2e-server.mjs
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 import {
@@ -1012,10 +1012,27 @@ async function main() {
 
   // ==========================================================================
   // 5. M2 遗留补遗：U17 客服入口 · L21 我的推荐 · L22 晋级审计 · L20 退出团长
-  //    （2026-09-15 裁定：一期不做在线客服 → 一律引导加客服微信人工处理）
+  //    ⚠️ 2026-10-07 更正：上面那句「一期不做在线客服」**已过时** ——
+  //       客服现为**三档降级**（`wechat_kf` 微信客服 / `contact` 原生客服消息 /
+  //       `none` 复制微信号兜底），端上是同一个按钮、不同唤起方式。
   // ==========================================================================
 
   // ---- 5.1 U17 客服入口配置
+  /**
+   * ⭐ 客服三档的**期望集合从真源读**，不在本脚本写第二份枚举 ——
+   *    「同一件事两份表述、约束只写在没人执行的那份」正是本项目反复踩的根因
+   *    （报告 §5 根因①）。同理，下面 `CS_MODES.length > 0` 这条不能省：
+   *    真源结构一变、正则失配就会得到**空集合**，而空集合会让
+   *    `includes()` 恒 false（报红）而不是恒绿 —— 宁可假红也不要假绿。
+   */
+  const CS_MODES = (() => {
+    const src = readFileSync(
+      new URL('../packages/shared-types/src/enums/customer-service.ts', import.meta.url),
+      'utf8',
+    );
+    const block = /export enum CustomerServiceMode \{([\s\S]*?)\n\}/.exec(src)?.[1] ?? '';
+    return [...block.matchAll(/=\s*'([a-z_]+)'/g)].map((m) => m[1]);
+  })();
   const support = await call('GET', '/me/support', { token: lming.token });
   const sup = support.body?.data;
   assert(
@@ -1035,6 +1052,16 @@ async function main() {
     sup?.wechatQrcodeUrl === null,
     'U17 未配置二维码 → 返回 null（端上隐藏图片位，不伪造图片）',
     `qrcode=${JSON.stringify(sup?.wechatQrcodeUrl)}`,
+  );
+  assert(
+    CS_MODES.length > 0 && CS_MODES.includes(sup?.csMode),
+    '⭐ U17 客服档位 `csMode` 必为真源枚举之一（三档降级：微信客服 / 原生客服消息 / 复制微信号）',
+    `真源=${JSON.stringify(CS_MODES)} 实得=${JSON.stringify(sup?.csMode)}`,
+  );
+  assert(
+    sup?.csMode === 'wechat_kf' || (sup?.csCorpId === null && sup?.csUrl === null),
+    '⭐ U17 非 `wechat_kf` 档 ⇒ `csCorpId` / `csUrl` **恒 null**（配一半也不下发；端上因此无需判「配了一半」）',
+    `csMode=${sup?.csMode} corpId=${JSON.stringify(sup?.csCorpId)} url=${JSON.stringify(sup?.csUrl)}`,
   );
   const supportAnon = await call('GET', '/me/support');
   assert(

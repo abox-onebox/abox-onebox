@@ -28,6 +28,15 @@ export interface PayResultView {
   paidAt: string | null;
   /** 支付失败原因（仅失败时有值） */
   failReason: string | null;
+  /**
+   * 该订单所属出餐日的**截单时刻**（北京时间 ISO）
+   *
+   * ⭐ 2026-10-07 整体复查⑰新增：支付结果页原在**端上写死**「今晚 24:00」。
+   *   截单是**可配**的生效时间轴（`currentTimeline().cutoff`），端上写死就是
+   *   第二份时刻定义 —— 后台把截单改成 23:00 后，页面仍写 24:00，且无一道门禁会红。
+   *   ⇒ 改由服务端下发，与 `HomeDailyResult.cutoffAt` **同源**（`cutoffAtOf`）。
+   */
+  cutoffAt: string | null;
 }
 
 /** W1 支付结果通知（微信 → 服务端；mock 模式下为等价明文结构） */

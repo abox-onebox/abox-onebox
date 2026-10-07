@@ -55,9 +55,12 @@
         <text class="promise__line"
           ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 无需填地址、随团长订餐</text
         >
+        <!-- ⭐ 2026-10-07 复查⑰：原写「每天 14:00 - 24:00 可预订明日套餐」。
+             开团/截单是本仓**可配**的生效时间轴，而 `LeaderInviteLanding` 只下发
+             `deliverAt`（送达），没有开团与截单 ⇒ 这里**不写时刻**，而不是抄一份写死的。
+             （真要显示时段，应由服务端在 landing 里下发，与本页 `deliverAt` 同源。） -->
         <text class="promise__line"
-          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 每天 14:00 - 24:00
-          可预订明日套餐</text
+          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 可预订明日套餐，随团长统一取餐</text
         >
       </view>
 

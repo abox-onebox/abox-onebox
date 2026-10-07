@@ -30,6 +30,7 @@ import { Order, PaymentLog, Refund } from '../../database/entities/order.entity'
 import { OperationLog } from '../../database/entities/system.entity';
 import { Dish, Supplier } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
+import { FUND_ACTION_ROLES } from '../finance/finance.constants';
 import { RefundService } from '../finance/refund.service';
 import { adminStatusText, buildTimeline } from './order-state-machine';
 import { OrderService } from './order.service';
@@ -47,6 +48,44 @@ import { AdminOrdersQueryDto, ManualAdjustDto } from './dto/order-admin.dto';
  * `pending_pay` 待支付超时 + `refund_applying` 退款待审批 + `refunding` 退款处理中。
  * **`cancelled` 不算异常** —— 它是一个正常终态，把它算进去会让这个 Tab 永远噪杂。
  */
+/**
+ * 取消理由 → 中文文案
+ *
+ * ⭐ 两张表的**取值域不同**，取决于「这一列是谁写的」：
+ *   · `leader`（团长代退）/ `admin`（后台强制退款）写的是 `RefundReasonType`（quality…）
+ *   · `user`（用户自助）/ `system`（截单）写的是 `CANCEL_REASONS`（not_in_office… / timeout_unpaid）
+ *
+ * 因此**按来源选主表**，但主表查不到时**再兜底另一张** ——
+ * 只按来源分派会在新增来源（如本次的 `admin`）时再次退化成英文，
+ * 那正是报告 §5 根因③「单向箭头只守一半」的形状。
+ *
+ * 两张都查不到则回退原值：宁可显示英文，也不要把数据吞成空。
+ */
+/**
+ * 资金写操作的**角色闸门**（D10 手动改单 / D11 强制退款）
+ *
+ * ⭐ 与这两个端点的 `@Roles(...FUND_ACTION_ROLES)` **同一真源** ——
+ *    出参的「按钮能不能点」与守卫的「点了让不让过」必须一致，
+ *    否则就是「按钮亮着、点了 10003」（2026-10-07 整体复查⑥的形状）。
+ *    财务域的 `canAdjust` / `canAudit` 本就是角色驱动的
+ *    （`balance-admin.service.ts:76`、`withdraw-admin.service.ts:199`），此处取同一写法。
+ */
+const canTakeFundAction = (role?: string | null): boolean =>
+  !!role && (FUND_ACTION_ROLES as readonly string[]).includes(role);
+
+/** 角色不足时给端上的**置灰原因**（与 `canTakeFundAction` 成对使用，别各判一套） */
+const fundRoleBlockReason = (role?: string | null): string | null =>
+  canTakeFundAction(role) ? null : '当前角色无此操作权限（需管理员或财务）';
+
+function cancelReasonLabel(source: string | null | undefined, reason: string): string {
+  const refund = REFUND_REASON_LABEL as Record<string, string>;
+  const cancel = CANCEL_REASON_LABEL as Record<string, string>;
+  const isRefundSide = source === CANCEL_SOURCE.LEADER || source === CANCEL_SOURCE.ADMIN;
+  const first = isRefundSide ? refund : cancel;
+  const second = isRefundSide ? cancel : refund;
+  return first[reason] ?? second[reason] ?? reason;
+}
+
 @Injectable()
 export class OrderAdminService {
   private readonly logger = new Logger('OrderAdminService');
@@ -127,7 +166,7 @@ export class OrderAdminService {
   // ==========================================================================
   // D9 · 订单详情 + 操作日志
   // ==========================================================================
-  async detail(orderNo: string) {
+  async detail(orderNo: string, viewerRole?: string) {
     const order = await this.orderRepo.findOne({ where: { orderNo } });
     if (!order) throw new BizException(ErrorCode.ORDER_NOT_FOUND);
 
@@ -240,10 +279,14 @@ export class OrderAdminService {
         : null,
       /** 端上据此置灰按钮并显示原因 —— 口径唯一在服务端，不由前端各判一套 */
       actions: {
-        canAdjust: this.adjustBlockReason(order) === null,
-        adjustBlockReason: this.adjustBlockReason(order),
-        canForceRefund: this.refundBlockReason(order) === null,
-        refundBlockReason: this.refundBlockReason(order),
+        // ⭐ 2026-10-07 整体复查⑥：`can*` 此前**只算订单状态、不算角色** ⇒
+        //    operator 打开详情，改价 / 强制退款按钮**亮着**，点了才吃 10003。
+        //    而 D10/D11 的 `@Roles` 已在同批次收窄到 `FUND_ACTION_ROLES`，
+        //    「亮着但点不动」只会更常见 ⇒ 出参与守卫必须同源。
+        canAdjust: this.adjustBlockReason(order) === null && canTakeFundAction(viewerRole),
+        adjustBlockReason: this.adjustBlockReason(order) ?? fundRoleBlockReason(viewerRole),
+        canForceRefund: this.refundBlockReason(order) === null && canTakeFundAction(viewerRole),
+        refundBlockReason: this.refundBlockReason(order) ?? fundRoleBlockReason(viewerRole),
         refundableFen,
       },
       operationLogs: logs.map((l) => ({
@@ -684,11 +727,7 @@ export class OrderAdminService {
          *
          * 两张表都查不到时**回退原值**（宁可显示英文，也不要把数据吞成空）。
          */
-        cancelReasonText: o.cancelReason
-          ? ((o.cancelSource === CANCEL_SOURCE.LEADER
-              ? (REFUND_REASON_LABEL as Record<string, string>)
-              : CANCEL_REASON_LABEL)[o.cancelReason] ?? o.cancelReason)
-          : null,
+        cancelReasonText: o.cancelReason ? cancelReasonLabel(o.cancelSource, o.cancelReason) : null,
         cancelNote: o.cancelNote ?? null,
         createdAt: toBjIso(o.createdAt),
         paidAt: toBjIso(o.paidAt),

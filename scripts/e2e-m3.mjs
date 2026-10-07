@@ -10535,6 +10535,27 @@ async function main() {
         '⭐ §28 状态已落库：`pending_pay → cancelled`、`paid → cut_off`（**不可逆**锁定），原本已取消的不受影响',
         st28.map((r) => `${String(r.order_no).slice(-2)}=${r.status}`).join(' '),
       );
+      // ⭐ 2026-10-07 复查（报告 3.3）：`cancel_source` 三来源此前只测了 `user`，
+      //    `system`（截单清未支付）**零回归** —— 而它是取消统计的**核心维度**。
+      const src28 = readRows(
+        'SELECT order_no, cancel_source, cancel_reason FROM ab_order WHERE order_no LIKE ? ORDER BY order_no',
+        [`${PREFIX28}P%`],
+      );
+      const src28of = new Map(src28.map((r) => [String(r.order_no), r]));
+      assert(
+        src28of.get(`${PREFIX28}P1`)?.cancel_source === 'system' &&
+          src28of.get(`${PREFIX28}P1`)?.cancel_reason === 'timeout_unpaid' &&
+          src28of.get(`${PREFIX28}P2`)?.cancel_source === 'system' &&
+          src28of.get(`${PREFIX28}P2`)?.cancel_reason === 'timeout_unpaid' &&
+          (src28of.get(`${PREFIX28}P3`)?.cancel_source ?? null) === null,
+        '⭐ §28 截单取消**写全**取消三列（`cancel_source=system` + `cancel_reason=timeout_unpaid`），而 `cut_off` 不是取消 ⇒ 三列保持 NULL —— 后台口径「取消来源空白 = 未取消」，漏写会让这一整类在运营取数时凭空消失',
+        src28
+          .map(
+            (r) =>
+              `${String(r.order_no).slice(-2)}=${r.cancel_source ?? 'NULL'}/${r.cancel_reason ?? 'NULL'}`,
+          )
+          .join(' '),
+      );
       const bal28 = readDb('SELECT balance, frozen FROM ab_balance WHERE user_id = ?', [uid28]);
       assert(
         cut28d?.autoCancelled?.releasedBalanceFen === 580 &&

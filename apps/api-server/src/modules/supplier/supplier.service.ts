@@ -19,7 +19,8 @@ import {
   canServeSupplier,
   licenseStateOf as sharedLicenseStateOf,
 } from '../../common/utils/supplier-qualification';
-import { bjDateTime, toBjIso, todayBj, tomorrowBj } from '../../common/utils/time';
+import { currentTimeline, formatTimeOfDay } from '../../common/utils/order-timeline';
+import { bjDateTime, now, toBjIso, todayBj, tomorrowBj } from '../../common/utils/time';
 import { Building, BuildingGroup } from '../../database/entities/building.entity';
 import { DistributionCenter } from '../../database/entities/finance.entity';
 import { MealAssignment, SetMealItem } from '../../database/entities/meal.entity';
@@ -37,10 +38,17 @@ import {
   SupplierWorkbenchQueryDto,
 } from './dto/supplier.dto';
 
-/** 出餐确认截止时刻（出餐日当天 HH:mm）—— 原型 P22「截止时间：09:30」 */
-const CONFIRM_DEADLINE_HOUR = 9;
-const CONFIRM_DEADLINE_MINUTE = 30;
-const CONFIRM_DEADLINE_TEXT = '09:30';
+/**
+ * 出餐确认截止时刻的文案（`HH:mm`）—— 原型 P22「截止时间：09:30」
+ *
+ * ⭐ 2026-10-07 整体复查⑤：此处**原本**是三个裸常量
+ *   （`CONFIRM_DEADLINE_HOUR = 9` / `_MINUTE = 30` / `_TEXT = '09:30'`），
+ *   那是本项目的**第二份时刻定义**：它不在 `BusinessTimeline` 里、没有配置项、没有 cron，
+ *   于是「时刻唯一真相」这道纪律的三个扫描面**一个都扫不到它** ——
+ *   把 09:30 改成 08:00，全仓门禁与 e2e **仍然全绿**。
+ *   ⇒ 现改为从 `currentTimeline().cookConfirmDeadline` 派生，本文件不再有第二个数。
+ */
+const confirmDeadlineText = (): string => formatTimeOfDay(currentTimeline().cookConfirmDeadline);
 
 /** `ab_supplier_dish_center_daily.status` 值域（二态） */
 const DETAIL_PENDING = 'pending';
@@ -216,7 +224,8 @@ export class SupplierService {
     });
 
     const deadlineAt = this.deadlineOf(date);
-    const overdue = Date.now() > deadlineAt.getTime();
+    // ⭐ 同 `assertNotOverdue`：相对现在的判定一律走 `now()`，不用 `Date.now()`
+    const overdue = now().getTime() > deadlineAt.getTime();
     const planTotal = dishes.reduce((s, d) => s + d.planQuantity, 0);
     const confirmedTotal = dishes.reduce((s, d) => s + d.confirmedQuantity, 0);
     const canServe = this.canServe(supplier);
@@ -239,7 +248,7 @@ export class SupplierService {
         canServe,
       },
       deadline: {
-        text: CONFIRM_DEADLINE_TEXT,
+        text: confirmDeadlineText(),
         at: toBjIso(deadlineAt),
         overdue,
         /** 未过点且未全部确认 = 还能确认 */
@@ -257,7 +266,7 @@ export class SupplierService {
         empty: dishes.length === 0,
       },
       notes: {
-        confirmRule: `出餐确认须在出餐日当天 ${CONFIRM_DEADLINE_TEXT} 前完成；提前确认随时可以，过点后系统不再受理。`,
+        confirmRule: `出餐确认须在出餐日当天 ${confirmDeadlineText()} 前完成；提前确认随时可以，过点后系统不再受理。`,
         planFrozen:
           '计划份数由截单后的「楼群已售份数」汇总而来，生成后即冻结；如需调整请联系运营。',
         notForSettlement: '本页份数是生产口径，不做结算依据；应付金额以「结算明细」为准。',
@@ -1011,16 +1020,19 @@ export class SupplierService {
   /** 时间闸门：迟于出餐日 09:30 → 50009（fail-closed） */
   private assertNotOverdue(date: string): void {
     const deadline = this.deadlineOf(date);
-    if (Date.now() <= deadline.getTime()) return;
+    // ⭐ 一切「相对现在」的判定都必须经 `now()`（`time.ts:77-81` 明写此纪律）：
+    //    直接 `Date.now()` 会绕开时钟注入，本地调时间复现「过点补确认」时判据失效。
+    if (now().getTime() <= deadline.getTime()) return;
     throw new BizException(
       ErrorCode.COOK_CONFIRM_OVERDUE,
-      `出餐确认截止时间为出餐日当天 ${CONFIRM_DEADLINE_TEXT}，本次针对 ${date} 的确认已超时。` +
+      `出餐确认截止时间为出餐日当天 ${confirmDeadlineText()}，本次针对 ${date} 的确认已超时。` +
         '为避免记录失真，系统不再受理补确认 —— 请联系运营线下处理。',
     );
   }
 
   private deadlineOf(date: string): Date {
-    return bjDateTime(date, CONFIRM_DEADLINE_HOUR, CONFIRM_DEADLINE_MINUTE);
+    const d = currentTimeline().cookConfirmDeadline;
+    return bjDateTime(date, d.hour, d.minute);
   }
 
   private canServe(s: Supplier): boolean {

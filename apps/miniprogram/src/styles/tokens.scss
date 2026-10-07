@@ -101,7 +101,19 @@ $shadow-card: 0 2rpx 8rpx rgba(110, 84, 53, 0.06);
 
 // ---- 字体（分层：display 楷体 / base 无衬线 / num 等宽）----
 // 手机上没有 KaiTi/楷体（那是 Windows 字体）→ 整条字体栈落空、回退系统黑体，页面观感「失真」。
-// 对策：自带子集字体（GB2312 一级汉字 + 常用符号，woff2 约 583KB），由 scripts/make-font-subset.py 生成。
+//
+// ⚠️⚠️ 2026-10-07 整体复查⑨ **如实更正**：下面那句「对策：自带子集字体」
+//     （由 `scripts/make-font-subset.py` 生成的 583/597 KB woff2）**只对 H5 成立** ——
+//     `@font-face` 被 `/* #ifdef H5 */` 包住，而**小程序的 wxss 不支持本地字体文件路径**
+//     （依据就写在同目录 `icons.scss`：`@font-face` 的 src 只接受**网络地址或 base64**）。
+//     ⇒ mp 端 `'ABoxKai'` **根本没有定义**，字体栈静默回退，而字体文件照旧被打进小程序包
+//       （597 KB，占主包 1.4 MB 的 **42%**，零引用）。
+//       「注释宣称对策已落地、而主端恰恰没生效」——这是本仓最典型的一类失真。
+//
+// ⚠️ **待裁定（γ，两条都要真机构建验证，不要凭推断改）**：
+//     (a) 把**标题字子集**做成 base64 内嵌（与 `icons.scss` 同款），mp 端楷体才真正生效；
+//     (b) 承认 mp 端不用楷体，把字体移出小程序工程（mp 主包立省 597 KB，H5 保持现状）。
+//     ⋙ 在此之前：mp 端字体栈**显式不写** `'ABoxKai'` —— 写进去只会让人误以为它生效了。
 /* #ifdef H5 */
 @font-face {
   font-family: 'ABoxKai';
@@ -110,8 +122,13 @@ $shadow-card: 0 2rpx 8rpx rgba(110, 84, 53, 0.06);
   font-style: normal;
   font-display: swap;
 }
-/* #endif */
 $font-family-display: 'ABoxKai', KaiTi, STKaiti, 楷体, 'Noto Serif SC', ABoxIcons, serif;
+/* #endif */
+/* #ifndef H5 */
+// mp 端：**没有** `ABoxKai`（上面的 `@font-face` 被条件编译排除，wxss 也不认本地字体路径）。
+// 保留 KaiTi/STKaiti/楷体 三个名（个别安卓 ROM 自带其一，命中即用），否则落 Noto Serif/系统黑体。
+$font-family-display: KaiTi, STKaiti, 楷体, 'Noto Serif SC', ABoxIcons, serif;
+/* #endif */
 // ⭐ 正文/表单/表格改无衬线：整段楷体在手机上读三段以上就累（长文页是判据）。
 $font-family-base:
   -apple-system, BlinkMacSystemFont, 'PingFang SC', 'HarmonyOS Sans SC', 'Noto Sans CJK SC',

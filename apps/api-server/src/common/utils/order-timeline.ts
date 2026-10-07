@@ -9,6 +9,11 @@
  * | 1 | `ab_config` 的 `set_meal.publish_time` 等 | **只作口径记录，没有任何代码读取**（标 `unwired`） |
  * | 2 | `TASK_SCHEDULES[*].cron` | 硬编码字符串 `'0 0 14 * * *'` |
  * | 3 | `time.ts` 的 `publishAtOf()` / `cutoffAtOf()` 等 | 硬编码数字 `14` / `0` / `11.5` |
+ * | 4 | `supplier.service.ts` 的出餐确认截止 09:30 | 裸常量（`CONFIRM_DEADLINE_HOUR/MINUTE/TEXT`） |
+ *
+ * ⚠️ 第 4 处是 2026-10-07 整体复查⑤才补登记的：它**既没有配置项也没有 cron**，
+ *    所以 #49 当时扫的三个面**一个都碰不到它** —— 漂移源的清单本身也会漏，
+ *    漏掉的那处恰恰是最看不见的那处。现已收口为下面的 `cookConfirmDeadline`。
  *
  * 三处不一致时**不会报错**：截单时刻配的是 `23:59`，而实际截单的 cron 是 `00:00` ——
  * 运营在配置页看到「23:59 截单」，用户实际可以下单到次日 00:00，**相差 1 分钟**，
@@ -54,7 +59,7 @@ export interface TimeOfDay {
   minute: number;
 }
 
-/** 业务时间轴的 9 个时刻 */
+/** 业务时间轴的 10 个时刻（第 10 个 `cookConfirmDeadline` 由 2026-10-07 复查⑤收口进来） */
 export interface BusinessTimeline {
   /** T-1 开团（次日套餐上架，用户可下单） */
   publish: TimeOfDay;
@@ -74,6 +79,23 @@ export interface BusinessTimeline {
   reconciliation: TimeOfDay;
   /** 见习团长失效扫描 */
   leaderExpire: TimeOfDay;
+  /**
+   * T 日出餐确认截止（fail-closed：过点不再受理补确认）
+   *
+   * ⭐ 2026-10-07 整体复查⑤新增：此前它在 `supplier.service.ts` 里以三个裸常量
+   *   （`CONFIRM_DEADLINE_HOUR = 9` / `_MINUTE = 30` / `_TEXT = '09:30'`）存在，
+   *   是本文件的**第四份漂移源**，却**没被登记在下面那张漂移表**里 ——
+   *   #49 收口时扫的三个面（`ab_config` / `TASK_SCHEDULES.cron` / `time.ts`）
+   *   一个都碰不到它：它没有配置项、没有 cron、不在 `time.ts`。
+   *   后果：运营改「送达时间」立刻生效，改不了出餐截止 ⇒
+   *   「配了不生效」在另一个旋钮上原样复现。
+   *
+   * ⚠️ **当前不可配**（未列入 `TIMELINE_CONFIG_KEYS`）：这是**刻意**的 ——
+   *   它是一道 fail-closed 硬闸，与「过点能否补确认」的合规口径绑定，
+   *   不宜由运营随手改。将来若要放开，加一行 `TIMELINE_CONFIG_KEYS` 即可
+   *   （同时补 `config.specs.ts` 与种子，别漏 D57 的条目数断言）。
+   */
+  cookConfirmDeadline: TimeOfDay;
 }
 
 /**
@@ -90,6 +112,8 @@ export const DEFAULT_TIMELINE: BusinessTimeline = {
   supplierShare: { hour: 2, minute: 10 },
   reconciliation: { hour: 4, minute: 0 },
   leaderExpire: { hour: 3, minute: 0 },
+  // 原型 P22「截止时间：09:30」—— 原写在 `supplier.service.ts`，2026-10-07 收口至此
+  cookConfirmDeadline: { hour: 9, minute: 30 },
 };
 
 /**
@@ -120,6 +144,7 @@ export const TIMELINE_LABEL: Record<keyof BusinessTimeline, string> = {
   supplierShare: '供应商应付生成（T+1）',
   reconciliation: '对账跑批',
   leaderExpire: '见习失效扫描',
+  cookConfirmDeadline: '出餐确认截止（T 日）',
 };
 
 /** `HH:mm` 展示（`24:00` 原样显示，**不折算成 00:00** —— 折算会让人以为截单在当天早上） */

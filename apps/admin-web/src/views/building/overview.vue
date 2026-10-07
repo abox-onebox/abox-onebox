@@ -270,8 +270,16 @@ onMounted(load);
   grid-template-columns: 1fr 1fr;
   gap: $space-3;
   margin-bottom: $space-3;
+}
 
-  @media (max-width: 1100px) {
+/**
+ * ⭐ 2026-10-07 整体复查⑱：这里原写 `@media (max-width: 1100px)` ——
+ *    那是**第二份断点**（真源 `use-narrow.ts` 的 `NARROW_MAX = 768`，数值还不一样），
+ *    而 CSS 断点与 JS 断点的漂移**没有任何门禁看得见**。
+ *    ⇒ 改挂 `.ab-layout.is-narrow`（由 `layouts/default-layout.vue` 挂上）。
+ */
+.ab-layout.is-narrow {
+  .grid {
     grid-template-columns: 1fr;
   }
 }

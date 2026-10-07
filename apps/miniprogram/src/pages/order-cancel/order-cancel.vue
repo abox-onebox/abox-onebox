@@ -8,7 +8,11 @@
         <view class="hero hero--warn">
           <text class="hero__title">无法自助退款</text>
           <text class="hero__desc">
-            截单后（T-1 24:00）订单已进入备餐流程，需由团长发起代退申请，平台审批后原路退回。
+            <!-- ⭐ 2026-10-07 复查⑰：原写「截单后（T-1 24:00）」。本页只有
+                 `OrderDetailResult`（它的时刻字段是**送达** `pickup.expectAt`，没有截单时刻），
+                 故退化为**不含时刻**的表述，而不是去抄一个写死的 24:00 ——
+                 需要截单时刻的页面（首页横幅 / 下单页）一律从 `daily.cutoffAt` 取。 -->
+            截单后订单已进入备餐流程，需由团长发起代退申请，平台审批后原路退回。
           </text>
         </view>
 

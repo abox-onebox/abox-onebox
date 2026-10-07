@@ -21,7 +21,13 @@ export function navigateTo(url: string): void {
     // 页面栈上限 10，溢出时降级为重定向（避免「点了没反应」）
     fail: (err) => {
       console.warn(`[router] navigateTo ${url} 失败，降级 redirectTo`, err);
-      uni.redirectTo({ url, fail: () => undefined });
+      // ⭐ 2026-10-07 复查：降级链的**最后一级**也不许静默 ——
+      //    上一级已经 warn 过，这里再吞掉就只剩「用户点了没反应」，
+      //    而日志里什么都没有（这是全仓最贵的一类「查不到原因」）。
+      uni.redirectTo({
+        url,
+        fail: (e2) => console.error(`[router] 降级 redirectTo ${url} 也失败`, e2),
+      });
     },
   });
 }
@@ -32,7 +38,11 @@ export function redirectTo(url: string): void {
     url,
     fail: (err) => {
       console.warn(`[router] redirectTo ${url} 失败，降级 reLaunch`, err);
-      uni.reLaunch({ url, fail: () => undefined });
+      // ⭐ 同上：最后一级失败必须留下痕迹
+      uni.reLaunch({
+        url,
+        fail: (e2) => console.error(`[router] 降级 reLaunch ${url} 也失败`, e2),
+      });
     },
   });
 }
