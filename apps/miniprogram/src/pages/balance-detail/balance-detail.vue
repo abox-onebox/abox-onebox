@@ -88,7 +88,10 @@
         </template>
       </view>
 
-      <text class="foot">余额异常请联系平台客服（我的 → 客服微信号），由人工核对处理</text>
+      <!-- ⭐ 2026-10-07：指路只说功能、不预设形态 —— 原写「我的 → 客服微信号」，
+           切到 `wechat_kf` / `contact` 档后「我的」里那个入口不叫这个名字（会指错路）。
+           与协议正文「我的 → 联系客服」、`csEntryLabel` 同一措辞。 -->
+      <text class="foot">余额异常请联系平台客服（我的 → 联系客服），由人工核对处理</text>
     </template>
   </view>
 </template>

@@ -130,7 +130,7 @@
       </view>
       <view class="menu__item" hover-class="menu__item--hover" @tap="goSupport">
         <text class="menu__label"
-          ><text class="abi abi-16">{{ I.phone }}</text> 客服微信号</text
+          ><text class="abi abi-16">{{ I.phone }}</text> {{ csEntryText }}</text
         >
         <text class="menu__arrow"
           ><text class="abi abi-16">{{ I.chev }}</text></text
@@ -200,7 +200,9 @@ import { fetchOrders } from '@/api/order';
 import { fetchMyBalance } from '@/api/user';
 import { fetchCommissions } from '@/api/leader-finance';
 import { fetchWorkbench } from '@/api/leader';
+import { fetchSupportContact } from '@/api/support';
 import { toastApiError, useRequest } from '@/composables/use-request';
+import { csEntryLabel } from '@/composables/use-customer-service';
 import { useLeaderStore } from '@/stores/leader';
 import { fenToYuanText } from '@/utils/format';
 import { useUserStore } from '@/stores/user';
@@ -208,6 +210,7 @@ import { clearAuthStorage } from '@/utils/storage';
 import { navigateTo, switchTab } from '@/utils/router';
 import { AGREEMENT_OPERATOR } from '@/constants/agreements';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
+import type { CustomerServiceMode } from '@abox/shared-types';
 
 const { run } = useRequest();
 const userStore = useUserStore();
@@ -220,6 +223,17 @@ const orderTotal = ref<number | null>(null);
 const monthCommissionFen = ref<number | null>(null);
 const monthQuantity = ref<number | null>(null);
 const pendingDeliverQty = ref<number | null>(null);
+
+/**
+ * 客服档位（`null` = 还没取到 / 取失败）
+ *
+ * ⭐ 只用于**入口叫法**（`csEntryLabel`），不参与任何业务判断 —— 业务分流在客服页
+ *    （`pages/support/contact` + `use-customer-service`）里做，本页不复制一份。
+ * ⭐ 取不到 ⇒ 中性「联系客服」：与协议正文措辞一致，任何档位下都成立，
+ *    **不回落成写死的某一档形态**（同族于「端上不写死联系方式」那条纪律）。
+ */
+const csMode = ref<CustomerServiceMode | null>(null);
+const csEntryText = computed(() => csEntryLabel(csMode.value));
 
 /**
  * ⭐ M5-15 修复（**身份不一致第二条**）：**服务端快照优先**。
@@ -381,6 +395,22 @@ function goSupport(): void {
 }
 
 /**
+ * 取客服档位（只为**入口叫法**，best-effort）
+ *
+ * ⚠️ 刻意**静默失败**：「我的」页是主入口，不该因为客服接口抖动弹一个 toast
+ *    （本页其它附加数据也是同一口径 —— 失败显示 `—`，不打断）。
+ *    取不到 `csMode` 就停在 `null` ⇒ 入口显示中性「联系客服」，点进去照样能用。
+ */
+async function loadSupport(): Promise<void> {
+  try {
+    const c = await run(() => fetchSupportContact());
+    csMode.value = c?.csMode ?? null;
+  } catch {
+    csMode.value = null;
+  }
+}
+
+/**
  * 自助切换办公楼（`pages/building/switch`）
  *
  * ⚠️ 此前这里只有一句 toast「请通过该楼团长邀请链接进入」—— 那句话在
@@ -411,11 +441,22 @@ function tapSwitchLeader(): void {
  *    与协议页并列。它是**微信提审硬条件**（提供账号注销入口），
  *    此前只有协议正文里一句「找客服申请」（M6 `K53`：「已在册、未排期」）。
  */
-const SETTINGS_ACTIONS = ['平台客服微信号', '用户协议', '隐私政策', '关于 ABox 一盒', '账号注销'];
+/**
+ * ⭐ 第 0 项**随客服档位变** —— 原写死「平台客服微信号」，切到 `wechat_kf` / `contact` 档后
+ *   入口与落地页（客服页显示「在线客服」）对不上，且与协议正文「我的 → 联系客服」两种叫法。
+ *   ⇒ 与 `csEntryLabel` 同一真源，三处表述一致。
+ */
+const settingsActions = computed(() => [
+  csEntryText.value,
+  '用户协议',
+  '隐私政策',
+  '关于 ABox 一盒',
+  '账号注销',
+]);
 
 function showSettings(): void {
   uni.showActionSheet({
-    itemList: SETTINGS_ACTIONS,
+    itemList: settingsActions.value,
     success: ({ tapIndex }) => {
       if (tapIndex === 0) goSupport();
       else if (tapIndex === 1) goAgreement('user');
@@ -475,6 +516,7 @@ onShow(() => {
     loadOrderTotal();
     loadMonthCommission();
     loadPendingDeliver();
+    loadSupport(); // 只为入口叫法，best-effort（放在 loadProfile 之后：需要 token）
   })();
 });
 </script>

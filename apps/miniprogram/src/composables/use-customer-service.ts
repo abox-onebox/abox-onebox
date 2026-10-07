@@ -20,7 +20,11 @@
  *
  * ⚠️ 开发者工具里客服会话**不生效**，必须真机 + 体验版验证。
  */
-import type { CustomerServiceMode } from '@abox/shared-types';
+// ⚠️ 2026-10-07 起**不是** `import type`：`csEntryLabel` 要用 `CustomerServiceMode.WECHAT_KF`
+//    这类**枚举值**做比较（`import type` 只能当类型用，取不到值）。
+//    ⛔ 别改回 `import type`，也别为了绕开它去写 `'wechat_kf'` 字面量 —— 那会让
+//    `dup:const` 判成「真源字面量外溢」。
+import { CustomerServiceMode } from '@abox/shared-types';
 
 /** `wx.openCustomerServiceChat` 的入参最小形状（避免依赖 types 包的具体版本） */
 export interface OpenCustomerServiceChatOptions {
@@ -154,4 +158,26 @@ export function csActionLabel(mode: CustomerServiceMode): string {
   if (mode === 'wechat_kf') return '发起在线咨询';
   if (mode === 'contact') return '联系在线客服';
   return '复制微信号';
+}
+
+/**
+ * ⭐ **入口标题**（与 `csActionLabel` 分开：动作 vs 名词，别混用）
+ *
+ * 用在「我的」页菜单项与设置面板这类**入口**上 —— 那里要的是「这个入口叫什么」，
+ * 不是「点了会发生什么」（后者才是 `csActionLabel`，它的 `none` 档是「复制微信号」，
+ * 当菜单标题读起来很怪）。
+ *
+ * ⭐⭐ 为什么必须随 `csMode` 变（2026-10-07 裁定）：
+ *   入口写死「客服微信号」时，一旦切到 `wechat_kf` / `contact` 档，
+ *   用户点进去看到的是**在线客服**，入口与落地页对不上；更糟的是协议里已改为中性的
+ *   「我的 → 联系客服」，入口却仍写「客服微信号」⇒ 同一条路两种叫法。
+ *
+ * ⭐ 取不到（`null` / 未加载 / 请求失败）时返回**中性**的「联系客服」——
+ *   与协议正文措辞一致，任何档位下都成立（不回落成写死的某一档形态）。
+ */
+export function csEntryLabel(mode: CustomerServiceMode | null | undefined): string {
+  if (mode === CustomerServiceMode.WECHAT_KF) return '在线客服';
+  if (mode === CustomerServiceMode.CONTACT) return '在线客服';
+  if (mode === CustomerServiceMode.NONE) return '客服微信号';
+  return '联系客服';
 }
