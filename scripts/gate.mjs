@@ -281,6 +281,20 @@ const GATES = {
    */
   'icons:lock': { cwd: '.', cmd: 'node scripts/check-icon-lock.mjs' },
   /**
+   * ⛔ mp 端不得有任何字体二进制进包（γ「楷体死资源」防复发闸门）。
+   *
+   * 为什么必须常驻：`ab-kaiti.woff2` 曾以**零引用**姿态在主包里占 42%（597→851 KB）——
+   * `@font-face` 被 `#ifdef H5` 排除，但 vite 收集 CSS 的 `url()` 发生在条件编译**之前**
+   * ⇒ 字体照样被当成 asset 产出。现在由 `apps/miniprogram/vite.config.ts` 的
+   * `abox:mp-no-font-asset` 插件在出包时剔除，本闸门复核它**真的剔干净了**
+   * （插件失效 / 字体被挪回 `static/` ⇒ 立刻转红）。
+   *
+   * ⚠️ **必须排在 `build:mp` 之后**：它扫的是 mp 产物目录。产物缺失时它**报红**而不是
+   *   报「通过」—— 把「目录不存在」当「0 个字体」放行，正是本闸门要治的恒绿陷阱。
+   * ⚠️ 自带自证 4 条（必报 ×2 / 必不报 ×1 / 判据 null ×1），与主流程共用同一判据函数。
+   */
+  'mp:no-font': { cwd: '.', cmd: 'node scripts/check-mp-no-font.mjs' },
+  /**
    * S9：**设计红线落点**（原 `_tmp/icons/ui-gate.py`，手工脚本）纳入常驻门禁。
    *
    * 为什么必须常驻：它当时**不在任何门禁内**，`all verify` 覆盖不到 ⇒ S8 把后台侧栏
@@ -463,6 +477,8 @@ const ALIASES = {
     'build:api',
     'build:admin',
     'build:mp',
+    // ⛔ mp 产物字体二进制（γ 死资源防复发）—— 必须排在 build:mp 之后：它扫的是构建产物
+    'mp:no-font',
   ],
 };
 
@@ -523,6 +539,8 @@ const REPORT_RE = {
   'icons:lock': [/^\s*\[自证\] 汇总 \d+\/\d+.*$/m, /^③ 覆盖率：\s*\d+\/\d+.*$/m],
   // e2e:msg：先看自证是否通过，再看判据结果与覆盖规模（比较点数）
   'e2e:msg': [/^✔ 自证 \d+\/\d+.*$/m, /^✔ e2e message 断言全覆盖.*$/m],
+  // mp:no-font：自证汇总 + 覆盖面（扫到的产物文件数；产物缺失时脚本自行 exit 2，不会静默）
+  'mp:no-font': [/^\[自证\] 汇总 \d+\/\d+.*$/m, /^③ 覆盖面：\s*\d+ 个产物文件.*$/m],
 };
 
 /**

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 生成 ABox 楷体子集字体（woff2）。
+源字体 = 霞鹜文楷 LXGW WenKai（SIL OFL 1.1，可分发）—— 见下方 FONT 处的换源说明。
 字符集 = GB2312 一级汉字（3755 常用字）+ ASCII 可打印 + 常用中文标点 + 源码里出现过的全部 CJK 字符。
 产出: apps/miniprogram/src/static/fonts/ab-kaiti.woff2
 """
@@ -8,7 +9,14 @@ import os, subprocess, sys
 
 ROOT = r"C:\Users\herma\WorkBuddy\ABox小程序\abox-onebox"
 SRC = os.path.join(ROOT, "apps", "miniprogram", "src")
-FONT = r"C:\Windows\Fonts\simkai.ttf"
+# ⚠️⚠️ 2026-10-07 换源字体：**simkai 是微软授权字体，不可随产品分发**
+#     （项目里早有登记：《小程序提审说明》§6 / 《开发里程碑计划》「生产前必办」）。
+#     现改用 **霞鹜文楷 LXGW WenKai v1.522 —— SIL Open Font License 1.1**（可商用、可分发、
+#     可嵌入），46867 字形，覆盖 GB2312 全部汉字；字形同为楷体风格，视觉口径不变。
+#     源字体 24.4 MB，放在 scripts/.font-cache/（已 gitignore，不进仓库），
+#     缺失时按下面 URL 重新下载即可，本脚本不联网。
+#     下载：https://github.com/lxgw/LxgwWenKai/releases/download/v1.522/LXGWWenKai-Regular.ttf
+FONT = os.path.join(ROOT, "scripts", ".font-cache", "LXGWWenKai-Regular.ttf")
 OUT_DIR = os.path.join(SRC, "static", "fonts")
 OUT = os.path.join(OUT_DIR, "ab-kaiti.woff2")
 CHARS_TXT = os.path.join(ROOT, "scripts", "ab-kaiti-chars.txt")  # 放 scripts/ 而非 src/static/，避免被打进产物
@@ -65,7 +73,8 @@ if r.returncode != 0:
     print(r.stdout[-800:]); print(r.stderr[-800:]); sys.exit(1)
 
 size = os.path.getsize(OUT)
+src_size = os.path.getsize(FONT)
 print(f"产出: {OUT}")
-print(f"体积: {size/1024:.0f} KB（原字体 11.2 MB 的 {size/11787312*100:.1f}%）")
+print(f"体积: {size/1024:.0f} KB（源字体 {src_size/1048576:.1f} MB 的 {size/src_size*100:.1f}%）")
 assert size < 3 * 1024 * 1024, "子集超过 3MB，字符集异常"
 print("OK")

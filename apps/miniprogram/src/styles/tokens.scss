@@ -103,21 +103,28 @@ $shadow-card: 0 2rpx 8rpx rgba(110, 84, 53, 0.06);
 // 手机上没有 KaiTi/楷体（那是 Windows 字体）→ 整条字体栈落空、回退系统黑体，页面观感「失真」。
 //
 // ⚠️⚠️ 2026-10-07 整体复查⑨ **如实更正**：下面那句「对策：自带子集字体」
-//     （由 `scripts/make-font-subset.py` 生成的 583/597 KB woff2）**只对 H5 成立** ——
+//     （由 `scripts/make-font-subset.py` 生成的 woff2）**只对 H5 成立** ——
 //     `@font-face` 被 `/* #ifdef H5 */` 包住，而**小程序的 wxss 不支持本地字体文件路径**
 //     （依据就写在同目录 `icons.scss`：`@font-face` 的 src 只接受**网络地址或 base64**）。
-//     ⇒ mp 端 `'ABoxKai'` **根本没有定义**，字体栈静默回退，而字体文件照旧被打进小程序包
-//       （597 KB，占主包 1.4 MB 的 **42%**，零引用）。
+//     ⇒ mp 端 `'ABoxKai'` **根本没有定义**，字体栈静默回退。
 //       「注释宣称对策已落地、而主端恰恰没生效」——这是本仓最典型的一类失真。
 //
-// ⚠️ **待裁定（γ，两条都要真机构建验证，不要凭推断改）**：
-//     (a) 把**标题字子集**做成 base64 内嵌（与 `icons.scss` 同款），mp 端楷体才真正生效；
-//     (b) 承认 mp 端不用楷体，把字体移出小程序工程（mp 主包立省 597 KB，H5 保持现状）。
-//     ⋙ 在此之前：mp 端字体栈**显式不写** `'ABoxKai'` —— 写进去只会让人误以为它生效了。
+// ✅ **2026-10-07 γ 已执行 (b)**：字体从 `src/static/fonts/`（uni **全量复制** static，
+//    不看有没有人引用）移到 `src/assets/fonts/`（**只有 CSS 真的 url() 引用才会被打包**）。
+//    ⇒ mp 端 `@font-face` 被条件编译排除 ⇒ 无人引用 ⇒ 字体**不再进小程序包**（主包立省 ~851 KB）。
+//    ⇒ H5 端 `@font-face` 仍在 ⇒ 打包照旧（产物见 `dist-h5/assets/*.woff2`）。
+//    ⛔ **别把字体挪回 `static/`** —— 那会让 851 KB 死资源静默回到主包（已有门禁看住，见 `mp:no-font`）。
+//
+// ✅ **同批换源字体**：原源 `C:\Windows\Fonts\simkai.ttf` 是**微软授权字体，不可随产品分发**
+//    （《小程序提审说明》§6 /《开发里程碑计划》「生产前必办」早有登记，一直没做）。
+//    现源 = **霞鹜文楷 LXGW WenKai v1.522，SIL OFL 1.1**（可商用 · 可分发 · 可嵌入），字形同为楷体。
+//    子集 3927 字 → 3919 字覆盖（缺的 8 个全是 emoji 类符号，本就不该由楷体提供）。
+//    ⋙ 源字体 24.4 MB 放 `scripts/.font-cache/`（已 gitignore，不进仓库），缺了按脚本注释里的 URL 重下。
+// ⋙ mp 端字体栈**显式不写** `'ABoxKai'` —— 写进去只会让人误以为它生效了。
 /* #ifdef H5 */
 @font-face {
   font-family: 'ABoxKai';
-  src: url('/static/fonts/ab-kaiti.woff2') format('woff2');
+  src: url('@/assets/fonts/ab-kaiti.woff2') format('woff2');
   font-weight: normal;
   font-style: normal;
   font-display: swap;
