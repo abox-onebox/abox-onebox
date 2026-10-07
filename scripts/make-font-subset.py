@@ -3,7 +3,11 @@
 生成 ABox 楷体子集字体（woff2）。
 源字体 = 霞鹜文楷 LXGW WenKai（SIL OFL 1.1，可分发）—— 见下方 FONT 处的换源说明。
 字符集 = GB2312 一级汉字（3755 常用字）+ ASCII 可打印 + 常用中文标点 + 源码里出现过的全部 CJK 字符。
-产出: apps/miniprogram/src/static/fonts/ab-kaiti.woff2
+产出: apps/miniprogram/src/assets/fonts/ab-kaiti.woff2
+
+⛔⛔ 产出目录必须是 **assets/，不能是 static/**（2026-10-07 γ 楷体批定的第二条，见下方 OUT_DIR 注释）。
+    static/ 由 uni **原样全量复制**进产物、且**不走 vite asset 管线** ⇒
+    落在 static/ 的字体**躲得过 `abox:mp-no-font-asset` 剔除插件**，会直接污染 mp 主包。
 """
 import os, subprocess, sys
 
@@ -17,7 +21,13 @@ SRC = os.path.join(ROOT, "apps", "miniprogram", "src")
 #     缺失时按下面 URL 重新下载即可，本脚本不联网。
 #     下载：https://github.com/lxgw/LxgwWenKai/releases/download/v1.522/LXGWWenKai-Regular.ttf
 FONT = os.path.join(ROOT, "scripts", ".font-cache", "LXGWWenKai-Regular.ttf")
-OUT_DIR = os.path.join(SRC, "static", "fonts")
+# ⛔⛔ **必须落在 assets/** —— 见文件头说明：static/ 会被 uni 原样复制、绕过 vite 剔除插件。
+#     （2026-10-07：字体从 static/fonts 迁到 assets/fonts 时漏改本行，已修；改回去 = mp 主包 +851KB。）
+# ⭐ 体积裁定（2026-10-07 主理人）：子集换源后 583KB → **851KB**，**接受，不再收窄**。
+#    理由：① 只进 H5 端（mp 端由 `abox:mp-no-font-asset` 全部剔除）；
+#          ② `font-display: swap` ⇒ 不阻塞首屏；
+#          ③ 再收窄会让**菜名 / 团长名等动态文案**回退系统楷体，字形不统一（比多几百 KB 更难接受）。
+OUT_DIR = os.path.join(SRC, "assets", "fonts")
 OUT = os.path.join(OUT_DIR, "ab-kaiti.woff2")
 CHARS_TXT = os.path.join(ROOT, "scripts", "ab-kaiti-chars.txt")  # 放 scripts/ 而非 src/static/，避免被打进产物
 

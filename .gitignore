@@ -44,6 +44,10 @@ _stale-build/
 #   ⚠️ 别把它搬进仓库：24 MB 二进制，且它随时可从上游重新获取。
 scripts/.font-cache/
 
+# Python 字节码缓存（`py_compile` / 直接跑 .py 都会产生；2026-10-07 补登 —— 此前一度被 git 看见）
+__pycache__/
+*.pyc
+
 # 运行时产物
 public/qrcodes/
 coverage/

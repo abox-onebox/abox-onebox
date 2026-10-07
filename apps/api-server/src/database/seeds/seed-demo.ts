@@ -1939,6 +1939,14 @@ async function selfCheck(ctx: {
   );
 
   // ⑨ 会计恒等式（并如实报出偏移）
+  //
+  // ⭐ **2026-10-07 主理人裁定：reversal 造成的差额「维持现状，不补记账」** —— 这不是缺陷，别再当 bug 修。
+  //    · reversal = 已结算佣金的冲销（例如订单取消追回已发佣金）。它**只扣 balance、不动 total_in/total_out**。
+  //    · 为什么不动是对的：冲销的钱**本来就没有流出平台**（本质是"应付转回"），
+  //      硬把它补进 total_out 反而会**虚增累计支出**，让经营口径失真。
+  //    ⇒ 因此「差额恰好等于冲销额」是**预期内的口径差异**，此处**显式容忍并记为 warning**（三档判据）。
+  //    · 影响面：只有「累计支出 total_out」这一枚统计口径受它影响；`balance` / `frozen` 由逐笔重演得出，**均正确**。
+  //    · 若要改成严格恒等，须同时改历史数据与 `ab_commission` 的写入路径 —— **风险远大于收益**，故不做。
   for (const b of ctx.balanceOnly) {
     const uid = Number(b.user_id);
     const fen = (v: unknown): number => Math.round(Number(v) * 100);
