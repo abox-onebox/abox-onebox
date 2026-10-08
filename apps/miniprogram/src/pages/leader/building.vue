@@ -225,10 +225,16 @@ async function reload(): Promise<void> {
     return;
   }
 
+  // 档案 / 战报 / 异常单计数：三条 best-effort 旁路，**同批并发**
+  // ⚠️ 三条**都要**带 `{ keepAuthState: true }`（`P1-16`）：它们与上面那条 `run()` 共用
+  //    同一枚 token，token 到期的那一瞬间是**齐射**（三条同时拿到 `10002`）；而
+  //    `allSettled` 让它们连原都不报 —— 若允许这里清态，就会静默删掉 `run()` 刚重登
+  //    写进去的新 token，本页没有第二条链路来修复它。
+  //    机理见 `pages/order-list/order-list.vue` 的 P1-16 注释。
   const [p, w, a] = await Promise.allSettled([
-    fetchLeaderProfile(),
-    fetchWorkbench(),
-    fetchLeaderAbnormal(),
+    fetchLeaderProfile({ keepAuthState: true }),
+    fetchWorkbench({ keepAuthState: true }),
+    fetchLeaderAbnormal({}, { keepAuthState: true }),
   ]);
   if (p.status === 'fulfilled') profile.value = p.value;
   if (w.status === 'fulfilled') war.value = w.value;

@@ -570,7 +570,11 @@ async function doQuit(): Promise<void> {
      *   故这里只是"把界面刷新对"，刷不上也不构成安全问题。
      */
     try {
-      const res = await fetchMe();
+      // ⚠️ `{ keepAuthState: true }` —— 这只是一次「把界面刷新对」的 best-effort 补刀，
+      //    **不是本页的会话裁决者**（裁决者是上面那条 `run(() => quitLeader(...))`）。
+      //    此处若允许清态，会把重登刚写进去的新 token 删掉，而 catch 里只有 `console.warn`
+      //    ⇒ 用户悄无声息地掉线。
+      const res = await fetchMe({ keepAuthState: true });
       userStore.setLogin(userStore.token, {
         id: res.id,
         nickname: res.nickname,

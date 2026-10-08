@@ -329,8 +329,11 @@ async function reload(): Promise<void> {
   }
 
   // 单价与费率：best-effort（失败只影响「预计佣金」这一格）
+  // ⚠️ `{ keepAuthState: true }` —— 旁路取数不能裁决登录态：本页的会话裁决者是上面那条
+  //    `run()`（遇 `10002` 会重登并重试一次）；这条腿只许失败，不许把刚换发的新 token 清掉。
+  //    机理见 `pages/order-list/order-list.vue` 的 P1-16 注释。
   try {
-    const w = await fetchWorkbench();
+    const w = await fetchWorkbench({ keepAuthState: true });
     rate.value = w.today.rate;
     unitPriceFen.value = w.today.quantity > 0 ? w.today.amountFen / w.today.quantity : 0;
   } catch {

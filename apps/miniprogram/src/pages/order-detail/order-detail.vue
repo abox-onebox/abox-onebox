@@ -413,6 +413,9 @@ function pick(dishId: number, lv: number): void {
 async function submitRating(): Promise<void> {
   if (!canSubmit.value || !detail.value) return;
   ratingSubmitting.value = true;
+  // TS 的 null 收窄**不进闭包**（`detail.value` 在箭头函数里会回到 `| null`），
+  // 故在闭包外先把订单号取好。
+  const targetOrderNo = detail.value.orderNo;
   try {
     const items = Object.entries(ratingPick.value).map(([dishId, rating]) => ({
       dishId: Number(dishId),
@@ -421,7 +424,10 @@ async function submitRating(): Promise<void> {
         ? { reason: ratingReasons.value[Number(dishId)].trim() }
         : {}),
     }));
-    await submitOrderRating(detail.value.orderNo, items);
+    // 会话裁决者：写操作走 `run()` ⇒ token 过期时透明重登后重试一次。
+    // 重试安全：首次 401 时服务端**根本没有落到写路径**，不存在重复评价；
+    // 「已评过」由服务端口径 `30021` 判定，catch 里再拉一次详情对齐 UI。
+    await run(() => submitOrderRating(targetOrderNo, items));
     uni.showToast({ title: '评价已提交，感谢反馈', icon: 'none' });
     // 重拉详情：canRate → rated 的状态切换由服务端口径驱动，端上不本地造终态
     await load();

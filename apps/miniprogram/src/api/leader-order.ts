@@ -110,11 +110,22 @@ export interface LeaderAbnormalData {
   list: LeaderAbnormalItem[];
 }
 
+/**
+ * L6 · 异常订单（待支付催促）—— **全量返回，无分页字段**
+ *
+ * @param options 透传给请求层：best-effort 旁路取数（如楼宇页顶部的异常单计数，
+ *                刷不出来只影响那一格）请传 `{ keepAuthState: true }` ——
+ *                它无权裁决登录态的有效性，
+ *                语义见 `api/request.ts` 的 `RequestOptions.keepAuthState`。
+ *                ⚠️ 订单页 `pages/leader/orders` 走主路径，保持默认。
+ */
 export function fetchLeaderAbnormal(
   params: { mealDate?: string } = {},
+  options: { keepAuthState?: boolean } = {},
 ): Promise<LeaderAbnormalData> {
   return http.get<LeaderAbnormalData>(
     `/leader/orders/abnormal${query({ mealDate: params.mealDate })}`,
+    options,
   );
 }
 
@@ -196,9 +207,24 @@ export interface PickupTodayData {
   members: LeaderOrderItem[];
 }
 
-/** L8 · 本楼今日取餐概况 */
-export function fetchPickupToday(params: { mealDate?: string } = {}): Promise<PickupTodayData> {
-  return http.get<PickupTodayData>(`/leader/pickup/today${query({ mealDate: params.mealDate })}`);
+/**
+ * L8 · 本楼今日取餐概况
+ *
+ * @param options 透传给请求层：best-effort 旁路取数（如战报页「待分发份数」那一格，
+ *                刷不出来只显示 0）请传 `{ keepAuthState: true }` ——
+ *                它无权裁决登录态的有效性，
+ *                语义见 `api/request.ts` 的 `RequestOptions.keepAuthState`。
+ *                ⚠️ 取餐页 `pages/leader/pickup`、楼宇页 `pages/leader/building`
+ *                走主路径，保持默认。
+ */
+export function fetchPickupToday(
+  params: { mealDate?: string } = {},
+  options: { keepAuthState?: boolean } = {},
+): Promise<PickupTodayData> {
+  return http.get<PickupTodayData>(
+    `/leader/pickup/today${query({ mealDate: params.mealDate })}`,
+    options,
+  );
 }
 
 /** L9 分支 A：确有序订单被推进 */

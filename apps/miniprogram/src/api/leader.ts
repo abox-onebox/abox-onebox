@@ -255,9 +255,20 @@ export function applyLeader(payload: ApplyLeaderPayload): Promise<ApplyLeaderRes
   return http.post<ApplyLeaderResult>('/leader/apply', { ...payload } as Record<string, unknown>);
 }
 
-/** L14 · 团长资料 */
-export function fetchLeaderProfile(): Promise<LeaderProfile> {
-  return http.get<LeaderProfile>('/leader/profile');
+/**
+ * L14 · 团长资料
+ *
+ * @param options 透传给请求层：best-effort 旁路取数（如楼宇页 / 战报页的等级卡片，
+ *                刷不出来只影响那一格）请传 `{ keepAuthState: true }` ——
+ *                它无权裁决登录态的有效性，
+ *                语义见 `api/request.ts` 的 `RequestOptions.keepAuthState`。
+ *                ⚠️ 资料页 `pages/leader/profile`、提现页 `pages/leader/withdraw`
+ *                走主路径，保持默认。
+ */
+export function fetchLeaderProfile(
+  options: { keepAuthState?: boolean } = {},
+): Promise<LeaderProfile> {
+  return http.get<LeaderProfile>('/leader/profile', options);
 }
 
 /**
@@ -277,9 +288,19 @@ export function updateLeaderProfile(payload: {
   return http.put<LeaderProfile>('/leader/profile', { ...payload } as Record<string, unknown>);
 }
 
-/** L16 · 4 级佣金规则 + C2 双条件升级门槛 + 我的晋级进度 */
-export function fetchLevelRules(): Promise<LevelRulesResult> {
-  return http.get<LevelRulesResult>('/leader/level-rules');
+/**
+ * L16 · 4 级佣金规则 + C2 双条件升级门槛 + 我的晋级进度
+ *
+ * @param options 透传给请求层：best-effort 旁路取数（如佣金页的晋级规则区，
+ *                刷不出来只影响那一块）请传 `{ keepAuthState: true }` ——
+ *                它无权裁决登录态的有效性，
+ *                语义见 `api/request.ts` 的 `RequestOptions.keepAuthState`。
+ *                ⚠️ 资料页 `pages/leader/profile` 走主路径，保持默认。
+ */
+export function fetchLevelRules(
+  options: { keepAuthState?: boolean } = {},
+): Promise<LevelRulesResult> {
+  return http.get<LevelRulesResult>('/leader/level-rules', options);
 }
 
 /** L18 · 勾选同意《团长合作协议》（补签 / 版本升级重签） */

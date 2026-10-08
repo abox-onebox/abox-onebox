@@ -103,7 +103,9 @@ const currentLeader = ref<string | null>(null);
 
 async function loadMe(): Promise<void> {
   try {
-    const res = await fetchMe();
+    // 会话裁决者：走 `run()` ⇒ token 过期时自动重登后重试一次（它**不挂** `keepAuthState`，
+    //    否则本页没有别的腿来裁决登录态；纪律见 `pages/order-list/order-list.vue` 的 P1-16）
+    const res = await run(() => fetchMe());
     currentId.value = res.buildingId ?? null;
     currentName.value = res.buildingName ?? null;
     currentLeader.value = res.leaderName ?? null;
@@ -159,7 +161,9 @@ async function pick(b: BuildingOptionItem): Promise<void> {
 
   submitting.value = true;
   try {
-    const res = await bindBuilding(b.id);
+    // 同上：用户主动写操作要能透明重登后重试 —— 标 `keepAuthState` 会让它永远失败
+    // （点一次没反应，再点一次才好），那才是用户可感知的坏体验。
+    const res = await run(() => bindBuilding(b.id));
     uni.showToast({ title: res.changed ? '已切换办公楼' : '你已在该办公楼', icon: 'none' });
     navigateBack();
   } catch (e) {

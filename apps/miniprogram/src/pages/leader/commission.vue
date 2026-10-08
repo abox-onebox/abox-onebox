@@ -356,7 +356,13 @@ async function reload(): Promise<void> {
   }
 
   // 余额与等级规则：best-effort（失败只影响对应卡片）
-  const [b, r] = await Promise.allSettled([fetchLeaderBalance(), fetchLevelRules()]);
+  // ⚠️ 两条都带 `{ keepAuthState: true }`：主路径是上面那条 `fetchPage(1)`（内部走 `run()`），
+  //    本批与它共用同一枚 token，token 到期是齐射；而下方 `loadMore()` 分页随时可能再触发
+  //    一轮 `run()` ⇒ 这里绝不能踩掉别人刚换发的新 token。
+  const [b, r] = await Promise.allSettled([
+    fetchLeaderBalance({ keepAuthState: true }),
+    fetchLevelRules({ keepAuthState: true }),
+  ]);
   if (b.status === 'fulfilled') balance.value = b.value;
   if (r.status === 'fulfilled') rules.value = r.value;
 }

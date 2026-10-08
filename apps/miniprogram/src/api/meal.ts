@@ -14,9 +14,17 @@ import { http, query } from './request';
 /**
  * U1 · 明日套餐
  * @param mealDate 指定出餐日（`YYYY-MM-DD`）；缺省 = 服务端「明日」
+ * @param options 透传给请求层：best-effort 旁路取数（如战报卡的截单倒计时，取不到
+ *                就整行隐藏）请传 `{ keepAuthState: true }` —— 它无权裁决登录态的有效性，
+ *                语义见 `api/request.ts` 的 `RequestOptions.keepAuthState`。
+ *                ⚠️ 首页 `pages/index/index`、下单页 `pages/order-create/order-create`
+ *                走主路径，保持默认。
  */
-export function fetchDaily(mealDate?: string): Promise<HomeDailyResult> {
-  return http.get<HomeDailyResult>(`/home/daily${query({ mealDate })}`);
+export function fetchDaily(
+  mealDate?: string,
+  options: { keepAuthState?: boolean } = {},
+): Promise<HomeDailyResult> {
+  return http.get<HomeDailyResult>(`/home/daily${query({ mealDate })}`, options);
 }
 
 /**

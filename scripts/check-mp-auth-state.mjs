@@ -38,9 +38,12 @@
  *   node scripts/check-mp-auth-state.mjs              # 跑全部场景 —— 门禁唯一走法
  *
  * 场景族（**四套，互不替代**）：
- *   · `leak` / `ok` / `truereject` —— `order-list` 单页，判据 ①②③④（本页重登换发）
- *   · `crossover:<id>`             —— `PAGES` 里登记的每一页，**跨页换发** ⇒ 判据 ②①
- *                                     +「逐腿 0 样本」守卫；每页另配 F（全删）/ G（只删一处）两针
+ *   · `leak` / `ok` / `truereject` —— `order-list` 单页，判据 ①②③④
+ *                                     换发来源：**本页** `run()` 并发重登
+ *   · `salvo:<id>`                 —— `PAGES` 里登记的每一页，判据 ②① +「逐腿 0 样本」守卫
+ *                                     换发来源：**在飞期间 token 到期**（别处重登写入的
+ *                                     新 token 是**结果**不是原因 —— 见 `PAGES` 上方）
+ *                                     每页另配 F（全删）/ G（只删一处）两针
  *
  * ⛔ 刻意**不提供**「只跑单个场景」的开关：单场景会拿到「不完整却全绿」的结论且无人拦截。
  *
@@ -58,19 +61,39 @@ const SRC = join(REPO, 'apps/miniprogram/src');
 /**
  * `order-list`：判据 ①②③④ 的**既有**场景族（leak / ok / truereject）。
  *
- * ⛔ 与下面的 `PAGES` **刻意不合并**：两者判据前提不同 ——
- *    leak 造的是「**本页**重登换发」，crossover 造的是「**跨页 / 服务端侧**换发」。
+ * ⛔ 与下面的 `PAGES` **刻意不合并**：两者的换发**来源**不同 ——
+ *    leak 是「**本页** `run()` 并发重登」换发，salvo 是「**在飞期间 token 到期**」换发
+ *    （新 token 由**别处**那条路径重登写入，是同一失效事件的结果，不是原因）。
  *    合并会把两条判据揉成一条，将来改一处忘一处就制造出第二个真相。
  */
 const PAGE = join(SRC, 'pages/order-list/order-list.vue');
 
 /**
- * 多页登记：**跨页换发**场景族（`crossover`）的被测页数组。
+ * 多页登记：**齐射**（`salvo`）场景族的被测页数组。
  *
- * ⚠️ 为什么必须另开一套机制（不是 leak 的扩展）：leak 只能证明「本页重登这一条换发路径」
- *    不踩踏；而 `keepAuthState` 真正要防的是**任何来源**的换发 —— 别的页面触发的重登、
- *    服务端单活会话把旧 token 作废。mine.vue 的 5 个位点当初就是**零覆盖**：把 5 个
- *    `keepAuthState` 全删，leak/ok/truereject 三个场景照样全绿（实测）。
+ * ── 场景的真实触发器（2026-10-05 订正 · 原叙事写错了）───────────────────────
+ * 旧叙事：「跨页换发 —— 别的页面重登 ⇒ 旧 token 变 401」。这条**在后端不成立**，已证伪：
+ *   · `apps/api-server/src/modules/auth/auth.module.ts:35`
+ *       `signOptions: { expiresIn: cfg.get('app.jwtExpiresIn') ?? '7d' }` —— 无状态签发
+ *   · `apps/api-server/src/modules/auth/auth.service.ts:106-112`
+ *       `jwt.signAsync({ sub, typ, openid, isLeader, teamLeaderId })` —— payload 里
+ *       **没有** `jti` / `tokenVersion`；全仓也搜不到这两个字段或任何 token 黑名单
+ *       ⇒ 别处重登**不会**让还在飞的那枚旧 JWT 变 401
+ *   · `apps/api-server/src/modules/auth/auth.service.ts:93`
+ *       `20014`（已注销）只在**登录时**抛；`common/guards/jwt-auth.guard.ts`（92 行）
+ *       只在 passport 验签后看 `typ` / `rt` / 路径作用域，**全程不查用户状态**
+ *       ⇒ 在飞请求也不会因为「别处在别处注销 / 重登」被拒
+ * ⇒ **唯一真触发器 = token 到期（齐射）**：一批并发请求同时携带那枚刚到期的 token，
+ *   主路径重登先回并写入新 token，旁路随后带着旧 token 回来吃 `10002`（未登录或登录已过期）。
+ *   harness 里那枚由「别处」写进来的 `T3` 是**同一失效事件的结果**，不是原因。
+ *
+ * ⛔ 因此本族**不**叫「跨页」：触发器与「谁在哪一页重登」无关，只与「token 到期」有关。
+ *    （**机制一字未改** —— 事件放闸 / 逐条放行 / 逐腿 0 样本守卫都原样保留，只订正叙事。）
+ *
+ * ⚠️ 为什么必须另开一套机制（不是 leak 的扩展）：leak 只能证明「本页 `run()` 重登
+ *    **这一条**换发路径」不踩踏；`keepAuthState` 真正要防的是**任何来源**的换发。
+ *    mine.vue 的 5 个位点当初就是**零覆盖**：把 5 个 `keepAuthState` 全删，
+ *    leak/ok/truereject 三个场景照样全绿（实测）。
  *
  * 每页配置四件事：
  *   · `mainUrl`  —— 走 `run()` 的主路径 URL（重登源；**不进**旁路集合）
@@ -80,12 +103,21 @@ const PAGE = join(SRC, 'pages/order-list/order-list.vue');
  *      两针都必须被判据 ② 报出。`dropOne` 尤其关键：它证明**每一条腿都真的被判别**，
  *      而不是「总体 0 违规」这种假绿 —— 单腿不被判别时，门禁长得跟它不存在一模一样。
  *
- * ⚠️ 新增一页只需往这个数组里加一项（第四批的 pickup / building / workbench 同理），
- *    不需要改判据本体。
+ * ⚠️ 新增一页只需往这个数组里加一项，不需要改判据本体。
+ *    当前登记 5 页：`mine`(5 腿) / `pickup`(1) / `building`(3) / `workbench`(3) /
+ *    `commission`(2)。⚠️ `profile` **刻意不登记**（口径不符，见数组末尾那段注释）。
  */
 const MINE_PAGE = join(SRC, 'pages/mine/mine.vue');
 const S_ALL_MINE = '__MUT_ALL_MINE';
 const S_ONE_MINE = '__MUT_ONE_MINE';
+const S_ALL_PICKUP = '__MUT_ALL_PICKUP';
+const S_ONE_PICKUP = '__MUT_ONE_PICKUP';
+const S_ALL_BUILDING = '__MUT_ALL_BUILDING';
+const S_ONE_BUILDING = '__MUT_ONE_BUILDING';
+const S_ALL_WORKBENCH = '__MUT_ALL_WORKBENCH';
+const S_ONE_WORKBENCH = '__MUT_ONE_WORKBENCH';
+const S_ALL_COMMISSION = '__MUT_ALL_COMMISSION';
+const S_ONE_COMMISSION = '__MUT_ONE_COMMISSION';
 
 const PAGES = [
   {
@@ -175,6 +207,269 @@ const PAGES = [
     sentinelAll: S_ALL_MINE,
     sentinelOne: S_ONE_MINE,
   },
+
+  // ── pickup：1 条腿（费率）──────────────────────────────────────────────────
+  {
+    id: 'pickup',
+    file: join(SRC, 'pages/leader/pickup.vue'),
+    mainUrl: '/leader/pickup/today',
+    /** `PickupTodayData`（`api/leader-order.ts:194`）—— 只需满足 `reload()` 之后真正读到的字段 */
+    mainBody: {
+      code: 0,
+      data: {
+        mealDate: '2026-10-09',
+        totalQuantity: 0,
+        confirmedQuantity: 0,
+        pendingQuantity: 0,
+        canConfirm: false,
+        delivery: null,
+        members: [],
+      },
+    },
+    bypass: [['/leader/workbench', 'RATE']],
+    dropAll: [
+      {
+        from: 'fetchWorkbench({ keepAuthState: true })',
+        to: `((globalThis.${S_ALL_PICKUP} = true), fetchWorkbench({}))`,
+        expect: 1,
+      },
+    ],
+    /**
+     * ⚠️ 单腿页的 G **不能**与 F 同形（否则它零信息量），故换一种真实回归形态：
+     * 「开关**在**，但被置成 `false`」。`api/request.ts:205` 的判据是 `!keepAuthState && …`
+     * ⇒ `false` 与「整段不传」**等价有害**，判据必须同样报出。
+     */
+    dropOne: {
+      label: 'pickup.vue:336 fetchWorkbench（开关置 false 形态）',
+      needle: {
+        from: 'fetchWorkbench({ keepAuthState: true })',
+        to: `((globalThis.${S_ONE_PICKUP} = true), fetchWorkbench({ keepAuthState: false }))`,
+        expect: 1,
+      },
+    },
+    sentinelAll: S_ALL_PICKUP,
+    sentinelOne: S_ONE_PICKUP,
+  },
+
+  // ── building：3 条腿（档案 / 战报 / 异常单）────────────────────────────────
+  {
+    id: 'building',
+    file: join(SRC, 'pages/leader/building.vue'),
+    mainUrl: '/leader/pickup/today',
+    mainBody: {
+      code: 0,
+      data: {
+        mealDate: '2026-10-09',
+        totalQuantity: 0,
+        confirmedQuantity: 0,
+        pendingQuantity: 0,
+        canConfirm: false,
+        delivery: null,
+        members: [],
+      },
+    },
+    bypass: [
+      ['/leader/profile', 'PROFILE'],
+      ['/leader/workbench', 'WAR'],
+      ['/leader/orders/abnormal', 'ABNORMAL'],
+    ],
+    dropAll: [
+      {
+        from: 'fetchLeaderProfile({ keepAuthState: true })',
+        to: `((globalThis.${S_ALL_BUILDING} = true), fetchLeaderProfile({}))`,
+        expect: 1,
+      },
+      {
+        from: 'fetchWorkbench({ keepAuthState: true })',
+        to: `((globalThis.${S_ALL_BUILDING} = true), fetchWorkbench({}))`,
+        expect: 1,
+      },
+      {
+        from: 'fetchLeaderAbnormal({}, { keepAuthState: true })',
+        to: `((globalThis.${S_ALL_BUILDING} = true), fetchLeaderAbnormal({}, {}))`,
+        expect: 1,
+      },
+    ],
+    dropOne: {
+      label: 'building.vue:236 fetchWorkbench',
+      needle: {
+        from: 'fetchWorkbench({ keepAuthState: true })',
+        to: `((globalThis.${S_ONE_BUILDING} = true), fetchWorkbench({}))`,
+        expect: 1,
+      },
+    },
+    sentinelAll: S_ALL_BUILDING,
+    sentinelOne: S_ONE_BUILDING,
+  },
+
+  // ── workbench：3 条腿（DAILY 是 fire-and-forget，最容易晚回来）──────────────
+  {
+    id: 'workbench',
+    file: join(SRC, 'pages/leader/workbench.vue'),
+    mainUrl: '/leader/workbench',
+    /**
+     * `LeaderWorkbenchData`（`api/leader.ts:80`）。
+     * ⚠️ `tomorrow.mealDate` **必须给**：`reload()` 拿它去调 `startCountdown(data.value.tomorrow.mealDate)`，
+     *    给不出来的话 `data.value.tomorrow` 是 undefined ⇒ `doQuit` 式 TypeError ⇒ DAILY 腿根本不发
+     *    ⇒ 0 样本守卫报「DAILY 未被判别」。给够了它就在批次内（实测 3/3）。
+     */
+    mainBody: {
+      code: 0,
+      data: {
+        today: {
+          mealDate: '2026-10-09',
+          orderCount: 0,
+          quantity: 0,
+          refundCount: 0,
+          amountFen: 0,
+          completedQuantity: 0,
+          commissionFen: 0,
+          level: 'gold',
+          levelLabel: '金牌',
+          rate: 0.1,
+        },
+        tomorrow: {
+          mealDate: '2026-10-10',
+          orderedCount: 0,
+          orderedOrders: 0,
+          cutoffAt: null,
+          canOrder: true,
+          unitPriceFen: 2580,
+        },
+        pickup: {
+          point: null,
+          buildingName: null,
+          floor: null,
+          status: 'pending',
+          statusText: '待确认分发',
+          expectAt: '',
+          expectAtIso: null,
+          actualAt: null,
+          driverName: null,
+          driverPhone: null,
+          plateNo: null,
+        },
+      },
+    },
+    bypass: [
+      ['/home/daily', 'DAILY'],
+      ['/leader/profile', 'PROFILE'],
+      ['/leader/pickup/today', 'PICKUP'],
+    ],
+    dropAll: [
+      {
+        from: 'fetchDaily(mealDate, { keepAuthState: true })',
+        to: `((globalThis.${S_ALL_WORKBENCH} = true), fetchDaily(mealDate, {}))`,
+        expect: 1,
+      },
+      {
+        from: 'fetchLeaderProfile({ keepAuthState: true })',
+        to: `((globalThis.${S_ALL_WORKBENCH} = true), fetchLeaderProfile({}))`,
+        expect: 1,
+      },
+      {
+        from: 'fetchPickupToday({}, { keepAuthState: true })',
+        to: `((globalThis.${S_ALL_WORKBENCH} = true), fetchPickupToday({}, {}))`,
+        expect: 1,
+      },
+    ],
+    /** G 特意挑 **DAILY**：它是 `void startCountdown()` 发射后不管的那条腿，最该被单独证明 */
+    dropOne: {
+      label: 'workbench.vue:329 fetchDaily（fire-and-forget 那条）',
+      needle: {
+        from: 'fetchDaily(mealDate, { keepAuthState: true })',
+        to: `((globalThis.${S_ONE_WORKBENCH} = true), fetchDaily(mealDate, {}))`,
+        expect: 1,
+      },
+    },
+    sentinelAll: S_ALL_WORKBENCH,
+    sentinelOne: S_ONE_WORKBENCH,
+  },
+
+  // ── commission：2 条腿（余额 / 等级规则）───────────────────────────────────
+  {
+    id: 'commission',
+    file: join(SRC, 'pages/leader/commission.vue'),
+    mainUrl: '/leader/commissions',
+    /** `LeaderCommissionsData`（`api/leader-finance.ts:71`）—— `fetchPage()` 读 `summary/list/page/hasMore` */
+    mainBody: {
+      code: 0,
+      data: {
+        summary: {
+          range: 'day',
+          startDate: '2026-10-09',
+          endDate: '2026-10-09',
+          earnedFen: 0,
+          reversedFen: 0,
+          netFen: 0,
+          quantity: 0,
+          level: 'gold',
+          levelLabel: '金牌',
+          rate: 0.1,
+        },
+        list: [],
+        page: 1,
+        pageSize: 10,
+        total: 0,
+        hasMore: false,
+      },
+    },
+    bypass: [
+      ['/leader/balance', 'BALANCE'],
+      ['/leader/level-rules', 'LEVEL'],
+    ],
+    dropAll: [
+      {
+        from: 'fetchLeaderBalance({ keepAuthState: true })',
+        to: `((globalThis.${S_ALL_COMMISSION} = true), fetchLeaderBalance({}))`,
+        expect: 1,
+      },
+      {
+        from: 'fetchLevelRules({ keepAuthState: true })',
+        to: `((globalThis.${S_ALL_COMMISSION} = true), fetchLevelRules({}))`,
+        expect: 1,
+      },
+    ],
+    dropOne: {
+      label: 'commission.vue:364 fetchLevelRules',
+      needle: {
+        from: 'fetchLevelRules({ keepAuthState: true })',
+        to: `((globalThis.${S_ONE_COMMISSION} = true), fetchLevelRules({}))`,
+        expect: 1,
+      },
+    },
+    sentinelAll: S_ALL_COMMISSION,
+    sentinelOne: S_ONE_COMMISSION,
+  },
+
+  // ══ `pages/leader/profile.vue` **刻意不登记** —— 不是覆盖不足，是登记口径不符 ══
+  //
+  // ⛔ 后来者：看到「profile 没进 PAGES」**不要**当成覆盖缺口去补。它两条前提都不成立：
+  //
+  //  1. **那条腿不是并发旁路**。`profile.vue:577` 的 `fetchMe({ keepAuthState: true })`
+  //     位于 `doQuit()` 内、且排在 `await run(() => quitLeader(...))` **之后**：
+  //       await run(() => quitLeader({ reason: '用户端主动退出团长' }, quitKey));
+  //       quitKey = '';
+  //       leaderStore.clear();
+  //       try { const res = await fetchMe({ keepAuthState: true }); … }
+  //     ⇒ 它是**顺序补刀**，携带 `run()` 刚刷新过的 token，不与任何东西并发。
+  //     salvo 场景族测的是「一批并发请求同时撞上 token 到期」，它根本不是批次成员。
+  //     （触发链还要先过 `confirmQuit()` → `uni.showModal` 用户点确认，`onShow` 不会碰到。）
+  //
+  //  2. **本页是双并发主路径**，与判据 ① 的「单主路径」假设不符：
+  //       Promise.all([run(() => fetchLeaderProfile()), run(() => fetchLevelRules())])
+  //     ⇒ 两条主路径各带过期 token 各吃一次 10002 ⇒ 合法清态 2 次 ⇒ 判据 ① 恒红。
+  //
+  // 实测过：登记进来就是 3 项红（① 清态=2 / 旁路扣住 0 条 / ME 未被判别）。
+  //
+  // ⛔ 要覆盖它得**另开场景族**（`uni.showModal` 替身 + 交互钩子 + 非 onShow 触发器），
+  //    代价与收益不成比例 —— **当前明确不做**。
+  //
+  // ✅ `:577` 那个 `keepAuthState` **flag 本身是对的、要保留**：那条腿是裸调、没有
+  //    `run()` 兜底 ⇒ 无权裁决登录态；而它的 `catch` 只有一句 `console.warn`
+  //    ⇒ 一旦清态，用户**悄无声息地掉线**（理由见 `profile.vue:573-576` 前端注释）。
+  //    留痕：该腿**不在 salvo 保护范围内**（它不并发）；将来 `doQuit()` 里若出现
+  //    **并发**调用，需要重估本条结论。
 ];
 
 const require_ = createRequire(pathToFileURL(join(REPO, 'package.json')).href);
@@ -195,7 +490,7 @@ try {
 // ── 常量 ─────────────────────────────────────────────────────────────────────
 const TOKEN_OLD = 'T1-expired';
 const TOKEN_NEW = 'T2-fresh';
-/** 跨页换发场景用的第三个 token：由「外部页面」写入，本页无从知晓 */
+/** 齐射场景用的第三个 token：T2 到期后，由「**别处**那条路径」重登写入，本页无从知晓 */
 const TOKEN_ROT = 'T3-rotated';
 /** 四档各自的 total —— 取四个**互不相同**的值，才能证明「各拿自己那一档」而不是都拿到同一个兜底值 */
 const TOTALS = { '': 12, paid: 3, completed: 7, cancelled: 2 };
@@ -350,9 +645,10 @@ function createTransport(sink, cfg) {
         );
       }
 
-      // ⚠️ 跨页换发场景：旁路请求**一到达就扣住**（此时它携带的还是当时的有效 token），
-      //    等「全部旁路都在途」这一**事件**放闸后，由外部换发再放行 ⇒ 一轮覆盖全部腿。
-      //    （不这么做的话，先返回的腿会赶在换发之前拿到 200 ⇒ 那条腿**永不被判别**
+      // ⚠️ 齐射场景：旁路请求**一到达就扣住**（此时它携带的 T2 还没到期），
+      //    等「全部旁路都在途」这一**事件**放闸后，再让 T2 到期（别处重登写入 T3）并放行
+      //    ⇒ 一轮覆盖全部腿。
+      //    （不这么做的话，先返回的腿会赶在到期之前拿到 200 ⇒ 那条腿**永不被判别**
       //      ⇒ 它的开关被删也测不出 —— mine.vue 的 SUPPORT 腿就是这个失效模式的实例。）
       if (cfg.holdBypass && bypassLabelOf(url, cfg.pageCfg)) {
         sink.pending.push(() =>
@@ -410,7 +706,7 @@ function classify(sink) {
     // ⚠️ `e.cleared` 是**归因**结果（哪一次响应出的手），不是「时间相近」—— 见 `removeStorageSync`
     stale: hits.filter((e) => isStale(e) && e.cleared),
     legit: hits.filter((e) => !isStale(e) && e.cleared),
-    /** 「危险条件」实录：携带旧 token 的响应，且当时已经换发过新 token */
+    /** 「危险条件」实录：携带旧 token 的响应，且当时**已经写到过**更新的 token */
     dangerous: hits.filter((e) => isStale(e)),
     countHits: hits.filter((e) => e.label.startsWith('CNT')),
   };
@@ -616,9 +912,11 @@ async function runLeak(cfg, bundleOverride) {
         binds.stale.map((e) => `  ${e.t}ms ${e.label} 携带=${e.tok}`).join(''),
     );
   }
+  // ① 同 `runSalvo`：假设**单**并发主路径（`order-list` 满足：`run(fetchOrders)` 一条）。
   if (binds.legit.length !== 1) {
     bad.push(
-      `① 主路径清态次数=${binds.legit.length}（必须恰好 1 —— 少了=过度修复，多了=主路径自己在乱清）`,
+      `① 主路径清态次数=${binds.legit.length}（必须恰好 1 —— 少了=过度修复，多了=主路径自己在乱清）` +
+        `（⚠️ 本判据假设**单**并发主路径）`,
     );
   }
   if (finalToken !== TOKEN_NEW) {
@@ -805,26 +1103,32 @@ async function runTrueReject(cfg, bundleOverride) {
 }
 
 /**
- * 场景 crossover：**跨页换发**（多页登记 `PAGES` 里每一页都跑一遍）
+ * 场景 salvo：**在飞期间 token 到期的齐射**（多页登记 `PAGES` 里每一页都跑一遍）
  *
  * ⚠️ 为什么必须另开这个场景（不是 leak 的变体）：leak 造的换发来自**本页**的 `run()`，
  *    `keepAuthState` 之外还有一层「顺序约定」在起作用（旁路排在 `run()` 之后）。
- *    而真实世界里换发**不由本页发起** —— 别的页面触发 `ensureLogin`、或服务端单活会话
- *    把旧 token 作废。mine.vue 当初就是这么踩的：`loadSupport()` 是**第二条** `run()` 路径，
+ *    而真实世界里换发**不由本页发起** —— token 恰好在这一批并发请求在飞时到期，
+ *    重登可能由本页发起、也可能由**别处**那条路径发起（本页无从知晓）。
+ *    mine.vue 当初就是这么踩的：`loadSupport()` 是**第二条** `run()` 路径，
  *    顺序约定只关掉了第一条那个窗口。
+ *
+ * ⛔ 触发器是「**token 到期**」，不是「别处重登」：JWT 无状态（见 `PAGES` 上方三处证据），
+ *    别处重登**不会**让在飞的旧 token 变 401。harness 里「别处写入 T3」只是把
+ *    「这一批请求携带的 T2 已经失效」这一事实**落到本页可见的位置**，是结果不是原因。
  *
  * 构造（**事件放闸**，不靠定时器赌顺序）：
  *   1. 进场 token=T1 已过期 ⇒ 主路径 `/auth/me` 吃 10002 ⇒ `run()` 重登 ⇒ 写入 T2
- *   2. N 条旁路**一到达就扣住**（`holdBypass`），此时它们携带的都是当时的有效 token T2
- *   3. 等「**N 条旁路全部在途**」这一**计数事件**成立 ⇒ 立刻做**外部换发**：
- *      直接往 storage 写 T3（来源在本页之外，本页无从知晓）+ 服务端作废 T2
- *   4. 放行 ⇒ N 条旁路**全部**携带 T2 回来吃 10002，而此时最新已写到 T3 ⇒ 全是「陈旧裁决」
+ *   2. N 条旁路**一到达就扣住**（`holdBypass`），此时它们携带的都是还没到期的 T2
+ *   3. 等「**N 条旁路全部在途**」这一**计数事件**成立 ⇒ 令 T2 到期：
+ *      服务端改认 T3（`cfg.valid.token`）+ storage 写入 T3（由别处那条路径重登写入）
+ *   4. 放行 ⇒ N 条旁路**全部**携带已失效的 T2 回来吃 10002，而此时最新已写到 T3
+ *      ⇒ 全是「陈旧裁决」
  *
  * ⇒ 一轮就覆盖 **N/N** 条腿。旧写法靠「把某条腿的延迟调大」来让它落在换发之后，
  *    结果 SUPPORT 那条腿（60ms）永远赶在换发之前返回 200 ⇒ **永不被判别**
  *    ⇒ 它的开关被删，门禁照样绿（实测坐实）。
  */
-async function runCrossover(pageCfg, bundleOverride) {
+async function runSalvo(pageCfg, bundleOverride) {
   const sink = createSink();
   // ⚠️ 自带 t0 + 自带可变 valid：场景内要改「服务端当前认哪个 token」，
   //    沿用 main 的全局 t0 / 共享 cfg 会让多个样本互相污染（truereject 踩过同一类坑）。
@@ -840,7 +1144,7 @@ async function runCrossover(pageCfg, bundleOverride) {
   globalThis.uni = createTransport(sink, cfg);
 
   const legs = pageCfg.bypass.length;
-  const mod = await freshImport(`cross-${pageCfg.id}`, bundleOverride);
+  const mod = await freshImport(`salvo-${pageCfg.id}`, bundleOverride);
   mod.mountPage(TOKEN_OLD);
   mod.fireOnShow();
 
@@ -851,13 +1155,15 @@ async function runCrossover(pageCfg, bundleOverride) {
       `旁路只扣住 ${sink.pending.length} 条（需 ≥${legs}）—— 危险条件根本没构造出来`,
     );
   } else {
-    // 外部换发：由「N 条旁路全部在途」这一**事件**放闸 —— 与机器快慢无关
+    // T2 到期：由「N 条旁路全部在途」这一**事件**放闸 —— 与机器快慢无关。
+    // ⛔ 顺序的含义是「T2 到期了，随后别处那条路径重登写入 T3」，
+    //    不是「T3 的签发导致 T2 失效」—— JWT 无状态，别处重登作废不了在飞的旧 token。
     globalThis.uni.setStorageSync('abox_token', TOKEN_ROT);
     cfg.valid.token = TOKEN_ROT;
     sink.events.push({
       t: Date.now() - cfg.t0,
       kind: 'NOTE',
-      op: '外部换发',
+      op: 'T2 到期 · 别处重登写入',
       label: '',
       code: '',
       tok: TOKEN_ROT,
@@ -878,13 +1184,20 @@ async function runCrossover(pageCfg, bundleOverride) {
   const bad = [];
   if (c.stale.length !== 0) {
     bad.push(
-      `② ${pageCfg.id} 旁路踩踏换发后的新 token：${c.stale.length} 次（必须 0）` +
+      `② ${pageCfg.id} 旁路踩踏别处重登写入的新 token：${c.stale.length} 次（必须 0）` +
         c.stale.map((e) => `  ${e.t}ms ${e.label} 携带=${e.tok}`).join(''),
     );
   }
+  // ① 主路径清态次数：⚠️ 本判据**假设本页只有一条并发主路径**（`run()`）。
+  //    双主路径页（如 `profile` 的 `Promise.all([run(fetchLeaderProfile), run(fetchLevelRules)])`）
+  //    会各吃一次 10002 ⇒ 合法清态 2 次 ⇒ 本判据**不适用**，不得直接登记进 `PAGES`
+  //    （见 `PAGES` 末尾那段注释）。⛔ 不要为此加「期望值旋钮」—— 剩下 5 页全是单主路径，
+  //    加一个没人用的旋钮 = 死代码，且会变成将来「把红改成绿」的把手。假设写在这里即可。
   if (c.legit.length !== 1) {
     bad.push(
-      `① 主路径清态次数=${c.legit.length}（必须恰好 1 —— 少了=过度修复，多了=主路径自己在乱清）`,
+      `① 主路径清态次数=${c.legit.length}（必须恰好 1 —— 少了=过度修复，多了=主路径自己在乱清）` +
+        `（⚠️ 本判据假设**单**并发主路径；若本页是 ` +
+        `\`Promise.all([run(), run()])\` 这类双主路径，这里会恒红 ⇒ 该页不适用本场景族）`,
     );
   }
 
@@ -901,8 +1214,11 @@ async function runCrossover(pageCfg, bundleOverride) {
   if (loginCount < 1) noSample.push('未触发重登（loginCount=0）');
 
   return {
-    scenario: `crossover:${pageCfg.id}`,
-    desc: `跨页换发：主路径重登拿到 ${TOKEN_NEW} 后，${legs} 条旁路在途期间由**外部**换发 ${TOKEN_ROT} ⇒ 旁路携带旧 token 回来，清态必须 0 次`,
+    scenario: `salvo:${pageCfg.id}`,
+    desc:
+      `齐射：主路径重登拿到 ${TOKEN_NEW} 后，${legs} 条旁路在途期间 ${TOKEN_NEW} **到期**` +
+      `（别处那条路径重登写入 ${TOKEN_ROT}）⇒ 旁路携带已失效的 ${TOKEN_NEW} 晚回来吃 10002，` +
+      `清态必须 0 次`,
     bad,
     noSample,
     sink,
@@ -1185,20 +1501,21 @@ async function main() {
     }
 
     // ── 多页登记（`PAGES`）：每页一套「真源码 + 全删针 + 只删一处针」──────────
-    //    ⚠️ 与上面 order-list 的 A/B/C/D/E **互不替代**：那五针守的是「本页重登换发」，
-    //    这两针守的是「**跨页**换发」。缺了 F/G，mine 那 5 个位点就是零覆盖（实测过）。
-    const crossReal = [];
+    //    ⚠️ 与上面 order-list 的 A/B/C/D/E **互不替代**：那五针守的是「**本页重登**换发」，
+    //    这两针守的是「**在飞期间 token 到期**」的齐射。缺了 F/G，mine 那 5 个位点
+    //    就是零覆盖（实测过）。
+    const salvoReal = [];
     for (const p of PAGES) {
       const bundle = await ensureBundle({ page: p.file });
       tmpDirs.push(dirname(bundle));
-      const r = await runCrossover(p, bundle);
-      crossReal.push(r);
+      const r = await runSalvo(p, bundle);
+      salvoReal.push(r);
       results.push(r);
     }
 
     for (let i = 0; i < PAGES.length; i += 1) {
       const p = PAGES[i];
-      const real = crossReal[i];
+      const real = salvoReal[i];
       // 真源码本身已经不达标 ⇒ 结论明确，再造变异体反而会盖住它（且变异针会找不到）
       if (real.bad.length || real.noSample.length) {
         line('');
@@ -1218,7 +1535,7 @@ async function main() {
       tmpDirs.push(dirname(bundleAll));
       mutants.push({
         name: `必报 F·${p.id} · 全删 ${nAll} 处 \`keepAuthState\`（≡ 把修复整体退回）`,
-        r: await runCrossover(p, bundleAll),
+        r: await runSalvo(p, bundleAll),
         sentinel: () => globalThis[p.sentinelAll] === true,
       });
 
@@ -1231,7 +1548,7 @@ async function main() {
       tmpDirs.push(dirname(bundleOne));
       mutants.push({
         name: `必报 G·${p.id} · 只删 ${p.dropOne.label}（${nOne} 处）⇒ 逐腿判别能力的证明`,
-        r: await runCrossover(p, bundleOne),
+        r: await runSalvo(p, bundleOne),
         sentinel: () => globalThis[p.sentinelOne] === true,
       });
     }
@@ -1260,8 +1577,8 @@ async function main() {
       // 失败时把事件流水全量打出：定位只看结论是没法复现的
       line('    事件流水（→发出 / ←响应[携带token] / TOKEN 读写）：');
       for (const e of timelineOf(r.sink)) line(`      ${e}`);
-    } else if (r.scenario.startsWith('crossover:')) {
-      line('    ✅ 跨页换发不踩踏 · 主路径清态 1 次 · 全部旁路腿均已判别');
+    } else if (r.scenario.startsWith('salvo:')) {
+      line(`    ✅ 齐射不踩踏 · 主路径清态 1 次 · 全部旁路腿均已判别（${r.samples.已判别腿}）`);
     } else {
       line('    ✅ 三条不变量全部满足');
     }

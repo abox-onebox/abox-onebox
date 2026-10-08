@@ -323,7 +323,10 @@ async function startCountdown(mealDate: string): Promise<void> {
   countdownReady.value = false;
 
   try {
-    const daily = await fetchDaily(mealDate);
+    // ⚠️ `{ keepAuthState: true }` —— 本请求由 `reload()` 里那句 `void startCountdown(...)`
+    //    **发射后不管**：响应落到哪一个 tick 完全不受 await 约束，是全页最有可能「晚回来
+    //    一步」的一条腿。它无权裁决登录态 —— 否则会把 `run()` 刚重登写进去的新 token 清掉。
+    const daily = await fetchDaily(mealDate, { keepAuthState: true });
     // 服务端可能忽略入参回落成「它的明天」——餐日对不上就不能用作本卡的依据
     if (daily.mealDate !== mealDate) return;
     countdownReady.value = true;
@@ -347,7 +350,13 @@ async function reload(): Promise<void> {
   }
 
   // 等级统计与待分发份数：best-effort，失败不挡主内容
-  const [p, k] = await Promise.allSettled([fetchLeaderProfile(), fetchPickupToday()]);
+  // ⚠️ 两条都带 `{ keepAuthState: true }`：与上面那条 `run()` 共用同一枚 token，token 到期
+  //    是齐射；`allSettled` 让它们连错都不报，若允许这里清态没人会知道发生过什么。
+  //    注意 `startCountdown()` 里那条 `fetchDaily` 与本批并发（fire-and-forget）。
+  const [p, k] = await Promise.allSettled([
+    fetchLeaderProfile({ keepAuthState: true }),
+    fetchPickupToday({}, { keepAuthState: true }),
+  ]);
   if (p.status === 'fulfilled') {
     profile.value = p.value;
     // 档案里的余额/等级是权威值，顺手刷新本地身份缓存（避免与 P8 显示两个等级）

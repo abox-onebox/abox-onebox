@@ -139,9 +139,20 @@ export interface LeaderBalanceData {
   payoutChannel: string;
 }
 
-/** L11 · 余额（提现 / 消费前的可用额） */
-export function fetchLeaderBalance(): Promise<LeaderBalanceData> {
-  return http.get<LeaderBalanceData>('/leader/balance');
+/**
+ * L11 · 余额（提现 / 消费前的可用额）
+ *
+ * @param options 透传给请求层：best-effort 旁路取数（如佣金页顶部那张余额卡片，
+ *                刷不出来只影响那一格）请传 `{ keepAuthState: true }` ——
+ *                它无权裁决登录态的有效性，
+ *                语义见 `api/request.ts` 的 `RequestOptions.keepAuthState`。
+ *                ⚠️ 提现页 `pages/leader/withdraw`、流水页 `pages/leader/balance-log`
+ *                走主路径，保持默认。
+ */
+export function fetchLeaderBalance(
+  options: { keepAuthState?: boolean } = {},
+): Promise<LeaderBalanceData> {
+  return http.get<LeaderBalanceData>('/leader/balance', options);
 }
 
 // ---------------------------------------------------------------------------

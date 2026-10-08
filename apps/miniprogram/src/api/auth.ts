@@ -87,7 +87,16 @@ export function login(payload: LoginPayload): Promise<LoginResult> {
   });
 }
 
-/** A2 · 当前登录用户资料（含团长身份） */
-export function fetchMe(): Promise<MeResult> {
-  return http.get<MeResult>('/auth/me');
+/**
+ * A2 · 当前登录用户资料（含团长身份）
+ *
+ * @param options 透传给请求层：best-effort 旁路取数（如「退出团长」收尾时顺手刷新
+ *                资料，刷不上也只是界面没跟上）请传 `{ keepAuthState: true }` ——
+ *                它无权裁决登录态的有效性，
+ *                语义见 `api/request.ts` 的 `RequestOptions.keepAuthState`。
+ *                ⚠️ 「我的」`pages/mine/mine`、申请页 `pages/leader-apply/leader-apply`、
+ *                换楼引导 `pages/building/switch` 三处是各自的会话裁决者，走主路径保持默认。
+ */
+export function fetchMe(options: { keepAuthState?: boolean } = {}): Promise<MeResult> {
+  return http.get<MeResult>('/auth/me', options);
 }
