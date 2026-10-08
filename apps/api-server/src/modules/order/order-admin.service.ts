@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, In, Repository, SelectQueryBuilder } from 'typeorm';
+import { Brackets, DataSource, In, Repository, SelectQueryBuilder } from 'typeorm';
 
 import {
   CANCEL_REASON_LABEL,
@@ -109,6 +109,8 @@ export class OrderAdminService {
     private readonly bizConfig: BizConfigService,
     private readonly refundService: RefundService,
     private readonly orderService: OrderService,
+    /** ⭐ 2026-10-08（P1-5 收口）：改单的「钱」与「单」必须在**同一个事务**里落库 */
+    private readonly dataSource: DataSource,
   ) {}
 
   // ==========================================================================
@@ -352,19 +354,57 @@ export class OrderAdminService {
       const balanceUsedFen = Math.min(toFen(Number(order.balanceUsed)), totalAmountFen);
       const payAmountFen = totalAmountFen - balanceUsedFen;
 
-      const frozenDelta = await this.orderService.syncFrozenBalance(
-        Number(order.id),
-        balanceUsedFen,
-      );
-      await this.orderRepo.update(
-        { id: order.id },
-        {
-          quantity,
-          totalAmount: money(totalAmountFen / 100),
-          payAmount: money(payAmountFen / 100),
-          version: (order.version ?? 0) + 1,
-        },
-      );
+      /**
+       * ⭐ 一个事务包住「改订单行」与「调冻结额」（P1-5 / BE-05 收口 · 2026-10-08）
+       *
+       * 改前这两件事分处**两个独立事务**：`syncFrozenBalance` 自开事务提交后，
+       * 这里才写第二次 ⇒ 中间任何失败都会留下「冻结额改了、份数没改」的账实不符。
+       * 现在 `m` 由本方法持有，两次写一起提交或一起回滚。
+       *
+       * ⚠️ 顺序：**先占位订单行，再动钱**。占位失败（并发）时一分钱都还没动，
+       *    不存在「钱冻了但单没改成」的中间态。
+       */
+      const frozenDelta = await this.dataSource.transaction(async (m) => {
+        /**
+         * 订单行的**真乐观锁**：`WHERE version = :v` + SQL 表达式自增
+         *
+         * 改前写成 `version: (order.version ?? 0) + 1` —— **内存快照值**，
+         * `WHERE` 里只有 `id` ⇒ 两路改单都能成功、后写者把前者整行覆盖，
+         * 且**任何一方都不报错**（缺陷 #81 同族，本处是订单域的残留）。
+         *
+         * ⚠️ `v` 直接取 `order.version`、**不做 `?? 0` 兜底**：`ab_order.version`
+         *    是 `INT UNSIGNED NOT NULL DEFAULT 0`（迁移 `1700000000000-init.ts:243`），
+         *    列值不可能为 NULL；若哪天 `order` 是缺列的部分查询，
+         *    `?? 0` 会把「快照缺失」伪装成 `version = 0` ⇒ 该行**永远更新不了**
+         *    （静默失败，比丢更新更糟）。不兜底则会当场报错，反而安全。
+         */
+        const claimed = await m
+          .createQueryBuilder()
+          .update(Order)
+          .set({
+            quantity,
+            totalAmount: money(totalAmountFen / 100),
+            payAmount: money(payAmountFen / 100),
+            version: () => 'version + 1',
+          })
+          .where('id = :id AND version = :v AND status = :st', {
+            id: order.id,
+            v: order.version,
+            st: order.status,
+          })
+          .execute();
+        if (!claimed.affected) {
+          // fail-closed：手上这份快照已过期，继续写就是把别人的结果覆盖回去
+          throw new BizException(
+            ErrorCode.ORDER_CONCURRENT_MODIFIED,
+            `订单 ${order.orderNo} 已被其它操作改动（本次依据 version=${order.version}` +
+              ` / status=${order.status}），改单未执行，请刷新后重试`,
+          );
+        }
+
+        // ⭐ 同一事务内调：行已被上面那条 CAS 占位，故本处**不再自增** version
+        return this.orderService.syncFrozenBalance(Number(order.id), balanceUsedFen, m);
+      });
 
       this.logger.log(
         `运营#${operatorId} 改单 ${order.orderNo}：份数 ${before.quantity} → ${quantity}` +
@@ -400,10 +440,35 @@ export class OrderAdminService {
       );
     }
 
-    await this.orderRepo.update(
-      { id: order.id },
-      { buildingId: Number(target.id), version: (order.version ?? 0) + 1 },
+    /**
+     * ⭐ 真乐观锁（BE-05 · 2026-10-08 收口）：`WHERE version = :v` + SQL 表达式自增
+     *
+     * 改前是 `this.orderRepo.update({ id }, { buildingId, version: (order.version ?? 0) + 1 })`
+     * —— `WHERE` 只有 `id`、`version` 写的是**内存快照值** ⇒ 乐观锁纯装饰：
+     * 两个运营先后改同一单（改楼 / 改份数），后写者用旧快照把前者一起覆盖，
+     * 且双方都收到「成功」。与 `30016 DELIVERY_CONFLICT` 同族，只是订单侧此前没有闸门。
+     *
+     * ⚠️ 同上：`v` 不兜底 `?? 0`，理由见 `change_quantity` 分支的注释。
+     */
+    const moved = await this.dataSource.transaction(async (m) =>
+      m
+        .createQueryBuilder()
+        .update(Order)
+        .set({ buildingId: Number(target.id), version: () => 'version + 1' })
+        .where('id = :id AND version = :v AND status = :st', {
+          id: order.id,
+          v: order.version,
+          st: order.status,
+        })
+        .execute(),
     );
+    if (!moved.affected) {
+      throw new BizException(
+        ErrorCode.ORDER_CONCURRENT_MODIFIED,
+        `订单 ${order.orderNo} 已被其它操作改动（本次依据 version=${order.version}` +
+          ` / status=${order.status}），改单未执行，请刷新后重试`,
+      );
+    }
 
     this.logger.log(
       `运营#${operatorId} 改单 ${order.orderNo}：取餐楼 ${before.buildingId} → ${target.id}` +

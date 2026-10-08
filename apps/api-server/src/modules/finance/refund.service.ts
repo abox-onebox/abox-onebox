@@ -621,7 +621,19 @@ export class RefundService {
       refund.version = (refund.version ?? 0) + 1;
       const saved = await m.save(refund);
 
-      // 乐观锁：仅当订单仍停在 refund_applying 时才回退（防与并发退款打架）
+      // 乐观锁：仅当订单仍停在 refund_applying **且版本未变**时才回退（防与并发退款打架）
+      //
+      // ⭐ 谓词是**双重的**（2026-10-08 · P1-5 收口）：
+      //   · `status = refund_applying` —— **业务**占位：这笔驳回只对「还在申请中」的订单成立；
+      //   · `version = :v`             —— **并发**占位：读到写之间若有另一路写点改过这一行
+      //     （支付回调 / 另一笔退款 / 改单），即使状态仍是 `refund_applying`，我们手上的
+      //     快照也已过期，继续写就是把人家的结果整行覆盖回去。
+      // ⚠️ `version` 必须用 **SQL 表达式自增**（`() => 'version + 1'）而不是
+      //     `(order.version ?? 0) + 1`：后者写的是**内存快照值**，等于没上锁（缺陷 #81 同族）。
+      //     `ab_order.version` 是 `INT UNSIGNED NOT NULL DEFAULT 0`（迁移
+      //     `1700000000000-init.ts:243`）⇒ 列值**不可能为 NULL**，故此处直接取快照值作谓词，
+      //     不做 `?? 0` 兜底 —— 兜底会把「快照缺失」伪装成 `version = 0`，令该行**永远更新不了**
+      //     （比丢更新更糟：静默失败且无报错）。
       //
       // ⚠️ 驳回 = 这笔取消**没发生**：申请时预写的 `cancel_source/cancel_reason`
       //    必须一并清掉（与 `applyByLeader` 的写入**配对**）。不清的话，订单
@@ -634,9 +646,13 @@ export class RefundService {
           cancelSource: null,
           cancelReason: null,
           cancelNote: null,
-          version: (order.version ?? 0) + 1,
+          version: () => 'version + 1',
         })
-        .where('id = :id AND status = :from', { id: order.id, from: OrderStatus.REFUND_APPLYING })
+        .where('id = :id AND status = :from AND version = :v', {
+          id: order.id,
+          from: OrderStatus.REFUND_APPLYING,
+          v: order.version,
+        })
         .execute();
       if (!upd.affected) {
         throw new BizException(ErrorCode.REFUND_STATUS_ILLEGAL, '订单状态已变更，请刷新后重试');

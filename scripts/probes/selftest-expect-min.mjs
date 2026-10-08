@@ -41,19 +41,44 @@ function ok(name, cond, detail = '') {
 console.log('EXPECT_MIN =', JSON.stringify(EXPECT_MIN));
 console.log('\n[必报样本 · 判据必须红]');
 ok('m1 缩水 110/114 → 报', checkMinAssertions('e2e:m1', '通过 108/110 · 全绿 ✅') !== null);
-// ⚠️ 缩水的形态是「总数变小」（通过 1300/1300），不是「失败变多」（通过 1300/1335 ——
-//    那属于「有 35 条没过」，由脚本 exit code 管，规模仍达标，判据不该插手）。
+// ⚠️ 缩水的形态是「总数变小」（通过 1300/1300），不是「失败变多」（通过 1300/1345 ——
+//    那属于「有 45 条没过」，由脚本 exit code 管，规模仍达标，判据不该插手）。
 ok('m3 缩水 1300/1300 → 报', checkMinAssertions('e2e:m3', '通过 1300/1300 · 全绿 ✅') !== null);
 ok('m2 0/0（正是原缺陷形态）→ 报', checkMinAssertions('e2e:m2', '通过 0/0 · 全绿 ✅') !== null);
 ok('完全没有汇总行 → 报', checkMinAssertions('e2e:m1', 'some other output') !== null);
 ok('空输出 → 报', checkMinAssertions('e2e:m3', '') !== null);
 
 console.log('\n[必不报样本 · 判据不许误伤]');
-ok('m1 刚好 114/114 → 不报', checkMinAssertions('e2e:m1', '通过 114/114 · 全绿 ✅') === null);
-ok('m3 刚好 1335/1335 → 不报', checkMinAssertions('e2e:m3', '通过 1335/1335 · 全绿 ✅') === null);
-ok('m2 上升 160/160 → 不报', checkMinAssertions('e2e:m2', '通过 160/160 · 全绿 ✅') === null);
+/**
+ * ⚠️ 样本值**一律从 `EXPECT_MIN` 派生**，不写死数字（2026-10-09 修）
+ *
+ * 判据源码是从 `gate.mjs` **原样 eval** 的，但**样本值此前是写死的**（114 / 1335 / 160）。
+ * 于是 min 每抬一次，就有样本从「必不报」翻成「必报」⇒ **自证自己红了**，
+ * 而它红的形态看起来像「判据坏了」，很容易被误读成要去改判据。
+ * 2026-10-09 那次抬升（m2 158→162、m3 1339→1345）一抬就翻了两条：
+ * `m3 1335/1335`（< 1345）与 `m2 160/160`（< 162）。
+ * ⇒ 改成派生：样本跟着真源走，**阈值再抬也不会把自证带红**。
+ */
+const at = (k) => `${EXPECT_MIN[k]}/${EXPECT_MIN[k]}`;
+const above = (k, n) => `${EXPECT_MIN[k] + n}/${EXPECT_MIN[k] + n}`;
+ok(
+  `m1 刚好 ${at('e2e:m1')} → 不报`,
+  checkMinAssertions('e2e:m1', `通过 ${at('e2e:m1')} · 全绿 ✅`) === null,
+);
+ok(
+  `m3 刚好 ${at('e2e:m3')} → 不报`,
+  checkMinAssertions('e2e:m3', `通过 ${at('e2e:m3')} · 全绿 ✅`) === null,
+);
+ok(
+  `m2 上升 ${above('e2e:m2', 8)} → 不报`,
+  checkMinAssertions('e2e:m2', `通过 ${above('e2e:m2', 8)} · 全绿 ✅`) === null,
+);
 ok('未登记门禁（lint）→ 不报', checkMinAssertions('lint', '通过 0/0') === null);
-ok('e2e 失败但规模达标 → 不报（失败由 exit code 管）', checkMinAssertions('e2e:m1', '通过 113/114 · 失败：X') === null);
+ok(
+  'e2e 失败但规模达标 → 不报（失败由 exit code 管）',
+  checkMinAssertions('e2e:m1', `通过 ${EXPECT_MIN['e2e:m1'] - 1}/${EXPECT_MIN['e2e:m1']} · 失败：X`) ===
+    null,
+);
 
 console.log(`\n合计：通过 ${pass} · 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

@@ -204,13 +204,25 @@ POST /api/v1/payments/mock/paid   { "orderNo": "AB202609150001" }
 替代方案**只有一处**：仓库内 `abox-onebox/scripts/gate.mjs`（免 pnpm；自带 `all` / `verify` 别名，**含 e2e**）。
 
 ```powershell
-# 跑全部门禁（node 用 managed 版本，勿用裸 node）
-& "C:\Users\herma\.workbuddy\binaries\node\versions\22.22.2-3\node.exe" abox-onebox\scripts\gate.mjs all
-& "...\node.exe" abox-onebox\scripts\gate.mjs verify          # 4 道：seed → e2e:m1 → e2e:m2 → e2e:m3
-& "...\node.exe" abox-onebox\scripts\gate.mjs --list          # 列出全部门禁与别名
-& "...\node.exe" abox-onebox\scripts\gate.mjs typecheck:api   # 只跑某几道（快速回归）
-& "...\node.exe" abox-onebox\scripts\gate.mjs design          # 设计线：design:spec + design:docs（本地跑；设计文档不入仓库，CI 看不到）
+# 跑全部门禁（用 PATH 里的 node 即可，不要写死绝对路径 —— 理由见下方 ⚠️）
+node abox-onebox\scripts\gate.mjs all
+node abox-onebox\scripts\gate.mjs verify          # 4 道：seed → e2e:m1 → e2e:m2 → e2e:m3
+node abox-onebox\scripts\gate.mjs --list          # 列出全部门禁与别名
+node abox-onebox\scripts\gate.mjs typecheck:api   # 只跑某几道（快速回归）
+node abox-onebox\scripts\gate.mjs design          # 设计线：design:spec + design:docs（本地跑；设计文档不入仓库，CI 看不到）
 ```
+
+> ⚠️ **别在文档里写死 node 的绝对路径 —— 它会陈旧，而且陈旧得不报错。**
+> 本手册曾经写 `...\node\versions\22.22.2-3\node.exe`，而本机实际是 `22.22.2-6`
+> ⇒ **照抄手册跑，第一道命令就是 `EXIT=127`（command not found）**，而这在手册里看上去完全正常。
+> 这正是本小节反复在治的同一个病：**同一件事多份表述，而不被自动化执行的那一份必然是错的。**
+>
+> - **首选**：直接用 PATH 里的 `node`（本机 `node -v` ⇒ `v22.22.2`）。
+> - **退路**（PATH 里没有 node 时）：managed 版本在 `C:\Users\herma\.workbuddy\binaries\node\versions\<版本号>\node.exe`，
+>   **版本号会随环境升级而变** ⇒ 用前**先 `ls` 确认**，⛔ **不要照抄任何文档里出现过的版本号**：
+>   ```powershell
+>   ls "C:\Users\herma\.workbuddy\binaries\node\versions\"
+>   ```
 
 > ⚠️ **工作区根 `tests/tools/gate.mjs` 已于 2026-09-21 删除** —— 它是一份只跑 12 道的**陈旧副本**，
 > 缺 M5 期新增的**多道**「声明 ↔ 实现」对账门禁（`schema:parity` / `index:parity` / `state:audit` /
@@ -231,13 +243,17 @@ POST /api/v1/payments/mock/paid   { "orderNo": "AB202609150001" }
 > 📌 **门禁条数全文只在此处声明一次**（下面这行是**机器可读标记**，由 `gate:parity` 门禁校验；
 > 加/删门禁后必须同步它，否则门禁会红并点名指出差多少）：
 >
-> `<!-- gate-count: all=27 verify=4 -->`
+> `<!-- gate-count: all=29 verify=4 -->`
 >
 > ⚠️ **其余文档一律不要再写死条数** —— 本项目已反复出现「同一个数字写死在多处，改一处就悄悄错，
 > 而没有任何工具会报错」。条数的**唯一真源**是 `gate.mjs` 自己：`node scripts/gate.mjs --json`。
 
 **原理**：不经过 pnpm，直接把各包 `node_modules/.bin` 的 `.CMD` shim 塞进 `PATH`，再用 `spawnSync(cmd, {shell:true})` 调用。
 共享包改动后必须先重建 dist（`gate.mjs` 的前两步已包含 `build-shared-types` / `build-shared-utils`）。
+
+> ⚠️ **跑之前还有两条硬纪律**：一是**必须预载子进程垫片**（否则全部门禁 `exit=null`），
+> 二是**`scripts/` 下的门禁脚本必须自带自证** —— 两条都写在 [§6.3](#63--门禁执行的两条硬纪律)。
+> 只看本小节就开跑，会得到一批**不可信的结论**（假红或假绿），而这两种都比跑不出来更危险。
 
 > 若在**别的机器**（pnpm 正常）上开发，直接用上表的 `pnpm xxx` 即可，本小节可忽略。
 
@@ -258,7 +274,7 @@ POST /api/v1/payments/mock/paid   { "orderNo": "AB202609150001" }
 ```bash
 cd abox-onebox
 export NODE_PATH=/c/Users/herma/.workbuddy/binaries/node/workspace/node_modules
-NODE=/c/Users/herma/.workbuddy/binaries/node/versions/22.22.2-3/node.exe
+NODE=node                         # ⚠️ 用 PATH 里的 node；不要写死 managed 绝对路径（会陈旧 ⇒ EXIT=127，见 §6.1）
 $NODE scripts/gate.mjs all        # 全量静态门禁 + 单测 + 三端构建（条数见 §6.1 标记，勿在此写死）
                                   #   shared×2 / lint / format / typecheck×3 / jest / build×3
                                   #   + schema:parity / index:parity / state:audit / route:audit
@@ -292,6 +308,75 @@ $NODE scripts/gate.mjs e2e:m3     # 单跑某一段（⚠️ 单跑不重置种�
 3. 注入后 `now()` 落在**未来**（真实 11:00 → 注入 20:00），不要用它做「距今多久」的断言；
 4. 直接手跑某个 e2e 脚本（不经 gate）时不会注入 → 窗口外会先撞上「前置：当前不在下单窗口」
    **一条**可读失败并退出（这是**刻意**的 fail-fast，避免 20 余条假红淹没真回归）。
+
+### 6.3 🔒 门禁执行的两条硬纪律
+
+> 这两条是**操作纪律**，不是「建议」。踩任一条的表现都是**门禁给你一个不可信的结论**
+> （假红或假绿），而这两种结论**都比「跑不出来」更危险** —— 因为你会据此改代码，或据此放行。
+
+#### ① ⛔ 子进程垫片 `_tmp/gatepipe/` —— 任何情况下不得删除或清空（P0 级）
+
+**它解决什么**：`gate.mjs` 用 `spawnSync(cmd, {shell:true})` 拉起子进程（见 §6.1「原理」），
+而**本机沙箱里 node 创建孙进程会撞 `EBUSY`**，进程根本起不来。垫片就是绕开这个环境缺陷的预载脚本。
+
+**用法（每次跑门禁前，一行）**：
+
+```bash
+export NODE_OPTIONS="--require C:/Users/herma/WorkBuddy/ABox小程序/_tmp/gatepipe/pipefix.cjs"
+```
+
+⚠️ **必须 `export`** —— 写成命令行前缀（`NODE_OPTIONS=... node scripts/gate.mjs all`）**不管用**：
+环境变量要被 `spawnSync` 拉起的**孙进程**继承，不做 export 的局部变量传不下去，
+表现是**顶层那道过了、被 spawn 出去的门禁照样 EBUSY**。
+
+**删掉之后长什么样（这是它被误判过的样子，务必认得）**：
+
+| 现象 | 真实原因 | 会被误读成 |
+| --- | --- | --- |
+| 门禁 `exit=null`、耗时 1ms、无输出 | 垫片没了 ⇒ 孙进程 EBUSY，崩在**进程创建**阶段 | 「这道门禁失败了」⇒ 报一条**根本不存在的 blocking** |
+
+> 📌 **已发生过的实例**：后端同事曾据 `lock:version ✘ exit=null (1ms)` 报了一条 blocking。
+> 同一道门禁**带垫片实测是 732ms · 自证 4/4 · 扫描 250 文件 · 命中 3 处 · EXIT=0（绿）**。
+> ⇒ **看到 `exit=null` 先查垫片在不在，不要先去改判据。**
+
+配套纪律：
+
+- **报红先分三类再动手**：**探针错**（判据 / 脚本写错）/ **产物错**（被扫的东西不对）/ **环境错**（垫片、端口、锁）。
+  `exit=null` 属第三类 —— 它不是测试结果，是**环境故障伪装成测试失败**。
+- ⛔ **不得在「清理临时文件」时顺手删 `_tmp/`**。垫片位于**工作区父目录**（`ABox小程序/_tmp/gatepipe/`），
+  **不在版本控制里**，仓库里也没有任何脚本会校验它存在 ⇒ 删掉**没有任何工具会报错**，
+  只能靠这条纪律兜住。
+- 若垫片确实不见了（不是你删的），**先找回再跑**，不要把 `exit=null` 当成结果上报。
+
+#### ② `scripts/` 下新增 / 修改门禁脚本的两条强制要求
+
+##### (a) 自带自证：必报样本 + 必不报样本，且 **0 样本必须报 `broken`**
+
+- **必报样本**：造一个**已知有缺陷**的输入，断言门禁**必须报出来**。
+- **必不报样本**：造一个**已知干净**的输入（含真实源码），断言门禁**必须不报**。
+- ⚠️ 两条缺一不可 —— 只有「必报」是**单向自证**：一个把「任何输入都算缺陷」写死的判据也能过它，
+  但会 100% 误报；只留「必不报」同理会被恒绿判据蒙混过去。
+- ⚠️ **0 样本时必须报 `broken` 并 `EXIT≠0`，不许静默通过**。
+  扫描目标为空（目录不存在 / 0 个文件 / 0 个调用点）时返回 0，
+  等于「门禁绿了，但它根本没看任何东西」。
+
+> 💡 **为什么自证必须长在脚本里、不能外挂**：
+> `eslint` 抓未使用变量、`prettier` 抓缩进、`tsc` 抓类型 —— **没有一样抓得到「判据恒绿 / 判据恒红」**。
+> 恒绿的门禁是**零信息量的门禁**，它唯一的作用是在报告里多一个 ✅。
+> 而最危险的失效形态**从来不是报错，是永远返回 0**。
+
+##### (b) 自带能力优先于外部依赖
+
+- 能靠脚本自身解决的（内置 fixture、临时目录、stub、手写工具函数），
+  **就不要依赖外部命令 / 垫片 / 会随机器变化的本机环境**这类**外部可变物**。
+- 判据同理：**能用纯函数表达就导出它**（如 `export function scanBareCalls()`），
+  让取证脚本 `import` 同一份判据复用 —— ⛔ **绝不另抄第二份判据**，抄的那份一定会漂，
+  最后变成「两个门禁各说各话，而没被执行的那份必然是错的」。
+- 正面例子：`mp:no-bare-call`（`scripts/check-mp-bare-call.mjs`：9 条自证 + 导出判据复用）、
+  `order:edges`（自证 11/11）、`mp:auth-state`（必报 / 必不报成对）。
+
+> ⛔ **别拿这条开倒车**：(b) 说的是「**新增门禁要把能力长在脚本里**」，
+> **不是**「不许用垫片」。垫片（①）是**环境缺陷的绕行方案**，照样要留着、照样不能删 —— 两者管的是两件事。
 
 ---
 

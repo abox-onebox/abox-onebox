@@ -748,6 +748,12 @@ async function main() {
     'M4-2 两段式②：入账后余额 = 佣金净额 ¥15.48，待入账归零',
     `balanceFen=${balSettled.body?.data?.balanceFen} pendingFen=${balSettled.body?.data?.pendingCommissionFen}`,
   );
+  // ⭐ P1-4 不变量的「第一次入账后」基线（见下方 settle2 之后的四条不变量断言）
+  const commSettled1 = readDb(
+    'SELECT status, settled_at FROM ab_commission WHERE order_id = ' +
+      '(SELECT id FROM ab_order WHERE order_no = ?)',
+    [orderNo],
+  );
   const settle2 = await call('POST', '/admin/finance/commissions/settle', {
     token: admin.token,
     body: { date: TODAY },
@@ -757,6 +763,67 @@ async function main() {
     settle2.body?.data?.scanned === 0 && balAfterRetry.body?.data?.balanceFen === 1548,
     'M4-2 两段式②：重复入账 scanned=0 且余额不变（幂等，不重复加钱）',
     `scanned=${settle2.body?.data?.scanned} balanceFen=${balAfterRetry.body?.data?.balanceFen}`,
+  );
+
+  /**
+   * ⭐ P1-4 · **两次 settle 的不变量**（2026-10-09 · **只补断言，不改码**）
+   *
+   * 原缺陷描述：入账是「读 pending 集 → 集体置 settled」，两次 settle 并发 ⇒ **重复加钱**。
+   * 回源核实结论：**缺陷不存在** —— `settlePending` 已是**逐行 CAS**
+   * （每行 `WHERE status = 'pending'`，配合 affected 归因），第二次 settle 扫到 0 行。
+   * ⇒ 下面四条是把它**冻住**的防复发断言，**不是**修它的断言。
+   *
+   * ⚠️ 如实标注本机能证明什么（**不许把不变量当竞态报**）：
+   *   · 服务端 SQLite（better-sqlite3，同步单连接）把事务**串行化**，两次 settle
+   *     是**一前一后**跑完的，**不会真的撞上同一时刻的写**；
+   *   · ⇒ 这里证明的是「**重复入账不重复加钱**」这条**不变量**，
+   *     **不是**「竞态被触发并拦住」。后者要真 MySQL 才造得出来，需 CI 的 MySQL job。
+   *   · 但它**不是空断言** —— 已做**变异实测**（2026-10-09，见下）。
+   *
+   * ⭐ **变异实测（2026-10-09 · 推理不算数，实测过才算）**
+   *   变异改法：`commission.service.ts` 入账段
+   *   `.set({ status: 'settled', settledAt: now })` → 改成 `.set({ settledAt: now })`
+   *   （**入账但不占位** ⇒ 佣金行留在 `pending` ⇒ 第二次跑批又捞到它、又加一次钱
+   *   = 原缺陷描述的「重复加钱」）。
+   *   实测结果：`node scripts/gate.mjs seed && node scripts/gate.mjs e2e:m2`
+   *   ⇒ **EXIT=1 · 通过 151/162**，失败清单里**本组四条全部命中**：
+   *     `P1-4 不变量①` / `不变量②` / `不变量③` / `不变量④`
+   *     （外加既有的 M4-2 两段式②×2、M2-③、L11×2、L19×2 等，共 11 条）。
+   *   ⇒ 结论：四条**都不是恒绿**，且敏感性比原注释写的更宽 —— 原以为只有 ③④ 会红，
+   *     实测 **①②③④ 四条全红**（①红是因为状态没被置 settled；
+   *     ②红是因为 `settled_at` 被第二次跑批刷新）。
+   *     变异已还原（`git diff` 该文件为空）。
+   *   ⚠️ 同条件对照：未变异时同命令 `通过 162/162 · 全绿`，EXIT=0。
+   */
+  const commAfter2 = readDb(
+    'SELECT status, settled_at FROM ab_commission WHERE order_id = ' +
+      '(SELECT id FROM ab_order WHERE order_no = ?)',
+    [orderNo],
+  );
+  assert(
+    commAfter2?.status === 'settled' && commAfter2?.settled_at != null,
+    'P1-4 不变量①：两次 settle 后佣金行仍是 **1 条 `settled`**、`settled_at` 非空（没被二次入账改回 pending / 清掉时间）',
+    `status=${commAfter2?.status} settledAt=${commAfter2?.settled_at}`,
+  );
+  assert(
+    String(commAfter2?.settled_at) === String(commSettled1?.settled_at),
+    'P1-4 不变量②：第二次 settle **不改写** `settled_at`（入账时间是「首次入账时刻」，重复跑批不能刷新它）',
+    `first=${commSettled1?.settled_at} second=${commAfter2?.settled_at}`,
+  );
+  const commLogCount = readDb(
+    "SELECT COUNT(*) n FROM ab_balance_log WHERE type = 'commission' AND user_id = ?",
+    [lming.userId],
+  );
+  assert(
+    Number(commLogCount?.n) === 1,
+    'P1-4 不变量③：佣金入账**只留 1 条余额流水**（重复跑批不重复记流水 —— 这是「重复加钱」在流水侧的样子）',
+    `rows=${commLogCount?.n}`,
+  );
+  const balRow = readDb('SELECT total_in FROM ab_balance WHERE user_id = ?', [lming.userId]);
+  assert(
+    Math.round(Number(balRow?.total_in ?? 0) * 100) === 1548,
+    'P1-4 不变量④：**累计入账 `total_in` = ¥15.48**（不是 2 倍 —— 「重复加钱」在账户侧的样子）',
+    `totalIn=${balRow?.total_in}`,
   );
 
   // ---- 4.4 L10 佣金明细 / L11 余额

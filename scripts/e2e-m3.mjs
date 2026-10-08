@@ -2243,6 +2243,110 @@ async function main() {
       `code=${adjCross.body?.code}`,
     );
 
+    // ------------------------------------------- D10-E 并发改单（真乐观锁）
+    /**
+     * ⭐ E · **并发改单**（2026-10-09 首跑实测后**据实改写** —— 改写理由写在下面）
+     *
+     * 原写法断言「两路**必有一路被拒** `30022`」⇒ **首跑实测失败**，`codes=[0,0]`：
+     * 两路**都成功了**。回源取证：`ab_operation_log` 里「并发改单 A 路」「B 路」
+     * **两条都在、且都没有 `error` 字段**。
+     *   根因：better-sqlite3 是**同步单连接**，两个请求被**整段串行化** ——
+     *   B 路是在 A 路写完之后才去读订单的 ⇒ 两路各自拿到的都是**当时的最新 version**，
+     *   **压根没产生过期快照** ⇒ 没有可被拦住的对象。
+     *   ⇒ 「必有一路 30022」在**本机结构性跑不出来**，**不是**锁没生效。
+     *
+     * 故拆成两层，各司其职：
+     *   ① **确定性机理探针**（**不依赖竞态**）：在事务里用**过期 version** 直写订单行，
+     *      断言 **0 行受影响**；再用**当前 version** 写一次作**对照组**断言 1 行 ——
+     *      没有对照组，上一条的「0 行」可能只是 SQL 写错，而不是谓词拦住。
+     *      两条都在 `BEGIN … ROLLBACK` 里跑 ⇒ **零落库副作用**。
+     *      这才是 `30022` 得以触发的**机理**。
+     *   ② **HTTP 并发对**（保留并发形状）：只断言 **不丢更新** ——
+     *      `version` 增量 == 成功路数。真发生「后写者整行覆盖」时
+     *      （2 路成功 / version 只 +1）当场红。
+     *
+     * ⚠️ 如实标注各自能拦住什么（**不许把不变量说成竞态**）：
+     *   · ① 证明「**谓词真会拦住过期快照**」，确定性、每次都跑；
+     *   · ② 在 SQLite 下实测是「2 成功 / +2」，**拦不住**装饰性锁 ——
+     *     装饰性锁由静态门禁 `lock:version` 兜（它直接扫源码里的 `version: (x ?? 0) + 1`）；
+     *   · 「真 MySQL 下竞态被触发并拦住」仍需 CI 的 MySQL job，本机造不出来。
+     * ⚠️ 目标值取 **4** 而不是 3：前文「电话要求加 1 份」已把本单改成 3，
+     *    再用 3 是**空操作**（实测 `changed:false`）⇒ 断言会是空的。
+     */
+    const ordRow0 = readDb('SELECT id, version FROM ab_order WHERE order_no = ?', [noA]);
+    assert(
+      Number(ordRow0?.version) > 0,
+      'D10-E① 前置守卫：被测订单的 version 必须 > 0 —— 若 version=0 则 staleV=-1，`WHERE version = -1` 恒 0 行 ⇒ E① 的「0 行受影响」无条件成立，退化成恒绿（假绿），与「CAS 谓词真生效」在汇总里同形。`ab_order.version` 是 INT UNSIGNED NOT NULL DEFAULT 0，新建的单就是 0，不是理论风险。',
+      `version=${Number(ordRow0?.version)}`,
+    );
+    const casProbe = (() => {
+      const db = fixtureDb();
+      try {
+        db.exec('BEGIN');
+        const stale = db
+          .prepare('UPDATE ab_order SET version = version + 1 WHERE id = ? AND version = ?')
+          .run(Number(ordRow0?.id), Number(ordRow0?.version) - 1).changes;
+        const live = db
+          .prepare('UPDATE ab_order SET version = version + 1 WHERE id = ? AND version = ?')
+          .run(Number(ordRow0?.id), Number(ordRow0?.version)).changes;
+        return { stale, live };
+      } finally {
+        db.exec('ROLLBACK'); // ⭐ 探针不留痕：整段回滚，version 保持原值
+        db.close();
+      }
+    })();
+    assert(
+      casProbe.stale === 0,
+      'D10-E① CAS 谓词探针：携带**过期 version** 的更新**必须 0 行受影响**（`WHERE version = :v` 真会拦住过期快照 —— 这正是 `30022` 得以触发的机理）',
+      `staleV=${Number(ordRow0?.version) - 1} changes=${casProbe.stale}`,
+    );
+    assert(
+      casProbe.live === 1,
+      'D10-E① 对照组：携带**当前 version** 的更新**恰好 1 行受影响**（没有对照组，上一条的「0 行」可能只是 SQL 写错而非谓词拦住）',
+      `changes=${casProbe.live}`,
+    );
+
+    const vBeforeRace = Number(
+      readDb('SELECT version FROM ab_order WHERE order_no = ?', [noA])?.version,
+    );
+    const [race1, race2] = await Promise.all([
+      call('POST', '/admin/orders/manual-adjust', {
+        token: adminToken,
+        body: { orderNo: noA, action: 'change_quantity', quantity: 4, reason: 'e2e 并发改单 A 路' },
+      }),
+      call('POST', '/admin/orders/manual-adjust', {
+        token: adminToken,
+        body: { orderNo: noA, action: 'change_quantity', quantity: 4, reason: 'e2e 并发改单 B 路' },
+      }),
+    ]);
+    const raceCodes = [race1.body?.code, race2.body?.code];
+    const raceOk = raceCodes.filter((c) => c === 0).length;
+    const raceRej = raceCodes.filter((c) => c === 30022).length;
+    const vAfterRace = Number(
+      readDb('SELECT version FROM ab_order WHERE order_no = ?', [noA])?.version,
+    );
+    assert(
+      raceOk + raceRej === 2,
+      'D10-E② 并发改单的返回码**只允许 `0` 或 `30022`**（冒出第三类码 = 并发路径走了别的分支，多半是状态闸门或 DTO 先红了）',
+      `codes=${JSON.stringify(raceCodes)}`,
+    );
+    assert(
+      vAfterRace - vBeforeRace === raceOk,
+      'D10-E② **不丢更新**：`version` 增量 == 成功路数（每成功一路恰好 +1；真发生「后写者整行覆盖」时会是 2 路成功 / 只 +1 ⇒ 当场红）',
+      `Δversion=${vAfterRace - vBeforeRace} 成功路数=${raceOk} codes=${JSON.stringify(raceCodes)}`,
+    );
+    assert(
+      raceOk >= 1,
+      'D10-E② 至少一路改单成功（两路都被拒 = 并发路径被别的闸门挡住了 —— 那本身就是回归）',
+      `codes=${JSON.stringify(raceCodes)}`,
+    );
+    const qtyAfterRace = readDb('SELECT quantity FROM ab_order WHERE order_no = ?', [noA]);
+    assert(
+      Number(qtyAfterRace?.quantity) === 4,
+      'D10-E② 并发改单后份数 = 目标值 4（赢的那路写进去的是目标值，不是被覆盖成别的值）',
+      `quantity=${qtyAfterRace?.quantity}`,
+    );
+
     const detA2 = await call('GET', `/admin/orders/${noA}`, { token: adminToken });
     assert(
       (detA2.body?.data?.operationLogs ?? []).some((l) => String(l.action).includes('手动改单')),
@@ -15706,7 +15810,7 @@ async function main() {
 
   // ⭐ 0 条断言必须**硬失败**（2026-10-04 整体复查 · 报告 ⑧）
   //    此前 `通过 0/0 · 全绿 ✅` + exit 0 是一条**合法**的退出路径：某次改动让一整节
-  //    被跳过时，1335 会静默掉到 0 而门禁照样绿。0 条不是「全过」，是**链路根本没执行**。
+  //    被跳过时，1345 会静默掉到 0 而门禁照样绿。0 条不是「全过」，是**链路根本没执行**。
   //    （外层 `gate.mjs` 的 `EXPECT_MIN` 另有一道规模下限，两者是同一缺陷的两层防护。）
   if (results.length === 0) {
     log('\n✘ 一条断言都没跑（0/0）—— 这不是「全绿」，是链路根本没执行。');

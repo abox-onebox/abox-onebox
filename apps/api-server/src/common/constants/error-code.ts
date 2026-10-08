@@ -236,6 +236,23 @@ export enum ErrorCode {
    * 回带 `data.ratedAt`，端上直接切「已评价」终态展示。
    */
   RATING_ALREADY_SUBMITTED = 30021,
+  /**
+   * 扩展（2026-10-08 · P1-5 / BE-05 收口）：订单行被并发修改，`version` 乐观锁未命中
+   *
+   * 语义：**你手上那份快照已经过期** —— 从你读到这次写入之间，有另一路写点改过这行
+   * （另一路改单 / 支付回调 / 退款回退 / 跑批）。此时**必须 fail-closed 抛错**，
+   * 不能用过期快照继续写：后写者会把前者的结果整行覆盖回去，且**任何一方都不报错**
+   * （表现是「改了但没生效」，与 `30016 DELIVERY_CONFLICT` 同一族）。
+   *
+   * ⚠️ 刻意**不复用** `30003 ORDER_STATUS_ILLEGAL`：那个码说的是「状态不允许」，
+   *    本码说的是「**值过期**」—— 状态可能仍然合法。排查入口也不同：
+   *    30003 去看状态机，本码去看「哪两路在写同一行」。
+   * ⚠️ 也**不复用** `40018 BALANCE_CONCURRENT_MODIFIED`：那是**余额行**的锁，
+   *    「每张单有自己的排查入口」是本仓一贯口径（见 40017 注释）。
+   *
+   * 收到本码 = 系统按设计停住了，**重试即可**（前提是端上重新拉一次详情拿到新 version）。
+   */
+  ORDER_CONCURRENT_MODIFIED = 30022,
 
   /** ---- 4xxxx 支付 / 退款 / 出款 ---- */
   PAY_CREATE_FAILED = 40001,
@@ -446,6 +463,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
    */
   [ErrorCode.RATING_NOT_ALLOWED]: '当前订单状态不允许评价',
   [ErrorCode.RATING_ALREADY_SUBMITTED]: '该订单已评价过，不能重复提交',
+  [ErrorCode.ORDER_CONCURRENT_MODIFIED]: '订单已被其它操作改动，请刷新后重试',
   [ErrorCode.PAY_CREATE_FAILED]: '支付单创建失败，请稍后重试',
   [ErrorCode.BALANCE_NOT_ENOUGH]: '余额不足',
   [ErrorCode.WITHDRAW_BELOW_MIN]: '提现金额低于最低限额',

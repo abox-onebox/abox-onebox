@@ -91,7 +91,24 @@ const RUNTIME_ENV = {
 const GATES = {
   'shared:types': { cwd: 'packages/shared-types', cmd: 'tsc -p tsconfig.build.json', group: 'shared' },
   'shared:utils': { cwd: 'packages/shared-utils', cmd: 'tsc -p tsconfig.build.json', group: 'shared' },
+  /**
+   * ⚠️ `.mjs` **刻意不纳管**（2026-10-09 裁定 · 技术债，本批不加门禁）
+   *
+   * `--ext` 只列了 `.ts,.vue` ⇒ `scripts/` 下的 `.mjs` 门禁脚本**不在** lint 覆盖内。
+   * 不扩 `--ext` 的理由：一次扫进整个 `scripts/`（几十个历史脚本），现有写法大概率
+   * **大批转红** ⇒ 属跨批次改动，不塞进 ι 批次收尾阶段。
+   * ⚠️ 语法面的兜底是有的：任何一道 `.mjs` 门禁若语法错，`gate.mjs` 跑它时直接 exit 1，
+   *    **不会静默通过**。
+   * ⇒ 改完 `.mjs` 请自觉 `node --check <file>` —— `.mjs` **不在 lint-staged 覆盖内**。
+   */
   lint: { cwd: '.', cmd: 'eslint . --ext .ts,.vue --max-warnings 0' },
+  /**
+   * ⚠️ `.mjs` **刻意不纳管**（同 `lint` 的裁定，理由见上）
+   *
+   * glob 只列 `{ts,vue,json,md,scss}` ⇒ `.mjs` **不在** prettier 覆盖内。
+   * 所以「单独跑 `prettier --check scripts/gate.mjs` 报了 N 处」**不等于** `format` 门禁会红
+   * —— 2026-10-09 正是这里栽过一次：拿自己的取数口径顶替了门禁的取数口径。
+   */
   format: { cwd: '.', cmd: 'prettier --check "**/*.{ts,vue,json,md,scss}"' },
   'format:write': { cwd: '.', cmd: 'prettier --write "**/*.{ts,vue,json,md,scss}"' },
   'typecheck:api': { cwd: 'apps/api-server', cmd: 'tsc --noEmit' },
@@ -319,6 +336,28 @@ const GATES = {
    */
   'mp:auth-state': { cwd: '.', cmd: 'node scripts/check-mp-auth-state.mjs' },
   /**
+   * ⛔ 小程序端「未受保护的裸调」**全仓无差别**扫描（P1-16 防复发 · 静态侧）。
+   *
+   * 与 `mp:auth-state` 的分工（**不要**合并、也不要互相替代）：
+   *   · `mp:auth-state` —— **运行时**、**深**：编译真 SFC 跑真场景，但**只覆盖已登记的 6 个页面**；
+   *   · `mp:no-bare-call` —— **静态**、**宽**：34 个页面文件**无差别**扫描。
+   * 前者证明「机制对」，后者保证「**没有漏网之页**」。判据窄而深 + 判据宽而浅，各司其职。
+   *
+   * 判据：任何 api 调用点若**既未被 `run()` 包裹**、**又未传 `keepAuthState: true`** ⇒ 报
+   * `文件:行`。当前 66 个调用点 = 50 `run()` + 16 flag + **0 裸调**。
+   * ⭐ 现在 0 处**不是**因为判据空 —— 是前端真的把 16 条腿都挂上了；谁新加裸调忘挂 flag
+   *   ⇒ 立刻红并点名。**已用 `git show 5e35bca` 的改动前 `pickup.vue` 复现过：
+   *   只换回这一个文件 ⇒ 报 `pages/leader/pickup.vue:333 fetchWorkbench()`。**
+   *
+   * ⛔ **刻意不收**「flag 是否落在正确形参位」那一层（相位校核）：`typecheck:mp` 已以
+   *   `TS2353` 兜住，`mp:auth-state` 的变异针按精确源码文本锚定、形参位一错即 fail-loud
+   *   ⇒ 单开就是恒绿。恒绿的门禁等于没有门禁，别把它塞回来。
+   *
+   * 自带 9 条自证（必报 3 / 必不报 3 / 判据 3），含「`run()` 回调体不得被误判成裸调」
+   * 「`keepAuthState: false` 不得被当成已挂」「0 调用点 ⇒ 判 broken 不许当通过」。
+   */
+  'mp:no-bare-call': { cwd: '.', cmd: 'node scripts/check-mp-bare-call.mjs' },
+  /**
    * ⛔ 订单状态迁移的**边级对账**（P1-9 防复发 · 状态机 `canTransit()` 生产零调用）。
    *
    * 缺陷本体：迁移合法性没有单一真源 —— `ORDER_TRANSITIONS` 声明了一套合法边，但
@@ -334,6 +373,28 @@ const GATES = {
    * 冲突」等防假绿判据；扫描到的实际写入点为 0 ⇒ 报 instrumentation broken 而非静默通过。
    */
   'order:edges': { cwd: '.', cmd: 'node scripts/check-order-edges.mjs' },
+  /**
+   * ⛔ **装饰性乐观锁**防复发（2026-10-08 复查 P1-5 + BE-05 合并收口）。
+   *
+   * 缺陷本体：`version: (order.version ?? 0) + 1` —— `version` 只在 SET 里**自增**，
+   * WHERE 里没有它 ⇒ 读与写之间的并发写被**整行覆盖**，且**两路都不报错**
+   * （表现为「改了但没生效」，比报错更难查）。同族：缺陷 #81（余额域已收口）。
+   * 2026-10-08 复查又查出 4 处（改份数 / 改取餐楼 / 驳回退款回退 / 改单 `balanceUsed`）。
+   *
+   * 正确范式（照 `order.service.ts` 余额域）：SET 用 **SQL 表达式** `version: () => 'version + 1'`
+   * ＋ WHERE 带 `version = :v`（`v` 取**快照值**，**不** `?? 0` —— 迁移
+   * `1700000000000-init.ts` 里该列 `NOT NULL DEFAULT 0`，兜底会把「快照缺失」伪装成
+   * `version = 0`，令该行**永远更新不了**，是静默失败）＋ `affected === 0 ⇒ fail-closed 抛错`。
+   *
+   * 判据：SET 里出现 `version: (X.version ?? 0) + 1` ⇒ 红并点名 `文件:行`。
+   * ⚠️ **先剥注释再扫** —— 本仓大量 JSDoc 会**引用**旧写法来讲解它，不剥会把每处「讲解」
+   *    判成违规（假阳性，且会逼后人不敢在注释里引用旧写法）。
+   * ⚠️ **白名单不许悄悄放行**：3 处备货/计划计数（`soldCount` / `planQuantity` ×2）刻意保留，
+   *    但每条必须**写明理由**、必须**真被命中**（未命中即红：要么代码已修好该删白名单、
+   *    要么键写错了在假装放行），且会被**显式打印**。
+   * 自带 4 条自证（必报 ×3 / 必不报 ×1）＋ 扫到 0 源文件判 instrumentation broken。
+   */
+  'lock:version': { cwd: '.', cmd: 'node scripts/check-optimistic-lock.mjs' },
   /**
    * S9：**设计红线落点**（原 `_tmp/icons/ui-gate.py`，手工脚本）纳入常驻门禁。
    *
@@ -513,8 +574,12 @@ const ALIASES = {
     'icons:lock',
     // P1-16：小程序端「踩踏式清态」防复发（编译真 SFC + 真源码跑 onShow；不依赖构建产物）—— 约 5 秒
     'mp:auth-state',
+    // P1-16：**静态侧**全仓无差别扫「未受保护的裸调」（mp:auth-state 只覆盖已登记页，本门保证无漏网）—— 毫秒级
+    'mp:no-bare-call',
     // P1-9：订单状态迁移边级对账（声明 vs 实际；声明表由反射取得，不抄）—— 纯静态、约 2 秒
     'order:edges',
+    // 2026-10-08 复查 P1-5 + BE-05：装饰性乐观锁防复发（SET 里 `version: (x ?? 0) + 1` ⇒ 红）—— 纯静态、毫秒级
+    'lock:version',
     // S9：设计红线落点（只读仓库内源码 ⇒ CI 可见）。⚠️ design:docs 刻意不进 all，原因见其定义处
     'design:spec',
     'jest',
@@ -587,8 +652,12 @@ const REPORT_RE = {
   'mp:no-font': [/^\[自证\] 汇总 \d+\/\d+.*$/m, /^③ 覆盖面：\s*\d+ 个产物文件.*$/m],
   // order:edges：自证汇总 + 实际/声明边数（分母为 0 = 判据空转，脚本自报 broken）
   'order:edges': [/^\[自证\] \d+\/\d+ 通过$/m, /^③ 实际写入边：\d+ 条$/m, /^④ 声明边集：\d+ 条$/m],
+  // lock:version：自证汇总 + 覆盖面（扫到的源文件数与命中数；命中 0 ⇒ 白名单未命中即红，不会静默）
+  'lock:version': [/^\[自证\] \d+\/\d+ 通过$/m, /^扫描 \d+ 个源文件 · 命中装饰性写法 \d+ 处$/m],
   // mp:auth-state：陈旧裁决/出手清态（判据核心）+ 结论行
   'mp:auth-state': [/^ {4}陈旧裁决: .*$/m, /^✅ 全部通过.*$/m],
+  // mp:no-bare-call：自证汇总 + 覆盖面（调用点总数；0 样本时脚本自行 exit 2，不会静默）
+  'mp:no-bare-call': [/^\[自证\] 汇总 \d+\/\d+.*$/m, /^③ 覆盖面：\s*\d+ 个页面文件.*$/m],
 };
 
 /**
@@ -596,7 +665,7 @@ const REPORT_RE = {
  *
  * 背景：三份 e2e 的收尾是 `log('通过 X/Y')` + `exit(failed.length ? 1 : 0)` ——
  * **`Y === 0` 时会打印「通过 0/0 · 全绿 ✅」并 exit 0**。某次改动让一整节被跳过时，
- * `1335` 会静默掉到 1300（乃至 0）而门禁照样全绿；基线 114/150/1335 此前
+ * `1346` 会静默掉到 1300（乃至 0）而门禁照样全绿；基线 114/162/1346 此前
  * **只写在文档里**，没有任何机械断言 —— 而文档是不会被执行的那一份。
  *
  * 这正是历史上「一条 e2e 断言恒红 17 天无人发现」的镜像面：那次是恒红被淹没，
@@ -604,11 +673,16 @@ const REPORT_RE = {
  *
  * ⚠️ 阈值**只允许上升**：删断言的人必须显式来改这里并写明理由，
  *    否则「悄悄少跑 200 条」与「全绿」在汇总里完全同形。
+ *
+ * 2026-10-09 追平**实测**（QA）：m2 158→**162**（P1-4「两次 settle」不变量 +4）·
+ *   m3 1339→1345（D10-E 并发改单 +6）→**1346**（D10-E① 的 version-0 前置守卫 +1，
+ *   修的是 `stale = version - 1` 在 `version === 0` 时退化成恒真的定时假绿）。
+ *   ⚠️ 一律抬到**实测值本身**：阈值判的是 `total < min`，留余量 = 给缩水留空间。
  */
 const EXPECT_MIN = {
   'e2e:m1': 114,
-  'e2e:m2': 150,
-  'e2e:m3': 1335,
+  'e2e:m2': 162,
+  'e2e:m3': 1346,
 };
 
 /** 返回 null = 达标；否则返回给人看的原因 */

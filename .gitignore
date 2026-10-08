@@ -56,7 +56,11 @@ npm-debug.log*
 pnpm-debug.log*
 
 # 临时/验证产物（本地排障用，严禁入库）
+# ⚠️ `_tmp/` 与 `_tmp_*` 是两种形态，都要挡：
+#    `_tmp_*` 是散落的单文件产物；`_tmp/` 是门禁与取证脚本的工作目录
+#    （如 `_tmp/gate-truth.json` 会让 `format` 报红，且它没有任何脚本在读）
 _tmp_*
+_tmp/
 _verify*.log
 _*_report.log
 _commitmsg.txt

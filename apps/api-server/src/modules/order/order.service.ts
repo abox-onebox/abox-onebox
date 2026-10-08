@@ -1158,6 +1158,20 @@ export class OrderService {
     for (const a of assignments) {
       const next = qtyOf.get(a.buildingGroupId) ?? 0;
       if (Number(a.soldCount) === next) continue;
+      /**
+       * ⚠️ 本处**刻意**保留「内存快照自增」写法（2026-10-08 复查裁定：不收口）
+       *
+       * 与钱/订单状态那几处不同，这里可接受的三条理由：
+       *   ① **写的是重算值，不是读-改-写**：`next` 由当日订单聚合得出，本方法幂等
+       *      （见方法头注释「每次按当前订单重算覆盖」）—— 即使两路并发，写进去的是
+       *      **同一个数**，不存在「后写覆盖掉一个不同的值」；
+       *   ② **单写者**：只有 4.x 备货定格跑批与它的手动补跑口会调本方法，
+       *      且跑批侧有任务锁，补跑是幂等的；
+       *   ③ 改真 CAS 要连带改这里的「重算 → 覆盖」语义，回归面会扩到备货链路，
+       *      收益不匹配（见 2026-10-08 批次裁定）。
+       * ⚠️ 若将来出现**第二个会动 `sold_count` 的写点**，第 ① 条即失效，
+       *    那时必须改成 `version: () => 'version + 1'` + `WHERE version = :v`。
+       */
       await this.assignmentRepo.update(
         { id: a.id },
         { soldCount: next, version: (a.version ?? 0) + 1 },
@@ -1317,11 +1331,28 @@ export class OrderService {
    * 余额的四个动作（冻结 / 解冻 / 消费 / 退回）都留在本文件，
    * 就是为了让「钱的状态」只有一处实现、只有一处能改错。
    *
+   * ## ⭐ 2026-10-08 收口（P1-5 / BE-05）：并入调用方事务 + 不再装饰性自增 version
+   *
+   *   · **改前**：本方法自己开事务先提交，调用方（`order-admin.service.ts#manualAdjust`）
+   *     再写第二次 ⇒ 同一笔改单的「钱」与「单」分处两个事务，中间失败即**账实不符**
+   *     （冻结额改了、份数没改）。
+   *   · **改后**：`m` 由调用方传入，两次写落在**同一个事务**里，一起提交或一起回滚。
+   *   · `version` 改前写成 `(order.version ?? 0) + 1` —— **内存快照值**，乐观锁等于没上
+   *     （缺陷 #81 同族）。改后见下方 `versionBump` 的说明。
+   *
+   * @param m 调用方事务。**传入即表示「行已被调用方的 CAS 占位」** ——
+   *          此时本方法**不自增 `version`**：同一行在一次事务里只许 bump 一次，
+   *          若这里也 bump，调用方那条 `WHERE version = :v` 就会失配 ⇒ 该行**永远更新不了**
+   *          （静默失败，比丢更新更糟）。不传则本方法自开事务并自行 bump。
    * @returns `deltaFen > 0` 表示多冻了，`< 0` 表示解冻了
    */
-  async syncFrozenBalance(orderId: number, newBalanceUsedFen: number): Promise<number> {
-    return this.dataSource.transaction(async (m: EntityManager) => {
-      const order = await m.findOne(Order, { where: { id: orderId } });
+  async syncFrozenBalance(
+    orderId: number,
+    newBalanceUsedFen: number,
+    m?: EntityManager,
+  ): Promise<number> {
+    const run = async (mm: EntityManager, versionBump: boolean): Promise<number> => {
+      const order = await mm.findOne(Order, { where: { id: orderId } });
       if (!order) throw new BizException(ErrorCode.ORDER_NOT_FOUND);
 
       const oldFen = toFen(order.balanceUsed);
@@ -1330,27 +1361,30 @@ export class OrderService {
 
       if (delta > 0) {
         // 抵扣额变大 → 再冻一部分（可用余额不足 → 40002）
-        const bal = await this.getOrCreateBalance(m, order.userId);
+        const bal = await this.getOrCreateBalance(mm, order.userId);
         if (toFen(bal.balance) < delta) {
           throw new BizException(
             ErrorCode.BALANCE_NOT_ENOUGH,
             `可用余额 ¥${bal.balance} 不足以再多抵扣 ¥${toYuanStr(delta)}`,
           );
         }
-        await this.freezeBalance(m, order.userId, delta, order.orderNo);
+        await this.freezeBalance(mm, order.userId, delta, order.orderNo);
       } else {
         // 抵扣额变小 → 解冻差额（冻结额不会小于抵扣额，故不会解出负数）
-        await this.releaseBalance(m, order.userId, -delta, order.orderNo);
+        await this.releaseBalance(mm, order.userId, -delta, order.orderNo);
       }
 
-      await m
-        .getRepository(Order)
-        .update(
-          { id: order.id },
-          { balanceUsed: toYuanStr(newBalanceUsedFen), version: (order.version ?? 0) + 1 },
-        );
+      await mm.getRepository(Order).update(
+        { id: order.id },
+        versionBump
+          ? // ⭐ SQL 表达式自增（不是内存快照值）—— 见 `updateBalanceRow` 的同款注释
+            { balanceUsed: toYuanStr(newBalanceUsedFen), version: () => 'version + 1' }
+          : { balanceUsed: toYuanStr(newBalanceUsedFen) },
+      );
       return delta;
-    });
+    };
+
+    return m ? run(m, false) : this.dataSource.transaction((mm) => run(mm, true));
   }
 
   /** 支付单创建前需要的信息（供 payment 域 U7 使用） */ async preparePrepay(

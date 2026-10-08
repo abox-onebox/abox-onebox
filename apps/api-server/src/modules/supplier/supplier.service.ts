@@ -812,6 +812,17 @@ export class SupplierService {
           status: DAILY_PENDING,
         });
       } else if (existed.status === DAILY_PENDING && Number(existed.planQuantity) !== plan.total) {
+        /**
+         * ⚠️ 本处**刻意**保留「内存快照自增」写法（2026-10-08 复查裁定：不收口）
+         *
+         * 与钱/订单状态那几处不同，这里可接受的三条理由：
+         *   ① **写的是派生值、不是读-改-写**：`plan.total` 由生产计划重算得出，
+         *      本方法幂等（同样的计划重跑得到同样的数），并发两路写进去的是**同一个值**；
+         *   ② **带状态闸门**：仅 `status = DAILY_PENDING` 才写，定格后的行不会被动；
+         *   ③ **单写者**：只有生产计划生成跑批与它的补跑口会调本方法。
+         * ⚠️ 若将来出现**第二个会动 `plan_quantity` 的写点**，第 ① 条即失效，
+         *    那时必须改成 `version: () => 'version + 1'` + `WHERE version = :v`。
+         */
         await this.dailyRepo.update(
           { id: existed.id },
           { planQuantity: plan.total, version: (existed.version ?? 0) + 1 },
@@ -838,6 +849,8 @@ export class SupplierService {
           existedDetail.status === DETAIL_PENDING &&
           Number(existedDetail.planQuantity) !== qty
         ) {
+          // ⚠️ 同上方 `dailyRepo.update` 的注释：此处同样是「写派生值 + 单写者 + 幂等」，
+          //    故**刻意**保留内存快照自增；出现第二个写点时须改真 CAS。
           await this.detailRepo.update(
             { id: existedDetail.id },
             { planQuantity: qty, version: (existedDetail.version ?? 0) + 1 },
