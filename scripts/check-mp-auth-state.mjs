@@ -44,6 +44,10 @@
  *                                     换发来源：**在飞期间 token 到期**（别处重登写入的
  *                                     新 token 是**结果**不是原因 —— 见 `PAGES` 上方）
  *                                     每页另配 F（全删）/ G（只删一处）两针
+ *   · `persist:<id>`               —— **`PERSIST`**（持久化族，**刻意不合入 `PAGES`**）：
+ *                                     断「一次清态有没有落进**持久化**」
+ *                                     触发器 = 这条腿**自己**吃了 `10002`（**不并发**）
+ *                                     配 P（只删一处开关）一针 + **双向活性**自证
  *
  * ⛔ 刻意**不提供**「只跑单个场景」的开关：单场景会拿到「不完整却全绿」的结论且无人拦截。
  *
@@ -106,6 +110,17 @@ const PAGE = join(SRC, 'pages/order-list/order-list.vue');
  * ⚠️ 新增一页只需往这个数组里加一项，不需要改判据本体。
  *    当前登记 5 页：`mine`(5 腿) / `pickup`(1) / `building`(3) / `workbench`(3) /
  *    `commission`(2)。⚠️ `profile` **刻意不登记**（口径不符，见数组末尾那段注释）。
+ *
+ * ── 「flag 挂在错误的形参位」这一类回归**不在本门禁内**，由两层兜住 ────────────
+ *  ① **本门禁的变异针按「精确源码文本」锚定**（`from` 是逐字照抄的调用片段，含形参数）。
+ *     形参位一错 ⇒ 文本就变了 ⇒ `writeMutants` **零命中直接抛错（fail-loud）**，
+ *     不是静默失效 —— 锚点漂了你会看到红，不会看到「全绿但什么都没测」。
+ *  ② `typecheck:mp`（`gate.mjs:99` = `vue-tsc --noEmit -p tsconfig.json`，**在 `all` 内**）
+ *     会以 `TS2353` 拦下 —— 实测 `fetchLeaderAbnormal({ keepAuthState: true })`（漏了第一个
+ *     实参）就是这么被抓出来的。
+ *
+ * ⛔ 因此**不再单开「相位校核」门禁**：上面两层已经兜住 ⇒ 它在现实中**几乎永远不触发**。
+ *    **恒绿的门禁等于没有门禁**，而且会变成一份需要维护、却没人说得清它守住什么的死资产。
  */
 const MINE_PAGE = join(SRC, 'pages/mine/mine.vue');
 const S_ALL_MINE = '__MUT_ALL_MINE';
@@ -462,8 +477,11 @@ const PAGES = [
   //
   // 实测过：登记进来就是 3 项红（① 清态=2 / 旁路扣住 0 条 / ME 未被判别）。
   //
-  // ⛔ 要覆盖它得**另开场景族**（`uni.showModal` 替身 + 交互钩子 + 非 onShow 触发器），
-  //    代价与收益不成比例 —— **当前明确不做**。
+  // ⛔ **不要**把它塞回 `PAGES`：本页是双主路径、该腿又不并发 ⇒ 两条 salvo 前提都不符。
+  //    该腿由**并列的 `persist` 族**（持久化族，见本文件 `PERSIST` / `runPersist`）负责覆盖：
+  //    判据不同 —— 它断的是「storage 里的 token 有没有被清」，不是「并发旁路有没有踩踏
+  //    新 token」；触发器也不同 —— 是「这条腿自己吃了 `10002`」，不是「token 到期齐射」。
+  //    （不需要 `uni.showModal` 替身：`doQuit()` 本身没有前置 UI，可直接调用 —— 已实证。）
   //
   // ✅ `:577` 那个 `keepAuthState` **flag 本身是对的、要保留**：那条腿是裸调、没有
   //    `run()` 兜底 ⇒ 无权裁决登录态；而它的 `catch` 只有一句 `console.warn`
@@ -518,6 +536,8 @@ function createSink() {
     toasts: [],
     requests: [],
     pending: [],
+    /** `uni.reLaunch` 落点（`doQuit` 收尾的 900ms 跳转）—— 记下来，不做纯 no-op 吞掉 */
+    relaunches: [],
     /** 正在派发的那个响应事件（用于把「清态」**归因**到具体某一次响应） */
     current: null,
   };
@@ -591,6 +611,13 @@ function createTransport(sink, cfg) {
     showLoading: () => {},
     hideLoading: () => {},
     showToast: (o) => sink.toasts.push(o),
+    /**
+     * ⚠️ `doQuit()` 收尾是 `setTimeout(() => switchTab(...), 900)`，而 `switchTab`
+     *    来自 `@/utils/router`（**不是** `uni.switchTab`）⇒ 底层调 **`uni.reLaunch`**
+     *    （`utils/router.ts:11`）。不 stub 的话 900ms 后 TypeError，且这个定时器
+     *    **跨场景存活** ⇒ 会污染后续样本。记进 `sink.relaunches`，不吞掉。
+     */
+    reLaunch: (o) => sink.relaunches.push(o),
     request(opts) {
       const url = String(opts.url);
       const carried = String(
@@ -655,6 +682,15 @@ function createTransport(sink, cfg) {
           finish(200, { code: 10002, message: '未登录或登录已过期', data: null }),
         );
         return;
+      }
+
+      // ⚠️ persist 族的触发器：`badUrls` 里的 URL **无条件**回 10002（不管携带什么 token）。
+      //    与 salvo 不同 —— salvo 的触发器是「token 到期」，persist 的是「这条腿自己吃了 10002」。
+      if (cfg.badUrls && cfg.badUrls.some((u) => String(url).includes(u))) {
+        return setTimeout(
+          () => finish(200, { code: 10002, message: '未登录或登录已过期', data: null }),
+          cfg.badDelay(url),
+        );
       }
 
       if (carried === (cfg.valid ? cfg.valid.token : cfg.validToken)) {
@@ -1235,6 +1271,152 @@ async function runSalvo(pageCfg, bundleOverride) {
   };
 }
 
+// ── `persist` 场景族（**持久化**族）───────────────────────────────────────────
+/**
+ * ⚠️ 与 `PAGES`（salvo 族）**并列，刻意不合入** —— 两条对照必须写清，
+ *    否则后人看到两组配置会以为是重复造轮子：
+ *      · `salvo`   断的是「**并发旁路有没有踩踏新 token**」，触发器 = **token 到期的齐射**；
+ *      · `persist` 断的是「**一次清态有没有落进持久化**」，触发器 = **这条腿自己吃了 `10002`**（不并发）。
+ *
+ * 为什么必须单开一族（不是 salvo 的变体）：`profile.vue:577` 的 `fetchMe` 在 `doQuit()` 内、
+ * 且排在 `await run(() => quitLeader(...))` **之后** ⇒ **顺序补刀**，不是齐射批次成员；
+ * 而本页又是**双主路径**（`reload()` 的 `Promise.all([run(), run()])`）⇒ 也不符合判据 ①。
+ *
+ * 为什么它是**真缺口**（与其余 12 条受害**不同类**）：这条腿吃 `10002` ⇒ 请求层
+ * `clearAuthStorage()`（`utils/storage.ts:63-68`，只 `removeStorage` 四个键）把
+ * token / user / isLeader / leader 从**持久化**里删掉；而**内存** `userStore` 还带着旧 token
+ * ⇒ 本次会话照常、用户照常收到「已退出团长身份」成功 toast 并跳转首页
+ * ⇒ **下次冷启动才发现自己是登出态**。`catch` 只有一句 `console.warn`，用户侧零感知。
+ * ⇒ 全清单里**唯一**会把坏状态落进持久化的位点。
+ *
+ * 判据（断言**持久化**，不是并发）：
+ *   · 真源码（带 `keepAuthState`）⇒ storage 里 token **仍在** + token 键**未被 remove**
+ *   · 变异体（去掉开关）          ⇒ storage 里 token **被清** + token 键**已被 remove**
+ *
+ * ⭐ 双向活性 = 本族的 0 样本守卫：若场景压根没跑到 `fetchMe`（`doQuit` 不可达、
+ *    或 `/auth/me` 没被请求），两次都会是「未 remove」⇒ 变异体那针**红不起来**
+ *    ⇒ 自证立刻失败，**不会退化成恒绿**。
+ */
+const S_PERSIST_TAIL = '__MUT_PERSIST_TAIL';
+const PERSIST = {
+  id: 'profile',
+  file: join(SRC, 'pages/leader/profile.vue'),
+  /** 主路径：`run(() => quitLeader(...))` ⇒ `POST /leader/quit`（`api/leader.ts:435`） */
+  mainUrl: '/leader/quit',
+  /** `QuitLeaderResult`（`api/leader.ts:404`） */
+  mainBody: {
+    code: 0,
+    data: {
+      isLeader: false,
+      status: 2,
+      level: 'gold',
+      levelLabel: '金牌',
+      quitAt: '2026-10-09T00:00:00.000Z',
+      kept: { totalOrders: 0, totalCommission: '0.00', balance: '0.00' },
+      tips: '',
+    },
+  },
+  /** 尾腿：`fetchMe({ keepAuthState: true })` ⇒ `GET /auth/me`（`api/auth.ts:101`） */
+  tailUrl: '/auth/me',
+  bypass: [['/auth/me', 'TAIL']],
+  /** 变异针：只去掉 `:577` 这一处开关 —— 该腿随即有权裁决登录态 ⇒ 清态落进持久化 */
+  drop: {
+    label: 'profile.vue:577 fetchMe',
+    needle: {
+      from: 'fetchMe({ keepAuthState: true })',
+      to: `((globalThis.${S_PERSIST_TAIL} = true), fetchMe({}))`,
+      expect: 1,
+    },
+  },
+  sentinel: S_PERSIST_TAIL,
+};
+
+/**
+ * 场景 persist：**一次清态有没有落进持久化**
+ *
+ * 驱动：`doQuit()` **可直接调用**，不需要 `uni.showModal` 替身 —— modal 只在
+ * `confirmQuit()`（`:531`）里，`doQuit()`（`:545`）本身没有前置 UI。
+ * 链路：`doQuit()` → `run(quitLeader)` 200 → `leaderStore.clear()` → `fetchMe` 10002。
+ *
+ * ⚠️ 断言在 **`await doQuit()` 返回之后立刻做**，不等那 900ms 的跳转定时器：
+ *    清态早在 `fetchMe` 的请求处理里就发生了 ⇒ 返回时 storage 已是终局状态。
+ */
+async function runPersist(bundleOverride) {
+  const sink = createSink();
+  const cfg = {
+    t0: Date.now(),
+    loginDelay: TIMING.login,
+    valid: { token: TOKEN_NEW },
+    okDelay: () => TIMING.okAll,
+    badDelay: () => TIMING.listBad,
+    badUrls: [PERSIST.tailUrl],
+    pageCfg: PERSIST,
+  };
+  globalThis.uni = createTransport(sink, cfg);
+
+  const mod = await freshImport('persist-profile', bundleOverride);
+  const api = mod.mountPage(TOKEN_NEW);
+
+  // ⭐ 驱动可达性**本身就是一条判据**：`doQuit` 不在 `setup()` 返回值里 ⇒ 本族前提不成立
+  //    ⇒ 必须报错，不许靠「啥也没发生所以 0 违规」蒙过去（那正是恒绿的形状）。
+  if (typeof api?.doQuit !== 'function') {
+    return {
+      scenario: `persist:${PERSIST.id}`,
+      desc: '持久化：调用 doQuit() —— 尾腿 fetchMe 吃 10002 ⇒ token 必须**仍在**持久化里',
+      bad: [],
+      noSample: [
+        '编译产物 `setup()` 的返回值里没有 `doQuit` ⇒ 本族驱动不可达，判据前提不成立',
+      ],
+      sink,
+      clearsN: 0,
+      token: '',
+      samples: { 请求数: sink.requests.length },
+    };
+  }
+
+  await api.doQuit();
+
+  const token = mod.currentToken();
+  const clearsN = sink.events.filter((e) => e.kind === 'TOK' && e.op === '删除').length;
+  const tailReqs = sink.requests.filter((r) => String(r.url).includes(PERSIST.tailUrl)).length;
+
+  const bad = [];
+  const noSample = [];
+  if (clearsN !== 0) {
+    bad.push(
+      `persist 清态落进了持久化：token 键被 remove ${clearsN} 次（必须 0）` +
+        ` —— 这条腿是 best-effort 补刀，无权裁决登录态；` +
+        `一旦清了，本次会话照常、用户下次冷启动才发现自己是登出态`,
+    );
+  }
+  if (token !== TOKEN_NEW) {
+    bad.push(`persist 最终 token="${token}"（应仍为 ${TOKEN_NEW}）`);
+  }
+  if (tailReqs < 1) {
+    noSample.push(
+      `尾腿 ${PERSIST.tailUrl} 一次都没发 ⇒ 危险条件根本没构造出来（判据会假绿）`,
+    );
+  }
+
+  return {
+    scenario: `persist:${PERSIST.id}`,
+    desc: '持久化：调用 doQuit() —— 尾腿 fetchMe 吃 10002 ⇒ token 必须**仍在**持久化里',
+    bad,
+    noSample,
+    sink,
+    clearsN,
+    token,
+    samples: {
+      请求数: sink.requests.length,
+      尾腿请求: `${tailReqs} 次（${PERSIST.tailUrl}）`,
+      'token 被 remove': `${clearsN} 次（必须 0）`,
+      最终token: token,
+      toast: sink.toasts.length,
+      reLaunch: sink.relaunches.length,
+    },
+  };
+}
+
 /** 事件流水（失败诊断用）：按时间排好，能直接读出因果链 */
 function timelineOf(sink) {
   return sink.events
@@ -1361,6 +1543,10 @@ async function main() {
       console.error(`❌ 找不到被测页面（多页登记 ${p.id}）：${p.file}`);
       return 2;
     }
+  }
+  if (!existsSync(PERSIST.file)) {
+    console.error(`❌ 找不到被测页面（persist 族 ${PERSIST.id}）：${PERSIST.file}`);
+    return 2;
   }
 
   const t0 = Date.now();
@@ -1552,6 +1738,35 @@ async function main() {
         sentinel: () => globalThis[p.sentinelOne] === true,
       });
     }
+
+    // ── `persist` 族（**持久化**）—— 与 salvo **并列、不合入 `PAGES`** ──────────
+    //    判据不同：salvo 断「并发旁路有没有踩踏新 token」；persist 断「一次清态有没有
+    //    落进持久化」。触发器也不同（token 到期 / 这条腿自己吃 10002）。
+    const persistBundle = await ensureBundle({ page: PERSIST.file });
+    tmpDirs.push(dirname(persistBundle));
+    const persistReal = await runPersist(persistBundle);
+    results.push(persistReal);
+
+    if (persistReal.bad.length || persistReal.noSample.length) {
+      line('');
+      line(
+        `（persist:${PERSIST.id} 真源码已不达标 ⇒ 跳过它的必报变异样本：结论已经明确，判据显然有牙齿）`,
+      );
+    } else {
+      const pDir = mkdtempSync(join(tmpdir(), `abox-mp-mut-persist-`));
+      tmpDirs.push(pDir);
+      // 必报 P：只去掉 `:577` 那一处开关 ⇒ 该腿有权裁决登录态 ⇒ 清态落进持久化
+      const nP = writeMutants(PERSIST.file, [PERSIST.drop.needle], join(pDir, 'drop-tail.vue'));
+      globalThis[PERSIST.sentinel] = false;
+      const bundleP = await ensureBundle({ page: join(pDir, 'drop-tail.vue') });
+      tmpDirs.push(dirname(bundleP));
+      mutants.push({
+        kind: 'persist',
+        name: `必报 P · 只删 ${PERSIST.drop.label}（${nP} 处）⇒ 清态必须落进持久化`,
+        r: await runPersist(bundleP),
+        sentinel: () => globalThis[PERSIST.sentinel] === true,
+      });
+    }
   } catch (e) {
     console.error(`❌ 场景执行失败（判据未真正跑完）：${e.message}`);
     return 1;
@@ -1579,6 +1794,10 @@ async function main() {
       for (const e of timelineOf(r.sink)) line(`      ${e}`);
     } else if (r.scenario.startsWith('salvo:')) {
       line(`    ✅ 齐射不踩踏 · 主路径清态 1 次 · 全部旁路腿均已判别（${r.samples.已判别腿}）`);
+    } else if (r.scenario.startsWith('persist:')) {
+      line(
+        `    ✅ 清态未落进持久化 · token 仍在（remove ${r.clearsN} 次）· 尾腿已判别`,
+      );
     } else {
       line('    ✅ 三条不变量全部满足');
     }
@@ -1622,6 +1841,22 @@ async function main() {
         for (const e of timelineOf(m.r.sink)) line(`      ${e}`);
       } else {
         line('    ✅ 判据有牙齿（真拒后无人清态会被抓住）');
+      }
+    } else if (m.kind === 'persist') {
+      // persist 族的必报：去掉开关后，清态**必须真的发生**（storage 里 token 被清、
+      // 且 token 键被 remove），且判据必须把它报出来。
+      // ⭐ 这同时是**双向活性**：变异体「清态没发生」⇒ 自证失败 ⇒ 不会退化成恒绿。
+      line(`  token 被 remove: ${m.r.clearsN} 次（必须 ≥1 —— 去掉开关后请求层必然清态）`);
+      line(`  最终 token: "${m.r.token}"（必须为空 —— 已被清出持久化）`);
+      const ok = m.r.clearsN >= 1 && m.r.token === '' && m.r.bad.length > 0;
+      if (!ok) {
+        bad_ += 1;
+        line('    ❌ 必报样本**没有**被报出 —— persist 判据已失效（不许记通过）');
+        line(`       remove ${m.r.clearsN} 次 / 最终 token="${m.r.token}" / 报出项 ${m.r.bad.length} 条`);
+        line('    事件流水（→发出 / ←响应[携带token] / TOKEN 读写）：');
+        for (const e of timelineOf(m.r.sink)) line(`      ${e}`);
+      } else {
+        line('    ✅ 判据有牙齿（去掉开关 ⇒ 清态落进持久化，会被抓住）');
       }
     } else {
       line(`  踩踏式清态: ${m.r.staleN} 次（必须 ≥1 —— 报不出说明判据抓不到回归）`);
