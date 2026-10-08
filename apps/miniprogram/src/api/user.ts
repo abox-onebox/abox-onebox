@@ -107,9 +107,18 @@ export interface MyBalanceLogsData {
   hasMore: boolean;
 }
 
-/** U13 · 账户余额 */
-export function fetchMyBalance(): Promise<UserBalanceData> {
-  return http.get<UserBalanceData>('/me/balance');
+/**
+ * U13 · 账户余额
+ *
+ * @param options 透传给请求层：best-effort 旁路取数（如首页只读展示的余额）请传
+ *                `{ keepAuthState: true }` —— 它无权裁决登录态的有效性，
+ *                语义见 `api/request.ts` 的 `RequestOptions.keepAuthState`。
+ *                ⚠️ 余额页 `pages/balance-detail` 走主路径，保持默认。
+ */
+export function fetchMyBalance(
+  options: { keepAuthState?: boolean } = {},
+): Promise<UserBalanceData> {
+  return http.get<UserBalanceData>('/me/balance', options);
 }
 
 /** U14 · 余额明细（不传 `type` = 全部流水） */

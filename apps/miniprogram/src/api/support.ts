@@ -37,7 +37,16 @@ export interface SupportContact {
   csUrl: string | null;
 }
 
-/** U17 · 客服入口配置（登录即可访问，不要求团长身份） */
-export function fetchSupportContact(): Promise<SupportContact> {
-  return http.get<SupportContact>('/me/support');
+/**
+ * U17 · 客服入口配置（登录即可访问，不要求团长身份）
+ *
+ * @param options 透传给请求层：best-effort 旁路取数（如只为决定入口叫法）请传
+ *                `{ keepAuthState: true }` —— 它无权裁决登录态的有效性，
+ *                语义见 `api/request.ts` 的 `RequestOptions.keepAuthState`。
+ *                ⚠️ 客服页 `pages/support/contact` 走主路径，保持默认。
+ */
+export function fetchSupportContact(
+  options: { keepAuthState?: boolean } = {},
+): Promise<SupportContact> {
+  return http.get<SupportContact>('/me/support', options);
 }

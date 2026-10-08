@@ -74,7 +74,7 @@
 | T13 | `refund_applying` | `refunded` | 运营 | **后台审批通过**（C6 第二段） | ⭐ **订单一步到 `refunded`** + 账务冲销（余额退回 / 佣金反冲）在同一事务内完成；微信退款通道在**事务外**调用 → `ab_refund.status='refunding'` |
 | T14 | —（`ab_refund`） | `refunded` | 系统 | 微信退款回调成功 | 只更新 `ab_refund.status='refunded'` 并收口；**订阅消息：退款结果（必推）**。⚠️ 订单**不在这里改状态**（它在 T13 已到终态）—— 订单若也走一遍 `refunding`，就等于把通道进度重复表达了一次 |
 | T15 | `refund_applying` | （回原状态） | 运营 | **后台驳回** | `ab_refund.status='rejected'`；**订阅消息：驳回原因** |
-| T16 | 任意非终态 | `cancelled` | 运营 | 强制退款（M32-05） | 同上 T4；**必须写 `ab_operation_log`** |
+| T16 | 任意非终态 | `refunded` | 运营 | 强制退款（M32-05 · 接口 D11） | ⭐ **跳过申请与审批**，由 `settleRefundDb` 原子占位**一步到 `refunded`** + 账务冲销；**必须写 `ab_operation_log`**（原写 `cancelled` 系**旧表**遗留（旧表把它挂在 M32-05 名下），与实现及 Func-19 不一致，本次以代码为准修正） |
 
 ### 2.1 状态机守则
 

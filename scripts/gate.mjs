@@ -319,6 +319,22 @@ const GATES = {
    */
   'mp:auth-state': { cwd: '.', cmd: 'node scripts/check-mp-auth-state.mjs' },
   /**
+   * ⛔ 订单状态迁移的**边级对账**（P1-9 防复发 · 状态机 `canTransit()` 生产零调用）。
+   *
+   * 缺陷本体：迁移合法性没有单一真源 —— `ORDER_TRANSITIONS` 声明了一套合法边，但
+   * `canTransit()` **全仓零生产调用**，各 service 用手写 where/update 自行迁移，声明表
+   * 无人执行。这正是 P0-1（L9 一键分发擅自把 `delivering` 推进 `completed`）能长期藏住的根因。
+   *
+   * 判据：声明边集 = `ORDER_TRANSITIONS` 的笛卡尔展开；实际边集 = 全仓所有「真正的订单
+   * 状态迁移写入点」；**实际 ⊆ 声明**，越界即报红并点名 `文件:行`。
+   * ⭐ 声明边集由**运行时反射**真模块取得，**绝不抄进脚本** —— 抄一份就等于「声明改了而
+   *   脚本不知道」，那才是恒绿的温床。
+   *
+   * 自带 18 条自证（判据层 / 取真度 / 恒绿反作弊），含「声明表不在反射结果里」「豁免与声明
+   * 冲突」等防假绿判据；扫描到的实际写入点为 0 ⇒ 报 instrumentation broken 而非静默通过。
+   */
+  'order:edges': { cwd: '.', cmd: 'node scripts/check-order-edges.mjs' },
+  /**
    * S9：**设计红线落点**（原 `_tmp/icons/ui-gate.py`，手工脚本）纳入常驻门禁。
    *
    * 为什么必须常驻：它当时**不在任何门禁内**，`all verify` 覆盖不到 ⇒ S8 把后台侧栏
@@ -497,6 +513,8 @@ const ALIASES = {
     'icons:lock',
     // P1-16：小程序端「踩踏式清态」防复发（编译真 SFC + 真源码跑 onShow；不依赖构建产物）—— 约 5 秒
     'mp:auth-state',
+    // P1-9：订单状态迁移边级对账（声明 vs 实际；声明表由反射取得，不抄）—— 纯静态、约 2 秒
+    'order:edges',
     // S9：设计红线落点（只读仓库内源码 ⇒ CI 可见）。⚠️ design:docs 刻意不进 all，原因见其定义处
     'design:spec',
     'jest',
@@ -567,6 +585,8 @@ const REPORT_RE = {
   'e2e:msg': [/^✔ 自证 \d+\/\d+.*$/m, /^✔ e2e message 断言全覆盖.*$/m],
   // mp:no-font：自证汇总 + 覆盖面（扫到的产物文件数；产物缺失时脚本自行 exit 2，不会静默）
   'mp:no-font': [/^\[自证\] 汇总 \d+\/\d+.*$/m, /^③ 覆盖面：\s*\d+ 个产物文件.*$/m],
+  // order:edges：自证汇总 + 实际/声明边数（分母为 0 = 判据空转，脚本自报 broken）
+  'order:edges': [/^\[自证\] \d+\/\d+ 通过$/m, /^③ 实际写入边：\d+ 条$/m, /^④ 声明边集：\d+ 条$/m],
   // mp:auth-state：陈旧裁决/出手清态（判据核心）+ 结论行
   'mp:auth-state': [/^ {4}陈旧裁决: .*$/m, /^✅ 全部通过.*$/m],
 };

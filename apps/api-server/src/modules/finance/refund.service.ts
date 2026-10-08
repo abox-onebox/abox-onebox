@@ -105,7 +105,10 @@ const ACTIVE_REFUND_STATUS: RefundStatus[] = [
  *
  * ⚠️ **刻意窄于「除 refunded 之外的一切」**：占位条件越具体，
  *    误伤（把一笔本不该退的单锁住）越不可能。它同时也是「订单状态机」里
- *    已声明的迁移边集合，与状态机对账时能直接对上。
+ *    已声明的迁移边集合（P1-9 补进 `ORDER_TRANSITIONS` 的那 6 条 `→ refunded`
+ *    就是照着本集合补的），与状态机对账时能直接对上 ——
+ *    **唯一的差集是保留态 `refunding`**：声明表里它同样有 `→ refunded` 的边，
+ *    但订单**永远不会进入**该态（见 `ORDER_RESERVED_STATUSES`），故不放在本集合内。
  */
 const CLAIMABLE_ORDER_STATUS: string[] = [...REFUNDABLE_STATUS, OrderStatus.REFUND_APPLYING];
 

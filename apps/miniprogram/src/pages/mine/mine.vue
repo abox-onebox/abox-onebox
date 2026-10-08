@@ -312,10 +312,14 @@ async function loadProfile(): Promise<void> {
   }
 }
 
-/** U13 余额（用户与团长同一账户） */
+/**
+ * U13 余额（用户与团长同一账户）
+ *
+ * ⚠️ `keepAuthState: true` —— 同 `loadOrderTotal` 的说明，旁路取数不裁决登录态。
+ */
 async function loadBalance(): Promise<void> {
   try {
-    const res = await fetchMyBalance();
+    const res = await fetchMyBalance({ keepAuthState: true });
     balanceFen.value = res.balanceFen;
   } catch {
     // 静默：余额取不到时显示 0 会让用户以为钱没了，故失败保留上一值
@@ -325,28 +329,47 @@ async function loadBalance(): Promise<void> {
 /**
  * 累计订单数（只取 total）
  *
- * ⚠️ `onShow` 里那一跳 `await loadProfile()` 同时是**登录态时序的护栏**，不只是 isLeader 闸门：
- *    本函数排在它之后 ⇒ 发出时拿的是重登后的最新 token，后续 10002 才是「真拒」而非「陈旧裁决」。
- *    口径见 `api/request.ts` 的 `keepAuthState`。
- *    ⛔ 这条护栏**只挡得住第一条**重登路径：`loadSupport()` 共用同一个 `useRequest` 的 `run()`，
- *       而它与本函数在 `onShow` 里是并发的（两个都不 await）—— 它若二次重登，
- *       本请求携带的 token 就又成了旧 token，裁决回到「陈旧裁决」（已知残余缺陷）。
- *    ⛔ 改成并发（Promise.all / 去掉 await、或在 loadProfile 前插裸调）会让窗口当场重开，复发 P1-16。
+ * ## 为什么这里带 `{ keepAuthState: true }`
+ * 本页的形态是「**一条主路径 + 五条旁路**」，裁决权的分配见下；完整口径在
+ * `api/request.ts` 的 `RequestOptions.keepAuthState` 头注。
+ *
+ * 请求层在拿到 `10002 / 401 / 20014` 时会 `clearAuthStorage()`（`:204-209` 的三元），
+ * 但它是**按单次响应**判定的：旁路请求天生带着「发出那一刻」的 token，
+ * 若期间 token 被换发（本页重登 / **别的页面**重登 / 服务端侧作废），
+ * 它拿回来的 10002 说的是「**我手上这张旧**」，不是「会话已死」——
+ * 让它清态就变成**陈旧裁决**：把刚写进去的新 token 删掉，用户被无谓登出（P1-16）。
+ * ⇒ 旁路一律标 `true`，**只失败、不出手**；「session 是否已死」只由主路径裁决。
+ *
+ * ⚠️ 这条护栏是**结构型**的（与 `order-list` 同口径），不是靠调用顺序保的：
+ *    开关打在每个请求自己身上，所以**任何来源**的换发都踩不到这五条旁路。
+ *    （对照：只把旁路串行排到 `run()` 之后的做法是**顺序型**的，
+ *     只能关掉「本页重登」这一个窗口，其余来源照样踩。）
+ *
+ * ⛔ `loadProfile` **不许标**这个开关 —— 它是本页唯一的主路径：
+ *    正是它（经 `useRequest` 的 `run()` 重登后仍失败）在回答「会话是不是真没了」。
+ *    标了就没人清态，真 token 失效 / 账号注销时用户会卡在半登录状态。
+ *
+ * ⚠️ 残余：标了开关的请求**照样会 `throw`**（请求层清态后仍走到抛错，`:216`），
+ *    所以取数失败时数据照旧落到 `null`、界面显示「—」——用户**不掉线**，但这次
+ *    旁路数据要等下一次 `onShow` 才补得上。可接受：旁路数据都不是主干。
  */
 async function loadOrderTotal(): Promise<void> {
   try {
-    const res = await fetchOrders({ page: 1, pageSize: 1 });
+    const res = await fetchOrders({ page: 1, pageSize: 1 }, { keepAuthState: true });
     orderTotal.value = res.total;
   } catch {
     orderTotal.value = null;
   }
 }
 
-/** 团长专属：本月佣金与份数（L10） */
+/** 团长专属：本月佣金与份数（L10） · `keepAuthState` 理由同 `loadOrderTotal` */
 async function loadMonthCommission(): Promise<void> {
   if (!leaderStore.isLeader) return;
   try {
-    const res = await fetchCommissions({ range: 'month', page: 1, pageSize: 1 });
+    const res = await fetchCommissions(
+      { range: 'month', page: 1, pageSize: 1 },
+      { keepAuthState: true },
+    );
     monthCommissionFen.value = res.summary.netFen;
     monthQuantity.value = res.summary.quantity;
   } catch {
@@ -365,7 +388,7 @@ async function loadMonthCommission(): Promise<void> {
 async function loadPendingDeliver(): Promise<void> {
   if (!leaderStore.isLeader) return;
   try {
-    const res = await fetchWorkbench();
+    const res = await fetchWorkbench({ keepAuthState: true });
     pendingDeliverQty.value = Math.max(0, res.today.quantity - res.today.completedQuantity);
   } catch {
     pendingDeliverQty.value = null;
@@ -413,7 +436,12 @@ function goSupport(): void {
  */
 async function loadSupport(): Promise<void> {
   try {
-    const c = await run(() => fetchSupportContact());
+    // ⛔ 刻意**不走** `run()`：`run()` 带「重登后重试」，会让它变成本页第二个重登源。
+    //    旁路取数当重登源，等于让「入口叫法」这种装饰性数据去裁决 session 是否已死。
+    //    ⚠️ 光不走 `run()` 还不够 —— 是否清态与走不走 `run()` 无关，
+    //       因此这里同时挂 `keepAuthState: true`（理由见 `loadOrderTotal` 的说明）。
+    //       两者叠加才是结构型护栏：既不当重登源，也不会被任何来源的换发打成陈旧裁决。
+    const c = await fetchSupportContact({ keepAuthState: true });
     csMode.value = c?.csMode ?? null;
   } catch {
     csMode.value = null;
@@ -519,14 +547,23 @@ onShow(() => {
   // loadMonthCommission / loadPendingDeliver 以 `leaderStore.isLeader` 为闸门，
   // 而这个标志位正是 loadProfile 在回调里置位的 —— 并发时冷启动必然早退，
   // 「本月佣金 / 待分发」永远显示「—」（横幅是响应式的，随后又出现，更显得自相矛盾）。
-  // loadProfile 自身经过请求层的 ensureToken，等它也顺带保证后续调用已有 token。
+  // loadProfile 自身经过 `run()`（→ `ensureLogin`），等它也顺带保证后续调用已有 token。
+  //
+  // ⚠️ 这跳 `await` **仍然承担的是上面这两件事（isLeader 闸门 + 冷启动 token）**，
+  //    而**不再是**登录态的护栏 —— 后者已经下沉为结构型开关：五条旁路各自带
+  //    `{ keepAuthState: true }`，不依赖「排在 `run()` 之后」这种顺序约定
+  //    （顺序约定只能关掉本页重登这一个窗口，跨页 / 服务端侧换发照样踩）。
+  //    所以后续新增旁路**不必**再纠结要不要 await，但**必须**记得挂那个开关。
+  //
+  // ⛔ `loadSupport()` 刻意**不走 `run()`** —— `run()` 带「重登后重试」，会让它成为本页
+  //    第二个重登源，等于让装饰性数据去裁决 session 是否已死（详见其函数内注释）。
   void (async () => {
     await loadProfile();
     loadBalance();
     loadOrderTotal();
     loadMonthCommission();
     loadPendingDeliver();
-    loadSupport(); // 只为入口叫法，best-effort（放在 loadProfile 之后：需要 token）
+    loadSupport(); // 只为入口叫法，best-effort：裸调 + keepAuthState ⇒ 既非重登源也不会清态，可留在并发里
   })();
 });
 </script>

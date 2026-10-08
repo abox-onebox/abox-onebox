@@ -18,15 +18,57 @@ import { currentTimeline, formatTimeOfDay } from '../../common/utils/order-timel
  *    这条边在此之前躺了三个批次：**声明表说订单会经过 `refunding`，而实现从没这么做过**，
  *    两边都不报错，e2e 与结构门禁全绿（同族：#15 / #67 / #76 —— 同一件事有多份表述，
  *    而不被自动化执行的那一份必然是错的）。
+ *
+ * ## D11 强制退款：为什么下面 6 条 `→ refunded` 的边是**补**上来的（P1-9 · 2026-10-08）
+ *
+ * 形态与 M5-8 **正好相反**：那次是「声明有、实现没有」，这次是「**实现天天在写、声明从来没有**」。
+ *
+ * `refund.service.ts` 的 `forceRefund`（D11 后台强制退款）**跳过申请与审批**，
+ * 校验 `order.status ∈ REFUNDABLE_STATUS` 后直接调 `settleRefundDb`，由它的原子占位语句
+ * `UPDATE ab_order SET status='refunded' WHERE status IN (:...ok)` 从
+ * `paid / cut_off / cooked / delivering / delivered / completed` **一步写到 `refunded`**。
+ * 而本表此前只声明了 `refund_applying → refunded` 一条 ⇒ 缺 6 条。
+ *
+ * ⭐ 这不是实现越权，是**声明表缺边**，三处文档都许可这条路径：
+ *   · 《状态机》§三 守则 2「终态封闭：`completed` 只能通过退款分支**降级为 `refunded`**」
+ *   · 《状态机》§七「强制退款走 D11，跳审批直接执行，必写操作日志 + 原因」
+ *   · Func-19「任意非终态 → `refunded`（强制退款）」
+ * （§二 T16 旧表写的是「→ `cancelled`」—— 那是**文档滞后**，已单列文档批次修。
+ *   ⚠️ 滞后的是**目标状态**，不是那个编号：`M32-05` 是 PRD 的**需求编号**，
+ *   与接口规范里的 `D11` **是两个并存的编号体系**（《接口规范》D11 一行的说明就是
+ *   「强制退款（M32-05）」），需求编号至今有效，不要在修文档时把它当成"遗留"删掉。
+ *   `paid → cancelled` 是 U11 **自助取消**那条边，语义不同，两码事。）
+ *
+ * 由门禁 `order:edges`（`scripts/check-order-edges.mjs`）机械对账「声明边集 ↔ 实际写入边」，
+ * 补边之后该门禁的豁免表**必须清空**（它会以 `[豁免与声明冲突]` 逼着删，删完才绿）。
  */
 export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.PENDING_PAY]: [OrderStatus.PAID, OrderStatus.CANCELLED],
-  [OrderStatus.PAID]: [OrderStatus.CUT_OFF, OrderStatus.CANCELLED],
-  [OrderStatus.CUT_OFF]: [OrderStatus.COOKED, OrderStatus.REFUND_APPLYING],
-  [OrderStatus.COOKED]: [OrderStatus.DELIVERING, OrderStatus.REFUND_APPLYING],
-  [OrderStatus.DELIVERING]: [OrderStatus.DELIVERED, OrderStatus.REFUND_APPLYING],
-  [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED, OrderStatus.REFUND_APPLYING],
-  [OrderStatus.COMPLETED]: [OrderStatus.REFUND_APPLYING],
+  [OrderStatus.PAID]: [OrderStatus.CUT_OFF, OrderStatus.CANCELLED, OrderStatus.REFUNDED], // D11：依据见上方「D11」段
+  [OrderStatus.CUT_OFF]: [
+    OrderStatus.COOKED,
+    OrderStatus.REFUND_APPLYING,
+    OrderStatus.REFUNDED, // D11：依据见上方「D11」段
+  ],
+  [OrderStatus.COOKED]: [
+    OrderStatus.DELIVERING,
+    OrderStatus.REFUND_APPLYING,
+    OrderStatus.REFUNDED, // D11：依据见上方「D11」段
+  ],
+  [OrderStatus.DELIVERING]: [
+    OrderStatus.DELIVERED,
+    OrderStatus.REFUND_APPLYING,
+    OrderStatus.REFUNDED, // D11：依据见上方「D11」段
+  ],
+  [OrderStatus.DELIVERED]: [
+    OrderStatus.COMPLETED,
+    OrderStatus.REFUND_APPLYING,
+    OrderStatus.REFUNDED, // D11：依据见上方「D11」段
+  ],
+  [OrderStatus.COMPLETED]: [
+    OrderStatus.REFUND_APPLYING,
+    OrderStatus.REFUNDED, // D11：依据见上方「D11」段
+  ],
   [OrderStatus.CANCELLED]: [],
   // ⚠️ 没有 `→ refunding`（M5-8 删边 · 理由见上）
   [OrderStatus.REFUND_APPLYING]: [OrderStatus.REFUNDED],

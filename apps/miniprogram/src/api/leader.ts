@@ -83,9 +83,18 @@ export interface LeaderWorkbenchData {
   pickup: WorkbenchPickup;
 }
 
-/** L1 · 团长工作台（今日战报 + 明日进度 + 取餐点） */
-export function fetchWorkbench(): Promise<LeaderWorkbenchData> {
-  return http.get<LeaderWorkbenchData>('/leader/workbench');
+/**
+ * L1 · 团长工作台（今日战报 + 明日进度 + 取餐点）
+ *
+ * @param options 透传给请求层：best-effort 旁路取数（如只派生一个「待分发份数」）
+ *                请传 `{ keepAuthState: true }` —— 它无权裁决登录态的有效性，
+ *                语义见 `api/request.ts` 的 `RequestOptions.keepAuthState`。
+ *                ⚠️ 工作台页 `pages/leader/workbench` 走主路径，保持默认。
+ */
+export function fetchWorkbench(
+  options: { keepAuthState?: boolean } = {},
+): Promise<LeaderWorkbenchData> {
+  return http.get<LeaderWorkbenchData>('/leader/workbench', options);
 }
 
 // ---------------------------------------------------------------------------

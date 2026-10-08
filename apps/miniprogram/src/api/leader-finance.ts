@@ -86,9 +86,17 @@ export interface LeaderCommissionQuery {
   pageSize?: number;
 }
 
-/** L10 · 佣金明细（含按日/按月汇总） */
+/**
+ * L10 · 佣金明细（含按日/按月汇总）
+ *
+ * @param options 透传给请求层：best-effort 旁路取数（如只取 `summary` 的计数请求）
+ *                请传 `{ keepAuthState: true }` —— 它无权裁决登录态的有效性，
+ *                语义见 `api/request.ts` 的 `RequestOptions.keepAuthState`。
+ *                ⚠️ 佣金页 `pages/leader/commission` 走主路径，保持默认。
+ */
 export function fetchCommissions(
   params: LeaderCommissionQuery = {},
+  options: { keepAuthState?: boolean } = {},
 ): Promise<LeaderCommissionsData> {
   return http.get<LeaderCommissionsData>(
     `/leader/commissions${query({
@@ -97,6 +105,7 @@ export function fetchCommissions(
       page: params.page,
       pageSize: params.pageSize,
     })}`,
+    options,
   );
 }
 
