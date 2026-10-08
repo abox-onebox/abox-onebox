@@ -30,11 +30,18 @@ export function createOrder(
   });
 }
 
-/** U9 · 我的订单列表 */
+/**
+ * U9 · 我的订单列表
+ *
+ * @param options 透传给请求层：best-effort 旁路取数（如只取 `total` 的计数请求）
+ *                请传 `{ keepAuthState: true }` —— 它无权裁决登录态的有效性，
+ *                语义见 `api/request.ts` 的 `RequestOptions.keepAuthState`。
+ */
 export function fetchOrders(
   params: { status?: string; page?: number; pageSize?: number } = {},
+  options: { keepAuthState?: boolean } = {},
 ): Promise<PageResult<OrderListItem>> {
-  return http.get<PageResult<OrderListItem>>(`/orders${query(params)}`);
+  return http.get<PageResult<OrderListItem>>(`/orders${query(params)}`, options);
 }
 
 /** U10 · 订单详情（含状态机时间线） */

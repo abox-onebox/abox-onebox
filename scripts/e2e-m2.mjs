@@ -1039,6 +1039,22 @@ async function main() {
     `pay=${afterRefund?.pay_amount}（原 ${beforeRefund?.pay_amount}）`,
   );
 
+  // ⭐ 2026-10-08（P1-10）· 代退必须**预写订单取消三列**
+  // 这是「取消来源」四档里 `leader` 这一档**在门禁内的唯一断言**。此前它只存在于探针
+  // `scripts/probes/deep-cancel.mjs` C19（实跑 33/33 全绿），而探针**不在 `gate.mjs` 里**
+  // ⇒ 一旦回归让代退忘写 `cancel_source`，29 道门禁 + 全量 e2e 全绿，而运营导出表里
+  // 「团长代退」这一整类**凭空消失**（后台口径：取消来源空白 = 未取消）。
+  // ⚠️ 判据必须**读库真值**，不能比对响应回显 —— 回显与写入同源，同源互比恒绿等于没断言。
+  const cancelRow7 = readDb(
+    'SELECT cancel_source, cancel_reason, cancel_note FROM ab_order WHERE order_no = ?',
+    [orderNo],
+  );
+  assert(
+    cancelRow7?.cancel_source === 'leader',
+    'M2-② 代退预写订单 cancel_source = leader（后台口径「空白 = 未取消」⇒ 漏写则运营取数少一整类）',
+    `cancel_source=${cancelRow7?.cancel_source} reason=${cancelRow7?.cancel_reason} status=${afterRefund?.status}`,
+  );
+
   const dupRefund = await call('POST', `/orders/${orderNo}/refund-apply`, {
     token: lming.token,
     body: { reasonType: 'other' },

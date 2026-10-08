@@ -322,7 +322,17 @@ async function loadBalance(): Promise<void> {
   }
 }
 
-/** 累计订单数（只取 total） */
+/**
+ * 累计订单数（只取 total）
+ *
+ * ⚠️ `onShow` 里那一跳 `await loadProfile()` 同时是**登录态时序的护栏**，不只是 isLeader 闸门：
+ *    本函数排在它之后 ⇒ 发出时拿的是重登后的最新 token，后续 10002 才是「真拒」而非「陈旧裁决」。
+ *    口径见 `api/request.ts` 的 `keepAuthState`。
+ *    ⛔ 这条护栏**只挡得住第一条**重登路径：`loadSupport()` 共用同一个 `useRequest` 的 `run()`，
+ *       而它与本函数在 `onShow` 里是并发的（两个都不 await）—— 它若二次重登，
+ *       本请求携带的 token 就又成了旧 token，裁决回到「陈旧裁决」（已知残余缺陷）。
+ *    ⛔ 改成并发（Promise.all / 去掉 await、或在 loadProfile 前插裸调）会让窗口当场重开，复发 P1-16。
+ */
 async function loadOrderTotal(): Promise<void> {
   try {
     const res = await fetchOrders({ page: 1, pageSize: 1 });

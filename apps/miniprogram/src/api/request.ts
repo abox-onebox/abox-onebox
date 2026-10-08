@@ -84,6 +84,24 @@ export interface RequestOptions {
   idempotentKey?: string;
   /** 是否展示全屏 loading（默认 false，由页面按场景决定） */
   loading?: boolean;
+  /**
+   * best-effort **旁路请求**标记：`true` = 即便命中「未登录 / 已注销」也**不清本地登录态**
+   * （默认 `false` = 清）。
+   *
+   * ⚠️ 为什么要有这个开关（`P1-16`）：
+   *    「token 是否还有效」这件事本该由**登录流程**裁决，但 `request()` 是按**单次请求**
+   *    判定的 —— 于是只要有一次响应是 `10002/401`，就无条件清态。
+   *    页面常常「主请求 + 多个旁路小请求并发」（如订单列表的列表 + 四档计数），
+   *    主请求正走 `useRequest` 的重登重试时，旁路请求带着**同一个旧 token**
+   *    回来同样是 10002 ⇒ 把刚重登写进去的**新 token 又删掉**：
+   *    晚一个 tick 就清一次，登录态与重登流程互相打架。
+   *    旁路请求压根不承担「session 是否已死」的裁决权，故开放 `true` 让它**只失败、不出手**。
+   *
+   * ⚠️ 使用边界：**只给**明确知道自己不承担该裁决的 best-effort 旁路取数用
+   *    （计数、装饰性数据）；页面主路径**必须保持默认** `false`，否则真正的
+   *    token 失效 / 账号注销没人清态，用户会卡在半登录状态。
+   */
+  keepAuthState?: boolean;
   /** 超时（毫秒），默认 15s */
   timeout?: number;
 }
@@ -131,6 +149,7 @@ export async function request<T>(options: RequestOptions): Promise<T> {
     auth = true,
     idempotentKey,
     loading = false,
+    keepAuthState = false,
     timeout = 15000,
   } = options;
 
@@ -180,7 +199,12 @@ export async function request<T>(options: RequestOptions): Promise<T> {
   //   · `20014` 账号已注销（M5-20）—— ⚠️ **不能**走重试那条路：登录本身就会被
   //     `20014` 挡回，重试就变成「登录 → 被拒 → 跳登录页 → 再登录」的**死循环**。
   //     故这里只清态，由页面就地进入「已注销」终态（不跳登录页）。
-  if (code === CODE_UNAUTHORIZED || res.statusCode === 401 || code === CODE_ACCOUNT_CANCELED) {
+  // ⚠️ `keepAuthState: true` 的旁路请求**不清态** —— 它无权裁决 session 是否已死，
+  //    那件事归主路径管（开关语义见 `RequestOptions.keepAuthState` 头注）。
+  if (
+    !keepAuthState &&
+    (code === CODE_UNAUTHORIZED || res.statusCode === 401 || code === CODE_ACCOUNT_CANCELED)
+  ) {
     clearAuthStorage();
   }
 

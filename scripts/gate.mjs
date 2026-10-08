@@ -295,6 +295,30 @@ const GATES = {
    */
   'mp:no-font': { cwd: '.', cmd: 'node scripts/check-mp-no-font.mjs' },
   /**
+   * ⛔ 小程序端不得出现「踩踏式清态」（P1-16 防复发）。
+   *
+   * 缺陷本体：`pages/order-list/order-list.vue` 的四档计数是**裸调** `fetchOrders`
+   * （不走 `useRequest`），而请求层对 `10002 / 401 / 20014` 是**无条件** `clearAuthStorage()`。
+   * 时序合上时：主请求正在「重登 → 重试」，这 4 个旁路请求拿同一个**旧 token**、响应晚一步
+   * 回来也是 `10002` ⇒ 把重登刚写进去的**新 token 删掉**。修法是请求层加显式开关
+   * `keepAuthState`，让旁路请求**只失败、不出手裁决 session**。
+   *
+   * ⚠️ 为什么必须收编成门禁：判据最初只活在 `_tmp/` 的取证脚本里（改前 4 次 / 改后 0 次），
+   *    而**没人会再跑它** ⇒ 回归时全绿。这与 `scripts/probes/*` 不在 `gate.mjs` 里
+   *    是同一个病（P1-10 的病根）。故按裁决收编为常驻门禁。
+   *
+   * 判据（脚本内三条不变量 + 样本下限）：
+   *   · 主路径清态**恰好 1 次**（防过度修复：开关收太死 ⇒ 真 token 失效没人清）；
+   *   · 旁路**踩踏式清态 0 次**（P1-16 本体：携带旧 token 的响应，却在本进程已换发新 token
+   *     之后清态 —— 这才是真正的判据；只比「最终 token 空不空」会是恒绿的空壳）；
+   *   · 正常路径行为不变（5 请求 / 0 重登 / 四档各自 total / 不弹错）。
+   * 取真度：真 SFC（`@vue/compiler-sfc` 编译）+ 真请求层 / useRequest / store，
+   *         替身只有 `uni.*` transport 与生命周期钩子登记；时序由**事件**驱动，不靠 sleep 赌。
+   * 自带**必报变异 ×2**（页面侧开关关闭 / 请求层守卫摘除，各带运行时哨兵证明变异真被执行）
+   * ＋ 样本下限（`noSample`：危险条件没造出来一律判未达标，不许拿「0 违规」当通过）。
+   */
+  'mp:auth-state': { cwd: '.', cmd: 'node scripts/check-mp-auth-state.mjs' },
+  /**
    * S9：**设计红线落点**（原 `_tmp/icons/ui-gate.py`，手工脚本）纳入常驻门禁。
    *
    * 为什么必须常驻：它当时**不在任何门禁内**，`all verify` 覆盖不到 ⇒ S8 把后台侧栏
@@ -471,6 +495,8 @@ const ALIASES = {
     'gate:parity',
     // S7.5：端上图标承载（三档锁）—— 纯静态、毫秒级
     'icons:lock',
+    // P1-16：小程序端「踩踏式清态」防复发（编译真 SFC + 真源码跑 onShow；不依赖构建产物）—— 约 5 秒
+    'mp:auth-state',
     // S9：设计红线落点（只读仓库内源码 ⇒ CI 可见）。⚠️ design:docs 刻意不进 all，原因见其定义处
     'design:spec',
     'jest',
@@ -541,6 +567,8 @@ const REPORT_RE = {
   'e2e:msg': [/^✔ 自证 \d+\/\d+.*$/m, /^✔ e2e message 断言全覆盖.*$/m],
   // mp:no-font：自证汇总 + 覆盖面（扫到的产物文件数；产物缺失时脚本自行 exit 2，不会静默）
   'mp:no-font': [/^\[自证\] 汇总 \d+\/\d+.*$/m, /^③ 覆盖面：\s*\d+ 个产物文件.*$/m],
+  // mp:auth-state：陈旧裁决/出手清态（判据核心）+ 结论行
+  'mp:auth-state': [/^ {4}陈旧裁决: .*$/m, /^✅ 全部通过.*$/m],
 };
 
 /**

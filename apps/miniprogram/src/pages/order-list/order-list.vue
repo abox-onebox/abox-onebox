@@ -137,16 +137,30 @@ async function fetchPage(target: number): Promise<void> {
   hasMore.value = res.hasMore;
 }
 
-/** 四个档位的 total（失败即 `null`，**不弹错**） */
+/**
+ * 四个档位的 total（失败即 `null`，**不弹错**）
+ *
+ * ⚠️ 为什么这里必须带 `keepAuthState: true`（`P1-16`）：
+ *    这 4 个请求是**旁路装饰数据**，却与主请求并发共用同一个 JWT。token 恰好过期时，
+ *    主请求走 `useRequest` 的「重登 → 重试」，而这 4 个请求拿着**同一个旧 token**
+ *    回来也是 `10002` ⇒ 请求层无条件 `clearAuthStorage()`，把重登刚写进去的**新 token 又删掉**
+ *    ——晚一个 tick 就清一次，登录态被副请求清掉。
+ *    标记 `keepAuthState` 让它们**只失败（计数显示空）**、不出手裁决 session，
+ *    把「是否需要重新登录」这件事留给走 `run()` 的主路径。
+ *    ⚠️ 反过来也成立：**主路径不要标它**，否则真正的 token 失效没人清态。
+ */
 async function loadCounts(): Promise<void> {
   const entries = await Promise.all(
     tabs.map(async (tab): Promise<[string, number | null]> => {
       try {
-        const res = await fetchOrders({
-          status: tab.value || undefined,
-          page: 1,
-          pageSize: 1,
-        });
+        const res = await fetchOrders(
+          {
+            status: tab.value || undefined,
+            page: 1,
+            pageSize: 1,
+          },
+          { keepAuthState: true },
+        );
         return [tab.value, res.total];
       } catch {
         return [tab.value, null];

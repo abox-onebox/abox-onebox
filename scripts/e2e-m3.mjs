@@ -2397,6 +2397,23 @@ async function main() {
       `reversed=${rfD?.reversal?.commissionReversedFen} qty=${rfD?.reversal?.commissionReversedQuantity}`,
     );
 
+    // ⭐ 2026-10-08（P1-10）· 后台强制退款必须**写全订单取消三列**（`source=admin`）
+    // 这是「取消来源」四档里 `admin` 这一档**在门禁内的唯一断言**。此前它只存在于探针
+    // `scripts/probes/deep-cancel.mjs` C28（实跑 33/33 全绿），而探针**不在 `gate.mjs` 里**
+    // ⇒ 漏写时门禁全绿，而运营导出表里「后台强制退款」这一整类凭空消失（C28 原话）。
+    // ⚠️ 与出参**同一笔写**：三列与订单终态必须一次落库，拆两次写会出现
+    //    「已 refunded 但 cancel_source 为空」的中间态（探针 C22 已钉驳回后须清空）。
+    // ⚠️ 判据必须**读库真值**，不能比对响应回显 —— 同源互比恒绿等于没断言。
+    const cancelRow11 = readDb(
+      'SELECT cancel_source, cancel_reason, cancel_note, status FROM ab_order WHERE order_no = ?',
+      [noB],
+    );
+    assert(
+      cancelRow11?.cancel_source === 'admin',
+      'D11 后台强制退款写全订单取消三列：cancel_source = admin（漏写 ⇒ 运营取数少一整类）',
+      `cancel_source=${cancelRow11?.cancel_source} reason=${cancelRow11?.cancel_reason} status=${cancelRow11?.status}`,
+    );
+
     const commRows = readRows(
       'SELECT type, status, amount, quantity FROM ab_commission WHERE order_id = (SELECT id FROM ab_order WHERE order_no = ?) ORDER BY id',
       [noB],
