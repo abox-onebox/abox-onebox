@@ -425,7 +425,12 @@
             </el-select>
           </el-form-item>
           <el-form-item v-if="auditForm.action === 'sign_agreement'" label="协议版本" required>
-            <el-input v-model="auditForm.agreementVersion" placeholder="如 v1.0" maxlength="16" />
+            <!-- placeholder 用真源常量的当前值，不写死：写死会在升版后变成误导性的旧版本号 -->
+            <el-input
+              v-model="auditForm.agreementVersion"
+              :placeholder="`如 ${LEADER_AGREEMENT_VERSION}`"
+              maxlength="16"
+            />
           </el-form-item>
           <el-form-item label="原因 / 备注" required>
             <el-input
@@ -457,6 +462,7 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { LEADER_AGREEMENT_VERSION } from '@abox/shared-types';
 
 import {
   appointLeader,
@@ -533,9 +539,12 @@ const updateForm = reactive({
 });
 
 const auditVisible = ref(false);
+// ⚠️ 默认值**只能取自 `@abox/shared-types` 的真源常量**：服务端已对 `agreementVersion` 加
+//    `@IsIn(LEADER_AGREEMENT_VERSIONS)` 白名单（见 `dto/leader-admin.dto.ts`），此处若写死字面量，
+//    真源升版后运营会拿着过期默认值提交 ⇒ 直接被白名单挡回，而这个值又是 `agree_version` 的留痕凭据。
 const auditForm = reactive({
   action: 'suspend' as LeaderAuditActionValue,
-  agreementVersion: 'v1.0',
+  agreementVersion: LEADER_AGREEMENT_VERSION,
   reason: '',
 });
 
@@ -718,7 +727,11 @@ async function doUpdate(): Promise<void> {
 
 function openAudit(row: LeaderRow): void {
   current.value = row;
-  Object.assign(auditForm, { action: 'suspend', agreementVersion: 'v1.0', reason: '' });
+  Object.assign(auditForm, {
+    action: 'suspend',
+    agreementVersion: LEADER_AGREEMENT_VERSION,
+    reason: '',
+  });
   auditVisible.value = true;
 }
 

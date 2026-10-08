@@ -13,7 +13,12 @@ import {
   MinLength,
 } from 'class-validator';
 
-import { ReceiveType } from '@abox/shared-types';
+import {
+  LEADER_AGREEMENT_VERSION,
+  LEADER_AGREEMENT_VERSIONS,
+  LEADER_AGREEMENT_VERSIONS_TEXT,
+  ReceiveType,
+} from '@abox/shared-types';
 
 /**
  * 团长端 DTO（《接口规范》§4.5）
@@ -61,19 +66,28 @@ export class ApplyLeaderReqDto {
 
   @ApiProperty({
     description: '已勾选同意的《团长合作协议》版本号 —— 缺失即视为未勾选，直接 10001',
-    example: 'v1.0',
+    example: LEADER_AGREEMENT_VERSION,
   })
   @IsString()
   @IsNotEmpty({ message: '请先勾选《团长合作协议》' })
-  @MaxLength(16, { message: '协议版本号不合法' })
+  @MaxLength(16, { message: '协议版本号过长' })
+  // ⭐ 白名单（追加，不削弱上面任何一条）：`agree_version` 是举证「他签过哪一版」的唯一凭据，
+  //    字面量由客户端自由填写 = 留痕无证明力。未知版本号一律 10001 拒，不再静默入库。
+  @IsIn(LEADER_AGREEMENT_VERSIONS, {
+    message: `协议版本号不合法（当前仅支持 ${LEADER_AGREEMENT_VERSIONS_TEXT}）`,
+  })
   agreementVersion!: string;
 }
 
 /** L18 · 勾选同意《团长合作协议》（补签 / 版本升级重签） */
 export class LeaderAgreementReqDto {
-  @ApiProperty({ description: '协议版本号', example: 'v1.0' })
+  @ApiProperty({ description: '协议版本号', example: LEADER_AGREEMENT_VERSION })
   @IsString()
   @MaxLength(16)
+  // ⭐ 同上：这是 `agree_version` 的**第二个写点**，同样只认白名单内的版本号。
+  @IsIn(LEADER_AGREEMENT_VERSIONS, {
+    message: `协议版本号不合法（当前仅支持 ${LEADER_AGREEMENT_VERSIONS_TEXT}）`,
+  })
   agreementVersion!: string;
 }
 

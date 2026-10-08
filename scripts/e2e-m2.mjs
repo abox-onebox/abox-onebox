@@ -254,6 +254,30 @@ async function main() {
     `code=${noAgree.body?.code} msg=${noAgree.body?.message}`,
   );
 
+  // ⭐ 白名单回归（申请入口）：`agree_version` 曾可由客户端任意写入。
+  //    只断言「缺值 → 10001」是不够的 —— 缺值被拒但**任意值都能过**，留痕照样没证明力。
+  const badVerApply = await call('POST', '/leader/apply', {
+    token: applicant.token,
+    body: {
+      buildingId: 1,
+      phone: '13700000101',
+      realName: 'e2e · 待生效',
+      floor: '9F',
+      agreementVersion: 'v9.9',
+    },
+  });
+  assert(
+    badVerApply.body?.code === 10001,
+    'M2-① 未知协议版本号 v9.9 → 10001（白名单拒绝，不入库）',
+    `code=${badVerApply.body?.code} message=${JSON.stringify(badVerApply.body?.message)}`,
+  );
+  const badVerRow = readDb('SELECT id FROM ab_team_leader WHERE user_id = ?', [applicant.userId]);
+  assert(
+    badVerRow === null,
+    'M2-① 非法版本号的申请**未建档**（白名单先于业务，未落 ab_team_leader）',
+    `row=${JSON.stringify(badVerRow)}`,
+  );
+
   const applied = await call('POST', '/leader/apply', {
     token: applicant.token,
     body: {
@@ -467,14 +491,45 @@ async function main() {
   );
   assert(!!r?.expireRule, 'L16 含见习 30 天失效规则文案', r?.expireRule);
 
+  // ⚠️ 此字面量**镜像** `@abox/shared-types` 的 `LEADER_AGREEMENT_VERSION`（当前 v1.0）。
+  //    `.mjs` 无法 import TS 真源，只能同步维护 —— 改那边的常量时必须同步改这里。
+  //    服务端已加白名单，写错值这里会直接变红（这是**期望**行为，不是要绕过的红灯）。
   const sign = await call('POST', '/leader/agreement', {
     token: applicant.token,
-    body: { agreementVersion: 'v1.1' },
+    body: { agreementVersion: 'v1.0' },
   });
   assert(
-    sign.body?.code === 0 && sign.body?.data?.agreeVersion === 'v1.1',
-    'L18 协议补签 / 版本升级重签生效',
-    `version=${sign.body?.data?.agreeVersion}`,
+    sign.body?.code === 0 && sign.body?.data?.agreeVersion === 'v1.0',
+    'L18 协议补签 / 版本升级重签生效（版本号必须是白名单内的 v1.0）',
+    `code=${sign.body?.code} version=${sign.body?.data?.agreeVersion}`,
+  );
+
+  // ⭐ 白名单回归：`agree_version` 是举证「这位团长签过哪一版」的唯一凭据，
+  //    字面量曾可由客户端任意写入（服务端零校验 = 留痕无证明力）。
+  //    这里钉死「未知版本号一律拒、且不入库」——只加 @IsIn 而没有用例等于没加。
+  const signBad = await call('POST', '/leader/agreement', {
+    token: applicant.token,
+    body: { agreementVersion: 'v9.9' },
+  });
+  assert(
+    signBad.body?.code === 10001,
+    'L18 未知协议版本号 v9.9 → 10001（白名单拒绝，不再静默入库）',
+    `code=${signBad.body?.code} message=${JSON.stringify(signBad.body?.message)}`,
+  );
+  assert(
+    typeof signBad.body?.message === 'string' &&
+      signBad.body.message !== '' &&
+      signBad.body.message !== '业务异常',
+    'L18 非法版本号的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿）',
+    `message=${JSON.stringify(signBad.body?.message)}`,
+  );
+  const signBadRow = readDb('SELECT agree_version FROM ab_team_leader WHERE user_id = ?', [
+    applicant.userId,
+  ]);
+  assert(
+    signBadRow?.agree_version !== 'v9.9',
+    'L18 被拒的请求**没有落库** —— agree_version 仍是上一次的合法值',
+    `agree_version=${signBadRow?.agree_version}`,
   );
 
   const updated = await call('PUT', '/leader/profile', {
@@ -1338,7 +1393,9 @@ async function main() {
       phone: '13700000101',
       realName: 'e2e 公司 · 测试团长',
       floor: '9F',
-      agreementVersion: 'v1.1',
+      // ⚠️ 镜像 `@abox/shared-types` 的 `LEADER_AGREEMENT_VERSION`（当前 v1.0）：
+      //    `.mjs` 无法 import TS 真源，改那边常量时必须同步改这里。
+      agreementVersion: 'v1.0',
     },
   });
   assert(

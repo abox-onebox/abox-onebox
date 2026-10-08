@@ -22,6 +22,27 @@ import {
 } from './dto/leader-order.dto';
 
 /**
+ * L9「一键分发」**允许被确认的源状态**（单一真相 · 本文件只此一处）
+ *
+ * ## ⭐ 口径（2026-10-08 裁决 · 缺陷 BE-01 收口）
+ * 只允许 `delivered → completed`。`delivering`（货在路上、配送单尚未标记送达）
+ * **不得**被顺手推进：替一张没送到的单确认收货，会把「货没到」这个事实永久抹掉，
+ * 且团长可据此**提前拿到佣金**。
+ *
+ * ## 三处必须一致的来源（改任意一处都要同步另两处）
+ *   ① 本常量（实现）；
+ *   ② `order-state-machine.ts` 的 `ORDER_TRANSITIONS` —— 本常量必须等于
+ *      「`ORDER_TRANSITIONS[from]` 含 `COMPLETED` 的那些 `from`」；
+ *      （当前只有 `delivered`；`delivering` 的出边是 `[delivered, refund_applying]`）
+ *   ③ `scripts/e2e-m3.mjs:11025-11027` —— 4.4 自动确认已断言
+ *      「`delivering` 的单报为履约异常、不转 completed」，手动路径必须同口径。
+ *
+ * ⚠️ 现状的原缺陷形状就是「SELECT 与 UPDATE 各写一份状态集合」，两份迟早漂移；
+ *    故此处收敛为一个常量，两处（SELECT / UPDATE）都引用它。
+ */
+export const CONFIRMABLE_FROM_STATUSES: OrderStatus[] = [OrderStatus.DELIVERED];
+
+/**
  * 团长侧订单服务（M2 · 2.3 / 2.5）
  *
  * 落点：`modules/order`（《开发里程碑计划 v1.0》2.3、2.5）
@@ -208,9 +229,14 @@ export class LeaderOrderService {
         .reduce((s, o) => s + Number(o.quantity || 0), 0),
       /** 待取餐 + 已送达 份数（可确认范围） */
       pendingQuantity: totalQuantity - doneQuantity,
-      canConfirm: rows.some((o) =>
-        [OrderStatus.DELIVERING, OrderStatus.DELIVERED].includes(o.status as OrderStatus),
-      ),
+      /**
+       * ⭐ 与 L9 **同源**：`CONFIRMABLE_FROM_STATUSES`（方法头裁决①）。
+       *
+       * 改前这里写死 `[delivering, delivered]` —— 与 L9 实际只认 `delivered` 的口径**不一致**：
+       * 团长的确认按钮亮着（本字段为 true），点下去却被 L9 判「货还在路上、没有待确认」而空转。
+       * 同一口径各写一份必然漂移，故此处不再复写字面量。
+       */
+      canConfirm: rows.some((o) => CONFIRMABLE_FROM_STATUSES.includes(o.status as OrderStatus)),
       delivery: delivery
         ? {
             status: delivery.status,
@@ -229,21 +255,42 @@ export class LeaderOrderService {
   // ---------------------------------------------------------------------------
   // L9 · 确认收货并一键分发（幂等 · 按实发份数计佣）
   // ---------------------------------------------------------------------------
+  /**
+   * L9 · 确认收货并一键分发（幂等 · 按实发份数计佣）
+   *
+   * ## ⭐ 2026-10-08 裁决（缺陷 BE-01 / BE-02 收口 —— 改前这两处都在偷偷犯错）
+   *
+   *   ① **只认 `delivered`**（`CONFIRMABLE_FROM_STATUSES`）：`delivering` —— 货在路上、
+   *      配送单尚未标记送达 —— **不许**被顺手推进成 `completed`。替一张没送到的单确认
+   *      收货，会把「货没到」这个事实永久抹掉，而团长凭这一下就能**提前拿到佣金**。
+   *      同一口径在「4.4 自动确认」上早已被 e2e 钉死：
+   *      `scripts/e2e-m3.mjs:11025-11027` 断言 `delivering` 的单报为履约异常、不转 completed。
+   *      ⚠️ 源状态集合此前在 SELECT 与 UPDATE 各写一份（两份迟早漂移），现已收敛为常量。
+   *   ② **`delivering` 的单必须如实暴露，不许静默消失**：单独计数后以
+   *      `skippedDeliveringCount` 下发，端上据此提示「还有 N 单未送达，送达后才能确认」。
+   *      静默跳过后团长看到的是「没有待确认的订单」—— 而真实原因是货没到：
+   *      前者他只能反复点按钮，后者他可以去催配送。
+   *   ③ **计佣入参 = 真正推进成功的行**（BE-02）：改为逐单条件更新、收集 `affected = 1`
+   *      的那些单。集合 UPDATE 只回一个总数、**不回「哪几行归我」**（本仓
+   *      `order.service.ts:674-678` 已就这一取舍写过裁决）；若拿 SELECT 读到的集合去计佣，
+   *      并发下被别人抢走的单会被照算佣金，并污染 `ab_team_leader.total_orders`。
+   */
   async confirmPickup(leader: TeamLeader, dto: PickupConfirmReqDto) {
     const mealDate = todayBj();
 
-    const qb = this.orderRepo
-      .createQueryBuilder('o')
-      .where('o.mealDate = :mealDate', { mealDate })
-      .andWhere('o.status IN (:...st)', {
-        st: [OrderStatus.DELIVERING, OrderStatus.DELIVERED],
-      });
-    this.applyScope(qb, leader);
-    if (dto.orderNos?.length) {
-      qb.andWhere('o.orderNo IN (:...nos)', { nos: dto.orderNos });
-    }
+    const orders = await this.buildPickupQuery(leader, mealDate, dto.orderNos)
+      .andWhere('o.status IN (:...st)', { st: CONFIRMABLE_FROM_STATUSES })
+      .getMany();
 
-    const orders = await qb.getMany();
+    /**
+     * ⭐ 在配送途中、本次**刻意不推进**的单（同范围：`mealDate` + 团长所辖 + 同批单号）
+     *
+     * 复用 `applyScope` 收窄，避免把别团长的 `delivering` 单算进来（IDOR）。
+     */
+    const skippedDeliveringCount = await this.buildPickupQuery(leader, mealDate, dto.orderNos)
+      .andWhere('o.status = :st', { st: OrderStatus.DELIVERING })
+      .getCount();
+
     if (!orders.length) {
       // 已全部确认时重复点击：返回零值而非报错（幂等友好）
       return {
@@ -252,31 +299,53 @@ export class LeaderOrderService {
         confirmedQuantity: 0,
         commissionFen: 0,
         repeated: true,
-        tips: '没有待确认的订单（可能已全部确认）',
+        /** 见方法头裁决②：有货在路上的单时，把「为什么没有待确认」如实给端上 */
+        skippedDeliveringCount,
+        tips:
+          skippedDeliveringCount > 0
+            ? `还有 ${skippedDeliveringCount} 单在配送途中，送达后才能确认分发`
+            : '没有待确认的订单（可能已全部确认）',
       };
     }
 
     const now = new Date();
-    const { affected, accrued } = await this.dataSource.transaction(async (m) => {
-      // 条件更新：仅当仍处于可确认态才推进，防并发重复确认
-      const upd = await m
-        .createQueryBuilder()
-        .update(Order)
-        .set({ status: OrderStatus.COMPLETED, completedAt: now })
-        .where('id IN (:...ids)', { ids: orders.map((o) => o.id) })
-        .andWhere('status IN (:...st)', {
-          st: [OrderStatus.DELIVERING, OrderStatus.DELIVERED],
-        })
-        .execute();
+    const { confirmed, accrued } = await this.dataSource.transaction(async (m) => {
+      /**
+       * ⭐ 逐单条件更新（防并发重复确认 + 拿到「哪几行归我」）
+       *
+       * 改前是一条集合 UPDATE：`affected` 只给总数，随后却拿**全部 SELECT 结果**去计佣
+       * ⇒ 被并发抢走的单照样计佣（BE-02）。逐单后 `confirmed` 就是唯一可信的集合。
+       */
+      const transitioned: Order[] = [];
+      for (const o of orders) {
+        const upd = await m
+          .createQueryBuilder()
+          .update(Order)
+          .set({ status: OrderStatus.COMPLETED, completedAt: now })
+          .where('id = :id', { id: o.id })
+          .andWhere('status IN (:...st)', { st: CONFIRMABLE_FROM_STATUSES })
+          .execute();
+        if ((upd.affected ?? 0) === 0) continue; // 已被别处推进 / 已转退款 → 不计佣
+        transitioned.push(o);
+      }
 
-      // 计佣（幂等：已计佣的订单会被跳过）
-      const acc = await this.commissionService.accrueForOrders(leader, orders, undefined, m);
-      return { affected: upd.affected ?? 0, accrued: acc };
+      if (transitioned.length !== orders.length) {
+        // 不静默：并发下「看到了 N 单、只推进了 M 单」是可对账的事实，必须留痕
+        this.logger.warn(
+          `一键分发：团长#${leader.id} 选中 ${orders.length} 单，实际推进 ${transitioned.length} 单` +
+            `（${orders.length - transitioned.length} 单已被别处处理，本次不计佣）`,
+        );
+      }
+
+      // 计佣（幂等：已计佣的订单会被跳过）—— 入参**只**是真正推进成功的行
+      const acc = await this.commissionService.accrueForOrders(leader, transitioned, undefined, m);
+      return { confirmed: transitioned, accrued: acc };
     });
 
     this.logger.log(
-      `一键分发：团长#${leader.id} 确认 ${accrued.count} 单 / ${accrued.quantity} 份，` +
-        `计佣 ¥${(accrued.amountFen / 100).toFixed(2)}（费率 ${Number(leader.commissionRate) * 100}%）`,
+      `一键分发：团长#${leader.id} 确认 ${confirmed.length} 单 / ${accrued.quantity} 份，` +
+        `计佣 ¥${(accrued.amountFen / 100).toFixed(2)}（费率 ${Number(leader.commissionRate) * 100}%）` +
+        (skippedDeliveringCount ? ` · 配送途中未确认 ${skippedDeliveringCount} 单` : ''),
     );
 
     // C2 晋级审计（M2-2.9）：计佣即改变「月单」，故在事务**外**重算并落表。
@@ -296,8 +365,8 @@ export class LeaderOrderService {
 
     return {
       mealDate,
-      /** 本次真正完成状态推进的订单数（乐观锁 affected） */
-      confirmedCount: affected,
+      /** 本次**真正**完成状态推进的订单数（== 计佣入参的行数，见方法头裁决③） */
+      confirmedCount: confirmed.length,
       confirmedQuantity: accrued.quantity,
       /**
        * 本次**计佣**金额（分）—— 验收标准 3：实发份数 × 等级费率
@@ -313,6 +382,8 @@ export class LeaderOrderService {
       rate,
       level,
       repeated: false,
+      /** 见方法头裁决②：同范围内 `delivering` 的单数（本次未确认，送达后才可确认） */
+      skippedDeliveringCount,
       confirmedAt: now,
     };
   }
@@ -320,6 +391,23 @@ export class LeaderOrderService {
   // ---------------------------------------------------------------------------
   // 内部工具
   // ---------------------------------------------------------------------------
+
+  /**
+   * L9 的选单范围（`mealDate` + 团长所辖 + 可选单号集合）
+   *
+   * ⭐ **每次调用都新建一个 QB**：`applyScope` 是**原地** `andWhere`，复用同一个实例
+   *    会把两个不同状态的查询条件叠在一起（查「已送达」与查「配送途中」各要一份）。
+   */
+  private buildPickupQuery(
+    leader: TeamLeader,
+    mealDate: string,
+    orderNos?: string[],
+  ): SelectQueryBuilder<Order> {
+    const qb = this.orderRepo.createQueryBuilder('o').where('o.mealDate = :mealDate', { mealDate });
+    this.applyScope(qb, leader);
+    if (orderNos?.length) qb.andWhere('o.orderNo IN (:...nos)', { nos: orderNos });
+    return qb;
+  }
 
   /** 所辖订单范围：本团长单，或历史未绑团长时按楼栋兜底 */
   private applyScope(qb: SelectQueryBuilder<Order>, leader: TeamLeader): void {

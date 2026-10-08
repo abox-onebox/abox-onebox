@@ -82,6 +82,19 @@ const ADMIN_EXEMPT = [
     why: '团长申请流水（M33-03 · 原型 P32）—— 由「团长管理」页的「申请流水」按钮进入（`leader/list.vue:593`）。它与 `/leader/list`（「团长管理」P32 · M33-03/04/05）同源同模块，是**观察流水**而非独立作业页，故不单列顶级菜单。',
   },
   {
+    key: '/leader/detail',
+    kind: 'drilldown',
+    via: 'views/leader/list.vue',
+    why: '团长详情（P0-3 · 2026-10-08 全面复查）—— 由「团长管理」列表每行的「详情」'
+      + '按钮进入（`leader/list.vue:583`，另两处入口为 `leader/apply.vue:265` 的流水钻取'
+      + '与 `leader/detail.vue:342` 的本页自跳转）。带 `?id=` 参数，是**看某一家的明细**'
+      + '而非独立作业页，故不单列顶级菜单 —— 与同类 `/leader/apply` 处理方式一致。'
+      + '⚠️ 该路由此前**从未被登记**：不在 `ADMIN_MENU_KEYS`、不在 `ADMIN_NAV`、也没有豁免，'
+      + '而服务端 `@Roles`（`leader-admin.controller.ts:36`）本就放行 operator ⇒'
+      + '除 `super_admin`（持有全量通配）外的角色点「详情」全被守卫拦到 `/403?from=`。'
+      + '补 KEY 之后必须补本条豁免，才能让「授权无入口」判据不误报。',
+  },
+  {
     key: '/supplier/form',
     kind: 'drilldown',
     via: 'views/supplier/list.vue',

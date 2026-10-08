@@ -132,7 +132,7 @@
  */
 import { computed, ref } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
-import { LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
+import { LEADER_AGREEMENT_VERSION, LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
 
 import { fetchMe } from '@/api/auth';
 import { applyLeader } from '@/api/leader';
@@ -143,8 +143,6 @@ import { useUserStore } from '@/stores/user';
 import { switchTab } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
-/** 协议版本号：与《团长合作协议》文本版本一一对应，随文本升级而改 */
-const AGREEMENT_VERSION = 'v1.0';
 const EXPIRE_RULE = '见习团长 30 天内未促成订单将自动取消资格';
 
 /** 等级阶梯（低 → 高），与后端 `LeaderLevelService.rules()` 同序 */
@@ -254,7 +252,10 @@ async function submit(): Promise<void> {
         phone: phone.value.trim(),
         realName: realName.value.trim(),
         floor: floor.value.trim() || undefined,
-        agreementVersion: AGREEMENT_VERSION,
+        // ⚠️ 版本号必须引 `@abox/shared-types` 的真源常量，不在本页另写一份：
+        //    它是 `agree_version` 的取值，而 `agree_version` 是举证「他签过哪一版」的唯一凭据，
+        //    多写一份就可能写成另一个值 ⇒ 同一份签署留痕自相矛盾（见该常量头注）。
+        agreementVersion: LEADER_AGREEMENT_VERSION,
       }),
     );
 

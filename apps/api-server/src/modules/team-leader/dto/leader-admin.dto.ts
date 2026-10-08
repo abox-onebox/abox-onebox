@@ -13,7 +13,14 @@ import {
   MinLength,
 } from 'class-validator';
 
-import { LeaderAuditAction, LeaderLevel, LeaderStatus } from '@abox/shared-types';
+import {
+  LEADER_AGREEMENT_VERSION,
+  LEADER_AGREEMENT_VERSIONS,
+  LEADER_AGREEMENT_VERSIONS_TEXT,
+  LeaderAuditAction,
+  LeaderLevel,
+  LeaderStatus,
+} from '@abox/shared-types';
 
 /**
  * 后台 · 团长管理 DTO（《接口规范 v1.0》§6.3 D19–D22）
@@ -242,11 +249,17 @@ export class AuditLeaderDto {
 
   @ApiPropertyOptional({
     description: '协议版本号（action=sign_agreement 时必填，落 agreed_at / agree_version）',
-    example: 'v1.0',
+    example: LEADER_AGREEMENT_VERSION,
   })
   @IsOptional()
   @IsString()
   @MaxLength(16)
+  // ⭐ 白名单（追加）：后台补签是 `agree_version` 的**第三个写点**，且由运营手填 ——
+  //    手填错版本号同样会让留痕失去举证价值，故与端上共用同一份合法值集合。
+  //    缺值仍由服务层报 10001（`@IsOptional` 放行 undefined，语义不变）。
+  @IsIn(LEADER_AGREEMENT_VERSIONS, {
+    message: `协议版本号不合法（当前仅支持 ${LEADER_AGREEMENT_VERSIONS_TEXT}）`,
+  })
   agreementVersion?: string;
 
   @ApiProperty({

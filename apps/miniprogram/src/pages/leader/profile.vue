@@ -105,7 +105,7 @@
 
         <view class="pair">
           <button class="btn btn--gold" hover-class="btn--hover" @tap="goShare">
-            <text class="abi abi-20">{{ I.share }}</text> 推荐新团长
+            <text class="abi abi-20">{{ I.share }}</text> 邀请同事拼饭
           </button>
           <button class="btn btn--ghost" hover-class="btn--hover" @tap="goCommission">
             升级规则
@@ -230,8 +230,11 @@
         </view>
         <view v-if="open === 'agree'" class="panel">
           <text class="field__note"> 签署时间：{{ formatDateTime(profile.agreedAt) }} </text>
+          <!-- ⚠️ 版本号**只能引 `@abox/shared-types` 的真源常量**，不能直接写在模板里：
+               它既决定写入 `agree_version` 的值（留痕可举证的凭据），又会打印在用户眼前；
+               写死一份就可能与应用页/服务端任命写入的值不一致 ⇒ 同一份签署自相矛盾。 -->
           <button class="btn btn--ghost btn--block" hover-class="btn--hover" @tap="resign">
-            重新签署 v1.1
+            重新签署 {{ LEADER_AGREEMENT_VERSION }}
           </button>
         </view>
 
@@ -318,6 +321,7 @@
  */
 import { computed, reactive, ref } from 'vue';
 import { onShow } from '@dcloudio/uni-app';
+import { LEADER_AGREEMENT_VERSION } from '@abox/shared-types';
 import type { LeaderLevel } from '@abox/shared-types';
 
 import {
@@ -484,9 +488,9 @@ async function savePayout(): Promise<void> {
 
 async function resign(): Promise<void> {
   try {
-    await run(() => signAgreement('v1.1'));
+    await run(() => signAgreement(LEADER_AGREEMENT_VERSION));
     await reload();
-    uni.showToast({ title: '已签署 v1.1', icon: 'none' });
+    uni.showToast({ title: `已签署 ${LEADER_AGREEMENT_VERSION}`, icon: 'none' });
   } catch (e) {
     toastApiError(e, '签署失败');
   }

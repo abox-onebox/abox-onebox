@@ -24,9 +24,12 @@
               {{ wechatId || '见客服页' }}
             </text>
           </view>
-          <view class="card__row">
+          <!-- ⚠️ 服务时间**只认服务端下发**（`SupportContact.hours`）：取不到就**整行隐藏**，
+               不在端上回落任何带时刻的字面量 —— 回落值就是新的硬编码
+               （同一族缺陷的裁量见 `pages/index/index.vue` `cutoffTimeText` 头注）。 -->
+          <view v-if="supportHours" class="card__row">
             <text class="card__label">服务时间</text>
-            <text class="card__value">{{ supportHours || '工作日 9:00 – 18:00' }}</text>
+            <text class="card__value">{{ supportHours }}</text>
           </view>
         </view>
         <text class="hint">点客服微信号可复制。注销后本小程序将无法再为你登录。</text>

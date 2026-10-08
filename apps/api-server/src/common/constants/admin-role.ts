@@ -36,6 +36,18 @@ export const ADMIN_MENU_KEYS = [
   '/order/delivery',
   '/leader/list',
   '/leader/apply',
+  // P0-3（2026-10-08 全面复查修复）：团长详情下钻页。路由在（`admin-web/router/routes.ts:67`）、
+  //   页面在（`views/leader/detail.vue`）、三处入口也在（`leader/list.vue:583`「详情」、
+  //   `leader/apply.vue:265` 流水钻取、`leader/detail.vue:342` 本页自跳转），
+  //   但此前**从未登记进授权清单** ⇒ 除 `super_admin`（拿 `'*'` 通配）外的所有角色
+  //   （admin / operator / finance）点「详情」都会被 `permission.ts` 的 `canAccess`
+  //   判否、被 `guards.ts` 拦到 `/403?from=`。
+  //   ⚠️ 服务端 `@Roles`（`leader-admin.controller.ts:36`）本来就放行 operator ——
+  //      典型的「接口放行、入口拦死」，与 M5-15 处置的那类同族。
+  //   ⚠️ **只登记在这里，不进 `ADMIN_NAV`**：它是带 `?id=` 的下钻页，加进 NAV 会变成
+  //      侧边栏里点进去必然缺参的顶级菜单 —— 那是「用一个可见性缺陷换掉一个不可达缺陷」。
+  //      「授权有、导航无」这条由 `check-nav-consistency.mjs` 的 drilldown 豁免兜住。
+  '/leader/detail',
   // C 端用户（`ab_user`）· 调 `/admin/users`。
   //   ⚠️ **不要与 `/system/admin-user` 混淆**：后者管后台运营账号（`ab_admin_user`）。
   //   ⚠️ 本 key 落在非 `/system/` 命名空间下，故 `operator`（客服）**可见** ——

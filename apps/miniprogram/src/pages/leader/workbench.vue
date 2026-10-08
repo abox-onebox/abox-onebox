@@ -48,7 +48,7 @@
         </block>
 
         <block v-else>
-          <text class="war__sub">{{ war.sub }}</text>
+          <text v-if="war.sub" class="war__sub">{{ war.sub }}</text>
           <text v-if="war.kind === 'open'" class="war__foot">
             <text class="abi abi-16">{{ I.info }}</text>
             <!-- ⚠️ 原句后半截「分享给同事可提升本月单量」把「分享」与「收益」直接挂钩，
@@ -84,7 +84,7 @@
 
         <view class="level__acts">
           <button class="level__btn" hover-class="level__btn--hover" @tap="goShare">
-            <text class="abi abi-20">{{ I.share }}</text> 推荐新团长
+            <text class="abi abi-20">{{ I.share }}</text> 邀请同事拼饭
           </button>
           <button
             class="level__btn level__btn--ghost"
@@ -161,7 +161,9 @@ import { fetchLeaderProfile, fetchWorkbench } from '@/api/leader';
 import type { LeaderProfile, LeaderWorkbenchData } from '@/api/leader';
 import { fetchPickupToday } from '@/api/leader-order';
 import type { PickupTodayData } from '@/api/leader-order';
+import { fetchDaily } from '@/api/meal';
 import { toastApiError, useRequest } from '@/composables/use-request';
+import { useCountdown } from '@/composables/use-countdown';
 import { useLeaderStore } from '@/stores/leader';
 import {
   displayOr,
@@ -181,8 +183,26 @@ const leaderStore = useLeaderStore();
 const data = ref<LeaderWorkbenchData | null>(null);
 const profile = ref<LeaderProfile | null>(null);
 const pickup = ref<PickupTodayData | null>(null);
-const remainSec = ref(0);
-let timer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * ⭐ 截单倒计时 —— 走 `useCountdown`（**以服务端剩余秒数起表**，本地只做递减）
+ *
+ * ⚠️ 为什么不拿 `tomorrow.cutoffAt − Date.now()` 自己算（这是本页此前的写法）：
+ *    那样 `now` 取的是**设备本地时钟**，用户改系统时间或设备漂移时倒计时直接失准，
+ *    而团长正是拿这个数字判断「还能不能再拉一单」。同一个数字，首页 P1 走 U1 的
+ *    `countdownSec`（服务端时钟），本页走本地时钟 ⇒ 两端同屏对不上。
+ *    判据见 `composables/use-countdown.ts` 头注第 4-8 行。
+ *
+ * 【本页的取数路径】L1 战报**不带** `countdownSec`（服务端 `workbench.service.ts`
+ * 只下发 `cutoffAt`）。按「不为此新增后端字段」的约束，复用**已存在的** U1：
+ * `GET /home/daily?mealDate=<tomorrow.mealDate>` ⇒ `countdownSec`
+ * （服务端实现 `apps/api-server/src/modules/meal/meal.service.ts`：`targetDate =
+ * mealDate ?? tomorrowBj()`，故显式传餐日时二者严格同源）。
+ */
+const { remainSec, start: startTick, stop: stopTick } = useCountdown();
+
+/** 倒计时是否拿到了**与本次战报同一出餐日**的服务端秒数；拿不到就不展示倒计时 */
+const countdownReady = ref(false);
 
 const errorText = computed(() => error.value?.message ?? '请稍后重试');
 const ratePercent = computed(() => (data.value ? (data.value.today.rate * 100).toFixed(0) : '--'));
@@ -245,7 +265,9 @@ const war = computed<{
       head: `明日 ${formatMealDate(d.tomorrow.mealDate)} · 预订已开放`,
       mainIcon: 'share',
       main: '现在分享拉单',
-      sub: `截单倒计时：${formatCountdown(remainSec.value)}`,
+      // ⚠️ 拿不到服务端秒数（`countdownReady=false`）就**不显示倒计时这一行**，
+      //    而不是拿本地时钟硬算一个出来 —— 理由见上面 `remainSec` 处的头注。
+      sub: countdownReady.value ? `截单倒计时：${formatCountdown(remainSec.value)}` : '',
     };
   }
 
@@ -288,28 +310,37 @@ const entries = computed(
   ],
 );
 
-/** 截单倒计时：每秒重算剩余秒数（不依赖服务端推送） */
-function startCountdown(): void {
+/**
+ * 起表：向 U1 要**本次战报那个出餐日**的服务端剩余秒数
+ *
+ * ⚠️ U1 在该楼群当日未编排时会抛 `MEAL_NOT_PUBLISHED`，也有可能与战报的餐日对不上
+ *    （战报刷新的瞬间跨日）。这两种情况都**不当错误弹出去**，而是：
+ *    停表 + `countdownReady=false` ⇒ 战报卡那行自动不显示倒计时 —— 与首页
+ *    「取不到就整行隐藏」的同一条纪律（`pages/index/index.vue` `cutoffTimeText`）。
+ */
+async function startCountdown(mealDate: string): Promise<void> {
   stopCountdown();
-  const tick = (): void => {
-    const iso = data.value?.tomorrow.cutoffAt;
-    remainSec.value = iso ? Math.max(0, Math.floor((Date.parse(iso) - Date.now()) / 1000)) : 0;
-  };
-  tick();
-  timer = setInterval(tick, 1000);
+  countdownReady.value = false;
+
+  try {
+    const daily = await fetchDaily(mealDate);
+    // 服务端可能忽略入参回落成「它的明天」——餐日对不上就不能用作本卡的依据
+    if (daily.mealDate !== mealDate) return;
+    countdownReady.value = true;
+    startTick(daily.countdownSec);
+  } catch {
+    countdownReady.value = false;
+  }
 }
 
 function stopCountdown(): void {
-  if (timer) {
-    clearInterval(timer);
-    timer = null;
-  }
+  stopTick();
 }
 
 async function reload(): Promise<void> {
   try {
     data.value = await run(() => fetchWorkbench());
-    startCountdown();
+    void startCountdown(data.value.tomorrow.mealDate);
   } catch (e) {
     toastApiError(e, '今日战报加载失败');
     return;

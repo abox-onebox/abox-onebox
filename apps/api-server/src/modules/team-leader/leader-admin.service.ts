@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, DataSource, In, Repository } from 'typeorm';
 
 import {
+  LEADER_AGREEMENT_VERSION,
   LEADER_AUDIT_ACTION_LABEL,
   LEADER_LEVEL_META,
   LEADER_STATUS_LABEL,
@@ -499,7 +500,10 @@ export class LeaderAdminService {
         levelUpdatedAt: now,
         status: LeaderStatus.ACTIVE,
         agreedAt: now,
-        agreeVersion: 'v1.0',
+        // ⭐ 不能写死：这里是 `agree_version` 的第三个写点。历史上三处各写一份字面量
+        //    且互相打架（v1.0 / v1.1），同一位团长的留痕几分钟内走过 v1.0 → v1.1。
+        //    统一引用 shared-types 的常量，升版只改一处。
+        agreeVersion: LEADER_AGREEMENT_VERSION,
       };
 
       const row = existing

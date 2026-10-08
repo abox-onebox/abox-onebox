@@ -3839,15 +3839,18 @@ async function main() {
     `code=${auNote.body?.code} label=${auNote.body?.data?.actionLabel}`,
   );
 
+  // ⚠️ 字面量**镜像** `@abox/shared-types` 的 `LEADER_AGREEMENT_VERSION`（当前 v1.0）。
+  //    `.mjs` 无法 import TS 真源 —— 改那边常量时必须同步改这里 3 处
+  //    （body / after.agreeVersion / readDb 的 agree_version）。
   const auSign = await call('POST', `/admin/leaders/${lyLeaderId}/audit`, {
     token: lAdmin,
-    body: { action: 'sign_agreement', agreementVersion: 'v1.1', reason: '协议升级重签（e2e）' },
+    body: { action: 'sign_agreement', agreementVersion: 'v1.0', reason: '协议升级重签（e2e）' },
   });
   const auSignRow = readDb('SELECT agree_version FROM ab_team_leader WHERE id = ?', [lyLeaderId]);
   assert(
     auSign.body?.code === 0 &&
-      auSign.body?.data?.after?.agreeVersion === 'v1.1' &&
-      auSignRow?.agree_version === 'v1.1',
+      auSign.body?.data?.after?.agreeVersion === 'v1.0' &&
+      auSignRow?.agree_version === 'v1.0',
     'D22 协议补签写 agreed_at / agree_version（历史团长未留痕 / 协议升级重签都靠它）',
     `code=${auSign.body?.code} ver=${auSignRow?.agree_version}`,
   );
@@ -3866,6 +3869,24 @@ async function main() {
       auSignNoVer.body.message !== '业务异常',
     "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
     `message=${JSON.stringify(auSignNoVer.body?.message)}`,
+  );
+
+  // ⭐ 白名单回归（后台补签）：`agree_version` 由运营**手填**，曾无任何校验 ——
+  //    手填错版本号同样让留痕失去举证价值。此处钉死「未知版本号一律拒、且不入库」。
+  const auSignBadVer = await call('POST', `/admin/leaders/${lyLeaderId}/audit`, {
+    token: lAdmin,
+    body: { action: 'sign_agreement', agreementVersion: 'v9.9', reason: '非法版本号（e2e）' },
+  });
+  assert(
+    auSignBadVer.body?.code === 10001,
+    'D22 协议补签传未知版本号 v9.9 → 10001（白名单拒绝，与「状态不支持」的 20013 区分开）',
+    `code=${auSignBadVer.body?.code} message=${JSON.stringify(auSignBadVer.body?.message)}`,
+  );
+  const auSignBadRow = readDb('SELECT agree_version FROM ab_team_leader WHERE id = ?', [lyLeaderId]);
+  assert(
+    auSignBadRow?.agree_version !== 'v9.9',
+    'D22 非法版本号**未落库** —— agree_version 仍是上一次补签的合法值 v1.0',
+    `agree_version=${auSignBadRow?.agree_version}`,
   );
 
   // 「停用要清 user.team_leader_id」——先造出「他归属于某位团长」这一事实（真实场景：团长由上级推荐加入）
