@@ -181,7 +181,14 @@ async function main() {
     await stopApiServer(server, PORT);
     // ⛔ **不能写成裸 `return`**：那会让进程**自然退出 0** —— 上面刚记了一条失败断言，
     //    exit 0 却告诉编排器「绿」。服务起不来是最该红的场景，静默绿等于把它吞掉。
-    //    （与 `e2e-m1` 同一形状，见 f6b31a4；此处无自清需求，故就地 exit 即可。）
+    //    （与 `e2e-m1` 同一形状，见 f6b31a4。）
+    //
+    // ✅ **此处可以就地 `process.exit`**，前提只有一个：本套件**没有 `finally` 收尾**要跑。
+    //    ⚠️ 一句话原则：**有 `finally` 收尾的脚本，一律不许就地 `process.exit`** ——
+    //    `process.exit()` 会立刻终止进程，`finally` 块**不会执行**，收尾就没了。
+    //    `e2e-m1` 正是因为它有自清（`cleanupAdHocUsers()`）才必须把 exit 挪到外层
+    //    `main()`（见 f6b31a4）。
+    //    ⇒ 照抄 m1 / m2 / m3 任一种写法之前，先看**自己有没有 `finally`**。
     process.exit(1);
   }
   ok('服务启动', `${BASE}/health`);
