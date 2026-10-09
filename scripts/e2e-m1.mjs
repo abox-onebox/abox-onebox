@@ -112,10 +112,116 @@ function assertOrderWindow() {
 // ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
-async function main() {
+// ---------------------------------------------------------------------------
+// 本套件「现造账号」的登记与自清
+// ---------------------------------------------------------------------------
+
+/**
+ * 本套件**自己现造**的用户，收尾统一带走（见 `main()` 的 `finally`）。
+ *
+ * ## 为什么必须自清 —— 这条断言的恒红形状
+ *
+ * `M1-①` 断言 `isNewUser === true`，只有「这次登录**真的**造了一个新用户」才成立。
+ * 原先用的是固定 code `dev:9001`：
+ *   · 第 1 次跑（干净库）→ 造出新用户 → 绿；
+ *   · 第 2 次跑（同一份库）→ 用户还在 → `isNewUser=false` → **恒红**。
+ * 而 `seed:demo` **不回收**这类 ad-hoc 用户。实测基线（2026-10-09 · 本地 sqlite
+ * 开发库 `data/abox-dev.sqlite`）：`ab_user` 共 36 行，其中 ad-hoc 占
+ * `mock_openid_9001` 1 行 + `mock_openid_qa-cancel-*` 5 行（后者出自第 9 节
+ * M5-20，同样造了不自清 —— 已另立待裁，本轮不扩权处理）。
+ *
+ * ⚠️ **这个形状值得单记**：「测试不幂等」只在**第二次**运行才显形，而 CI 每次都是
+ *    干净环境 ⇒ **CI 永远抓不到**。它只在开发者本机连跑第二遍时出现，
+ *    且极容易被误判成「代码回归」。
+ *
+ * ## 为什么是「一次性 code + 自清」而不是「固定 code + 让 seed 回收」
+ *
+ * 后者要把**测试夹具账号**写进**产品种子**（`seed:demo` 得认识它），两边耦合；
+ * 且「回收」要求种子认识所有套件的所有临时账号 —— 漏一个就回到原样。
+ * 测试自己造的自己收，才是幂等的形状：无论第几遍，套件看到的都是同一个世界。
+ */
+const adHocUsers = [];
+
+/**
+ * 生成**一次性**登录 code。
+ *
+ * `dev:` 前缀 ⇒ mock provider 直映射成 `mock_openid_<后缀>`
+ * （`apps/api-server/src/providers/wx-mini/mock-wx-mini.provider.ts:51-55`），
+ * 故「换 code」就等于「换一个全新 openid」。
+ * 长度留足余量：`ab_user.openid` 为 `varchar(64)`，`mock_openid_` 占 11 字符，
+ * 本函数产物最长约 11+7+1+8+1+8 = 36。
+ *
+ * ⚠️ 唯一性**不靠这里保证**：万一撞号，`M1-①` 的 `isNewUser === true` 会**当场红**，
+ *    而不是悄悄退化成「测了个老用户」。
+ */
+function oneShotCode(tag) {
+  return `dev:${tag}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * 删除 `adHocUsers` 里登记的账号。**只在 `finally` 里调**，失败也尽力走完。
+ *
+ * ## 为什么删 `ab_user` 一行就够（实测，不是推断）
+ * 现造账号只做过一次登录，实测它在全部 8 张带 `user_id` 的表里都是 **0 行**
+ * （`ab_balance` / `ab_balance_log` / `ab_dish_rating` / `ab_message` / `ab_order`
+ * / `ab_refund` / `ab_team_leader` / `ab_withdraw`）⇒ 删父行不留孤儿。
+ *
+ * ## 为什么以 `id` 定位，且删前先读回 `openid`
+ * `id` 来自本次登录**出参**，是这一行唯一确定的指针；`DELETE ... WHERE id = ? AND
+ * openid = ?` 把「删的是我造的那一行」这件事变成**可回放**的条件。
+ *
+ * ## 为什么自清失败**不**让本轮判红
+ * 自清失败 ⇒ 账号留下 ⇒ **下一次**跑 `M1-①` 必然红在 `isNewUser=false`，
+ * 即后果**不会被静默吞掉**，只是延后一轮显形。若在这里再判一次红，等于给套件
+ * 新增一个偶发红来源，与本项目「假红会淹没真回归」的处理原则冲突。故只打 ⚠。
+ */
+function cleanupAdHocUsers() {
+  if (adHocUsers.length === 0) return;
+
+  let db;
+  try {
+    db = openFixtureDb();
+  } catch (e) {
+    log(`⚠ 自清未执行：打不开夹具库（${e?.message ?? e}）`);
+    log(`  本次现造的 ${adHocUsers.length} 个账号留在库里 —— 下次跑 M1-① 会红在 isNewUser=false。`);
+    return;
+  }
+
+  try {
+    for (const u of adHocUsers) {
+      const row = db.prepare('SELECT id, openid FROM ab_user WHERE id = ?').get(u.id);
+      if (!row) {
+        log(`· 自清：id=${u.id} 已不在库里（无需删除）`);
+        continue;
+      }
+      const hit = db
+        .prepare('DELETE FROM ab_user WHERE id = ? AND openid = ?')
+        .run(u.id, row.openid).changes;
+      const left = db.prepare('SELECT count(*) AS c FROM ab_user WHERE id = ?').get(u.id).c;
+      if (hit === 1 && left === 0) {
+        log(`· 自清：已带走本套件现造的账号 id=${u.id} openid=${row.openid}`);
+      } else {
+        log(`⚠ 自清未生效：id=${u.id} openid=${row.openid} 删除 ${hit} 行 / 仍剩 ${left} 行`);
+        log('  下次跑 M1-① 会红在 isNewUser=false。');
+      }
+    }
+  } catch (e) {
+    log(`⚠ 自清异常（不掩盖本轮断言结论）：${e?.message ?? e}`);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * 套件主体（原 `main`）。
+ *
+ * ⚠️ 为什么退出码要**返回**而不是就地 `process.exit()`：`process.exit()` 会立刻
+ *    终止进程，`finally` 块**不会执行** ⇒ 自清就没了。退出集中到外层 `main()`。
+ */
+async function run() {
   log(`\n=== ABox M1 端到端验收 ===\n数据库：${DB_PATH}\n`);
 
-  if (!assertOrderWindow()) process.exit(1);
+  if (!assertOrderWindow()) return 1;
 
   installCleanupHooks();
   await assertPortFree(PORT);
@@ -124,7 +230,7 @@ async function main() {
   if (!healthy) {
     fail('服务启动', `健康检查超时（90s）· ${BASE}/health`);
     await stopApiServer(server, PORT);
-    return;
+    return 1;
   }
   ok('服务启动', `${BASE}/health`);
 
@@ -218,8 +324,13 @@ async function main() {
   // ⚠️ 注意区分：种子里的 5 个用户**本身都是团长账号**，其 `ab_user.phone` 来自
   //    「申请团长时留的联系方式」，属合规数据；L9 禁止的是**登录环节索取**。
   //    故真正能证明 L9 的是「全新用户」与「入参白名单」这两条断言。
-  const fresh = await call('POST', '/auth/login', { body: { code: 'dev:9001' } });
+  // ⚠️ 「全新用户」**每次必须换一个 code**：本条断言的是 `isNewUser === true`，
+  //    账号若已存在（上次跑留下的）就**恒红**。换 code 之外还要在收尾**自清**
+  //    （`cleanupAdHocUsers`），否则只是把「第二次跑红」推迟成「第 N 次跑红」。
+  const freshCode = oneShotCode('m1fresh');
+  const fresh = await call('POST', '/auth/login', { body: { code: freshCode } });
   const fu = fresh.body?.data?.user;
+  if (Number.isInteger(fu?.id)) adHocUsers.push({ id: fu.id, code: freshCode });
   assert(
     fresh.body?.code === 0 &&
       fresh.body?.data?.isNewUser === true &&
@@ -1094,13 +1205,13 @@ async function main() {
   if (results.length === 0) {
     log('\n✘ 一条断言都没跑（0/0）—— 这不是「全绿」，是链路根本没执行。');
     log('  常见原因：前置失败被异常路径吞掉 / 服务没起来 / 某一节被条件整体跳过。');
-    process.exit(1);
+    return 1;
   }
 
   const failed = results.filter((r) => !r.pass);
   log('\n──────── 汇总 ────────');
   log(`通过 ${results.length - failed.length}/${results.length}` + (failed.length ? ` · 失败：${failed.map((f) => f.name).join(' | ')}` : ' · 全绿 ✅'));
-  process.exit(failed.length ? 1 : 0);
+  return failed.length ? 1 : 0;
 }
 
 /** yyyy-MM-dd 日期加减（纯 UTC，避开时区陷阱） */
@@ -1150,6 +1261,22 @@ function resolveLeaderByU6Rule(userId) {
   } finally {
     db.close();
   }
+}
+
+/**
+ * 入口：跑套件 → **无论成败**都自清现造账号 → 统一退出。
+ *
+ * `try/finally` 是这里唯一的正确形状：`run()` 里任何一处抛错 / 提前返回，
+ * 自清都必须照跑 —— 测试自己造的自己收，失败也尽力带走。
+ */
+async function main() {
+  let code = 1;
+  try {
+    code = await run();
+  } finally {
+    cleanupAdHocUsers();
+  }
+  process.exit(code);
 }
 
 main().catch((e) => {
