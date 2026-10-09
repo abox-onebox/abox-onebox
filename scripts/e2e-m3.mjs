@@ -327,12 +327,16 @@ async function main() {
     //    exit 0 却告诉编排器「绿」。服务起不来是最该红的场景，静默绿等于把它吞掉。
     //    （与 `e2e-m1` 同一形状，见 f6b31a4。）
     //
-    // ✅ **此处可以就地 `process.exit`**，前提只有一个：本套件**没有 `finally` 收尾**要跑。
-    //    ⚠️ 一句话原则：**有 `finally` 收尾的脚本，一律不许就地 `process.exit`** ——
-    //    `process.exit()` 会立刻终止进程，`finally` 块**不会执行**，收尾就没了。
-    //    `e2e-m1` 正是因为它有自清（`cleanupAdHocUsers()`）才必须把 exit 挪到外层
-    //    `main()`（见 f6b31a4）。
-    //    ⇒ 照抄 m1 / m2 / m3 任一种写法之前，先看**自己有没有 `finally`**。
+    // ✅ **此处可以就地 `process.exit`**，前提只有一个：**执行到这一点时，栈上没有
+    //    任何 pending 的 `finally`** —— 本文件那些 `finally` 都在 `main()` **之前的
+    //    helper 里**，跑到这儿时早已退出栈。
+    //
+    //    ⚠️ 精确原则是「**该点栈上无 pending `finally`**」，**不是**「本文件没有
+    //    `finally`」—— 后者会让人在**真有收尾**的地方也敢就地 exit（本注释第一版
+    //    就是这么写错的，已订正）。
+    //    `process.exit()` 会立刻终止进程，`finally` **不会执行**，收尾就没了；
+    //    `e2e-m1` 正是因为它在 `main()` 的 `finally` 里自清（`cleanupAdHocUsers()`）
+    //    才必须把 exit 挪到外层 `main()`（见 f6b31a4）。
     process.exit(1);
   }
   ok('服务启动', BASE);
@@ -348,8 +352,9 @@ async function main() {
     //    ⭐ 这条与 `!healthy` **毫无关系** —— 找这类缺陷要认「**记了失败却 exit 0**」
     //    这个**形状**，不是认某个变量名（只 grep `!healthy` 会漏掉本处，已实测漏过一次）。
     //
-    // ✅ 就地 `process.exit` 的前提同上：本套件**没有 `finally` 收尾**。
-    //    （有 `finally` 的脚本一律不许就地 exit —— 理由见 `!healthy` 处注释。）
+    // ✅ 就地 `process.exit` 的前提同上：**该点栈上无 pending `finally`**
+    //    （本文件那些 `finally` 都在 `main()` 之前的 helper 里）。
+    //    完整理由见上方 `!healthy` 处注释 —— 别只看「本文件有没有 finally」。
     process.exit(1);
   }
   const seedFinance = readDb(
