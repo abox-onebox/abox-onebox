@@ -490,12 +490,42 @@ export interface ScanOptions {
  */
 export type GitHistoryMode = 'complete' | 'shallow' | 'unavailable';
 
+/**
+ * `mode` → 「历史是否**真的完整扫过**」的**唯一映射**（κ-7：派生 > 同步）
+ *
+ * ⛔ `scanned` 原先是 `HistoryResult` 里的一个**独立字段**，在两个 return 里各写一次
+ *    （`historyNotScanned()` 写 `false`、成功出口写 `!shallow`）。它俩恒等**不是构造保证的**，
+ *    只是两份字面量恰好相等：
+ *      · `GitHistoryMode` 加第 4 个成员时 `tsc` **不会报错**（本仓 0 处 `switch (mode)` 穷尽性检查，
+ *        两处 return 都仍然可赋值）⇒ 漏改一处 ⇒ `mode='partial'` 配 `scanned=true`
+ *        ⇒ 结论行打印「已执行（完整历史）」而历史其实是截断的 ⇒ **静默绿**；
+ *      · ⚠️ 这个对儿**真的错过一次**：见 `isShallowRepository` 上方注释 —— 浅仓库在旧判据下
+ *        是 `scanned: true`，即「安静地绿、不报错」的原形，正是 κ-2 修的那个病。
+ *
+ * ⇒ 现在 `scanned` 一律由 `mode` **派生**，且穷尽性由下面的 `Record` 兜住：
+ *   **加成员而不在这张表里决定它 ⇒ 编译不过**（这就是当初缺的那道机械看护）。
+ *
+ * 为什么真源是 `mode` 而不是 `scanned`：① 它是被打印成 CI 契约行 `[git-history] mode=` 的那个；
+ * ② 它三值，`scanned` 只是它的**有损投影**（把 `shallow` 与 `unavailable` 压成同一个 `false`）；
+ * ③ 它是封闭联合，**只有它**能被做成穷尽性检查。
+ */
+const HISTORY_FULLY_SCANNED: Record<GitHistoryMode, boolean> = {
+  complete: true,
+  shallow: false,
+  unavailable: false,
+};
+
+export function isHistoryFullyScanned(mode: GitHistoryMode): boolean {
+  return HISTORY_FULLY_SCANNED[mode];
+}
+
 /** git 历史扫描的结果 —— 必须把「扫没扫到」和「扫到几条」分开回报 */
 interface HistoryResult {
   hits: Hit[];
   mode: GitHistoryMode;
-  /** `mode === 'complete'` ⇒ 历史**真的被完整扫过** */
-  scanned: boolean;
+  // ⛔ 刻意**没有** `scanned` 字段 —— 「有没有完整扫过」是 `mode` 的投影，
+  //    一律由 `isHistoryFullyScanned(mode)` 派生，不由构造点各自同步（理由见该函数注释；
+  //    `reason` 则是真独立数据，**不许**顺手也派生掉）。
   /** 非 `complete` 时的原因（原文，供 FAIL 提示定位） */
   reason?: string;
 }
@@ -609,7 +639,7 @@ function historyNotScanned(hits: Hit[], err: unknown, opts: ScanOptions): Histor
       'git 历史未扫描，但调用方已**显式声明** requireHistory=false —— 本条不阻断；请定期确认此处确实不该有 git 历史。',
     ),
   );
-  return { hits, mode: 'unavailable', scanned: false, reason };
+  return { hits, mode: 'unavailable', reason };
 }
 
 /**
@@ -651,7 +681,8 @@ function scanGitHistory(root: string, opts: ScanOptions): HistoryResult {
     return historyNotScanned(hits, e, opts);
   }
   // ⚠️ 不 return —— 被截断的那一段仍然照扫：多报一条总比静默强，
-  //    但 `scanned` 必须是 false（结论里「历史 0 命中」不能被当成扫干净了）。
+  //    但 `mode` 必须不是 `complete`（⇒ 派生的「扫没扫到」为 false：
+  //    结论里「历史 0 命中」不能被当成扫干净了）。
   if (shallow) hits.push(shallowHistoryHit(opts));
 
   // 2a. 历史里出现过的敏感文件名（哪怕已删除）
@@ -703,7 +734,6 @@ function scanGitHistory(root: string, opts: ScanOptions): HistoryResult {
   return {
     hits,
     mode: shallow ? 'shallow' : 'complete',
-    scanned: !shallow,
     reason: shallow ? '仓库为浅 clone —— git 历史被截断' : undefined,
   };
 }
@@ -899,7 +929,7 @@ export function run(opts: ScanOptions): {
   historyScanned: boolean;
   /** `historyScanned === false` 时的原因（原文） */
   historyReason?: string;
-  /** 历史的**三态**，与 `historyScanned` 同源（`complete` ⇔ `scanned === true`） */
+  /** 历史的**三态** —— `historyScanned` 由它派生（`isHistoryFullyScanned`），不再另有一份 */
   historyMode: GitHistoryMode;
 } {
   const root = findRepoRoot(__dirname);
@@ -911,7 +941,8 @@ export function run(opts: ScanOptions): {
     workspace: [...ws.hits, ...assertSkipDirsAreNotSource(root, ws.skippedDirs)],
     history: hs.hits,
     logs: scanLogs(root),
-    historyScanned: hs.scanned,
+    // ⭐ 派生：**全文件唯一**的「扫没扫到」计算点（原先是两个 return 各写一次，靠同步维持）
+    historyScanned: isHistoryFullyScanned(hs.mode),
     historyReason: hs.reason,
     historyMode: hs.mode,
   };
