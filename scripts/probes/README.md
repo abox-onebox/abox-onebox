@@ -48,10 +48,15 @@ node scripts/probes/<文件名>
 
 ### ⚠️ 裸跑 `exit=null` = **子进程起不来**，不是探针判红
 
-本机（Windows · **机器级**，关掉沙箱同样复现）**无法为子进程创建匿名管道**：
-`spawnSync` 只要走 `stdio:'pipe'`（**省略 `stdio` 时默认就是它**）⇒ `status=null` + `EBUSY`，
-连 `node -v` 都起不来。表现是 **`exit=null`、耗时 1ms、无输出** ——
-这是**环境故障伪装成测试失败**，不是探针的结论，别照着它去改判据。
+本机（Windows · **机器级**，关掉沙箱同样复现）**无法为子进程创建匿名管道**，
+`spawnSync` 起不来 ⇒ `status=null` + `EBUSY`，连 `node -v` 都跑不出来。表现是
+**`exit=null`、耗时 1ms、无输出** —— 这是**环境故障伪装成测试失败**，不是探针的结论，
+别照着它去改判据。
+
+⭐ **病根是 `stdio[0]`（stdin），不是 stdout/stderr**（κ-9 逐路实测，每组 3 次稳定）：
+`['pipe','ignore','ignore']` ⇒ ❌ EBUSY；而 **`['ignore','pipe','pipe']` ⇒ ✅ 正常**。
+⇒ **最小修法只需把 stdin 钉成 `'ignore'`**，不必换掉整套 stdio。
+（旧表述「只要走 `stdio:'pipe'` 就 EBUSY」不够精确 —— stdout/stderr 用 pipe 其实没事。）
 
 **正确修法只有一条**：把脚本里那处裸 `spawnSync` 换成
 

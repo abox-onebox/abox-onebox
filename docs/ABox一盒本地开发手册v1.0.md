@@ -328,9 +328,23 @@ $NODE scripts/gate.mjs e2e:m3     # 单跑某一段（⚠️ 单跑不重置种�
 >
 > ⛔ **跑 `scripts/gate.mjs` 不要 `export NODE_OPTIONS="--require ..."`** —— 它现在自带能力。
 
-**它到底是什么问题**：本机（Windows · **机器级**，关掉沙箱同样复现）**无法为子进程创建匿名管道**。
-`spawnSync` 只要走 `stdio: 'pipe'`（⚠️ **省略 `stdio` 时的默认值就是它**）⇒
-`status = null` + `EBUSY`，进程根本起不来 —— 连 `node -v` 都跑不出来。
+**它到底是什么问题**：本机（Windows · **机器级**，关掉沙箱同样复现）**无法为子进程创建匿名管道**，
+`spawnSync` 起不来 ⇒ `status = null` + `EBUSY`，连 `node -v` 都跑不出来。
+
+⭐ **病根是 `stdio[0]`（stdin），不是 stdout/stderr** —— κ-9 逐路实测（`node -v`，每组 3 次，稳定）：
+
+| `stdio` | 结果 |
+| --- | --- |
+| 省略（默认全 `pipe`） | ❌ `null` / `EBUSY` |
+| `['pipe','pipe','pipe']` | ❌ `null` / `EBUSY` |
+| **`['pipe','ignore','ignore']`**（只留 stdin=pipe） | ❌ `null` / `EBUSY` |
+| **`['ignore','pipe','pipe']`**（stdout/stderr 仍是 pipe） | ✅ 正常 |
+| `['ignore','inherit','inherit']` | ✅ 正常 |
+| `['ignore', fdOut, fdErr]`（`spawnCapture` 口径） | ✅ 正常 |
+
+⇒ **最小修法只需把 stdin 钉成 `'ignore'`**（`stdio: ['ignore', ...]`），不必换掉整套 stdio。
+⚠️ 旧表述写的是「只要走 `stdio:'pipe'` 就 EBUSY」—— **不够精确**：stdout/stderr 用 `pipe` 其实没事。
+照旧表述操作会让人以为必须整体替换，从而错过这一行修法。
 
 **现在的解法（自带，不依赖仓库外任何物料）**：`scripts/lib/spawn-capture.mjs`
 —— 临时文件重定向 + 退出后回读，行为对齐 `pipe`，换台机器（有管道的环境）照样跑。
