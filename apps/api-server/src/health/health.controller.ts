@@ -9,6 +9,9 @@ import { Public } from '../common/decorators/auth.decorator';
 import { BizException } from '../common/exceptions/biz.exception';
 import { QueueService } from '../common/queue/queue.service';
 import { QUEUE_LABEL, QUEUE_NAMES } from '../common/queue/queue.types';
+// ⛔ 只 import 判据，**不重写**：`isEscapeOn` 有 22 条实测（含反证）在守着，
+//    另抄一份「认 1/true」的判断就多一个漂移点（本仓 §6.3②(b)：绝不另抄第二份判据）。
+import { isEscapeOn } from '../common/utils/prod-mock-gate';
 
 /**
  * 探针单次超时（ms）
@@ -74,6 +77,13 @@ async function timedProbe(
  * 失败原因（DB 主机、端口、账号、连接串）**只写服务端日志**，HTTP 出参里
  * 一律给固定文案。探针是公网可达的（编排器要打），把底层错误原样回显
  * 等于把内网拓扑放在门口。运维要细节就去翻日志 —— 那一侧有访问控制。
+ *
+ * ⭐ λ-3：出参里额外回显**运行形态**两个字段（`providerMode` / `mockEscaped`）。
+ *    它们是形态、不是秘密（值域就是 `real` / `mock` / `true` / `false`），
+ *    而「生产是不是在跑 mock」这件事运行期毫无症状 —— 服务照常起、接口照常通、
+ *    就绪探针照常绿。开了逃生开关后，这个事实只存在于启动日志里，
+ *    而 readiness 是**唯一不需要登录**就能问「你现在什么形态」的入口。
+ *    ⛔ 边界：**只回显形态**，不回显 openid / 手机号 / 连接串 / 任何业务数据。
  */
 @ApiTags('系统')
 @Controller('health')
@@ -116,6 +126,16 @@ export class HealthController {
   @ApiOperation({ summary: '就绪探针（免鉴权 · 检数据库与队列消费者）' })
   async ready() {
     const version = this.cfg.get<string>('app.version') ?? 'dev';
+
+    // ⭐ 运行形态（λ-3）—— 两条口径不许折：
+    //   · `providerMode` 取**配置里的生效值**，与 `main.ts` 的启动硬闸**同源**
+    //     （`main.ts:102` 也是 `cfg.get('app.drivers.providerMode')`）。
+    //     ⛔ 不许回退去读 `process.env.PROVIDER_MODE`：`app.config.ts` 的默认值按
+    //     NODE_ENV 分岔（生产 `real` / 其余 `mock`），重读 env 会把「漏配时的默认值」
+    //     绕过去 ⇒ 回显出来的不是真实形态（理由与 `prod-mock-gate.ts` 的头注同源）。
+    //   · `mockEscaped` 用**导入的** `isEscapeOn`，不在此重写（见上方 import 注释）。
+    const providerMode = this.cfg.get<string>('app.drivers.providerMode') ?? '-';
+    const mockEscaped = isEscapeOn(process.env.ALLOW_MOCK_IN_PROD);
 
     // DB：真跑一条语句。不用 `isInitialized` —— 连接池里的死连接不会反映在它上面
     //
@@ -177,6 +197,9 @@ export class HealthController {
       },
       uptimeSec: Math.floor((Date.now() - this.bootedAt) / 1000),
       version,
+      // 运行形态：**成功与 503 两条路径共用同一份 body** ⇒ 依赖没就绪时也能被问到形态
+      providerMode,
+      mockEscaped,
     };
 
     if (failed.length) {
