@@ -250,9 +250,42 @@ export enum ErrorCode {
    * ⚠️ 也**不复用** `40018 BALANCE_CONCURRENT_MODIFIED`：那是**余额行**的锁，
    *    「每张单有自己的排查入口」是本仓一贯口径（见 40017 注释）。
    *
-   * 收到本码 = 系统按设计停住了，**重试即可**（前提是端上重新拉一次详情拿到新 version）。
+   *
+   * ⚠️ **λ 批次（#38-A · 2026-10-09）已把「调用方违约」拆走 → `30023`**：
+   *    本码现在**只**由 `order-admin.service.ts` 的两处真并发 CAS 抛出
+   *    （改份数 / 改楼，共 2 处 —— 由 `e2e:m3` 的 D10-F 段机械守着）。
+   *    拆的理由见 `30023` 的注释。
    */
   ORDER_CONCURRENT_MODIFIED = 30022,
+  /**
+   * λ 批次（#38-A · 2026-10-09）· `syncFrozenBalance` 的**调用方违约**（**不是**并发）
+   *
+   * 判据（两处，都在 `order.service.ts#syncFrozenBalance`）：
+   *   ① 入口断言「行上 `version` == `versionBeforeCas` + 1」不成立；
+   *   ② 写回抵扣额时 `affected === 0`。
+   * 两者说的是同一件事：**调用方没按契约先在同一事务里做一次真 CAS
+   * （`WHERE version = :v`）就动钱了**（或交上来的凭证与真实 CAS 不一致）。
+   *
+   * ## 为什么要跟 `30022` 拆开 —— 拆的是**排查入口**，不是端上分支
+   *
+   * · **可观测性**：`30022` 说的是「有另一路写点在跟你抢」（外部时序，重试有用）；
+   *   本码说的是「**有个调用点写错了**」（内部缺陷，重试无用 —— 只能改代码）。
+   *   两者此前共用一个码 ⇒ 日志 / 监控 / 告警里**完全同形**，于是「线上真有人在
+   *   并发改单」与「某个调用点漏做 CAS」看不出区别；后者若被当成并发去重试，
+   *   只会把自己**伪装成偶发冲突**，然后一直留着。
+   * · **可断言性**：拆开后两边各有独立判据 —— `e2e:m3` 的 D10-F 段机械断言
+   *   「本码恰好挂在 `order.service.ts` 的两处、`30022` 恰好挂在
+   *   `order-admin.service.ts` 的两处」，且两条**文案必须不同**；
+   *   谁把违约路径改回 `30022`，那条断言当场红。
+   *
+   * ⛔ 拆码**不是**为了给端上分派「重不重试」—— 端上不该靠码名猜语义；
+   *    两条路径的文案各自把「下一步该找谁」说清楚。
+   *
+   * ⚠️ 真相仍**同时**打进服务端日志（`order.service.ts` 那两处 `logger.error`，
+   *    本次拆码时**一行未动**）：错误码给**排查与断言**分派入口，日志给人看现场 ——
+   *    两者不是一回事，不该二选一。
+   */
+  ORDER_FROZEN_SYNC_CAS_VIOLATION = 30023,
 
   /** ---- 4xxxx 支付 / 退款 / 出款 ---- */
   PAY_CREATE_FAILED = 40001,
@@ -464,6 +497,8 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.RATING_NOT_ALLOWED]: '当前订单状态不允许评价',
   [ErrorCode.RATING_ALREADY_SUBMITTED]: '该订单已评价过，不能重复提交',
   [ErrorCode.ORDER_CONCURRENT_MODIFIED]: '订单已被其它操作改动，请刷新后重试',
+  [ErrorCode.ORDER_FROZEN_SYNC_CAS_VIOLATION]:
+    '订单抵扣额同步未通过一致性校验，本次金额未变动，请联系技术处理',
   [ErrorCode.PAY_CREATE_FAILED]: '支付单创建失败，请稍后重试',
   [ErrorCode.BALANCE_NOT_ENOUGH]: '余额不足',
   [ErrorCode.WITHDRAW_BELOW_MIN]: '提现金额低于最低限额',

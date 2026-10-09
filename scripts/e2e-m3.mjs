@@ -2350,6 +2350,96 @@ async function main() {
       `quantity=${qtyAfterRace?.quantity}`,
     );
 
+    // ------------------------------------------- D10-F · 30022 / 30023 拆码对偶
+    /**
+     * ⭐ F · **拆码对偶**（λ 批次 / #38-A）
+     *
+     * ## 为什么有这段
+     * `30022 ORDER_CONCURRENT_MODIFIED` 原先是**四个**抛出点共用一个码，而四点分属
+     * **两类语义**：
+     *   · A 类（**真并发**）：`order-admin.service.ts` 的改份数 / 改楼 —— 手上快照过期，
+     *     刷新重试**有用**；
+     *   · B 类（**调用方违约**）：`order.service.ts#syncFrozenBalance` 两处 —— 调用方
+     *     漏做 CAS 或凭证不对，是**编程错误**，重试**无用**。
+     * 同一个码下，这两类在日志 / 监控 / 告警里**完全同形** ⇒ 「真有人在并发改单」与
+     * 「某个调用点写错了」看不出来。故拆出 `30023 ORDER_FROZEN_SYNC_CAS_VIOLATION`。
+     *
+     * ## ⚠️ 为什么对偶断言落在**源码层**（如实标注 —— 不许写成「HTTP 层已验」）
+     * 本机 SQLite 下这两个码的 **HTTP 返回结构性拿不到**：
+     *   · A 类要求「两路并发撞出过期快照」，而 better-sqlite3 是同步单连接，两路被
+     *     整段串行化 ⇒ **压根不产生过期快照**（E 段首跑实测 `codes=[0,0]`）；
+     *   · B 类要求调用方交错的 `versionBeforeCas`，而唯一调用点在同一事务里
+     *     **现读现传** ⇒ 只有**改源码**才造得出来。
+     *   故 HTTP 层**不是「已排除」，是本机造不出来** ⇒ 改在**可达的层**上断言：
+     *   ① 源码判据（本段：确定性、每次都跑）；② 变异实测（一次性取证，见报告）。
+     *
+     * ## 源码判据能拦住什么（不是「数一数」而已）
+     *   · 谁把 B 类两处改回 `30022` ⇒ F① 当场红（拆分被撤销）；
+     *   · 谁新增抛点用错码 ⇒ 计数不符 ⇒ F① / F② 红；
+     *   · 谁把两条文案写成一样 ⇒ F④ 红（用户可见层面等于没拆）。
+     */
+    const ORDER_SVC = join(ROOT, 'apps/api-server/src/modules/order/order.service.ts');
+    const ADMIN_SVC = join(ROOT, 'apps/api-server/src/modules/order/order-admin.service.ts');
+    const ERRCODE_SRC = join(ROOT, 'apps/api-server/src/common/constants/error-code.ts');
+    /** 字面量计数（**刻意不用正则**：码名里的 `.` 会被当通配符，判据会松一档） */
+    const nOf = (file, token) => readFileSync(file, 'utf8').split(token).length - 1;
+    /**
+     * ⛔ token **必须带尾逗号 + 换行**，即只数「**抛点形态**」`ErrorCode.X,\n`。
+     *   注释里提到码名**不算** —— 否则判据会被注释牵着走：实测在 `order.service.ts`
+     *   的头注里写一次码名，计数就从 2 变 3，F① 当场红，而红的**原因与拆分无关**。
+     *   （这正是「判据要挑形态、不要挑名字」的例子。）
+     */
+    const THROW_VIOLATION = 'ErrorCode.ORDER_FROZEN_SYNC_CAS_VIOLATION,\n';
+    const THROW_CONCURRENT = 'ErrorCode.ORDER_CONCURRENT_MODIFIED,\n';
+    const msgOf = (code) => {
+      const m = new RegExp(`\\[ErrorCode\\.${code}\\]:\\s*'([^']*)'`).exec(
+        readFileSync(ERRCODE_SRC, 'utf8'),
+      );
+      return m?.[1] ?? null;
+    };
+
+    const nViolation = nOf(ORDER_SVC, THROW_VIOLATION);
+    const nAdminConcurrent = nOf(ADMIN_SVC, THROW_CONCURRENT);
+    const nSvcConcurrent = nOf(ORDER_SVC, THROW_CONCURRENT);
+
+    assert(
+      nViolation === 2,
+      'D10-F① 违约码 `30023` **恰好**挂在 `order.service.ts` 的 2 处（`syncFrozenBalance` 的入口断言 + 写回 0 行）' +
+        ' —— 少于 2 = 拆分被撤销，多于 2 = 有新抛点误用了它',
+      `order.service.ts 命中 ${nViolation} 处`,
+    );
+    assert(
+      nAdminConcurrent === 2,
+      'D10-F② 真并发码 `30022` **恰好**留在 `order-admin.service.ts` 的 2 处（改份数 / 改楼）' +
+        ' —— 拆码不许把老语义一起挪走',
+      `order-admin.service.ts 命中 ${nAdminConcurrent} 处`,
+    );
+    assert(
+      nSvcConcurrent === 0,
+      'D10-F③ `order.service.ts` 里**不再**残留 `30022`（违约路径与并发路径已彻底分开）',
+      `残留 ${nSvcConcurrent} 处`,
+    );
+    const msgConcurrent = msgOf('ORDER_CONCURRENT_MODIFIED');
+    const msgViolation = msgOf('ORDER_FROZEN_SYNC_CAS_VIOLATION');
+    assert(
+      !!msgConcurrent && !!msgViolation && msgConcurrent !== msgViolation,
+      'D10-F④ 两码文案**都存在且互不相同**（文案相同 = 用户可见层面等于没拆）',
+      `30022=${JSON.stringify(msgConcurrent)} 30023=${JSON.stringify(msgViolation)}`,
+    );
+    // 自证：判据**不是恒绿** —— 构造一份「拆分被撤销」的同源文本（把 30023 全换回 30022），
+    // 同一支计数字面量函数必须数出 0 ⇒ 真有人改回去时 F① 才会由绿转红。
+    // （不是拿写死的样本自证：底本仍是**真源码**，只在内存里换码名。）
+    const asIfReverted = readFileSync(ORDER_SVC, 'utf8')
+      .split('ErrorCode.ORDER_FROZEN_SYNC_CAS_VIOLATION')
+      .join('ErrorCode.ORDER_CONCURRENT_MODIFIED');
+    const nIfReverted = asIfReverted.split(THROW_VIOLATION).length - 1;
+    assert(
+      nViolation === 2 && nIfReverted === 0,
+      'D10-F⑤ 自证：判据**有判别力** —— 真源码数出 2 处、若拆分被撤销则同一函数数出 0 处' +
+        '（⇒ F① 会由绿转红，不是恒绿）',
+      `真源码 ${nViolation} 处 → 撤销后 ${nIfReverted} 处`,
+    );
+
     const detA2 = await call('GET', `/admin/orders/${noA}`, { token: adminToken });
     assert(
       (detA2.body?.data?.operationLogs ?? []).some((l) => String(l.action).includes('手动改单')),

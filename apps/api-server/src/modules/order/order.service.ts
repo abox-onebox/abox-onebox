@@ -1406,15 +1406,18 @@ export class OrderService {
       /**
        * ⚠️ **先把真相打进服务端日志**，再抛业务码 —— 两者的读者不是同一批人：
        *
-       * 抛的是 `ErrorCode.ORDER_CONCURRENT_MODIFIED`(30022)，但**该码的语义在此处并不适用**：
-       * 它在 `error-code.ts` 里的注释写着「收到本码 = 系统按设计停住了，**重试即可**」，
-       * 而本处失败的性质是**调用方违约**（漏做 CAS / 拿了过期快照）⇒ **重试无用** ——
-       * 端上按「并发冲突」无谓重试，反而会把这条编程错误**伪装成偶发冲突**而掩盖掉。
+       * 抛的是 `ErrorCode.ORDER_FROZEN_SYNC_CAS_VIOLATION`(30023)：本处失败的性质是
+       * **调用方违约**（漏做 CAS / 拿了过期快照）⇒ **重试无用**。它与「真并发」的
+       * `30022` 不是一回事 —— 两类在 λ 批次（#38-A）已拆成两个码，理由见
+       * `error-code.ts` 里 30023 的注释（一句话：为的是**可观测性 + 可断言性**，
+       * 不是给端上分派重试策略）。
        *
-       * ⇒ 故日志里写明「不是并发、重试无用、去看哪个调用点」；HTTP 侧仍复用 30022，
-       *   以免为它新增一个错误码而牵动 `errcode:message` 的 84 条对账。
-       * ⚠️ **λ 批次待办**：把「调用方违约」拆成独立错误码（或给 30022 补例外说明），
-       *    拆完**本行日志仍保留** —— 日志里的真相与错误码不是一回事，不该二选一。
+       * ⇒ 日志里仍写明「不是并发、重试无用、去看哪个调用点」，且**拆码后本行日志
+       *    一行未动**：错误码给**排查与断言**分派入口，日志给人看现场 ——
+       *    两者不是一回事，不该二选一。
+       *
+       * （原「怕新增错误码牵动 `errcode:message` 的 84 条对账」这个顾虑**不成立**：
+       *   那条门禁的码数是**由源码派生**的，加一个码不需要改它 —— 见 #38 只读定位。）
        */
       this.logger.error(
         `syncFrozenBalance 调用方违约（**不是并发**，重试无用）：订单 #${orderId} ` +
@@ -1424,7 +1427,7 @@ export class OrderService {
           '静态门禁 `lock:frozen-sync` 管的是「交没交凭证」，这里管的是「凭证对不对」）。',
       );
       throw new BizException(
-        ErrorCode.ORDER_CONCURRENT_MODIFIED,
+        ErrorCode.ORDER_FROZEN_SYNC_CAS_VIOLATION,
         `订单 #${orderId} 在 syncFrozenBalance 入口的 version=${order.version}，` +
           `不等于「调用方占位前 version(${versionBeforeCas}) + 1」= ${expectedVersion} —— ` +
           '本方法要求调用方在同一事务内先用 `WHERE version = :v` 占位；' +
@@ -1466,7 +1469,7 @@ export class OrderService {
       .where('id = :id AND version = :expected', { id: order.id, expected: expectedVersion })
       .execute();
     if (!written.affected) {
-      // 同上：先把「这不是普通并发」的真相写进日志，HTTP 侧仍复用 30022（λ 批次再拆码）
+      // 同上：先把「这不是普通并发」的真相写进日志（λ 批次 / #38-A 已拆出独立码 30023）
       this.logger.error(
         `syncFrozenBalance 写回抵扣额 0 行受影响（**不是并发**，重试无用）：订单 #${orderId} ` +
           `期望 version=${expectedVersion}，入口断言时实测 ${order.version} —— ` +
@@ -1474,7 +1477,7 @@ export class OrderService {
           '整笔事务回滚、金额不会落库。',
       );
       throw new BizException(
-        ErrorCode.ORDER_CONCURRENT_MODIFIED,
+        ErrorCode.ORDER_FROZEN_SYNC_CAS_VIOLATION,
         `订单 #${orderId} 写回抵扣额时 0 行受影响（期望 version=${expectedVersion}）—— ` +
           '整笔事务回滚、金额不会落库，请检查该调用点是否漏做 CAS',
       );
