@@ -104,7 +104,11 @@ cp .env.example .env.prod     # .env.prod 已在 .gitignore 中，绝不入库
 > `PROVIDER_MODE=mock` ⇒ 服务**直接 `process.exit(1)` 起不来**（日志首行带判据串 `PROD_MOCK_GATE`）。
 > 这不是「建议」，是硬闸 —— mock 在生产不是功能降级，而是**任意 code 免密登录任意身份**
 > + **免鉴权端点 `POST /pay/mock/paid` 可把任意订单标记为已支付** + 手机号恒为测试号，
-> 且**运行期毫无症状**（服务照常起、健康检查照常绿，而 `/health/ready` 不回显 providerMode）。
+> 且**启动期之外几乎没有症状**（服务照常起、接口照常通、健康检查照常绿）。
+>
+> ⭐ **λ-3（2026-10-09）起运行期有一个可见入口**：`GET /health/ready` 会回显
+> `providerMode`（生效值）与 `mockEscaped`（逃生开关是否真的开着），排查「线上到底跑的是
+> 什么形态」时**先看这两个字段**。`main.ts` 在逃生开关开启时还会打一条 **error 级**告警。
 >
 > 两种后果要分清：
 > - **漏配 `PROVIDER_MODE`** ⇒ 起不来，`main.ts` 的 `REQUIRED_IN_PROD` 拦（更早的一道）；
