@@ -128,7 +128,7 @@ function assertOrderWindow() {
  * 而 `seed:demo` **不回收**这类 ad-hoc 用户。实测基线（2026-10-09 · 本地 sqlite
  * 开发库 `data/abox-dev.sqlite`）：`ab_user` 共 36 行，其中 ad-hoc 占
  * `mock_openid_9001` 1 行 + `mock_openid_qa-cancel-*` 5 行（后者出自第 9 节
- * M5-20，同样造了不自清 —— 已另立待裁，本轮不扩权处理）。
+ * M5-20，同样造了不自清 —— 已在本批次一并收进 `adHocUsers`，第 9 节有实测记录）。
  *
  * ⚠️ **这个形状值得单记**：「测试不幂等」只在**第二次**运行才显形，而 CI 每次都是
  *    干净环境 ⇒ **CI 永远抓不到**。它只在开发者本机连跑第二遍时出现，
@@ -821,6 +821,11 @@ async function run() {
   // 「换个方式测闸门①」，永远测不到成功路径。故用 `dev:qa-cancel-<时间戳>`
   // 现造一个干净账号（mock provider 把 `dev:x` 直接映射成稳定 openid，见
   // `providers/wx-mini/mock-wx-mini.provider.ts`）。
+  //
+  // ⚠️ 这个账号**必须登记进 `adHocUsers`**（收尾统一带走）：本段**不断言 `isNewUser`**，
+  //    所以账号已存在也照样绿 —— 污染**不会**让本套件变红，只会**悄悄攒在库里**。
+  //    实测：连跑三轮 `e2e:m1`，`mock_openid_qa-cancel-*` 由 5 行涨到 8 行（每轮 +1）。
+  //    「不显形」正是它比 M1-① 更难发现的地方 —— 但性质一样：测试自己造的自己收。
   if (existsSync(DB_PATH)) {
     const cdb = openFixtureDb();
     try {
@@ -828,6 +833,7 @@ async function run() {
       const fl = await call('POST', '/auth/login', { body: { code: freshCode } });
       const fToken = fl.body?.data?.token;
       const fId = fl.body?.data?.user?.id;
+      if (Number.isInteger(fId)) adHocUsers.push({ id: fId, code: freshCode });
       assert(
         fl.body?.code === 0 && !!fToken && !!fId,
         'M5-20 U19 前置：现造一个干净账号（种子用户全是团长，测不到成功路径）',
