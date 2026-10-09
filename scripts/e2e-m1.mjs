@@ -58,6 +58,28 @@ function assert(cond, name, detail = '') {
 const call = makeCall(BASE);
 
 /**
+ * 免鉴权探针出参里的「泄露字面量」判据
+ *
+ * ⛔ **只许改扫描范围，不许删这里的端口片段**（`3306` / `6379` / `127.0.0.1` …）。
+ *   历史教训：`e2e:m1` 曾出现 113/114 的偶发红，原因是判据扫到了 `timestamp` 里
+ *   随机撞出的 `3306`/`6379`（13 位毫秒时间戳 ⇒ 真实时间轴上 0.0925% 的毫秒值会命中）。
+ *   若有人用「把 3306/6379 从正则里删掉」来治它，真正的泄露检查就**静默死掉** ——
+ *   正确做法是排除 `requestId` / `timestamp` 两个字段（见下方 M5-0 处）。
+ */
+const LEAK_MARKER_RE = /password|secret|passwd|127\.0\.0\.1|localhost|3306|6379|sqlite|\.env/i;
+
+/**
+ * 免鉴权探针出参的**扫描范围**：扣掉 `requestId` / `timestamp` 两个内嵌毫秒时间戳的字段
+ *
+ * ⭐ 生产断言与两条自证**都走这一个函数** —— 否则会出现「自证过的判据」与
+ *    「实际在用的判据」不是同一个（自证白做，且这种错不会报出来）。
+ */
+function stripNoiseFields(body) {
+  const { requestId: _rid, timestamp: _ts, ...rest } = body ?? {};
+  return rest;
+}
+
+/**
  * 前置：本套件以**真实 HTTP 下单**为前提，要求当前处在下单窗口
  * `isOrderable(T)` = `[T-1 14:00, T-1 23:00)` 内。
  *
@@ -153,11 +175,32 @@ async function main() {
     `version=${ready.body?.data?.version} uptimeSec=${ready.body?.data?.uptimeSec}`,
   );
   // 探针**免鉴权**（编排器要打），故出参按「会被人看见」设计：失败原因只进服务端日志
-  const probeRaw = JSON.stringify(ready.body);
+  // ⭐ κ-5 / 任务 #39：扫描范围**排除 `requestId` 与 `timestamp`** —— 二者内嵌**同一个
+  //   13 位毫秒时间戳**，而毫秒值里随时会撞出 `3306` / `6379` 这类端口字面量：
+  //   实测在真实时间轴上枚举 24h（86,400,000 个毫秒值）⇒ 命中 79,949 个 = **0.0925%**
+  //   （约 1/1081 次运行）⇒ 判据会为一个与「泄露」**完全无关**的原因变红。
+  //   ⇒ 排掉这两个字段后判据强度**不降**：真正可能被塞连接串的是 `data` 那一层。
+  //   ⛔ 不许靠删正则里的 `3306` / `6379` 来「治」这条偶发红 —— 那等于把真正的泄露
+  //      检查静默关掉。要改的是**扫描范围**，不是**判据强度**。
+  const probeRaw = JSON.stringify(stripNoiseFields(ready.body));
   assert(
-    !/password|secret|passwd|127\.0\.0\.1|localhost|3306|6379|sqlite|\.env/i.test(probeRaw),
+    !LEAK_MARKER_RE.test(probeRaw),
     'M5-0 免鉴权探针不泄露主机 / 端口 / 连接串',
     probeRaw.slice(0, 160),
+  );
+  // 自证：判据的**两条边界**都必须成立 —— 缺任一条都会退化
+  //   （① 不成立 = 判据恒绿，等于没有检查；② 不成立 = 为无关原因恒红，迟早被人删正则「治」掉）
+  const leakingBody = { data: { dsn: 'mysql://root@127.0.0.1:3306/abox' } };
+  assert(
+    LEAK_MARKER_RE.test(JSON.stringify(stripNoiseFields(leakingBody))),
+    'M5-0 自证①：判据**仍抓得住**真连接串（排除时间戳**没有**削弱强度）',
+    '合成出参 data.dsn=mysql://root@127.0.0.1:3306/abox',
+  );
+  const noisyTsBody = { data: { ok: true }, requestId: 'req_1791637900000_0', timestamp: 1791637900000 };
+  assert(
+    !LEAK_MARKER_RE.test(JSON.stringify(stripNoiseFields(noisyTsBody))),
+    'M5-0 自证②：时间戳里撞出的 `6379` **不再**误报（历史 113/114 的偶发红即此类）',
+    '合成出参仅时间戳含 6379',
   );
   // 对照：@Public 是**特例**而非常态 —— 受保护端点在无 token 时仍须拦
   const guarded = await call('GET', '/admin/finance/withdrawals');
