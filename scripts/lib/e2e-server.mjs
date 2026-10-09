@@ -19,6 +19,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createConnection } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +32,86 @@ export const IS_WIN = process.platform === 'win32';
 
 /** 单独跑时默认端口（避开 `.env` 的 3000，防止与开发者手动起的服务互撞） */
 export const DEFAULT_PORT = 3101;
+
+// ---------------------------------------------------------------------------
+// 夹具直连 sqlite（**唯一**打开方式）
+// ---------------------------------------------------------------------------
+
+/**
+ * e2e 直连 sqlite 的**锁等待预算**（毫秒）。
+ *
+ * 取 5000 不是随手挑的：写方（API 服务走 TypeORM → better-sqlite3）的 `timeout`
+ * **默认就是 5000**（`typeorm/driver/better-sqlite3/BetterSqlite3Driver.js:87`、
+ * `better-sqlite3/lib/database.js:34`）。夹具侧与写方对齐同一个量级，
+ * 才不会「写方愿意等 5s，读方 0ms 就崩」。
+ */
+export const FIXTURE_BUSY_TIMEOUT_MS = 5000;
+
+/**
+ * 打开一个**夹具用**的 sqlite 连接（读/写都走它）。
+ *
+ * ## 为什么不能写成 `new DatabaseSync(DB_PATH)`（κ-4：e2e:m1 的 `database is locked`）
+ *
+ * **根因（已实测）**：`node:sqlite` 的 `busy_timeout` **默认是 0**（实测
+ * `PRAGMA busy_timeout` → `0`），而本仓的 sqlite 是**回滚日志模式**
+ * （`PRAGMA journal_mode` → `delete`，未开 WAL）。该模式下写方在**提交那一瞬**
+ * 会持有 EXCLUSIVE 锁，此时另一个连接的读/写会立刻拿到 `SQLITE_BUSY`。
+ * 而「提交」发生得**完全异步于 HTTP 响应** —— API 服务内的三个队列消费者
+ * （order-paid / refund-apply / settle-orders，`QUEUE_DRIVER=memory`）在响应之后
+ * 才落库。于是夹具那一次直连读撞不撞上这段窗口纯看时序：
+ *   · 撞上 → `Error: database is locked`，`main()` 整段中断（实测 `e2e-m1.mjs:512`、
+ *     `:639` 都撞过）；
+ *   · 没撞上 → 全绿。
+ * 这就是「偶发假红」的形状：**假红与真缺陷在汇总里同形**，一条会偶发红的门禁
+ * 会让之后所有批次的判断失真，CI（Linux 时序不同）上更甚。
+ *
+ * **修法**：给夹具连接设一个**有界**的 `busy_timeout`（= `FIXTURE_BUSY_TIMEOUT_MS`）。
+ * 它治的是根因——「读方对一次可等待的锁竞争零容忍」——而不是把报错吞掉：
+ *
+ * ⛔ **刻意不做** `try/catch` 吞 `database is locked`：那会把「读失败」伪装成
+ *    「读到 0 行」，是**输入被掏空型静默绿**。锁若在预算内没释放，这里**照旧抛**，
+ *    门禁照样红 —— 只是不再把「正常的毫秒级写提交」误判成崩溃。
+ *
+ * **为什么不是其它候选**：
+ *   · 「等写落定再读」—— 消费者的提交时刻对脚本不可见，只能靠猜阈值，必然偶发；
+ *   · 「改成走 API 不直连读」—— 这些断言的意义**就是**「接口出参里没有的列也要落库」
+ *     （如 `cancel_reason`），走 API 等于把判据删掉；
+ *   · 「开 WAL」—— 能消掉读写互斥，但要改**数据库文件本身**的持久化属性
+ *     （`-wal`/`-shm` 落盘、清理时机），等于改了被测环境；本地 dev 库与
+ *     生产 MySQL 本就不同源，为此动它不是本缺陷该付的代价。故不采纳。
+ *
+ * **自检**：设完立刻读回 `PRAGMA busy_timeout`，不符就抛。若将来换 node 版本 /
+ * 换驱动导致 pragma 被静默忽略，这里**当场红**，而不是退化成偶发假红。
+ *
+ * ## 实测记录（κ-4 · 2026-10-09 · Windows · node v22.22.2）
+ *
+ * - **最小对照实验**（两进程：一方持 EXCLUSIVE 锁 3s，另一方直连读 / 写）：
+ *   `busy_timeout=0` → 读、写**都**在 ~20ms 抛 `database is locked`；
+ *   `busy_timeout=5000` → 读、写**都**等到锁释放后成功（~1.8s）。
+ *   即本修法对「读」与「写」两种用法同样有效，不只是把读修好。
+ * - **自然条件**（原样 `node scripts/gate.mjs seed e2e:m1`）：**改前 8 次 → 红 0 次**。
+ * - **写入放大**（另起进程对**同一个 sqlite 文件**高频提交小事务，把「写方持
+ *   EXCLUSIVE 锁」这一窗口的出现频率抬高）：**改前 3 次 → 红 3 次**，失败点实测
+ *   落在 `e2e-m1.mjs:512`（2 次，正是上报的 `:510` 那句直连读）与 `:639`（1 次，写）；
+ *   **改后 2 次 → 全绿 114/114**。因果链在放大条件下是**确定性**的。
+ *
+ * ⚠️ **诚实标注：未做「自然条件下的确定性复现」。** 上面那 8 次全绿是真实的，
+ *    故**不推断**改前的自然失败率；只能说它在**本机**低于 1/8。CI（Linux）的
+ *    时序不同，同一竞态在那里的频率未知 —— 这也正是不把它留着不管的理由。
+ */
+export function openFixtureDb(path = DB_PATH) {
+  const db = new DatabaseSync(path);
+  db.exec(`PRAGMA busy_timeout = ${FIXTURE_BUSY_TIMEOUT_MS}`);
+  const got = db.prepare('PRAGMA busy_timeout').get()?.timeout;
+  if (got !== FIXTURE_BUSY_TIMEOUT_MS) {
+    db.close();
+    throw new Error(
+      `夹具连接 busy_timeout 未生效（期望 ${FIXTURE_BUSY_TIMEOUT_MS}，实得 ${String(got)}）——` +
+        `不修会让 e2e 在服务端提交写事务的那一瞬偶发抛 "database is locked"。`,
+    );
+  }
+  return db;
+}
 
 /** 本脚本使用的端口：`E2E_PORT=3110 node scripts/e2e-m2.mjs` 可覆盖 */
 export const PORT = Number(process.env.E2E_PORT ?? DEFAULT_PORT);

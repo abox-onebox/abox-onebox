@@ -16,13 +16,11 @@ import { fileURLToPath as __aboxFup } from 'node:url';
 const __aboxU = (p) => __aboxFup(new URL(p, import.meta.url)).replace(/[\/]+$/, '');
 
 import { spawnSync } from 'node:child_process';
-import { DatabaseSync } from 'node:sqlite';
-
 const ROOT = __aboxU('../..');
 const NODE = process.execPath;
 const PF = process.env.ABOX_PIPEFIX ?? ''; // 本机专用 child_process 垫片（**不在仓库内**，它自述「勿入仓库」）；设 `ABOX_PIPEFIX=<路径>` 才启用
 
-const { BASE, DB_PATH, startApiServer, waitHealthy, stopApiServer } = await import(
+const { BASE, DB_PATH, openFixtureDb, startApiServer, waitHealthy, stopApiServer } = await import(
   `file:///${ROOT}/scripts/lib/e2e-server.mjs`
 );
 
@@ -64,8 +62,7 @@ function writeDb(sql, params, tries = 8) {
   for (let i = 0; i < tries; i++) {
     let db = null;
     try {
-      db = new DatabaseSync(DB_PATH);
-      db.exec('PRAGMA busy_timeout = 8000');
+      db = openFixtureDb();
       const r = db.prepare(sql).run(...params);
       db.close();
       return r;

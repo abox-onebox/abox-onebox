@@ -37,7 +37,6 @@
  *       串跑时，前一个脚本回收进程树后会**确认端口释放**才返回；详见 scripts/lib/e2e-server.mjs
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
 
 import {
   BASE,
@@ -46,6 +45,7 @@ import {
   assertPortFree,
   installCleanupHooks,
   makeCall,
+  openFixtureDb,
   startApiServer,
   stopApiServer,
   waitHealthy,
@@ -97,7 +97,7 @@ async function adminLogin(username, password) {
 
 function readDb(sql, params = []) {
   if (!existsSync(DB_PATH)) return null;
-  const db = new DatabaseSync(DB_PATH);
+  const db = openFixtureDb();
   try {
     return db.prepare(sql).get(...params) ?? null;
   } finally {
@@ -112,11 +112,16 @@ function readDb(sql, params = []) {
  *      配送生成属定时任务（M4）。而 M2 验收标准 2/3 依赖「今日已送达订单」，
  *      故在此直写状态位，属于**测试夹具**而非绕过业务校验。
  * ⚠️ 写前已停掉一切业务写入（服务空闲），并有 SQLITE_BUSY 重试。
+ *
+ * ⚠️ κ-4：连接改走 `openFixtureDb()`（带 `busy_timeout`）。此前这里是裸
+ *    `new DatabaseSync()`（`busy_timeout=0`），只能靠下面「连续 5 次立即重试」
+ *    硬扛 —— 而服务端的消费者提交是**毫秒级**的，5 次立即重试照样可能全落在
+ *    同一个提交窗口里。真正的兜底是连接级 `busy_timeout`；重试留作第二层。
  */
 function writeDb(sql, params = []) {
   if (!existsSync(DB_PATH)) return null;
   for (let i = 0; i < 5; i++) {
-    const db = new DatabaseSync(DB_PATH);
+    const db = openFixtureDb();
     try {
       return db.prepare(sql).run(...params);
     } catch (e) {

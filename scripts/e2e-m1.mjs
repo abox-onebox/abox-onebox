@@ -20,7 +20,6 @@
  *       串跑时两个脚本抢同一个端口（详见 scripts/lib/e2e-server.mjs 顶部说明）。
  */
 import { existsSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
 
 import {
   BASE,
@@ -29,6 +28,7 @@ import {
   assertPortFree,
   installCleanupHooks,
   makeCall,
+  openFixtureDb,
   sleep,
   startApiServer,
   stopApiServer,
@@ -507,7 +507,9 @@ async function main() {
   // 直查 sqlite 验证落库（接口出参不含取消理由，只看响应永远发现不了「没写进去」）
   let cancelRow = null;
   {
-    const db = new DatabaseSync(DB_PATH);
+    // ⚠️ 必须走 `openFixtureDb()`：裸 `new DatabaseSync()` 的 busy_timeout 是 0，
+    //    会撞上服务端异步提交的写事务而偶发抛 `database is locked`（κ-4，详见 lib）。
+    const db = openFixtureDb();
     cancelRow = db
       .prepare('SELECT cancel_reason, cancel_source FROM ab_order WHERE order_no = ?')
       .get(orderNo);
@@ -538,7 +540,7 @@ async function main() {
 
   if (orderNo2 && existsSync(DB_PATH)) {
     // 把出餐日改到「昨天」→ 截单时刻早已过去 → 触发 40004 分支
-    const db = new DatabaseSync(DB_PATH);
+    const db = openFixtureDb();
     const past = mealDateYMD(mealDate, -2);
     const stmt = db.prepare('UPDATE ab_order SET meal_date = ? WHERE order_no = ?');
     const info = stmt.run(past, orderNo2);
@@ -611,7 +613,7 @@ async function main() {
     );
 
     // ---- 缺陷⑫ 回归：把 1002 绑定的团长（#1）改成停职，逼出分歧点 ----
-    const db = new DatabaseSync(DB_PATH);
+    const db = openFixtureDb();
     try {
       const suspend = db.prepare('UPDATE ab_team_leader SET status = 2 WHERE id = 1').run();
       assert(suspend.changes === 1, '构造「团长停职」样本', 'ab_team_leader#1 status 1 → 2');
@@ -666,7 +668,7 @@ async function main() {
   // 现造一个干净账号（mock provider 把 `dev:x` 直接映射成稳定 openid，见
   // `providers/wx-mini/mock-wx-mini.provider.ts`）。
   if (existsSync(DB_PATH)) {
-    const cdb = new DatabaseSync(DB_PATH);
+    const cdb = openFixtureDb();
     try {
       const freshCode = `dev:qa-cancel-${Date.now()}`;
       const fl = await call('POST', '/auth/login', { body: { code: freshCode } });
@@ -891,7 +893,7 @@ async function main() {
   assert(ratingPaid?.paid === true, 'U20 前置：新单已支付', `status=${ratingPaid?.status}`);
 
   if (ratingOrderNo && existsSync(DB_PATH)) {
-    const rdb = new DatabaseSync(DB_PATH);
+    const rdb = openFixtureDb();
     try {
       const fix = rdb
         .prepare("UPDATE ab_order SET status = 'delivered' WHERE order_no = ?")
@@ -1078,7 +1080,7 @@ function mealDateYMD(dateStr, days) {
  *    随机取一位在任团长会让「显示 == 归属」在有多位团长的楼上偶发假红。
  */
 function resolveLeaderByU6Rule(userId) {
-  const db = new DatabaseSync(DB_PATH);
+  const db = openFixtureDb();
   try {
     const u = db
       .prepare('SELECT building_id, team_leader_id FROM ab_user WHERE id = ?')

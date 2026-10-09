@@ -407,7 +407,7 @@ export class OrderAdminService {
          *    （同一行一次事务里只许 bump 一次，理由见 `syncFrozenBalance` 头注）。
          *
          * ⭐ `versionBeforeCas` 必须交出**上面那条 CAS 用的同一个 `v`**：方法内会当场断言
-         *    「行上 version == 它 + 1」（κ 批次 · 2026-10-10）。这条**跨方法不变量**
+         *    「行上 version == 它 + 1」（κ 批次 · 2026-10-09）。这条**跨方法不变量**
          *    此前只写在注释里 ⇒ 谁将来在这里删掉 CAS 直接动钱，会**当场报错**而不是静默丢锁。
          */
         return this.orderService.syncFrozenBalance(Number(order.id), balanceUsedFen, {

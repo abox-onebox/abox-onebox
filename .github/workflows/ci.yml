@@ -42,7 +42,16 @@ jobs:
     name: Gates (scripts/gate.mjs all)
     runs-on: ubuntu-latest
     steps:
+      # ⚠️ `fetch-depth: 0` **不是可选优化**，是 `security:scan` 的前置条件。
+      #    `apps/api-server/src/common/security/security-scan.ts` 扫的是
+      #    `git log --all -p`（「提交过又删掉」的密钥仍在历史里），而 checkout 默认
+      #    `fetch-depth: 1` ⇒ 历史近乎为空 ⇒ 扫描范围空 ⇒ **安静地绿、不报错**。
+      #    （同一道门禁自 κ-2 起在「历史没扫到且未声明」时直接 FAIL，故这里缺了会红，
+      #     不会再退化成假绿。）
+      #    `verify` job 不需要 —— 它只跑 seed + e2e，不读 git 历史。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}

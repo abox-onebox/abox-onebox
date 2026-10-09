@@ -243,7 +243,11 @@ node abox-onebox\scripts\gate.mjs design          # 设计线：design:spec + de
 > 📌 **门禁条数全文只在此处声明一次**（下面这行是**机器可读标记**，由 `gate:parity` 门禁校验；
 > 加/删门禁后必须同步它，否则门禁会红并点名指出差多少）：
 >
-> `<!-- gate-count: all=29 verify=4 -->`
+> `<!-- gate-count: all=30 verify=4 -->`
+>
+> （2026-10-09 κ 批次：新增 `lock:frozen-sync` —— `syncFrozenBalance` 调用点必须交出
+> `versionBeforeCas`。它是 `lock:version` 扫不到的那一半：那条只认 SET 里的装饰性自增，
+> 而这条治的是「条件性不带 version」的**跨方法**契约。）
 >
 > ⚠️ **其余文档一律不要再写死条数** —— 本项目已反复出现「同一个数字写死在多处，改一处就悄悄错，
 > 而没有任何工具会报错」。条数的**唯一真源**是 `gate.mjs` 自己：`node scripts/gate.mjs --json`。

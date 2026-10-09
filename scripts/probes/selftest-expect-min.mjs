@@ -41,7 +41,7 @@ function ok(name, cond, detail = '') {
 console.log('EXPECT_MIN =', JSON.stringify(EXPECT_MIN));
 
 /**
- * ⚠️ 样本值**一律从 `EXPECT_MIN` 派生**，不写死数字（2026-10-09 修 · 2026-10-10 补「必报」侧）
+ * ⚠️ 样本值**一律从 `EXPECT_MIN` 派生**，不写死数字（2026-10-09 修）
  *
  * 判据源码是从 `gate.mjs` **原样 eval** 的，但**样本值原先写死了**
  * （必不报侧 114 / 1335 / 160，必报侧 108/110 / 1300/1300）。

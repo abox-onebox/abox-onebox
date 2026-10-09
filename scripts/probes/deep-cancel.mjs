@@ -12,14 +12,13 @@ import { fileURLToPath as __aboxFup } from 'node:url';
 const __aboxU = (p) => __aboxFup(new URL(p, import.meta.url)).replace(/[\/]+$/, '');
 
 import { spawnSync } from 'node:child_process';
-import { DatabaseSync } from 'node:sqlite';
-
 const ROOT = __aboxU('../..');
 const NODE = process.execPath;
 
 const {
   BASE,
   DB_PATH,
+  openFixtureDb,
   startApiServer,
   waitHealthy,
   stopApiServer,
@@ -71,9 +70,9 @@ function tomorrowBj() {
  *    必崩）。这不是产品缺陷 —— 是探针没等锁。
  */
 function openDb() {
-  const db = new DatabaseSync(DB_PATH);
-  db.exec('PRAGMA busy_timeout = 8000');
-  return db;
+  // ⭐ κ-4：锁等待预算**不在本文件出现** —— 一律派生自真源
+  //   `lib/e2e-server.mjs` 的 `openFixtureDb()`（自带「读回 pragma 不符即抛」的自检）。
+  return openFixtureDb();
 }
 
 function readCancel(orderNo) {

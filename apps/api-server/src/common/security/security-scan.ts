@@ -19,7 +19,32 @@
  * 必须全部被报出；也构造**占位样本**必须不被报出。任一条不符即自身失败 ——
  * 「恒绿的检查比没有检查更糟」。
  *
+ * ## 「有没有真扫描过」必须自己说出口（2026-10-09 κ-2）
+ *
+ * 本文件曾经的形状是：**git 不可用 ⇒ 历史未扫 ⇒ 返回 0 命中 ⇒ 门禁绿**。
+ * 也就是「全历史密钥扫描」一次都没跑，而结论是「无 FAIL 级命中」——
+ * 恒绿比恒红更难发现，因为它连「我失效了」都不会说一句。
+ * （CI 侧同源：`actions/checkout` 默认 `fetch-depth: 1` 时历史近乎为空，
+ *   表现完全相同——安静地绿，不报错。）
+ *
+ * 现在的判据是 `requireHistory`，且**刻意不问结果、只问选择**：
+ *   · 不问「扫到几个提交」—— 解包副本 / 浅 clone 这些**合法**场景会恒红，
+ *     而恒红和真缺陷在汇总里长得一模一样，人照样学不到东西；
+ *   · 只问「**有没有人做出过明确选择**」—— 未声明 / `true` ⇒ 历史不完整即 **FAIL**；
+ *     显式 `false` ⇒ 放过但**必须可见**（记 `NOTE`）。
+ * ⇒ 「既没声明、也没扫到」当场变红；合法场景在调用处写一次 `requireHistory: false` 就绿。
+ *
+ * 「历史不完整」有两个入口，**共用同一条等级规则**（`incompleteHistoryHit`）：
+ *   ① git 跑不起来（解包副本 / 没装 git）；
+ *   ② **浅 clone** —— CI `actions/checkout` 缺 `fetch-depth: 0` 的直接后果。
+ * ② 是硬约束而非可选检查：那条 yaml 配置若只写在注释里，改回 1 就回到「安静地绿」，
+ *   而「一个正确性前提只有注释、没有门禁」正是本项目的复发模式。
+ *   ⚠️ ② **必须单独问 `--is-shallow-repository`**：浅仓库里 `git log -p` 照样 exit 0，
+ *      靠「git 跑没跑成功」永远发现不了它（本机实测见 `isShallowRepository` 注释）。
+ *
  * 运行：`gate.mjs security:scan`
+ * 无 git 历史时显式放行：`ABOX_SECURITY_SCAN_REQUIRE_HISTORY=0 gate.mjs security:scan`
+ *                      或 `… security-scan.ts --require-history=false`
  */
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
@@ -217,13 +242,34 @@ const TEXT_EXT = new Set([
   '.env',
 ]);
 
-/** 不扫的目录 */
+/**
+ * 不扫的目录
+ *
+ * ⛔ **禁忌（可判定，不是「审慎」这种模糊措辞）**：本表**只许**放「按项目定义
+ *    **就不是源码**」的目录 —— 判据是硬的：该目录在 `.gitignore` 里，且
+ *    `git ls-files` 查不到**任何**被跟踪的文件（实测 2026-10-09：本表现在 7 个
+ *    目录逐个查，`git ls-files` 命中数**全为 0**）。
+ *
+ *    **任何一个真源码目录进这张表 = 给密钥扫描开一个永久盲区，而且这个盲区
+ *    永远不报错** —— 漏报比误报安静得多，这正是本项目反复踩的形状。
+ *    ⇒ 上面这条由 `assertSkipDirsAreNotSource()` **机械看住**（新增一项即自动验一次），
+ *      不靠后人读注释自觉：「正确性前提只写在注释里」就是 κ-2 这一轮在治的病。
+ *
+ * ⚠️ `_tmp` 为什么**必须**进：它是门禁与取证脚本的工作目录，实测放过过整份源码副本
+ *    —— κ-2 构造浅 clone 样本时把副本放在 `_tmp/`，真仓库的工作区扫描**把副本又扫了
+ *    一遍**（工作区命中 2→4、显式豁免 2→4）。重复计数是**已发生**的，不是理论风险。
+ *    `.gitignore` 也早已把它定为「临时/验证产物、严禁入库」，与 `dist` 同类。
+ *
+ * ⚠️ `dist` / `build` / `coverage` 同为**构建或验证产物**，同样 0 个被跟踪文件。
+ */
 const SKIP_DIR = new Set([
   'node_modules',
   '.git',
   'dist',
+  'build',
   'coverage',
   '_stale-build',
+  '_tmp',
   '.turbo',
   'unpackage',
 ]);
@@ -288,29 +334,74 @@ function findRepoRoot(start: string): string {
   throw new Error('未找到仓库根（pnpm-workspace.yaml）—— 检查器必须在仓库内运行');
 }
 
-function walk(root: string): string[] {
-  const out: string[] = [];
+/**
+ * 遍历文本文件，**并**回报被 `SKIP_DIR` 跳过的目录（后者供自校验用）
+ *
+ * ⚠️ 刻意只遍历**一次**并同时产出两份结果 —— 分成两个函数就是「同一份遍历两份表述」，
+ *    而两份表述迟早会不一致（本项目的横向根因）。
+ */
+function walk(root: string): { files: string[]; skippedDirs: string[] } {
+  const files: string[] = [];
+  const skippedDirs: string[] = [];
   const visit = (dir: string): void => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       if (e.isDirectory()) {
-        if (SKIP_DIR.has(e.name)) continue;
+        if (SKIP_DIR.has(e.name)) {
+          skippedDirs.push(path.join(dir, e.name));
+          continue;
+        }
         visit(path.join(dir, e.name));
       } else if (TEXT_EXT.has(path.extname(e.name).toLowerCase()) || e.name.startsWith('.env')) {
-        out.push(path.join(dir, e.name));
+        files.push(path.join(dir, e.name));
       }
     }
   };
   visit(root);
-  return out;
+  return { files, skippedDirs };
 }
 
 // ---------------------------------------------------------------------------
 // 一、工作区扫描
 // ---------------------------------------------------------------------------
 
-function scanWorkspace(root: string): Hit[] {
+/**
+ * 用 `git ls-files` **机械**看住「真源码目录不许进 `SKIP_DIR`」这条禁忌
+ *
+ * 判据：被跳过的目录里只要存在**任何一个被 git 跟踪的文件**，就说明这条 SKIP 把
+ * 真源码挡在了扫描之外 ⇒ 永久盲区，**且不会报错**（漏报永远比误报安静）。
+ *
+ * ⚠️ 只在 git 可用时验 —— git 不可用 ⇒ **放弃本检查**，绝不允许凭空造出一个 FAIL：
+ *    那会把「这台机器没有 git」伪装成「有人误把源码目录加进了 SKIP_DIR」，
+ *    而后者需要人来改、前者只需要换台机器，两者被混为一谈就是新的假红。
+ */
+function assertSkipDirsAreNotSource(root: string, dirs: string[]): Hit[] {
+  if (!dirs.length) return [];
+  let tracked: string[] = [];
+  try {
+    tracked = gitOut(root, ['ls-files', '--', ...dirs])
+      .split(/\r?\n/)
+      .filter(Boolean);
+  } catch {
+    return []; // git 不可用 ⇒ 放弃（理由见上）
+  }
+  if (!tracked.length) return [];
+  return [
+    {
+      level: 'FAIL',
+      pattern: 'SKIP_DIR 挡住了真源码',
+      where: 'security:scan 自校验',
+      hint: '被 SKIP_DIR 跳过的目录里存在 **git 跟踪的文件** ⇒ 该目录是真源码，跳过它等于给密钥扫描开永久盲区。请删掉这一项，或改用更窄的路径 —— `SKIP_DIR` 只许放「按项目定义就不是源码」的产物目录（判据见该常量注释）。',
+      snippet:
+        tracked.slice(0, 5).join(' | ') +
+        (tracked.length > 5 ? ` …（共 ${tracked.length} 个被跟踪文件）` : ''),
+    },
+  ];
+}
+
+function scanWorkspace(root: string): { hits: Hit[]; skippedDirs: string[] } {
   const hits: Hit[] = [];
-  for (const file of walk(root)) {
+  const { files, skippedDirs } = walk(root);
+  for (const file of files) {
     let text: string;
     try {
       text = fs.readFileSync(file, 'utf8');
@@ -351,12 +442,86 @@ function scanWorkspace(root: string): Hit[] {
       }
     }
   }
-  return hits;
+  return { hits, skippedDirs };
 }
 
 // ---------------------------------------------------------------------------
 // 二、git 历史扫描（「提交过又删掉」的仍然算泄露）
 // ---------------------------------------------------------------------------
+
+/**
+ * 「git 历史必须被扫到吗」—— **三种状态，没有缺省值**
+ *
+ * 这是 κ-2 补上的那条判据，针对的形状写在文件头：git 不可用 ⇒ 历史未扫 ⇒
+ * 返回 0 命中 ⇒ 门禁绿，而「全历史密钥扫描」一次都没跑。
+ *
+ * ⭐ 判据**不问结果、只问选择**（理由见文件头）：
+ *   · `true` 或**不写**（未声明）⇒ 扫不到即 **FAIL**；
+ *   · `false`                   ⇒ 扫不到就放过，但**必须可见**（记 `NOTE`）。
+ *
+ * ⭐ 已实测的一条性质（κ-2 · **勿当成 regression**）：显式声明 `false` 之后，
+ *    **即便探测历史的那条 git 命令本身是失败的**（样本里是 `spawnSync git ENOENT`），
+ *    门禁**仍然 EXIT=0**。opt-out 的语义是「**放弃这一路检查**」，不是
+ *    「要求这一路必须跑通」—— 后者会让「没有 git 的合法环境」永远红，那是恒红。
+ *    ⇒ 读输出时：绿的原因是「**有人明确选择了放弃**」，且该选择以 NOTE 留在输出里可审计；
+ *      只有当 opt-out 之下**仍然冒出 FAIL** 时，那才是真回归。
+ */
+export type RequireHistory = boolean | undefined;
+
+export interface ScanOptions {
+  /**
+   * ⚠️ 该字段在**类型上没有缺省** —— 这不是疏忽，它就是判据的落点：
+   *    TS 调用方漏写会**编译不过**，从而被迫做出一次明确选择；
+   *    运行时（JS 调用方）漏传 ⇒ 视为「要求」，与未声明同样处理。
+   */
+  requireHistory: RequireHistory;
+}
+
+/**
+ * git 历史的**三态** —— 与「扫到几条命中」正交
+ *
+ *   `complete`    —— 完整历史已扫（CI 正常态）
+ *   `shallow`     —— 仓库是浅 clone，历史被截断（`fetch-depth` 缺了）
+ *   `unavailable` —— git 压根跑不起来（解包副本 / 没装 git）
+ *
+ * ⚠️ 它会以 `[git-history] mode=<值>` 单独打印一行 —— 这是给 **CI 日志 grep** 用的
+ *    稳定标记（人类可读那行是中文、会随措辞改动，不适合当契约）。
+ *    上线前人工核对的就是这一行，见 `docs` 侧的验证清单。
+ */
+export type GitHistoryMode = 'complete' | 'shallow' | 'unavailable';
+
+/** git 历史扫描的结果 —— 必须把「扫没扫到」和「扫到几条」分开回报 */
+interface HistoryResult {
+  hits: Hit[];
+  mode: GitHistoryMode;
+  /** `mode === 'complete'` ⇒ 历史**真的被完整扫过** */
+  scanned: boolean;
+  /** 非 `complete` 时的原因（原文，供 FAIL 提示定位） */
+  reason?: string;
+}
+
+/**
+ * 读取调用方对「要不要 git 历史」的**显式声明**
+ *
+ * 认三种写法：`--require-history[=<值>]` · `--no-require-history` ·
+ * 环境变量 `ABOX_SECURITY_SCAN_REQUIRE_HISTORY=<值>`。
+ * 一个都不出现 ⇒ `undefined`（**未声明** ⇒ 按「要求」处理）。
+ *
+ * ⚠️ 刻意**不设缺省 `true`**：缺省会让「忘了声明」与「声明了要」在输出里无从分辨，
+ *    而本判据的全部价值就在于把这两者分开。
+ */
+function readDeclaredRequireHistory(argv: string[]): RequireHistory {
+  const asBool = (raw: string): boolean => !/^(0|false|no|off)$/i.test(raw.trim());
+  for (const a of argv) {
+    const m = /^--(no-)?require-history(?:=(.*))?$/.exec(a);
+    if (!m) continue;
+    if (m[1]) return false; // --no-require-history
+    return asBool(m[2] ?? 'true'); // --require-history[=<值>]
+  }
+  const env = process.env.ABOX_SECURITY_SCAN_REQUIRE_HISTORY;
+  if (env === undefined || env.trim() === '') return undefined;
+  return asBool(env);
+}
 
 /**
  * 跑 `git` 并**拿回** stdout —— 刻意**不用** `execFileSync` 的默认 stdio（= `'pipe'`）
@@ -401,16 +566,100 @@ function gitOut(root: string, args: string[]): string {
   return out;
 }
 
-function scanGitHistory(root: string): Hit[] {
+/**
+ * 「历史不完整」这一族命中的**唯一构造入口**
+ *
+ * 两个入口（git 跑不起来 / 浅 clone）共用一条等级规则，就是为了保证：
+ * **开关只有 `requireHistory` 一个** —— 开关越多，越容易「忘了声明」，
+ * 而「忘了声明」正是这一族缺陷的原型。
+ */
+function incompleteHistoryHit(
+  opts: ScanOptions,
+  pattern: string,
+  snippet: string,
+  hintRequired: string,
+  hintDeclared: string,
+): Hit {
+  const required = opts.requireHistory !== false; // 未声明 ⇒ 要求
+  return {
+    level: required ? 'FAIL' : 'NOTE',
+    pattern,
+    where: 'security:scan 前置条件',
+    hint: required ? hintRequired : hintDeclared,
+    snippet,
+  };
+}
+
+/**
+ * git 跑不起来时的收口 —— **不再静默返回 0 命中**
+ *
+ * κ-2 之前这里直接 `return []`，于是「历史没扫」与「历史扫干净了」在输出里
+ * 是同一行（`【二 · git 历史扫描】 无命中`）。现在二者必须分开：
+ *   · 未声明 / 声明 `requireHistory: true` ⇒ **FAIL**（这一条绿是假的，不许过关）；
+ *   · 显式声明 `requireHistory: false` ⇒ `NOTE`（放过，但**可见**、可审计）。
+ */
+function historyNotScanned(hits: Hit[], err: unknown, opts: ScanOptions): HistoryResult {
+  const reason = err instanceof Error ? err.message : String(err);
+  hits.push(
+    incompleteHistoryHit(
+      opts,
+      'git 历史未扫描',
+      redact(reason),
+      'git 历史**一次都没扫到**（原因见 snippet）—— 此时「无 FAIL 级命中」是假绿。若此处**确实**没有 git 历史（解包副本 / 未装 git），请显式声明 --require-history=false 或 ABOX_SECURITY_SCAN_REQUIRE_HISTORY=0；否则先修好 git 再跑。',
+      'git 历史未扫描，但调用方已**显式声明** requireHistory=false —— 本条不阻断；请定期确认此处确实不该有 git 历史。',
+    ),
+  );
+  return { hits, mode: 'unavailable', scanned: false, reason };
+}
+
+/**
+ * 浅 clone 检测 —— CI `actions/checkout` 缺 `fetch-depth: 0` 的**直接后果**
+ *
+ * ⭐ 这条不是「多抓一类问题」，而是把上一轮刚补的那条防线**变成硬约束**：
+ *    `fetch-depth: 0` 若只写在 `ci.yml` 的注释里，就没有任何机械校验在看住它
+ *    （一个正确性前提只写在注释里、没有门禁检查，正是本项目的复发模式）。
+ *    现在由门禁自己看住：谁把它改回 1，CI 当场红。
+ *
+ * ⚠️ 必须**单独问一句**，不能靠「git log 跑没跑成功」推断 —— 本机实测：
+ *      · 完整 clone  ⇒ `git rev-parse --is-shallow-repository` = `false`
+ *      · `--depth 1` ⇒ `true`，而 `git log --all -p` **照样 exit 0**
+ *    ⇒ 浅仓库在旧判据下是 `scanned: true`，即「安静地绿、不报错」的原形。
+ */
+function isShallowRepository(git: (...args: string[]) => string): boolean {
+  return git('rev-parse', '--is-shallow-repository').trim() === 'true';
+}
+
+function shallowHistoryHit(opts: ScanOptions): Hit {
+  return incompleteHistoryHit(
+    opts,
+    'git 历史被截断（浅 clone）',
+    'git rev-parse --is-shallow-repository → true',
+    '当前仓库是**浅 clone** —— `git log --all -p` 只能看到被截断的那一段，「全历史密钥扫描」名存实亡。CI 侧根因几乎总是 `actions/checkout` **缺了 `fetch-depth: 0`**（默认 1）；本地则是 `git clone --depth N`。若确认此处**不需要**全历史，显式声明 --require-history=false 或 ABOX_SECURITY_SCAN_REQUIRE_HISTORY=0。',
+    '当前仓库是浅 clone，git 历史不完整；调用方已**显式声明** requireHistory=false —— 本条不阻断。',
+  );
+}
+
+function scanGitHistory(root: string, opts: ScanOptions): HistoryResult {
   const hits: Hit[] = [];
   const git = (...args: string[]): string => gitOut(root, args);
+
+  // 2a-0. 浅 clone —— **先于**任何扫描判一次（理由见 `isShallowRepository`）
+  let shallow = false;
+  try {
+    shallow = isShallowRepository(git);
+  } catch (e) {
+    return historyNotScanned(hits, e, opts);
+  }
+  // ⚠️ 不 return —— 被截断的那一段仍然照扫：多报一条总比静默强，
+  //    但 `scanned` 必须是 false（结论里「历史 0 命中」不能被当成扫干净了）。
+  if (shallow) hits.push(shallowHistoryHit(opts));
 
   // 2a. 历史里出现过的敏感文件名（哪怕已删除）
   let names = '';
   try {
     names = git('log', '--all', '--pretty=format:', '--name-only', '--diff-filter=AD');
-  } catch {
-    return []; // 非 git 环境（如解包副本）—— 由调用方记录「历史未扫」
+  } catch (e) {
+    return historyNotScanned(hits, e, opts); // 非 git 环境（如解包副本）—— **必须红或显式声明**
   }
   const seen = new Set<string>();
   for (const n of names.split(/\r?\n/)) {
@@ -432,8 +681,8 @@ function scanGitHistory(root: string): Hit[] {
   let patch = '';
   try {
     patch = git('log', '--all', '-p', '--format=commit:%H');
-  } catch {
-    return hits;
+  } catch (e) {
+    return historyNotScanned(hits, e, opts); // 内容扫描没跑完 ⇒ 同样不许算「扫过」
   }
   for (const raw of patch.split(/\r?\n/)) {
     if (!raw.startsWith('+') || raw.startsWith('+++')) continue;
@@ -451,7 +700,12 @@ function scanGitHistory(root: string): Hit[] {
       });
     }
   }
-  return hits;
+  return {
+    hits,
+    mode: shallow ? 'shallow' : 'complete',
+    scanned: !shallow,
+    reason: shallow ? '仓库为浅 clone —— git 历史被截断' : undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -508,7 +762,7 @@ function scanLogs(root: string): Hit[] {
   const apiSrc = path.join(root, 'apps', 'api-server', 'src');
   if (!fs.existsSync(apiSrc)) return hits;
 
-  for (const file of walk(apiSrc)) {
+  for (const file of walk(apiSrc).files) {
     if (!file.endsWith('.ts')) continue;
     const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
     for (let i = 0; i < lines.length; i += 1) {
@@ -600,6 +854,32 @@ function selfTest(): void {
     }
   }
 
+  // ⭐ κ-2：「历史不完整 ⇒ 必须红」这条判据**自身**的自证
+  //    两个入口（git 跑不起来 / 浅 clone）× 三种声明（未声明 / true / false）：
+  //      未声明 与 true ⇒ FAIL（不许退化成静默 0 命中）；显式 false ⇒ NOTE（放过但必须可见）。
+  //    两个入口共用一条等级规则是刻意的 —— 判据一旦分家，就会出现「只声明了一半」的空档。
+  //    判据失灵（比如有人把 `level` 改回 WARN），这里当场失败。
+  const incompleteCases: Array<[ScanOptions, 'FAIL' | 'NOTE']> = [
+    [{ requireHistory: undefined }, 'FAIL'], // 未声明 ⇒ 按「要求」处理
+    [{ requireHistory: true }, 'FAIL'],
+    [{ requireHistory: false }, 'NOTE'],
+  ];
+  for (const [opts, want] of incompleteCases) {
+    const declared = String(opts.requireHistory);
+    const viaErr = historyNotScanned([], new Error('git 不可用（自证样本）'), opts).hits[0]?.level;
+    if (viaErr !== want) {
+      missed.push(
+        `历史未扫判据失效（期望 ${want}，实得 ${String(viaErr)}）：requireHistory=${declared}`,
+      );
+    }
+    const viaShallow = shallowHistoryHit(opts).level;
+    if (viaShallow !== want) {
+      missed.push(
+        `浅 clone 判据失效（期望 ${want}，实得 ${viaShallow}）：requireHistory=${declared}`,
+      );
+    }
+  }
+
   if (missed.length) {
     throw new Error(
       `自证失败（${missed.length} 项）—— 检查器失效时必须自己失败：\n    ${missed.join('\n    ')}`,
@@ -611,15 +891,37 @@ function selfTest(): void {
 // 主流程
 // ---------------------------------------------------------------------------
 
-export function run(): { workspace: Hit[]; history: Hit[]; logs: Hit[] } {
+export function run(opts: ScanOptions): {
+  workspace: Hit[];
+  history: Hit[];
+  logs: Hit[];
+  /** git 历史是否**完整扫过**（false ⇒ 未扫 / 被截断，结论里不含完整历史） */
+  historyScanned: boolean;
+  /** `historyScanned === false` 时的原因（原文） */
+  historyReason?: string;
+  /** 历史的**三态**，与 `historyScanned` 同源（`complete` ⇔ `scanned === true`） */
+  historyMode: GitHistoryMode;
+} {
   const root = findRepoRoot(__dirname);
   selfTest();
-  return { workspace: scanWorkspace(root), history: scanGitHistory(root), logs: scanLogs(root) };
+  const hs = scanGitHistory(root, opts);
+  const ws = scanWorkspace(root);
+  return {
+    // 「跳过的目录里不许有真源码」这道自校验挂在工作区命中里 —— 与扫描同一次遍历取得
+    workspace: [...ws.hits, ...assertSkipDirsAreNotSource(root, ws.skippedDirs)],
+    history: hs.hits,
+    logs: scanLogs(root),
+    historyScanned: hs.scanned,
+    historyReason: hs.reason,
+    historyMode: hs.mode,
+  };
 }
 
 function main(): void {
   const root = findRepoRoot(__dirname);
-  const { workspace, history, logs } = run();
+  // ⚠️ 声明**只能**来自命令行 / 环境变量 —— main 自己不许替调用方选。
+  const opts: ScanOptions = { requireHistory: readDeclaredRequireHistory(process.argv.slice(2)) };
+  const { workspace, history, logs, historyScanned, historyReason, historyMode } = run(opts);
   const all = [...workspace, ...history, ...logs];
   const fail = all.filter((h) => h.level === 'FAIL');
   const warn = all.filter((h) => h.level === 'WARN');
@@ -638,21 +940,55 @@ function main(): void {
   };
 
   console.log(`仓库：${root}`);
+  console.log(
+    `声明：requireHistory=${String(opts.requireHistory)}${
+      opts.requireHistory === undefined ? '（**未声明** ⇒ 按「要求」处理）' : ''
+    }`,
+  );
   show('一 · 工作区密钥扫描', workspace);
   show('二 · git 历史扫描', history);
   show('三 · 日志脱敏核查', logs);
 
   console.log(
     `\n合计命中 ${all.length} 项（FAIL ${fail.length} / WARN ${warn.length} / 显式豁免 ${note.length}）` +
-      ` —— 工作区 ${workspace.length} · 历史 ${history.length} · 日志 ${logs.length}`,
+      ` —— 工作区 ${workspace.length} · 历史 ${history.length} · 日志 ${logs.length}` +
+      // ⚠️ 这一行是**契约**：CI 上线前人工核对的就是它（grep `[git-history] mode=`）。
+      //    中文那行只是给人看的，措辞会随版本变，不能当契约。
+      `\n[git-history] mode=${historyMode}` +
+      `\ngit 历史扫描：${
+        historyScanned
+          ? '已执行（完整历史）'
+          : `**不完整** —— ${historyReason ?? '未执行'}（本次结论不含完整 git 历史）`
+      }`,
   );
 
+  // ⭐ κ-2 复核：把「这次到底扫没扫 git 历史」塞进**最后一行**。
+  //   `gate.mjs` 的 `reportOf()` 在没有专门正则时兜底展示最后一行 —— 这一路**不依赖
+  //   任何正则被维护**。后来 gate.mjs 侧补了 `REPORT_RE['security:scan']`（命中即
+  //   `return hits`，兜底随之失效）⇒ 现在两条路**都必须**带得出来，且互为备份：
+  //     ① 正则命中路径：上面 `[git-history] mode=` 与 `git 历史扫描：` 两行被抽走；
+  //     ② 正则失配 / 被删路径：兜底回最后一行，而句尾仍挂着 `· git 历史：…`。
+  //   ⇒ 任一路径烂掉，另一条仍可见；这不是靠两处同步维持的，是两条独立通路。
+  //   ⚠️ 状态**现算**，不新增写死文案：与 958 行同源（`historyScanned` / `historyMode`）。
+  const declaredNoHistory = opts.requireHistory === false;
+  // ⭐ 用 `historyScanned` 而不是 `historyMode === 'complete'`：两者恒等（`run()` 的
+  //   返回契约 `scanned ⇔ mode === 'complete'`），但写成本文件 958 行**同一个谓词** ——
+  //   「扫没扫到」便不再有第二个判断点（派生 > 同步）。
+  const historyState = historyScanned
+    ? '已执行（完整历史）'
+    : `未执行（${historyMode === 'shallow' ? '浅 clone' : 'git 不可用'}${
+        declaredNoHistory ? ' · 已显式声明 requireHistory=false' : ''
+      }）`;
+
   if (fail.length) {
-    console.log(`\n✘ 安全扫描未通过：${fail.length} 项阻断（必须处理，不可带病上线）`);
+    console.log(
+      `\n✘ 安全扫描未通过：${fail.length} 项阻断（必须处理，不可带病上线） · git 历史：${historyState}`,
+    );
     process.exit(1);
   }
   console.log(
-    `\n✔ 安全扫描通过：无 FAIL 级命中${warn.length ? `（${warn.length} 项 WARN 待人工确认）` : ''}`,
+    `\n✔ 安全扫描通过：无 FAIL 级命中${warn.length ? `（${warn.length} 项 WARN 待人工确认）` : ''}` +
+      ` · git 历史：${historyState}`,
   );
 }
 

@@ -148,7 +148,6 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 
 import {
   BASE,
@@ -158,6 +157,7 @@ import {
   assertPortFree,
   installCleanupHooks,
   makeCall,
+  openFixtureDb,
   startApiServer,
   stopApiServer,
   waitHealthy,
@@ -216,11 +216,14 @@ function inOrderWindowBj() {
  *    夹具这一侧的读/写就会立刻抛 `database is locked`，把一次偶发撞车放大成
  *    「整节异常中断」——而失败点与被测行为毫无关系（典型的环境型假红）。
  *    夹具事务都是毫秒级的，等一会儿即可，故统一设 5s。
+ *
+ * ⚠️ κ-4：**真源下沉到 `lib/e2e-server.mjs` 的 `openFixtureDb()`**（含根因实测、
+ *    为什么不吞报错、以及「pragma 未生效即抛」的自检）。本套件此前是唯一
+ *    带此保护的套件，`e2e-m1` / `e2e-m2` 没有 —— 那正是 κ-4 偶发假红的来源。
+ *    这里保留函数名以免牵动上千行调用点，但实现只有一个。
  */
 function fixtureDb() {
-  const db = new DatabaseSync(DB_PATH);
-  db.exec('PRAGMA busy_timeout = 5000');
-  return db;
+  return openFixtureDb();
 }
 
 function readDb(sql, params = []) {

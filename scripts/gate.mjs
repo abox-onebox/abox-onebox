@@ -397,6 +397,31 @@ const GATES = {
    */
   'lock:version': { cwd: '.', cmd: 'node scripts/check-optimistic-lock.mjs' },
   /**
+   * κ 批次（2026-10-09）：**跨方法 CAS 契约**的**静态**侧 —— `lock:version` 的姊妹门禁
+   *
+   * ⚠️ 它治的是 `lock:version` **扫不到**的那一半：
+   *   · `lock:version` 只认 SET 里的 `version: (x.version ?? 0) + 1`（装饰性自增）；
+   *   · 而 `syncFrozenBalance` 的病灶形态是「**条件性不带 version**」—— 它**自己不上锁**，
+   *     锁由**调用方**先在同一事务里做一次真 CAS 来提供。这条不变量跨了方法边界，
+   *     静态扫任何单个方法都看不见它。
+   *
+   * κ-3 已把它做成**运行时断言**（调用方必须交出 `versionBeforeCas`，入口验
+   * 「行上 version == 它 + 1」），并做了变异实测：把 `versionBeforeCas` 偏移 1
+   * ⇒ `e2e:m3` 立刻 1341/1346，红的正是 5 条 D10 断言。
+   * ⚠️ 但运行时只对**被 e2e 覆盖到的调用点**成立 —— 将来谁新增一个「传了事务却没做 CAS」
+   *    的调用点、又没被现有断言覆盖 ⇒ 运行时也拦不住 ⇒ 故补这一道静态门禁。
+   *
+   * 判据（`scripts/check-frozen-sync.mjs`）：
+   *   ① 全仓 `syncFrozenBalance(` 的**调用点**（`async syncFrozenBalance(` 是声明，跳过）
+   *      必须交出 `versionBeforeCas`，缺了点名 `文件:行`；
+   *   ② 契约真源 `FrozenSyncCasCtx` 的 `manager` / `versionBeforeCas` 必须仍**非可选**
+   *      （防「把必填改回可选」⇒ ① 名存实亡，等于门禁被自己绕过）；
+   *   ③ **0 调用点 ⇒ 报 broken**（扫到空返回绿 = 判据空转，与恒绿同罪）。
+   * 自带 5 条自证（必报 ×3 / 必不报 ×2），样本**从真源码变形派生**、不写死数字；
+   * 判据导出为纯函数供复用。
+   */
+  'lock:frozen-sync': { cwd: '.', cmd: 'node scripts/check-frozen-sync.mjs' },
+  /**
    * S9：**设计红线落点**（原 `_tmp/icons/ui-gate.py`，手工脚本）纳入常驻门禁。
    *
    * 为什么必须常驻：它当时**不在任何门禁内**，`all verify` 覆盖不到 ⇒ S8 把后台侧栏
@@ -581,6 +606,10 @@ const ALIASES = {
     'order:edges',
     // 2026-10-08 复查 P1-5 + BE-05：装饰性乐观锁防复发（SET 里 `version: (x ?? 0) + 1` ⇒ 红）—— 纯静态、毫秒级
     'lock:version',
+    // κ 批次（2026-10-09）：`lock:version` 扫不到的那一半 —— `syncFrozenBalance` 的调用点
+    // 必须交出 `versionBeforeCas`（跨方法 CAS 契约；运行时断言的静态补位）—— 纯静态、毫秒级
+    // ⚠️ 加进 `all` 后 `all` 由 29 道变 30 道 ⇒ 手册 §6.1 的 `gate-count` 标记**必须**同步（否则 `gate:parity` 红）
+    'lock:frozen-sync',
     // S9：设计红线落点（只读仓库内源码 ⇒ CI 可见）。⚠️ design:docs 刻意不进 all，原因见其定义处
     'design:spec',
     'jest',
@@ -680,6 +709,23 @@ const REPORT_RE = {
   'order:edges': [/^\[自证\] \d+\/\d+ 通过$/m, /^③ 实际写入边：\d+ 条$/m, /^④ 声明边集：\d+ 条$/m],
   // lock:version：自证汇总 + 覆盖面（扫到的源文件数与命中数；命中 0 ⇒ 白名单未命中即红，不会静默）
   'lock:version': [/^\[自证\] \d+\/\d+ 通过$/m, /^扫描 \d+ 个源文件 · 命中装饰性写法 \d+ 处$/m],
+  // security:scan：**「这次到底扫没扫 git 历史」必须在汇总里看得见** —— 否则
+  //   「没扫到历史却全绿」与「真的干净」在汇总里完全同形（κ-2 的静默绿）。
+  //   四条按脚本输出先后排列：① `[git-history] mode=`（CI 契约行，稳定标记）；
+  //   ② 中文明细行（带未扫原因）；③ 合计命中（FAIL / WARN / 显式豁免 分项 ——
+  //      WARN 是「绿着但待人工确认」，不进汇总就等于没人看）；④ 结论行。
+  //   ⚠️ 四条**缺一不可**：`reportOf()` 命中即 `return hits`，**一加正则，
+  //      「最后一行」兜底就失效** —— 少列一条等于把这条信息从汇总里删掉。
+  //   ⚠️ 反向保险：万一这四条哪天全部失配，兜底会回到最后一行，而脚本侧在结论行
+  //      句尾也挂了 `· git 历史：…`（见 security-scan.ts）⇒ 两条路不会同时哑。
+  'security:scan': [
+    /^\[git-history\] mode=.*$/m,
+    /^git 历史扫描：.*$/m,
+    /^合计命中 \d+ 项.*$/m,
+    /^(✔|✘) 安全扫描.*$/m,
+  ],
+  // lock:frozen-sync：自证汇总 + 覆盖面（扫到的源文件数与调用点数；0 调用点 ⇒ 脚本自报空转，不会静默）
+  'lock:frozen-sync': [/^\[自证\] \d+\/\d+ 通过$/m, /^扫描 \d+ 个源文件 · 命中调用点 \d+ 处$/m],
   // mp:auth-state：陈旧裁决/出手清态（判据核心）+ 结论行
   'mp:auth-state': [/^ {4}陈旧裁决: .*$/m, /^✅ 全部通过.*$/m],
   // mp:no-bare-call：自证汇总 + 覆盖面（调用点总数；0 样本时脚本自行 exit 2，不会静默）

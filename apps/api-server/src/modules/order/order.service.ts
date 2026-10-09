@@ -120,7 +120,7 @@ export interface AutoConfirmByDateResult {
 }
 
 /**
- * `syncFrozenBalance` 的**调用凭证**（κ 批次 · 2026-10-10 新增）
+ * `syncFrozenBalance` 的**调用凭证**（κ 批次 · 2026-10-09 新增）
  *
  * 把原先只写在 `@param` 注释里的「调用方必须先做 CAS」变成**必填的入参形状**：
  * 不给 `manager` 编译不过（那条自开事务的死分支已删），不给 `versionBeforeCas` 也编译不过，
@@ -1364,7 +1364,7 @@ export class OrderService {
    *    而「传 `m` 即意味调用方已 CAS」这条**跨方法不变量只写在 `@param` 注释里**。
    *    静态门禁 `lock:version` 只扫 `version: (x.version ?? 0) + 1` 这类装饰性写法，
    *    **扫不到「条件性不带 version」** ⇒ 这条不变量当时没有任何东西在看。
-   *  · **本次（κ 批次 · 2026-10-10）**：把注释**升格成运行时断言** ——
+   *  · **本次（κ 批次 · 2026-10-09）**：把注释**升格成运行时断言** ——
    *    ① 删掉「不传事务则自开事务并自增」那条**从无调用方的死分支**（它没有测试覆盖，
    *       留着就是「钱的路径上有一段没人跑过的代码」），使本方法**只有一种调用形态**；
    *    ② 调用方必须交出它占位**之前**的 `version`，本方法进来就验「行上 version == 该值 + 1」。
@@ -1391,7 +1391,7 @@ export class OrderService {
     if (!order) throw new BizException(ErrorCode.ORDER_NOT_FOUND);
 
     /**
-     * ⭐⭐ 跨方法不变量的**运行时证明**（2026-10-10 起不再只是注释）
+     * ⭐⭐ 跨方法不变量的**运行时证明**（2026-10-09 起不再只是注释）
      *
      * 进到这里时，行必须处于「已被调用方 CAS 占位」的状态 ⇒ `version` 恰好比调用方
      * 占位前的值大 1。不满足只有两种可能，每一种都必须炸响而不是继续：
@@ -1403,6 +1403,26 @@ export class OrderService {
      *    `?? 0` 会把「快照缺失」伪装成 `version = 0` ⇒ 断言静默失真。不兜底则会当场报错。
      */
     if (order.version !== expectedVersion) {
+      /**
+       * ⚠️ **先把真相打进服务端日志**，再抛业务码 —— 两者的读者不是同一批人：
+       *
+       * 抛的是 `ErrorCode.ORDER_CONCURRENT_MODIFIED`(30022)，但**该码的语义在此处并不适用**：
+       * 它在 `error-code.ts` 里的注释写着「收到本码 = 系统按设计停住了，**重试即可**」，
+       * 而本处失败的性质是**调用方违约**（漏做 CAS / 拿了过期快照）⇒ **重试无用** ——
+       * 端上按「并发冲突」无谓重试，反而会把这条编程错误**伪装成偶发冲突**而掩盖掉。
+       *
+       * ⇒ 故日志里写明「不是并发、重试无用、去看哪个调用点」；HTTP 侧仍复用 30022，
+       *   以免为它新增一个错误码而牵动 `errcode:message` 的 84 条对账。
+       * ⚠️ **λ 批次待办**：把「调用方违约」拆成独立错误码（或给 30022 补例外说明），
+       *    拆完**本行日志仍保留** —— 日志里的真相与错误码不是一回事，不该二选一。
+       */
+      this.logger.error(
+        `syncFrozenBalance 调用方违约（**不是并发**，重试无用）：订单 #${orderId} ` +
+          `期望 version=${expectedVersion}（调用方占位前 ${versionBeforeCas} + 1），实测 ${order.version}` +
+          ' —— 调用方要么漏做了 `WHERE version = :v` 的 CAS 占位，要么拿的是过期快照。' +
+          '本次一分钱未动且整笔事务回滚；请检查该调用点（契约见 `FrozenSyncCasCtx`，' +
+          '静态门禁 `lock:frozen-sync` 管的是「交没交凭证」，这里管的是「凭证对不对」）。',
+      );
       throw new BizException(
         ErrorCode.ORDER_CONCURRENT_MODIFIED,
         `订单 #${orderId} 在 syncFrozenBalance 入口的 version=${order.version}，` +
@@ -1446,6 +1466,13 @@ export class OrderService {
       .where('id = :id AND version = :expected', { id: order.id, expected: expectedVersion })
       .execute();
     if (!written.affected) {
+      // 同上：先把「这不是普通并发」的真相写进日志，HTTP 侧仍复用 30022（λ 批次再拆码）
+      this.logger.error(
+        `syncFrozenBalance 写回抵扣额 0 行受影响（**不是并发**，重试无用）：订单 #${orderId} ` +
+          `期望 version=${expectedVersion}，入口断言时实测 ${order.version} —— ` +
+          '该行在断言之后、写回之前又被改过，或调用方凭证与真实 CAS 不一致。' +
+          '整笔事务回滚、金额不会落库。',
+      );
       throw new BizException(
         ErrorCode.ORDER_CONCURRENT_MODIFIED,
         `订单 #${orderId} 写回抵扣额时 0 行受影响（期望 version=${expectedVersion}）—— ` +
