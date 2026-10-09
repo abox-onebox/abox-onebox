@@ -10,8 +10,9 @@
  *   · `POST /pay/mock/paid` 是 `@Public()` 免鉴权端点，它唯一的内部防线是
  *     `!this.wxpay.isMock` 抛 `10004` ⇒ **mock 下 `isMock === true`，防线不存在**
  *     ⇒ 任意订单可被免鉴权标记为已支付。
- * 而这三件事在**运行期毫无症状**：服务照常起、接口照常通、`/health/ready` 照常绿
- * （它还**不回显** providerMode，谁都看不见）。
+ * 而这三件事在**运行期几乎毫无症状**：服务照常起、接口照常通、`/health/ready` 照常绿。
+ * （λ-3 起 `/health/ready` **已回显** `providerMode` / `mockEscaped`，运行期**可查**了 ——
+ *   但那只是「形态能被问到」，它不拦任何一次免密登录或免鉴权改支付状态 ⇒ 本闸照旧要硬。）
  *
  * ⇒ 故判为「**宁可起不来**」：生产 + mock ⇒ `process.exit(1)`。
  *
@@ -105,8 +106,9 @@ export function judgeProdMock(input: ProdMockGateInput = {}): ProdMockGateVerdic
     reason:
       `${PROD_MOCK_GATE_TAG} 启动中止：NODE_ENV=production 且生效的 PROVIDER_MODE=mock。` +
       'mock 在生产不是「功能降级」，而是**免密登录任意身份 + 免鉴权改支付状态**，' +
-      '且运行期毫无症状（服务照常起、接口照常通、健康检查照常绿，' +
-      '而 `/health/ready` 并不回显 providerMode）。宁可起不来，不可带着假安全上线。' +
+      '且运行期几乎毫无症状（服务照常起、接口照常通、健康检查照常绿；' +
+      'λ-3 起 `/health/ready` 已回显 `providerMode` / `mockEscaped`，运行期可查，' +
+      '但那只说明形态可问，它不拦任何一次请求）。宁可起不来，不可带着假安全上线。' +
       '处理：.env 里写 `PROVIDER_MODE=real` 并配齐微信 / 支付账号后重启；' +
       '确需在产物跑 mock，请显式设 `ALLOW_MOCK_IN_PROD=1`' +
       '（只认 `1` / `true`；`0` / `false` / `yes` / 空串一律视为未开）。',
