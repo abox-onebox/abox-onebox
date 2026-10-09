@@ -350,34 +350,41 @@ $NODE scripts/gate.mjs e2e:m3     # 单跑某一段（⚠️ 单跑不重置种�
 —— 临时文件重定向 + 退出后回读，行为对齐 `pipe`，换台机器（有管道的环境）照样跑。
 `gate.mjs` 的 `runChild()` 已统一走它 ⇒ **跑门禁不需要任何预载**。
 
-**仍会踩到的只剩 `scripts/probes/` 里这 5 个**（内部仍是裸 `spawnSync`，没走 `spawnCapture`）。
-下表是 2026-10-09 κ-6 **逐个裸跑实测**的结果（`timeout 150 node <file> > log 2>&1; echo $?`，
-不挂任何 `NODE_OPTIONS`，3101/3102/3103 空闲）：
+**κ-9-b（2026-10-09）起：`scripts/probes/` 里那 5 个也已收敛到 `spawnCapture`** —— 此前它们内部是裸
+`spawnSync`（stdin=pipe）⇒ 裸跑恒 `exit=null`。现已全部改造，**裸跑 5/5 全绿**；原先留着的
+`ABOX_PIPEFIX` 挂载口（指向已退役的外部垫片）**已一并删除**。
+
+下表是 κ-9-b 改造后**逐个裸跑实测**的结果（`timeout 150 node <file> > log 2>&1; echo $?`，
+不挂任何 `NODE_OPTIONS`）：
 
 | 探针（`scripts/probes/`） | 裸跑退出码 | 裸跑能用？ | 说明 |
 | --- | --- | --- | --- |
-| `audit-wx-compliance.mjs` | 2 | ❌ | 内部裸 `spawnSync` 跑 `gate.mjs seed` ⇒ `seed 失败 exit=null` |
-| `deep-cancel.mjs` | 2 | ❌ | 同上 |
-| `deep-kf.mjs` | 2 | ❌ | 同上 |
-| `deep-round2.mjs` | 2 | ❌ | 同上 |
-| `run-layer3.mjs` | 2 | ❌ | 同上（并且它还串跑上列三个，一处不通全线不通） |
+| `audit-wx-compliance.mjs` | **0** | ✅ | κ-9-b 起走 `spawnCapture`（改造前 2 / `exit=null`） |
+| `deep-cancel.mjs` | **0** | ✅ | 同上 |
+| `deep-kf.mjs` | **0** | ✅ | 同上 |
+| `deep-round2.mjs` | **0** | ✅ | 同上 |
+| `run-layer3.mjs` | **0** | ✅ | 同上；⚠️ κ-9-b 顺带修掉一处**被 `exit=null` 遮住的真缺陷**，见下 |
 | `deep-test.mjs` | 2 | ❌ | ⚠️ **与 EBUSY 无关**：它连 `http://127.0.0.1:3000`，红是因为**没有在跑的 API 服务**，挂任何东西都救不了 |
 | `check-agreement-body.mjs` | **0** | ✅ | 不起子进程 |
 | `prod-mock-gate.mjs` | **0** | ✅ | 它用的就是 `spawnCapture` |
+| `security-history-modes.mjs` | **0** | ✅ | κ-8 收编时即走 `spawnCapture` |
 | `selftest-e2e-zero.mjs` | **0** | ✅ | 不起子进程 |
 | `selftest-expect-min.mjs` | **0** | ✅ | 不起子进程 |
 
-> ⚠️ **别把这 5 个的「需要」读成「去把垫片找回来」**：它们内部确实留了
-> `ABOX_PIPEFIX=<路径>` 的**可选挂载口**（在 `spawnSync` 参数里拼 `--require`），
-> 但**垫片本体已退役**（文件已改名），这个口子现在**没有可用物料可挂**。
-> 正确修法只有一条：把那处 `spawnSync` 换成 `spawnCapture`
-> （`scripts/lib/spawn-capture.mjs` —— 在仓库内、跨机器可用、不需要任何外部物料）。
+> ⭐ **`run-layer3` 那处被遮住的缺陷值得单记**：它的 `WS = __aboxU('../../../')` **多退一层**，
+> 传给子进程的脚本路径恒定 `MODULE_NOT_FOUND` ⇒ **这个探针此前从未真正跑通过**。
+> 但它的失败形态一直是 `exit=2`，和「本机 EBUSY 环境问题」长得一样，所以没人往下挖。
+> ⇒ **环境型失败会遮蔽真缺陷**：看到「看起来像环境问题」的红，别急着归因为环境。
+
+⛔ **别再去挂垫片**：外部垫片已于 κ-1 退役（文件改名 `pipefix.cjs.RETIRING-κ1-20261009`），
+`ABOX_PIPEFIX` 挂载口已全仓删除。正确修法只有一条 —— 换 `spawnCapture`
+（`scripts/lib/spawn-capture.mjs`：仓库内、跨机器可用、不需要任何外部物料）。
 
 **删掉/改错之后长什么样（务必认得）**：
 
 | 现象 | 真实原因 | 会被误读成 |
 | --- | --- | --- |
-| `exit=null`、耗时 1ms、无输出 | 脚本内部用了 `spawnSync`（默认 pipe）⇒ 崩在**进程创建**阶段 | 「这道门禁/探针失败了」⇒ 报一条**根本不存在的 blocking** |
+| `exit=null`、耗时 1ms、无输出 | 脚本内部用了 `spawnSync` 且 **stdin 是 `pipe`** ⇒ 崩在**进程创建**阶段 | 「这道门禁/探针失败了」⇒ 报一条**根本不存在的 blocking** |
 
 > 📌 **已发生过的实例**：后端同事曾据 `lock:version ✘ exit=null (1ms)` 报了一条 blocking，
 > 而同一道门禁实测是 732ms · 自证 4/4 · 扫描 250 文件 · 命中 3 处 · EXIT=0（绿）。
