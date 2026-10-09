@@ -97,7 +97,23 @@ cp .env.example .env.prod     # .env.prod 已在 .gitignore 中，绝不入库
 | `WXPAY_MCH_ID` / `WXPAY_API_V3_KEY` / `WXPAY_SERIAL_NO` / `WXPAY_PRIVATE_KEY_PATH` | 商户平台 | 四件套缺一不可 |
 | `WXPAY_NOTIFY_URL` | `https://<域名>/api/v1/payments/wxpay/notify` | ⚠️ 必须是**公网 HTTPS** |
 | `FLEX_PLATFORM_*` | 灵活用工平台 | 佣金代发 + 个税代扣（C11） |
-| `PROVIDER_MODE` | `real` | 切成真实微信/灵活用工 |
+| `PROVIDER_MODE` | `real` | 切成真实微信/灵活用工；⚠️ 生产**漏配即起不来**，见下 |
+| `ALLOW_MOCK_IN_PROD` | 留空（=不开） | 生产**确实要跑 mock** 时才显式设 `1`，见下 |
+
+> ⚠️ **生产禁 mock 启动硬闸（λ-1 · 2026-10-09 起）**：`NODE_ENV=production` 且生效的
+> `PROVIDER_MODE=mock` ⇒ 服务**直接 `process.exit(1)` 起不来**（日志首行带判据串 `PROD_MOCK_GATE`）。
+> 这不是「建议」，是硬闸 —— mock 在生产不是功能降级，而是**任意 code 免密登录任意身份**
+> + **免鉴权端点 `POST /pay/mock/paid` 可把任意订单标记为已支付** + 手机号恒为测试号，
+> 且**运行期毫无症状**（服务照常起、健康检查照常绿，而 `/health/ready` 不回显 providerMode）。
+>
+> 两种后果要分清：
+> - **漏配 `PROVIDER_MODE`** ⇒ 起不来，`main.ts` 的 `REQUIRED_IN_PROD` 拦（更早的一道）；
+> - **显式写了 `PROVIDER_MODE=mock`** ⇒ 起不来，`PROD_MOCK_GATE` 拦。
+>
+> **确需在产物环境跑 mock**（例如联调、演示），必须显式开逃生开关 `ALLOW_MOCK_IN_PROD=1`：
+> 只认 `1` / `true`（大小写不敏感），`0` / `false` / `yes` / 空串 / 随便塞的值**一律视为未开**
+> —— 故意做成「塞什么都能过」就等于没有开关。开关生效时启动日志会打一条 **error 级**
+> 告警，写明现状 / 意味着什么 / 怎么关。
 
 ### 4.3 三条纪律
 

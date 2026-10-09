@@ -442,6 +442,7 @@ DB_DRIVER=mysql
 QUEUE_DRIVER=redis
 STORAGE_DRIVER=cos
 PROVIDER_MODE=real
+# ALLOW_MOCK_IN_PROD=1  # ⚠️ 仅「生产确实要跑 mock」时才设；不设 ⇒ 生产带 mock **起不来**
 
 DB_HOST=...            # 云数据库
 REDIS_HOST=...
@@ -451,6 +452,14 @@ WXPAY_MCH_ID=...       # 微信支付商户号 + 证书
 WXPAY_API_V3_KEY=...
 FLEX_PLATFORM_APP_ID=...   # 灵活用工平台（C11）
 ```
+
+> ⚠️ **生产禁 mock 是硬闸**（λ-1 · 2026-10-09 起）：`NODE_ENV=production` 且生效的
+> `PROVIDER_MODE=mock` ⇒ 服务**起不来**（启动日志首行带判据串 `PROD_MOCK_GATE`）；
+> **漏配** `PROVIDER_MODE` 同样起不来（那是更早的一道：`main.ts` 的 `REQUIRED_IN_PROD`）。
+> 确需在产物环境跑 mock，必须**显式**设 `ALLOW_MOCK_IN_PROD=1` —— 只认 `1` / `true`
+> （大小写不敏感），`0` / `false` / `yes` / 空串 / 随便塞的值**一律视为未开**；
+> 开关生效时启动日志会打一条 **error 级**告警（现状 / 意味着什么 / 怎么关）。
+> 判据与四场景实测见 `scripts/probes/prod-mock-gate.mjs`。详见《ABox一盒部署运维手册v1.0.md》§4.2。
 
 切换前检查清单：
 
