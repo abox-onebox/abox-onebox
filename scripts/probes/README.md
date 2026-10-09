@@ -15,18 +15,19 @@
 「**裸跑**」= 直接 `node scripts/probes/<文件名>` —— 不挂任何 `NODE_OPTIONS`、不起服务、3101/3102/3103 空闲。
 下表是 2026-10-09 κ-6 **逐个实测**的退出码（口径与《ABox一盒本地开发手册》§6.3① 同源，两边不许各说各话）：
 
-| 探针                       | 它测什么                                                                                                                         | 裸跑                 |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| `deep-test.mjs`            | 资质墙 / 一人一日多单（28 项）。**自己不起服务**，要外部喂一个：`node scripts/probes/deep-test.mjs http://127.0.0.1:3000/api/v1` | ❌（`fetch failed`） |
-| `deep-cancel.mjs`          | 取消理由与 `cancel_source` 四来源（22 项）。自带 seed + 起停                                                                     | ❌                   |
-| `deep-round2.mjs`          | 边界 / 闭环 / 多单 / 资质墙（32 项）。自带 seed + 起停                                                                           | ❌                   |
-| `deep-kf.mjs`              | 客服三档降级（`csMode`）的实测探针。自带 seed + 起停                                                                             | ❌                   |
-| `audit-wx-compliance.mjs`  | **小程序合规审计**：只信实测响应，查溯源页 / 资质墙 / 客服页的出参里还有没有第三方平台痕迹与外部域名资源                         | ❌                   |
-| `run-layer3.mjs`           | 第三层一键：`deep-test` / `deep-cancel` / `deep-round2` 串跑（各自独立起停会抢 3101 端口）                                       | ❌                   |
-| `selftest-e2e-zero.mjs`    | 自证：e2e「0 条断言 ⇒ exit 1」的判据真会红（必报 + 必不报样本）                                                                  | ✅                   |
-| `selftest-expect-min.mjs`  | 自证：`gate.mjs` 的 `EXPECT_MIN` 规模判据真会红 / 会绿                                                                           | ✅                   |
-| `check-agreement-body.mjs` | 协议正文（`constants/agreements.ts`）改动的机械复核                                                                              | ✅                   |
-| `prod-mock-gate.mjs`       | 自证：`main.ts` 的**生产禁 mock 启动硬闸**判据（λ-1）—— 四场景 + 反证；纯判据、不起服务、不碰端口                                | ✅                   |
+| 探针                         | 它测什么                                                                                                                                                                             | 裸跑                 |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- |
+| `deep-test.mjs`              | 资质墙 / 一人一日多单（28 项）。**自己不起服务**，要外部喂一个：`node scripts/probes/deep-test.mjs http://127.0.0.1:3000/api/v1`                                                     | ❌（`fetch failed`） |
+| `deep-cancel.mjs`            | 取消理由与 `cancel_source` 四来源（22 项）。自带 seed + 起停                                                                                                                         | ❌                   |
+| `deep-round2.mjs`            | 边界 / 闭环 / 多单 / 资质墙（32 项）。自带 seed + 起停                                                                                                                               | ❌                   |
+| `deep-kf.mjs`                | 客服三档降级（`csMode`）的实测探针。自带 seed + 起停                                                                                                                                 | ❌                   |
+| `audit-wx-compliance.mjs`    | **小程序合规审计**：只信实测响应，查溯源页 / 资质墙 / 客服页的出参里还有没有第三方平台痕迹与外部域名资源                                                                             | ❌                   |
+| `run-layer3.mjs`             | 第三层一键：`deep-test` / `deep-cancel` / `deep-round2` 串跑（各自独立起停会抢 3101 端口）                                                                                           | ❌                   |
+| `selftest-e2e-zero.mjs`      | 自证：e2e「0 条断言 ⇒ exit 1」的判据真会红（必报 + 必不报样本）                                                                                                                      | ✅                   |
+| `selftest-expect-min.mjs`    | 自证：`gate.mjs` 的 `EXPECT_MIN` 规模判据真会红 / 会绿                                                                                                                               | ✅                   |
+| `check-agreement-body.mjs`   | 协议正文（`constants/agreements.ts`）改动的机械复核                                                                                                                                  | ✅                   |
+| `prod-mock-gate.mjs`         | 自证：`main.ts` 的**生产禁 mock 启动硬闸**判据（λ-1）—— 四场景 + 反证；纯判据、不起服务、不碰端口                                                                                    | ✅                   |
+| `security-history-modes.mjs` | 自证：`security:scan` 的 git 历史**三态**（`complete` / `shallow` / `unavailable`）与「扫没扫到」是否自洽 —— 用**假 git** 顶在 PATH 最前把三态逼出来（κ-8 收编；需 ts-node，约 20s） | ✅                   |
 
 ⚠️ 上表 ❌ 的两类红**不是一回事**，别混着修：
 
