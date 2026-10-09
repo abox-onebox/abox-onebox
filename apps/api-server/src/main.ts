@@ -12,6 +12,7 @@ import { resolve } from 'path';
 
 import { AppModule } from './app.module';
 import { requestIdMiddleware } from './common/middleware/request-id.middleware';
+import { judgeProdMock } from './common/utils/prod-mock-gate';
 import { clockShiftMs, isClockShifted, now, toBjIso } from './common/utils/time';
 
 /**
@@ -64,6 +65,50 @@ function assertProdSecrets(): void {
     );
   }
   process.exit(1);
+}
+
+/**
+ * 「生产禁 mock」启动硬闸（λ-1 · 2026-10-09 · 审查报告 #8 收口）
+ *
+ * ## 为什么 `assertProdSecrets()` 挡不住这件事
+ *
+ * 上面那条只看 `PROVIDER_MODE` **有没有配**（`!process.env[k]?.trim()`），
+ * **不看配的是什么值** ⇒ `NODE_ENV=production` + `PROVIDER_MODE=mock` 完全合法。
+ * 而 mock 在生产不是降级，是安全模型整体失效（三条后果写在 `prod-mock-gate.ts` 头注）。
+ * 项目记忆里线上就是 `PROVIDER_MODE=mock` ⇒ 这是**线上正在跑的形态**，不是假设风险。
+ *
+ * ## ⚠️ 两个刻意的取舍
+ *
+ *   1. **`providerMode` 取自配置，不重读 `process.env.PROVIDER_MODE`**
+ *      —— `app.config.ts` 的生产默认值是 `'real'`，直接读 env 会把「漏配时的默认值分岔」
+ *      绕过去 ⇒ 判的就不是运行时真正生效的那个值，这道闸形同虚设。
+ *   2. **它不在 `assertProdSecrets()` 旁边执行**：那条跑在 `NestFactory.create` 之前，
+ *      那时 `ConfigService` 还不存在。故本闸放在**能取到 cfg 的第一时间**
+ *      （`app.get(ConfigService)` 之后、`listen()` 之前）—— 仍然是「起不来」，
+ *      只是晚到 app 已创建；要赶在 `listen()` 前，这一点没有妥协。
+ *
+ * ## 逃生开关 `ALLOW_MOCK_IN_PROD`
+ *
+ * 只认 `1` / `true`（大小写不敏感），其余一律视为未开 —— 判据在
+ * `common/utils/prod-mock-gate.ts`（纯函数，探针 `scripts/probes/prod-mock-gate.mjs`
+ * 用四场景 + 反证验过，不是「理论上会拦」）。
+ * ⚠️ 开了就用 **`Logger.error` 而不是 warn**：这是「正在裸奔」级别的现状，
+ *     warn 会被忽略；日志里必须说全三件事（现状 / 意味着什么 / 怎么关）。
+ */
+function assertProdProviderMode(cfg: ConfigService): void {
+  const verdict = judgeProdMock({
+    nodeEnv: process.env.NODE_ENV,
+    // ⭐ 生效值（来自配置）—— 不是 process.env.PROVIDER_MODE，理由见上
+    providerMode: cfg.get<string>('app.drivers.providerMode'),
+    allowMockInProd: process.env.ALLOW_MOCK_IN_PROD,
+  });
+  if (!verdict.allow) {
+    Logger.error(verdict.reason ?? 'PROD_MOCK_GATE 启动中止（理由缺失）', 'Bootstrap');
+    process.exit(1);
+  }
+  if (verdict.escapeOn && verdict.notice) {
+    Logger.error(verdict.notice, 'Bootstrap');
+  }
 }
 
 /**
@@ -128,6 +173,9 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   const cfg = app.get(ConfigService);
+
+  // ⭐ 能取到配置的**第一时间**就拦（DI 时序说明见函数头注）：早于 listen ⇒ 拦住就起不来
+  assertProdProviderMode(cfg);
 
   // 请求链路 ID（《接口规范》§1.2）：优先沿用 X-Request-Id，缺省服务端生成
   app.use(requestIdMiddleware);
