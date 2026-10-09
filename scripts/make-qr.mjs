@@ -68,6 +68,9 @@ const adminPort = Number(opt('admin-port', 5173));
 const wantPng = !opt('no-png', false);
 /** 是否对生成的 PNG 做**反解校验**（默认开；见 verifyPng() 说明） */
 const wantVerify = !opt('no-verify', false);
+/** 反解校验**为什么**没跑（空串 = 跑过了）。末尾据此给**对症**的恢复办法 ——
+ *   「缺依赖」和「没有 PNG」的病根不同，给错办法等于没给。 */
+let verifySkipReason = '';
 
 for (const [k, p] of [
   ['api-port', apiPort],
@@ -205,8 +208,9 @@ function assertSvgWellFormed(svg) {
  * 而且要到「测试人扫了打不开」才暴露，排查时还会先怀疑网络。
  * **编一遍、解一遍是两条独立代码路径**，能真正兜住这类错误；光「相信库」兜不住。
  *
- * 依赖 `jimp` + `qrcode-reader`（根 node_modules 已有）。装不上就**跳过并明说跳过了** ——
- * 绝不能让「没校验」看起来像「校验通过」。
+ * 依赖 `jimp` + `qrcode-reader`（根 node_modules 里**目前有**，但**没写进任何 package.json**
+ * ⇒ 换台机器 / 重新 `pnpm install` 就没了，校验会**静默空转**）。
+ * 装不上就**跳过 + 明说 + 把退出码置非 0** —— 绝不能让「没校验」看起来像「校验通过」。
  */
 async function verifyPng(entries) {
   let Jimp;
@@ -215,9 +219,18 @@ async function verifyPng(entries) {
     Jimp = require('jimp');
     const mod = require('qrcode-reader');
     QrCode = mod.default ?? mod;
-  } catch {
+  } catch (e) {
+    // ⛔ **不能只 `return`**：「校验没跑」和「校验通过」在调用方眼里都是 undefined，
+    //    main() 会继续写完 HTML 然后**自然退出 0** —— 编排器看到绿，而卡上的码
+    //   **一张都没被反解核对过**。二维码编错肉眼完全看不出来（形状都「像二维码」），
+    //   这正是 verifyPng() 存在的唯一理由；让它空转等于把这道兜底拆掉还留着牌子。
+    // ✅ 也**不在此就地 `process.exit`**：本函数返回后 main() 还要写入口卡 HTML，
+    //    硬退会把产物一起带走 —— 用户拿不到任何东西，只会更想加 `--no-verify` 了事。
+    //    ⇒ 交回 `false`，由 main() 末尾统一判「校验未执行 ⇒ 退出码非 0」。
     console.log('  ⚠ 反解校验：缺 jimp / qrcode-reader，**已跳过**（不代表校验通过）');
-    return;
+    console.log(`      require 失败：${e?.message ?? e}`);
+    verifySkipReason = '缺依赖 jimp / qrcode-reader';
+    return false;
   }
 
   for (const e of entries) {
@@ -235,6 +248,7 @@ async function verifyPng(entries) {
     }
     console.log(`  ✔ 反解通过 ${e.file.padEnd(18)} → ${got}`);
   }
+  return true;
 }
 
 async function main() {
@@ -250,6 +264,8 @@ async function main() {
     console.log(`  ✔ ${e.label.padEnd(18)} ${e.url}`);
   }
 
+  // `verified` = 反解校验**确实跑过且全员通过**；跳过（缺依赖 / 没出 PNG）一律 false
+  let verified = false;
   if (wantPng) {
     mkdirSync(PNG_DIR, { recursive: true });
     for (const e of ENTRIES) {
@@ -261,9 +277,10 @@ async function main() {
       });
     }
     console.log(`  ✔ PNG 已写入 ${PNG_DIR}`);
-    if (wantVerify) await verifyPng(ENTRIES);
+    if (wantVerify) verified = await verifyPng(ENTRIES);
   } else if (wantVerify) {
     console.log('  ⚠ 反解校验需要 PNG 文件，本轮带了 --no-png，**校验已跳过**（不代表通过）');
+    verifySkipReason = '本轮 --no-png，没有可反解的 PNG';
   }
 
   writeFileSync(OUT_HTML, render(), 'utf8');
@@ -276,6 +293,31 @@ async function main() {
     console.log(`  ⚠️ 手机上打不开？先确认：① 手机与电脑在**同一个 WiFi**`);
     console.log('     ② Windows 防火墙放行了 node.exe（控制面板 → 允许应用通过防火墙）');
     console.log('     ③ 本卡生成时的 IP 与当前一致（换过网络就要重跑本脚本）');
+  }
+
+  // ⛔ 「校验没跑」必须落到**退出码**上：只打一行 ⚠ 的话，编排器/CI 看到的还是 0，
+  //    「未经验证的卡」和「验证通过的卡」长得一模一样 —— 这就是本次扫出的 B 类静默绿。
+  // ✅ 判红放在**落盘之后**：产物照给，只是拒绝盖章（不是把活白干）。
+  if (wantVerify && !verified) {
+    console.log('─'.repeat(68));
+    console.log('  ✖ 本次产物**未经验证** —— 反解校验没有跑起来，退出码 1');
+    console.log('     二维码编错肉眼完全看不出来，所以「没校验」不能长得像「校验通过」。');
+    console.log(`     原因：${verifySkipReason || '（未知）'}`);
+    console.log();
+    if (verifySkipReason.startsWith('缺依赖')) {
+      console.log('  怎么修（装好即自动启用，**无需改本脚本一行**）：');
+      console.log('      pnpm add -D -w jimp qrcode-reader');
+      console.log('      node scripts/make-qr.mjs        # 重跑：反解通过才 exit 0');
+    } else {
+      console.log('  怎么修（校验必须**先有 PNG**，装依赖治不了这条）：');
+      console.log('      node scripts/make-qr.mjs        # 去掉 --no-png 重跑，反解通过才 exit 0');
+    }
+    console.log();
+    console.log('  若确实要在这台机器上交付（不装依赖）：');
+    console.log('      node scripts/make-qr.mjs --no-verify');
+    console.log('      ⚠️ 那么**每张码你都必须人工扫一遍**，确认扫出来就是卡上写的那个地址 —');
+    console.log('         这一步没有任何程序替你兜。');
+    process.exitCode = 1;
   }
   console.log();
 }
