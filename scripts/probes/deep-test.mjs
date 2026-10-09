@@ -121,7 +121,9 @@ async function main() {
   ok('B1 登录取 token', !!token, token ? 'ok' : `body=${JSON.stringify(login.body).slice(0, 160)}`);
   if (!token) {
     console.log('\n无法继续，token 缺失');
-    return;
+    // ⛔ **不能裸 `return`**：同上 —— 会跳过末尾 `if (fail) process.exit(1)` ⇒ exit **0**。
+    // ✅ 就地 `process.exit` 的前提已核：**该点栈上无 pending `finally`**（本文件无 `finally`）。
+    process.exit(1);
   }
 
   await call('PUT', '/me/building', { token, body: { buildingId: 1 } });

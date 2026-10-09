@@ -164,7 +164,13 @@ async function main() {
   ok('C1 登录取 token', !!token, token ? 'ok' : JSON.stringify(login.body).slice(0, 160));
   if (!token) {
     await stopApiServer(child);
-    return;
+    // ⛔ **不能裸 `return`**：那会跳过本函数末尾的 `if (fail) process.exit(1)` ⇒
+    //    进程自然退出 **0**，连「合计：通过 X · 失败 Y」汇总都不打印 ——
+    //    失败被吞得比只掉退出码还干净（上面那行 `ok(...)` 已经把 fail 记上了）。
+    // ✅ 此处可就地 `process.exit`，前提已核：**该点栈上无 pending `finally`**
+    //    （本文件无 `finally`；`stopApiServer` 上一行已显式调用）。
+    //    —— 原则见 `e2e-m3.mjs` 的 `!healthy` 处注释（「不是本文件没有 finally」）。
+    process.exit(1);
   }
   await call('PUT', '/me/building', { token, body: { buildingId: 1 } });
 
