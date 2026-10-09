@@ -228,13 +228,21 @@ try {
     }
   }
 } finally {
-  // ⚠️ Windows 对**刚被执行过**的 `.exe` 有映像锁 ⇒ 删它可能 EPERM。
-  //    清理失败**不影响结论**（与 `spawn-capture.mjs` 同一处置：由系统临时目录兜底），
-  //    但不能让它把进程崩掉 —— 崩了会盖掉上面已经跑出来的结论。
+  // ⚠️ 这里**必然**清理失败，而且是**设计如此**，不是偶发：
+  //    假 git 是 **node.exe 的硬链**（`fsutil hardlink list` 可证：37 条链接指向同一个 node.exe）；
+  //    只要**任何** node 进程在跑 —— 本进程自己就是 —— node.exe 的映像被加载，
+  //    Windows 就**拒绝删除它的任一条硬链**（实测：cmd `rmdir /s /q` 报「拒绝访问」）。
+  // ⇒ 故**刻意不加重试**：重试永远不会成功，留着只会让人以为「清理有兜底」，
+  //    那是把一段注定空转的代码伪装成兜底 —— 与本项目反复罚的「判据空转」同族。
+  //    清理失败**不影响结论**（由系统临时目录兜底；硬链共享 node.exe 数据，磁盘代价 0），
+  //    但也不能让它把进程崩掉 —— 崩了会盖掉上面已经跑出来的结论。
   try {
-    rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+    rmSync(tmpRoot, { recursive: true, force: true });
   } catch {
-    log(`ℹ 临时目录未能完全清理（Windows 映像锁）：${tmpRoot} —— 由系统兜底，不影响结论`);
+    log(
+      `ℹ 预期行为：探针用的假 git 是 node.exe 的硬链，node 进程运行期间 Windows 拒绝删除其任一硬链` +
+        ` ⇒ 临时目录残留 ${tmpRoot} —— 由系统兜底清理（硬链共享数据，磁盘代价 0），不影响结论`,
+    );
   }
 }
 
