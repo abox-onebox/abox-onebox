@@ -11,7 +11,12 @@
 import { fileURLToPath as __aboxFup } from 'node:url';
 const __aboxU = (p) => __aboxFup(new URL(p, import.meta.url)).replace(/[\/]+$/, '');
 
-import { spawnSync } from 'node:child_process';
+// ⚠️ 本机（Windows · 机器级）无法为子进程创建匿名管道 ⇒ 裸 `spawnSync`（省略 `stdio`
+//    时默认就是 `'pipe'`）恒 `status=null` + EBUSY，连 `node -v` 都起不来。
+//    ⛔ 故此处**不**用 `node:child_process` 的 `spawnSync`，也不再挂任何外部垫片
+//    （旧 `ABOX_PIPEFIX` 挂载口已于 2026-10-09 随垫片退役一并删除）。
+//    与 `gate.mjs` / `prod-mock-gate.mjs` 同源，统一走仓库内的临时文件重定向。
+import { spawnCapture } from '../lib/spawn-capture.mjs';
 const ROOT = __aboxU('../..');
 const NODE = process.execPath;
 
@@ -128,17 +133,10 @@ async function placeOrder(token, mealDate) {
 
 async function main() {
   console.log('重置种子…');
-  // ⚠️ 本机 stdio:'pipe' 一律 EBUSY（记忆 C5/C19）：起子进程必须挂 pipefix 垫片
-  const PF = process.env.ABOX_PIPEFIX ?? ''; // 本机专用 child_process 垫片（**不在仓库内**，它自述「勿入仓库」）；设 `ABOX_PIPEFIX=<路径>` 才启用
-  const seed = spawnSync(NODE, ['scripts/gate.mjs', 'seed'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      PIPEFIX_QUIET: '1',
-      NODE_OPTIONS: PF ? `--require ${PF}` : (process.env.NODE_OPTIONS ?? ''),
-    },
-  });
+  // ⚠️ 本机 stdio:'pipe' 一律 EBUSY（记忆 C5/C19）：起子进程**不能**碰管道。
+  //    `spawnCapture` 返回 `{ status, error, stdout, stderr }`，stdout/stderr 已是字符串；
+  //    子进程起不来时 `error` 会被摊到 stderr 上，`status=null` 与「真失败」可辨。
+  const seed = spawnCapture(NODE, ['scripts/gate.mjs', 'seed'], { cwd: ROOT });
   if (seed.status !== 0) {
     console.error(
       'seed 失败 exit=' + seed.status,

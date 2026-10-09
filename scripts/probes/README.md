@@ -18,23 +18,23 @@
 | 探针                         | 它测什么                                                                                                                                                                             | 裸跑                 |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- |
 | `deep-test.mjs`              | 资质墙 / 一人一日多单（28 项）。**自己不起服务**，要外部喂一个：`node scripts/probes/deep-test.mjs http://127.0.0.1:3000/api/v1`                                                     | ❌（`fetch failed`） |
-| `deep-cancel.mjs`            | 取消理由与 `cancel_source` 四来源（22 项）。自带 seed + 起停                                                                                                                         | ❌                   |
-| `deep-round2.mjs`            | 边界 / 闭环 / 多单 / 资质墙（32 项）。自带 seed + 起停                                                                                                                               | ❌                   |
-| `deep-kf.mjs`                | 客服三档降级（`csMode`）的实测探针。自带 seed + 起停                                                                                                                                 | ❌                   |
-| `audit-wx-compliance.mjs`    | **小程序合规审计**：只信实测响应，查溯源页 / 资质墙 / 客服页的出参里还有没有第三方平台痕迹与外部域名资源                                                                             | ❌                   |
-| `run-layer3.mjs`             | 第三层一键：`deep-test` / `deep-cancel` / `deep-round2` 串跑（各自独立起停会抢 3101 端口）                                                                                           | ❌                   |
+| `deep-cancel.mjs`            | 取消理由与 `cancel_source` 四来源（自带 seed + 起停；κ-9-b 实测 33 项全绿）                                                                                                          | ✅                   |
+| `deep-round2.mjs`            | 边界 / 闭环 / 多单 / 资质墙（自带 seed + 起停；κ-9-b 实测 32 项全绿）                                                                                                                | ✅                   |
+| `deep-kf.mjs`                | 客服三档降级（`csMode`）的实测探针（自带 seed + 起停；κ-9-b 实测 34 项全绿）                                                                                                         | ✅                   |
+| `audit-wx-compliance.mjs`    | **小程序合规审计**：只信实测响应，查溯源页 / 资质墙 / 客服页的出参里还有没有第三方平台痕迹与外部域名资源（κ-9-b 实测 16 项全绿）                                                     | ✅                   |
+| `run-layer3.mjs`             | 第三层一键：`deep-test` / `deep-cancel` / `deep-round2` 串跑（各自独立起停会抢 3101 端口；κ-9-b 实测三支全绿）                                                                       | ✅                   |
 | `selftest-e2e-zero.mjs`      | 自证：e2e「0 条断言 ⇒ exit 1」的判据真会红（必报 + 必不报样本）                                                                                                                      | ✅                   |
 | `selftest-expect-min.mjs`    | 自证：`gate.mjs` 的 `EXPECT_MIN` 规模判据真会红 / 会绿                                                                                                                               | ✅                   |
 | `check-agreement-body.mjs`   | 协议正文（`constants/agreements.ts`）改动的机械复核                                                                                                                                  | ✅                   |
 | `prod-mock-gate.mjs`         | 自证：`main.ts` 的**生产禁 mock 启动硬闸**判据（λ-1）—— 四场景 + 反证；纯判据、不起服务、不碰端口                                                                                    | ✅                   |
 | `security-history-modes.mjs` | 自证：`security:scan` 的 git 历史**三态**（`complete` / `shallow` / `unavailable`）与「扫没扫到」是否自洽 —— 用**假 git** 顶在 PATH 最前把三态逼出来（κ-8 收编；需 ts-node，约 20s） | ✅                   |
 
-⚠️ 上表 ❌ 的两类红**不是一回事**，别混着修：
+上表现在只剩 `deep-test.mjs` 一个 ❌ —— 它**与进程创建无关**：连 `http://127.0.0.1:3000`，
+红是因为**没有在跑的 API 服务**（`探针自身异常： fetch failed`）。先起服务再喂地址，
+换任何物料都救不了这一条（它也是**唯一**需要外部服务的一个，其余都自带 seed + 起停）。
 
-- `deep-cancel` / `deep-round2` / `deep-kf` / `audit-wx-compliance` / `run-layer3` 这 **5 个** —— 内部是裸
-  `spawnSync` 拉 `gate.mjs seed` ⇒ 进程**根本没起来**（`exit=null`），见下一节；
-- `deep-test.mjs` —— **与进程创建无关**：它连 `http://127.0.0.1:3000`，红是因为**没有在跑的 API 服务**
-  （`探针自身异常： fetch failed`）。先起服务再喂地址，换任何物料都救不了这一条。
+> κ-9-b（2026-10-09）：原先 ❌ 的那 5 个已修 —— 内部裸 `spawnSync` 拉 `gate.mjs seed`
+> 时进程**根本没起来**（`exit=null`），见下一节。现全部改为 `spawnCapture`。
 
 ## 三、怎么跑
 
@@ -69,9 +69,10 @@ import { spawnCapture } from '../lib/spawn-capture.mjs';
 
 > ⛔ **不要去找垫片**。曾经有过一个**外部**垫片 `_tmp/gatepipe/pipefix.cjs`（工作区外、从未入仓库），
 > 它已于 **2026-10-09 κ-1 退役**，`scripts/gate.mjs` 自带 fd 重定向后不再需要它。
-> 这 5 个探针里确实还留着 `ABOX_PIPEFIX=<路径>` 的挂载口，但**已经没有物料可挂** ——
-> 拿着一个退役物料的绝对路径填进去只会让 node **启动即失败**（`Cannot find module`）。
-> 看到 `exit=null`，动作是**换 `spawnCapture`**，不是把垫片找回来。
+> 这 5 个探针里原本还留着 `ABOX_PIPEFIX=<路径>` 的挂载口（**没有物料可挂**，拿退役物料的
+> 绝对路径填进去只会让 node **启动即失败** `Cannot find module`），κ-9-b 已随本次改造
+> **一并删除**，连同配套的 `PIPEFIX_QUIET` 环境变量。
+> ⇒ 看到 `exit=null`，动作是**换 `spawnCapture`**，不是把垫片找回来。
 
 ## 四、为什么它们不在门禁里
 
