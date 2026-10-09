@@ -68,11 +68,10 @@
  *
  * 用法：`node scripts/check-order-edges.mjs [--list]`
  */
-import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnCapture } from './lib/spawn-capture.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const API_DIR = join(ROOT, 'apps/api-server');
@@ -106,48 +105,15 @@ const EDGE_EXEMPTIONS = {};
 // ---------------------------------------------------------------------------
 
 /**
- * 跑子进程并**拿回**它的 stdout/stderr
+ * 跑子进程并**拿回**它的 stdout/stderr —— 用 `lib/spawn-capture.mjs` 的**同一份**实现
  *
  * ⚠️ 刻意**不用** `stdio: 'pipe'`：本机（`spawnSync` + 匿名管道）一律 EBUSY
- *    （同 `gate.mjs` 在全部门禁上踩过的那个坑，见 `_tmp/gatepipe/pipefix.cjs` 头注）。
- *    直接改成「**临时文件重定向 + 退出后回读**」—— 行为对齐 `pipe`，
- *    但不依赖任何外部垫片，换台机器照样跑（有管道的环境也不受影响）。
- *
- * ⭐ 顺带一条：子进程**根本没起来**时 `error` 会被摊到 stderr 上 ——
- *    否则只会看到「无输出」，又把**环境故障**伪装成**对账失败**。
+ *    （同 `gate.mjs` 在全部门禁上踩过的那个坑）。实现是「**临时文件重定向 + 退出后回读**」
+ *    —— 行为对齐 `pipe`，但不依赖任何外部垫片，换台机器照样跑。
+ * ⚠️ 2026-10-09（κ 批次）：原先这里有一份**本地同款实现**，与 `gate.mjs` /
+ *    `check-gate-parity.mjs` 各存一份 ⇒ 正是本项目要治的「同一件事 N 份表述」。
+ *    现统一收敛到 `scripts/lib/spawn-capture.mjs`（一份实现、三处调用点）。
  */
-function spawnCapture(cmd, args, opts) {
-  const tag = `order-edges-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
-  const outFile = join(tmpdir(), `${tag}.out.log`);
-  const errFile = join(tmpdir(), `${tag}.err.log`);
-  const fdOut = openSync(outFile, 'w');
-  const fdErr = openSync(errFile, 'w');
-  let r;
-  try {
-    r = spawnSync(cmd, args, { ...opts, stdio: ['ignore', fdOut, fdErr] });
-  } finally {
-    closeSync(fdOut);
-    closeSync(fdErr);
-  }
-  const read = (f) => {
-    try {
-      return readFileSync(f, 'utf8');
-    } catch {
-      return '';
-    }
-  };
-  const stdout = read(outFile);
-  let stderr = read(errFile);
-  for (const f of [outFile, errFile]) {
-    try {
-      unlinkSync(f);
-    } catch {
-      /* ignore */
-    }
-  }
-  if (r.error) stderr = `${stderr}[spawn] 子进程未能启动：${r.error.code ?? ''} ${r.error.message}\n`;
-  return { status: r.status, error: r.error, stdout, stderr };
-}
 
 /**
  * 用 `ts-node` 把 `order-state-machine.ts` 的**真值** JSON 出来

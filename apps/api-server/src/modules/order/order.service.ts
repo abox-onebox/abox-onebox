@@ -120,6 +120,26 @@ export interface AutoConfirmByDateResult {
 }
 
 /**
+ * `syncFrozenBalance` 的**调用凭证**（κ 批次 · 2026-10-10 新增）
+ *
+ * 把原先只写在 `@param` 注释里的「调用方必须先做 CAS」变成**必填的入参形状**：
+ * 不给 `manager` 编译不过（那条自开事务的死分支已删），不给 `versionBeforeCas` 也编译不过，
+ * 给了错的则由方法内的断言在运行时拦住 —— 三层都堵在同一条不变量上。
+ */
+export interface FrozenSyncCasCtx {
+  /** 调用方事务（本方法的一切读写都落在它里面，与调用方同生共死） */
+  manager: EntityManager;
+  /**
+   * 调用方那条 CAS 的 `WHERE version = :v` 里用的**原值**（占位**之前**的快照）
+   *
+   * ⚠️ 必须与实际写进 CAS 的是**同一个变量**，本方法据此验「行上 version == 它 + 1」。
+   * ⚠️ 不要 `?? 0` 兜底：`ab_order.version` 是 `NOT NULL DEFAULT 0`，兜底会把
+   *    「快照缺失」伪装成 `version = 0`（理由见 `syncFrozenBalance` 内注释）。
+   */
+  versionBeforeCas: number;
+}
+
+/**
  * 订单服务
  *
  * 覆盖《接口规范 v1.0》：U6 创建订单、U9 订单列表、U10 订单详情、U11 自助取消
@@ -1331,60 +1351,108 @@ export class OrderService {
    * 余额的四个动作（冻结 / 解冻 / 消费 / 退回）都留在本文件，
    * 就是为了让「钱的状态」只有一处实现、只有一处能改错。
    *
-   * ## ⭐ 2026-10-08 收口（P1-5 / BE-05）：并入调用方事务 + 不再装饰性自增 version
+   * ## ⭐⭐ 调用契约：**必须**落在「调用方已做完真 CAS 的同一个事务」里
    *
-   *   · **改前**：本方法自己开事务先提交，调用方（`order-admin.service.ts#manualAdjust`）
-   *     再写第二次 ⇒ 同一笔改单的「钱」与「单」分处两个事务，中间失败即**账实不符**
-   *     （冻结额改了、份数没改）。
-   *   · **改后**：`m` 由调用方传入，两次写落在**同一个事务**里，一起提交或一起回滚。
-   *   · `version` 改前写成 `(order.version ?? 0) + 1` —— **内存快照值**，乐观锁等于没上
-   *     （缺陷 #81 同族）。改后见下方 `versionBump` 的说明。
+   * 本方法**既不自己开事务、也不自增 `version`**，只负责改 `balance_used` 与动余额。
+   * 三个版本是怎么走到这里的：
    *
-   * @param m 调用方事务。**传入即表示「行已被调用方的 CAS 占位」** ——
-   *          此时本方法**不自增 `version`**：同一行在一次事务里只许 bump 一次，
-   *          若这里也 bump，调用方那条 `WHERE version = :v` 就会失配 ⇒ 该行**永远更新不了**
-   *          （静默失败，比丢更新更糟）。不传则本方法自开事务并自行 bump。
+   *  · **最初**：自己开事务先提交，调用方（`order-admin.service.ts#manualAdjust`）再写第二次
+   *    ⇒ 同一笔改单的「钱」与「单」分处两个事务，中间失败即**账实不符**（冻结额改了、份数没改）。
+   *  · **2026-10-08（P1-5 / BE-05）**：事务改由调用方传入，两次写一起提交或一起回滚；同时把
+   *    原先的内存快照自增（`version: (order.version ?? 0) + 1`，缺陷 #81 同族）去掉。
+   *    ⚠️ 那版留了个坑：`m` 是**可选**的，方法内部按 `versionBump` 布尔值二选一，
+   *    而「传 `m` 即意味调用方已 CAS」这条**跨方法不变量只写在 `@param` 注释里**。
+   *    静态门禁 `lock:version` 只扫 `version: (x.version ?? 0) + 1` 这类装饰性写法，
+   *    **扫不到「条件性不带 version」** ⇒ 这条不变量当时没有任何东西在看。
+   *  · **本次（κ 批次 · 2026-10-10）**：把注释**升格成运行时断言** ——
+   *    ① 删掉「不传事务则自开事务并自增」那条**从无调用方的死分支**（它没有测试覆盖，
+   *       留着就是「钱的路径上有一段没人跑过的代码」），使本方法**只有一种调用形态**；
+   *    ② 调用方必须交出它占位**之前**的 `version`，本方法进来就验「行上 version == 该值 + 1」。
+   *      将来谁新增一个「传了事务却没做 CAS」的调用点，**当场报错**，而不是静默丢锁。
+   *
+   * ⚠️ 为什么同一行在一次事务里**只许 bump 一次**：若本方法也 bump，调用方那条
+   *    `WHERE version = :v` 会永远失配 ⇒ 该行**再也更新不了**（静默失败，比丢更新更糟）。
+   *
+   * @param callerCas 调用方的 CAS 凭证：`manager` = 调用方事务；`versionBeforeCas` = 调用方那条
+   *                  CAS 的 `WHERE version = :v` 里用的**原值**（占位**之前**的快照）。
+   *                  两者都是必填 —— **少给一个是编译错**，给错了由下方断言在运行时拦住。
    * @returns `deltaFen > 0` 表示多冻了，`< 0` 表示解冻了
    */
   async syncFrozenBalance(
     orderId: number,
     newBalanceUsedFen: number,
-    m?: EntityManager,
+    callerCas: FrozenSyncCasCtx,
   ): Promise<number> {
-    const run = async (mm: EntityManager, versionBump: boolean): Promise<number> => {
-      const order = await mm.findOne(Order, { where: { id: orderId } });
-      if (!order) throw new BizException(ErrorCode.ORDER_NOT_FOUND);
+    const { manager: mm, versionBeforeCas } = callerCas;
+    /** 调用方 CAS 之后、本方法**应当**看到的行版本 —— 唯一的期望值 */
+    const expectedVersion = versionBeforeCas + 1;
 
-      const oldFen = toFen(order.balanceUsed);
-      const delta = newBalanceUsedFen - oldFen;
-      if (delta === 0) return 0;
+    const order = await mm.findOne(Order, { where: { id: orderId } });
+    if (!order) throw new BizException(ErrorCode.ORDER_NOT_FOUND);
 
-      if (delta > 0) {
-        // 抵扣额变大 → 再冻一部分（可用余额不足 → 40002）
-        const bal = await this.getOrCreateBalance(mm, order.userId);
-        if (toFen(bal.balance) < delta) {
-          throw new BizException(
-            ErrorCode.BALANCE_NOT_ENOUGH,
-            `可用余额 ¥${bal.balance} 不足以再多抵扣 ¥${toYuanStr(delta)}`,
-          );
-        }
-        await this.freezeBalance(mm, order.userId, delta, order.orderNo);
-      } else {
-        // 抵扣额变小 → 解冻差额（冻结额不会小于抵扣额，故不会解出负数）
-        await this.releaseBalance(mm, order.userId, -delta, order.orderNo);
-      }
-
-      await mm.getRepository(Order).update(
-        { id: order.id },
-        versionBump
-          ? // ⭐ SQL 表达式自增（不是内存快照值）—— 见 `updateBalanceRow` 的同款注释
-            { balanceUsed: toYuanStr(newBalanceUsedFen), version: () => 'version + 1' }
-          : { balanceUsed: toYuanStr(newBalanceUsedFen) },
+    /**
+     * ⭐⭐ 跨方法不变量的**运行时证明**（2026-10-10 起不再只是注释）
+     *
+     * 进到这里时，行必须处于「已被调用方 CAS 占位」的状态 ⇒ `version` 恰好比调用方
+     * 占位前的值大 1。不满足只有两种可能，每一种都必须炸响而不是继续：
+     *   · **调用方漏做 CAS**（`version` 根本没动）⇒ 本方法会在没有锁保护的情况下动钱；
+     *   · **调用方拿了过期快照**（差得更多）⇒ 正在把别人的结果覆盖回去。
+     *
+     * ⚠️ `order.version` 不兜底 `?? 0`：`ab_order.version` 是 `INT UNSIGNED NOT NULL DEFAULT 0`
+     *    （迁移 `1700000000000-init.ts:243`），列值不可能为 NULL；一旦 `order` 是缺列的部分查询，
+     *    `?? 0` 会把「快照缺失」伪装成 `version = 0` ⇒ 断言静默失真。不兜底则会当场报错。
+     */
+    if (order.version !== expectedVersion) {
+      throw new BizException(
+        ErrorCode.ORDER_CONCURRENT_MODIFIED,
+        `订单 #${orderId} 在 syncFrozenBalance 入口的 version=${order.version}，` +
+          `不等于「调用方占位前 version(${versionBeforeCas}) + 1」= ${expectedVersion} —— ` +
+          '本方法要求调用方在同一事务内先用 `WHERE version = :v` 占位；' +
+          '本次一分钱未动且整笔事务回滚，请检查该调用点是否漏做 CAS',
       );
-      return delta;
-    };
+    }
 
-    return m ? run(m, false) : this.dataSource.transaction((mm) => run(mm, true));
+    const oldFen = toFen(order.balanceUsed);
+    const delta = newBalanceUsedFen - oldFen;
+    if (delta === 0) return 0;
+
+    if (delta > 0) {
+      // 抵扣额变大 → 再冻一部分（可用余额不足 → 40002）
+      const bal = await this.getOrCreateBalance(mm, order.userId);
+      if (toFen(bal.balance) < delta) {
+        throw new BizException(
+          ErrorCode.BALANCE_NOT_ENOUGH,
+          `可用余额 ¥${bal.balance} 不足以再多抵扣 ¥${toYuanStr(delta)}`,
+        );
+      }
+      await this.freezeBalance(mm, order.userId, delta, order.orderNo);
+    } else {
+      // 抵扣额变小 → 解冻差额（冻结额不会小于抵扣额，故不会解出负数）
+      await this.releaseBalance(mm, order.userId, -delta, order.orderNo);
+    }
+
+    /**
+     * ⭐ 写本身也带 `version` 谓词 —— **只做谓词、不自增**（见上文「只许 bump 一次」）
+     *
+     * 入口那条断言已经证明过同一件事，这里再写一遍的分工是：
+     * 断言管「进来的那一刻」，谓词管「落库的那一刻」。将来若有人挪动或删掉断言，
+     * 这条 UPDATE 自己就会 `affected = 0` 而报错，不需要第二个人记得补。
+     * 钱这条路上，同一条不变量有**两道**机械证据不算多。
+     */
+    const written = await mm
+      .createQueryBuilder()
+      .update(Order)
+      .set({ balanceUsed: toYuanStr(newBalanceUsedFen) })
+      .where('id = :id AND version = :expected', { id: order.id, expected: expectedVersion })
+      .execute();
+    if (!written.affected) {
+      throw new BizException(
+        ErrorCode.ORDER_CONCURRENT_MODIFIED,
+        `订单 #${orderId} 写回抵扣额时 0 行受影响（期望 version=${expectedVersion}）—— ` +
+          '整笔事务回滚、金额不会落库，请检查该调用点是否漏做 CAS',
+      );
+    }
+    return delta;
   }
 
   /** 支付单创建前需要的信息（供 payment 域 U7 使用） */ async preparePrepay(

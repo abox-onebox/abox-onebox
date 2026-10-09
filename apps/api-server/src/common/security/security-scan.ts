@@ -21,8 +21,9 @@
  *
  * 运行：`gate.mjs security:scan`
  */
-import { execFileSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 interface Pattern {
@@ -357,10 +358,52 @@ function scanWorkspace(root: string): Hit[] {
 // 二、git 历史扫描（「提交过又删掉」的仍然算泄露）
 // ---------------------------------------------------------------------------
 
+/**
+ * 跑 `git` 并**拿回** stdout —— 刻意**不用** `execFileSync` 的默认 stdio（= `'pipe'`）
+ *
+ * ⚠️ 本机（Windows · 机器级限制）**无法为子进程创建匿名管道**：`spawnSync` /
+ *    `execFileSync` 只要走 `pipe` 一律 `status=null` + `EBUSY`。
+ * ⚠️ 这里的坏形状**尤其隐蔽**：`scanGitHistory` 把 git 失败 `catch` 成
+ *    「非 git 环境 ⇒ 历史未扫」并**返回 0 命中** ⇒ **门禁照样绿**，
+ *    而「全历史密钥扫描」一次都没跑。恒绿比恒红更难发现（见本文件头注）。
+ *    ⇒ 2026-10-09（κ 批次：外部垫片退役）改为「临时文件重定向 + 退出后回读」，
+ *      行为对齐 `pipe`，且不依赖任何仓库外物料。
+ */
+function gitOut(root: string, args: string[]): string {
+  const tag = `abox-secscan-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+  const outFile = path.join(os.tmpdir(), `${tag}.out.log`);
+  const errFile = path.join(os.tmpdir(), `${tag}.err.log`);
+  const fdOut = fs.openSync(outFile, 'w');
+  const fdErr = fs.openSync(errFile, 'w');
+  let r: ReturnType<typeof spawnSync>;
+  try {
+    r = spawnSync('git', args, { cwd: root, stdio: ['ignore', fdOut, fdErr] });
+  } finally {
+    fs.closeSync(fdOut);
+    fs.closeSync(fdErr);
+  }
+  let out = '';
+  try {
+    out = fs.readFileSync(outFile, 'utf8');
+  } catch {
+    out = '';
+  }
+  for (const f of [outFile, errFile]) {
+    try {
+      fs.unlinkSync(f);
+    } catch {
+      /* 临时目录残留由系统兜底，不影响扫描结论 */
+    }
+  }
+  // 行为对齐 execFileSync：启动失败 / 非零退出 ⇒ **抛**（由调用方决定怎么兜）
+  if (r.error) throw r.error;
+  if (r.status !== 0) throw new Error(`Command failed: git ${args.join(' ')} — exit ${r.status}`);
+  return out;
+}
+
 function scanGitHistory(root: string): Hit[] {
   const hits: Hit[] = [];
-  const git = (...args: string[]): string =>
-    execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const git = (...args: string[]): string => gitOut(root, args);
 
   // 2a. 历史里出现过的敏感文件名（哪怕已删除）
   let names = '';

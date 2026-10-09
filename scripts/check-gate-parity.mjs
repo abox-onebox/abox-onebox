@@ -41,10 +41,10 @@
  *
  * 退出码：0 通过 · 1 有违规 · 2 自证失败（检查器自身坏掉 ⇒ 显式失败，不静默放行）
  */
-import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnCapture } from './lib/spawn-capture.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CI_PATH = join(ROOT, '.github', 'workflows', 'ci.yml');
@@ -96,8 +96,10 @@ const CI_EXEMPT = {
 // 真源：由 `gate.mjs --json` 自报（门禁清单的唯一真源就是它）
 // ─────────────────────────────────────────────────────────────────────────────
 function loadTruth() {
-  const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'gate.mjs'), '--json'], {
-    encoding: 'utf8',
+  // ⛔ 刻意**不用** `spawnSync` 的默认 stdio（= `'pipe'`）：本机无法为子进程创建匿名管道
+  //    ⇒ `status=null` + `EBUSY` ⇒ 顶层那道绿着、这里却报「退出码 null」（正是本文件
+  //    头注释里记过的那次最难辨认的假象）。改用 fd 重定向，详见 `lib/spawn-capture.mjs`。
+  const r = spawnCapture(process.execPath, [join(ROOT, 'scripts', 'gate.mjs'), '--json'], {
     cwd: ROOT,
   });
   if (r.status !== 0 || !r.stdout) {

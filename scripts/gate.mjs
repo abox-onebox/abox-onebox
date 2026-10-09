@@ -33,6 +33,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnCapture } from './lib/spawn-capture.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const NODE_DIR = dirname(process.execPath);
@@ -631,6 +632,31 @@ function purgeTrash(trash) {
 }
 
 /**
+ * 拉起门禁子进程并拿回它的 stdout / stderr
+ *
+ * ⛔ **刻意不用** `stdio: 'pipe'`（2026-10-09 κ 批次）
+ *
+ * 本机**无法为子进程创建匿名管道**（机器级限制，与沙箱无关）：`spawnSync` 只要走
+ * `pipe`（**省略 `stdio` 时默认就是 `pipe'`**）一律 `status=null` + `EBUSY`
+ * ⇒ **全部门禁 `exit=null`、耗时 1ms、无输出** —— 环境故障伪装成测试失败。
+ *
+ * 此前靠外部垫片 `_tmp/gatepipe/pipefix.cjs`（`NODE_OPTIONS=--require` 预载）绕行，
+ * 但它必须 `export` 才能继承到孙进程，漏一次就全盘 `exit=null`（已踩两次）。
+ * 故把「临时文件重定向 + 退出后回读」**直接做进调用点**（`scripts/lib/spawn-capture.mjs`），
+ * 行为对齐 `pipe`，且不依赖任何仓库外物料 ⇒ 垫片退役后 CI / 换机器同样可跑。
+ *
+ * 判定口径**不变**：`ok = status === 0`，再叠 `checkMinAssertions`。
+ * ⚠️ 别小看「拿回输出」这件事：`reportOf()` 的 `↳` 行是**展示**，而
+ *    `checkMinAssertions` 要**解析** `combined` 里的「通过 X/Y」—— 拿不到输出
+ *    ⇒ 解析不到 ⇒ **fail-closed 返回错误 ⇒ e2e 三道恒红**，同时证据还不可见。
+ */
+function runChild(cmd, opts) {
+  const r = spawnCapture(cmd, [], opts);
+  // 注：`maxBuffer` 在此不再需要 —— 输出落在临时文件里，没有 32MB 截断这一说。
+  return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+}
+
+/**
  * 门禁自报覆盖面（2026-09-21 · 对策②）
  *
  * 目的：让每条门禁在汇总里**自报「查了什么、查了多少」**，而不是只报「过 / 不过」。
@@ -752,13 +778,10 @@ function run(name) {
   const trashed = gate.outDir ? swapAwayOutDir(resolve(cwd, gate.outDir), name) : null;
 
   const started = Date.now();
-  const r = spawnSync(gate.cmd, {
+  const r = runChild(gate.cmd, {
     cwd,
     shell: true,
-    stdio: 'pipe',
     env,
-    encoding: 'utf8',
-    maxBuffer: 32 * 1024 * 1024,
   });
   const ms = Date.now() - started;
 
