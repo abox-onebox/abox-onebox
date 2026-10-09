@@ -255,7 +255,8 @@ node abox-onebox\scripts\gate.mjs design          # 设计线：design:spec + de
 **原理**：不经过 pnpm，直接把各包 `node_modules/.bin` 的 `.CMD` shim 塞进 `PATH`，再用 `spawnSync(cmd, {shell:true})` 调用。
 共享包改动后必须先重建 dist（`gate.mjs` 的前两步已包含 `build-shared-types` / `build-shared-utils`）。
 
-> ⚠️ **跑之前还有两条硬纪律**：一是**必须预载子进程垫片**（否则全部门禁 `exit=null`），
+> ⚠️ **跑之前还有两条硬纪律**：一是**认得 `exit=null`**（子进程起不来，不是测试失败；
+> ⛔ 不要去预载已退役的垫片 —— 见 §6.3①），
 > 二是**`scripts/` 下的门禁脚本必须自带自证** —— 两条都写在 [§6.3](#63--门禁执行的两条硬纪律)。
 > 只看本小节就开跑，会得到一批**不可信的结论**（假红或假绿），而这两种都比跑不出来更危险。
 
@@ -318,39 +319,64 @@ $NODE scripts/gate.mjs e2e:m3     # 单跑某一段（⚠️ 单跑不重置种�
 > 这两条是**操作纪律**，不是「建议」。踩任一条的表现都是**门禁给你一个不可信的结论**
 > （假红或假绿），而这两种结论**都比「跑不出来」更危险** —— 因为你会据此改代码，或据此放行。
 
-#### ① ⛔ 子进程垫片 `_tmp/gatepipe/` —— 任何情况下不得删除或清空（P0 级）
+#### ① `exit=null` = **子进程起不来**（环境故障伪装成测试失败），解法是 fd 重定向
 
-**它解决什么**：`gate.mjs` 用 `spawnSync(cmd, {shell:true})` 拉起子进程（见 §6.1「原理」），
-而**本机沙箱里 node 创建孙进程会撞 `EBUSY`**，进程根本起不来。垫片就是绕开这个环境缺陷的预载脚本。
+> ⚠️ **2026-10-09 κ-1 起本条已整体改写。旧口径（「必须预载外部垫片 `_tmp/gatepipe/pipefix.cjs`，
+> P0 不得删除」）现在是错的，而且错的方向最坏** —— 垫片已于 κ-1 退役
+> （文件改名 `pipefix.cjs.RETIRING-κ1-20261009`），照旧口径挂上去 ⇒ node **启动即失败**
+> （`Cannot find module`），你会以为门禁坏了，转头去改判据。
+>
+> ⛔ **跑 `scripts/gate.mjs` 不要 `export NODE_OPTIONS="--require ..."`** —— 它现在自带能力。
 
-**用法（每次跑门禁前，一行）**：
+**它到底是什么问题**：本机（Windows · **机器级**，关掉沙箱同样复现）**无法为子进程创建匿名管道**。
+`spawnSync` 只要走 `stdio: 'pipe'`（⚠️ **省略 `stdio` 时的默认值就是它**）⇒
+`status = null` + `EBUSY`，进程根本起不来 —— 连 `node -v` 都跑不出来。
 
-```bash
-export NODE_OPTIONS="--require C:/Users/herma/WorkBuddy/ABox小程序/_tmp/gatepipe/pipefix.cjs"
-```
+**现在的解法（自带，不依赖仓库外任何物料）**：`scripts/lib/spawn-capture.mjs`
+—— 临时文件重定向 + 退出后回读，行为对齐 `pipe`，换台机器（有管道的环境）照样跑。
+`gate.mjs` 的 `runChild()` 已统一走它 ⇒ **跑门禁不需要任何预载**。
 
-⚠️ **必须 `export`** —— 写成命令行前缀（`NODE_OPTIONS=... node scripts/gate.mjs all`）**不管用**：
-环境变量要被 `spawnSync` 拉起的**孙进程**继承，不做 export 的局部变量传不下去，
-表现是**顶层那道过了、被 spawn 出去的门禁照样 EBUSY**。
+**仍会踩到的只剩 `scripts/probes/` 里这 5 个**（内部仍是裸 `spawnSync`，没走 `spawnCapture`）。
+下表是 2026-10-09 κ-6 **逐个裸跑实测**的结果（`timeout 150 node <file> > log 2>&1; echo $?`，
+不挂任何 `NODE_OPTIONS`，3101/3102/3103 空闲）：
 
-**删掉之后长什么样（这是它被误判过的样子，务必认得）**：
+| 探针（`scripts/probes/`） | 裸跑退出码 | 裸跑能用？ | 说明 |
+| --- | --- | --- | --- |
+| `audit-wx-compliance.mjs` | 2 | ❌ | 内部裸 `spawnSync` 跑 `gate.mjs seed` ⇒ `seed 失败 exit=null` |
+| `deep-cancel.mjs` | 2 | ❌ | 同上 |
+| `deep-kf.mjs` | 2 | ❌ | 同上 |
+| `deep-round2.mjs` | 2 | ❌ | 同上 |
+| `run-layer3.mjs` | 2 | ❌ | 同上（并且它还串跑上列三个，一处不通全线不通） |
+| `deep-test.mjs` | 2 | ❌ | ⚠️ **与 EBUSY 无关**：它连 `http://127.0.0.1:3000`，红是因为**没有在跑的 API 服务**，挂任何东西都救不了 |
+| `check-agreement-body.mjs` | **0** | ✅ | 不起子进程 |
+| `prod-mock-gate.mjs` | **0** | ✅ | 它用的就是 `spawnCapture` |
+| `selftest-e2e-zero.mjs` | **0** | ✅ | 不起子进程 |
+| `selftest-expect-min.mjs` | **0** | ✅ | 不起子进程 |
+
+> ⚠️ **别把这 5 个的「需要」读成「去把垫片找回来」**：它们内部确实留了
+> `ABOX_PIPEFIX=<路径>` 的**可选挂载口**（在 `spawnSync` 参数里拼 `--require`），
+> 但**垫片本体已退役**（文件已改名），这个口子现在**没有可用物料可挂**。
+> 正确修法只有一条：把那处 `spawnSync` 换成 `spawnCapture`
+> （`scripts/lib/spawn-capture.mjs` —— 在仓库内、跨机器可用、不需要任何外部物料）。
+
+**删掉/改错之后长什么样（务必认得）**：
 
 | 现象 | 真实原因 | 会被误读成 |
 | --- | --- | --- |
-| 门禁 `exit=null`、耗时 1ms、无输出 | 垫片没了 ⇒ 孙进程 EBUSY，崩在**进程创建**阶段 | 「这道门禁失败了」⇒ 报一条**根本不存在的 blocking** |
+| `exit=null`、耗时 1ms、无输出 | 脚本内部用了 `spawnSync`（默认 pipe）⇒ 崩在**进程创建**阶段 | 「这道门禁/探针失败了」⇒ 报一条**根本不存在的 blocking** |
 
-> 📌 **已发生过的实例**：后端同事曾据 `lock:version ✘ exit=null (1ms)` 报了一条 blocking。
-> 同一道门禁**带垫片实测是 732ms · 自证 4/4 · 扫描 250 文件 · 命中 3 处 · EXIT=0（绿）**。
-> ⇒ **看到 `exit=null` 先查垫片在不在，不要先去改判据。**
+> 📌 **已发生过的实例**：后端同事曾据 `lock:version ✘ exit=null (1ms)` 报了一条 blocking，
+> 而同一道门禁实测是 732ms · 自证 4/4 · 扫描 250 文件 · 命中 3 处 · EXIT=0（绿）。
+> ⇒ **看到 `exit=null` 先判「是不是进程创建失败」，不要先去改判据。**
 
 配套纪律：
 
-- **报红先分三类再动手**：**探针错**（判据 / 脚本写错）/ **产物错**（被扫的东西不对）/ **环境错**（垫片、端口、锁）。
+- **报红先分三类再动手**：**探针错**（判据 / 脚本写错）/ **产物错**（被扫的东西不对）/ **环境错**（进程创建、端口、锁）。
   `exit=null` 属第三类 —— 它不是测试结果，是**环境故障伪装成测试失败**。
-- ⛔ **不得在「清理临时文件」时顺手删 `_tmp/`**。垫片位于**工作区父目录**（`ABox小程序/_tmp/gatepipe/`），
-  **不在版本控制里**，仓库里也没有任何脚本会校验它存在 ⇒ 删掉**没有任何工具会报错**，
-  只能靠这条纪律兜住。
-- 若垫片确实不见了（不是你删的），**先找回再跑**，不要把 `exit=null` 当成结果上报。
+- ⛔ **不要把「把垫片找回来」当成修法**（垫片已退役）：要改的是那处 `spawnSync`，
+  改成 `import { spawnCapture } from '../lib/spawn-capture.mjs'`。
+- 新写脚本一律**直接**用 `spawnCapture`，不要再写 `spawnSync` —— 后者等于把一个
+  「只在本机能跑」的前提藏进代码里（§6.3②(b) 同一条道理）。
 
 #### ② `scripts/` 下新增 / 修改门禁脚本的两条强制要求
 
@@ -380,7 +406,15 @@ export NODE_OPTIONS="--require C:/Users/herma/WorkBuddy/ABox小程序/_tmp/gatep
   `order:edges`（自证 11/11）、`mp:auth-state`（必报 / 必不报成对）。
 
 > ⛔ **别拿这条开倒车**：(b) 说的是「**新增门禁要把能力长在脚本里**」，
-> **不是**「不许用垫片」。垫片（①）是**环境缺陷的绕行方案**，照样要留着、照样不能删 —— 两者管的是两件事。
+> **不是**「不许起子进程」—— 两者管的是两件事，而且方向一致：
+>
+> - **外部垫片**（`_tmp/gatepipe/pipefix.cjs`）是「靠**仓库外**物料绕行环境缺陷」，已于 κ-1 退役（见 ①）；
+> - **`spawnCapture`**（`scripts/lib/spawn-capture.mjs`）是「把同一份能力**长在仓库里**」，
+>   它正是 (b) 想要的那个形态 —— 该用就用，不是「外部依赖」。
+>
+> 所以① 与 (b) **不冲突**：① 说「外部垫片别找回来了」，(b) 说「能力要长在脚本里」，
+> 两者的交集就是 `spawnCapture`。看到脚本里还有裸 `spawnSync`，正确动作是**换成 `spawnCapture`**，
+> 不是「为了不违反 (b) 就不敢动」，也不是「把垫片找回来」。
 
 ### 6.4 📐 复查与取证的三条可执行判据
 
