@@ -179,7 +179,10 @@ async function main() {
   if (!healthy) {
     fail('服务启动', `健康检查超时（90s）· ${BASE}/health`);
     await stopApiServer(server, PORT);
-    return;
+    // ⛔ **不能写成裸 `return`**：那会让进程**自然退出 0** —— 上面刚记了一条失败断言，
+    //    exit 0 却告诉编排器「绿」。服务起不来是最该红的场景，静默绿等于把它吞掉。
+    //    （与 `e2e-m1` 同一形状，见 f6b31a4；此处无自清需求，故就地 exit 即可。）
+    process.exit(1);
   }
   ok('服务启动', `${BASE}/health`);
 
