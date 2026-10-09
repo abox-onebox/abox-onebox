@@ -118,7 +118,26 @@ export class HealthController {
     const version = this.cfg.get<string>('app.version') ?? 'dev';
 
     // DB：真跑一条语句。不用 `isInitialized` —— 连接池里的死连接不会反映在它上面
-    const rawDb = await timedProbe(() => this.dataSource.query('SELECT 1'));
+    //
+    // ⭐ κ-5 / 任务 #39：**探测语句按驱动分派** —— 上面那句「真跑一条语句」在 sqlite 下
+    //   是**空承诺**，与 `isInitialized` 一样探不到库（注释不许比代码承诺得多）：
+    //     · `sqlite` ⇒ `SELECT 1` 会被常量折叠、**根本不读文件** ⇒ 库被别的连接
+    //       独占锁住时照样报 `ok:true latency=0`。实测：持 `BEGIN EXCLUSIVE` 锁期间
+    //       `/health/ready` 报绿 **3/3**，而同库的业务读被卡 6.8s / 2.7s，其中一次
+    //       服务端直接抛 `SqliteError: database is locked`。故换成**必须读文件**的
+    //       `SELECT count(*) FROM sqlite_master` —— 要解析 schema 就一定读文件。
+    //       选 `sqlite_master` 而非业务表：schema 表**一定存在**（空库也有），
+    //       不会因某张业务表被删 / 改名而假红，且成本恒定。
+    //     · `mysql` ⇒ **保持 `SELECT 1`**。它不碰表，但**必须走一次真实连接往返** ⇒
+    //       连接断了 / 池里是死连接就会抛错 ⇒ `ok:false` ⇒ 503，这正是 readiness 要的。
+    //       ⛔ 不改成碰表：碰表会把**表级锁**误判成不可用 ⇒ 编排器摘流量，
+    //       那是比漏报更糟的假阴性（把健康实例判死）。
+    //   ⚠️ 驱动取自 `app.drivers.db` —— 与 `DatabaseModule` 选连接的**同一真源**
+    //      （`database.module.ts:21`），避免出现「探针探的库」与「服务用的库」不是同一个。
+    const dbDriver = this.cfg.get<string>('app.drivers.db') ?? 'mysql';
+    const dbProbeSql =
+      dbDriver === 'sqlite' ? 'SELECT count(*) AS c FROM sqlite_master' : 'SELECT 1';
+    const rawDb = await timedProbe(() => this.dataSource.query(dbProbeSql));
 
     // 队列：不重连、不 PING（探针不产生副作用），只看消费者注册完整度
     const missing = QUEUE_NAMES.filter((q) => !this.queue.hasConsumer(q));
