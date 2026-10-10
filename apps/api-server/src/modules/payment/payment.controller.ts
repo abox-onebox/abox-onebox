@@ -45,7 +45,13 @@ export class OrdersPayController {
 
 /**
  * 微信支付回调与调试探针（§七 W1）
- * `/pay/notify` **免 JWT**，real 模式下由 `wx-signature.guard` 校验收款签名。
+ *
+ * `/pay/notify` **免 JWT**：real 模式下由 `RealWxPayProvider#parseNotify` 校验收款签名
+ * （验签 + AES-256-GCM 解密 + 5 分钟反重放；拿不到平台证书即抛错，不退化成跳过验签）。
+ *
+ * ⚠️ 历史包袱：此处原写着「由 `wx-signature.guard` 校验收款签名」，而那个 guard
+ *    实际**只有 `export {}`、全仓 0 引用** —— 是一句**失真的注释**，会让人误以为
+ *    验签已被某个守卫兜住。该空壳文件已删除，验签的真源以上面那行为准。
  */
 @ApiTags('支付')
 @Controller('pay')

@@ -27,6 +27,13 @@ apps/*/components.d.ts
 .env.production
 !.env.example
 
+# ⭐ 微信支付凭据目录（商户私钥 apiclient_key.pem / 平台证书 wechatpay_*.pem）
+#    绝对不能进仓库：security-scan 会扫 git 历史里的私钥。
+#    部署时手工放到 <仓库根>/deploy/certs/，权限 600、属主 root。
+deploy/certs/
+*.pem
+
+
 # 本地数据卷
 data/
 

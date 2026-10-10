@@ -17,6 +17,15 @@ export interface WechatConfig {
     serialNo: string;
     privateKeyPath: string;
     notifyUrl: string;
+    /**
+     * 微信支付**平台证书**（PEM，可含多张）路径 —— 回调验签的公钥来源。
+     * 商户平台 → API 安全 → 下载平台证书；也可留空由 `#autoFetchCert` 自动拉取。
+     */
+    platformCertPath: string;
+    /** 退款结果通知地址（可选；不配则退款结果只能靠 `find_refunds` 轮询） */
+    refundNotifyUrl: string;
+    /** 平台证书未在本地命中时，是否调 `/v3/certificates` 自动拉取（默认开） */
+    autoFetchCert: boolean;
   };
   flex: {
     name: string;
@@ -40,6 +49,10 @@ export default registerAs('wechat', (): WechatConfig => ({
     serialNo: process.env.WXPAY_SERIAL_NO ?? '',
     privateKeyPath: process.env.WXPAY_PRIVATE_KEY_PATH ?? '',
     notifyUrl: process.env.WXPAY_NOTIFY_URL ?? '',
+    platformCertPath: process.env.WXPAY_PLATFORM_CERT_PATH ?? '',
+    refundNotifyUrl: process.env.WXPAY_REFUND_NOTIFY_URL ?? '',
+    // 显式写 `0` / `false` 才关；留空 = 开（本地证书未命中时自动拉取）
+    autoFetchCert: !['0', 'false', 'FALSE'].includes(process.env.WXPAY_AUTO_FETCH_CERT ?? ''),
   },
   flex: {
     name: process.env.FLEX_PLATFORM_NAME ?? '',

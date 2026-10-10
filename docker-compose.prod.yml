@@ -117,6 +117,14 @@ services:
     volumes:
       # 仅本地存储模式需要；走 COS 时可以去掉
       - api-uploads:/app/data/uploads
+      # ⭐ 微信支付凭据（商户私钥 / 平台证书）—— 只读挂载
+      #    `RealWxPayProvider` 在容器里按 `WXPAY_PRIVATE_KEY_PATH` /
+      #    `WXPAY_PLATFORM_CERT_PATH` 读这两个文件；**没有这个挂载，容器里根本
+      #    读不到它们** ⇒ 通道初始化失败、下单/退款/回调全线不可用。
+      #    宿主机目录：`deploy/certs/`（私钥权限 600、属主 root；**不要进 git**）。
+      #    ⚠️ 目录不存在时 docker 会建一个空目录 —— 服务照样起得来，但支付不可用，
+      #       且只是一条 ERROR 日志 ⇒ 属于「静默失效」形状，上线前必须核对文件真的在。
+      - ${WXPAY_CERT_DIR:-./deploy/certs}:/etc/abox/certs:ro
     networks: [abox-net]
     logging: *default-logging
     deploy:
