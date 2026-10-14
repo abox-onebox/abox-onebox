@@ -151,13 +151,14 @@ export const SUPPLIER_STATUS_LABEL: Record<number, string> = {
  *
  * ⚠️ 本项目有**两条轴**，各有各的中文，**别互相映射、也别合并**：
  *   · **品类轴（本枚举 · 字符串）**：`ab_dish.category`，回答「**这道菜本身是什么**」——
- *     `main 主荤 / half 半荤 / veg 素菜 / soup 汤品 / staple 主食`
+ *     `main 主件 / half 辅品 / veg 素品 / soup 附品 / staple 随附`
  *     （红烧肉=main、卤蛋=half、清炒时蔬=veg）。展示文案 = 本文件的 `DISH_CATEGORY_LABEL`。
  *   · **档位轴（数字 1–5）**：`ab_set_meal_item.slot`，回答「**它在套餐里填哪个坑**」——
- *     `1 主荤 / 2 半荤 / 3 素菜 / 4 汤 / 5 主食`，展示文案 = `@abox/shared-utils`
+ *     `1 主件 / 2 辅品 / 3 素品 / 4 附品 / 5 随附`，展示文案 = `@abox/shared-utils`
  *     的 `SET_MEAL_SLOT_LABEL`（后台编排页与用户端共用）。
- *   两轴**概念相邻、取值不同、中文不同**（档位写「汤」、品类写「汤品」）——
- *   把「汤品」改成「汤」会连累菜品库 / 角标 / 溯源页的真实展示口径，**不要那样改**。
+ *   两轴**概念相邻、字段 / 枚举仍分离**（category 取值 main/half/veg/soup/staple 与 slot 1–5 仍是两个独立字段）——
+ *   **展示词现已对齐为同一套**（主件 / 辅品 / 素品 / 附品 / 随附），这是有意的口径统一，不是合并两轴；
+ *   不要因为「中文相同」就误判为字段合并、把 category 直接塞进 slot。
  *   把两者合并会立刻产生「菜品档位 ↔ 套餐槽位」互相污染的连锁改造，故保持分离，
  *   并在《接口规范》§6.4 的扩展接口处登记该差异。
  *
@@ -169,24 +170,24 @@ export const SUPPLIER_STATUS_LABEL: Record<number, string> = {
  *   那是「同一件事的第三份表述」，已连同文件一并删除。
  */
 export enum DishCategory {
-  /** 主荤（红烧肉 / 东坡肉） */
+  /** 主件（红烧肉 / 东坡肉） */
   MAIN = 'main',
-  /** 半荤（卤蛋 / 酱牛肉） */
+  /** 辅品（卤蛋 / 酱牛肉） */
   HALF = 'half',
-  /** 素菜（清炒时蔬） */
+  /** 素品（清炒时蔬） */
   VEG = 'veg',
-  /** 汤品（酸辣汤） */
+  /** 附品（酸辣汤） */
   SOUP = 'soup',
-  /** 主食（米饭 / 面点） */
+  /** 随附（米饭 / 面点） */
   STAPLE = 'staple',
 }
 
 export const DISH_CATEGORY_LABEL: Record<DishCategory, string> = {
-  [DishCategory.MAIN]: '主荤',
-  [DishCategory.HALF]: '半荤',
-  [DishCategory.VEG]: '素菜',
-  [DishCategory.SOUP]: '汤品',
-  [DishCategory.STAPLE]: '主食',
+  [DishCategory.MAIN]: '主件',
+  [DishCategory.HALF]: '辅品',
+  [DishCategory.VEG]: '素品',
+  [DishCategory.SOUP]: '附品',
+  [DishCategory.STAPLE]: '随附',
 };
 
 export const DISH_CATEGORY_OPTIONS = (Object.values(DishCategory) as DishCategory[]).map((v) => ({

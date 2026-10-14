@@ -87,10 +87,10 @@ export const CANCEL_REASON_TIMEOUT_UNPAID = 'timeout_unpaid';
 /** 用户理由 + 系统理由的完整集合（后台展示 / 导出用） */
 export const CANCEL_REASON_LABEL: Record<string, string> = {
   not_in_office: '临时有事/不在办公室',
-  dish_dislike: '菜品不合口味',
+  dish_dislike: '内容不合口味',
   price: '价格/预算',
-  delivery_time: '送餐时间不合适',
-  ate_elsewhere: '改在别处吃',
+  delivery_time: '配送时间不合适',
+  ate_elsewhere: '改在别处就餐',
   duplicate: '重复下单/下错了',
   other: '其他',
   timeout_unpaid: '超时未支付（系统截单）',

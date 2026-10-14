@@ -5,7 +5,7 @@
 /** 套餐内一道菜的展示视图（严禁包含供价 / 分账 / 供应商状态 —— C8） */
 export interface MealDishView {
   name: string;
-  /** 档位：1 主荤 / 2 半荤 / 3 素菜 / 4 汤 / 5 主食 */
+  /** 档位：1 主件 / 2 辅品 / 3 素品 / 4 附品 / 5 随附 */
   slot: number;
   category: string | null;
   imageUrl: string | null;
