@@ -103,7 +103,7 @@ async function reload() {
  * 否则运营不知道自己这次点的是「一天」还是「所有天」）。
  */
 async function onSettle() {
-  const scope = date.value ? `仅「${date.value}」这一出餐日` : '**全部**出餐日';
+  const scope = date.value ? `仅「${date.value}」这一发货日` : '**全部**发货日';
   try {
     await ElMessageBox.confirm(
       `将把 ${scope} 的「待入账」佣金计入团长余额。\n\n` +
@@ -125,7 +125,7 @@ async function onSettle() {
 
     const lines = [
       `扫描 ${res.scanned} 条 · 入账 ${res.settled} 条 · 跳过 ${res.skipped} 条`,
-      `入账金额 ${money(res.amountFen)} · 计入份数 ${res.quantity}`,
+      `入账金额 ${money(res.amountFen)} · 计入件数 ${res.quantity}`,
     ];
     if (res.leaders?.length) {
       lines.push('');
@@ -168,7 +168,7 @@ onMounted(() => {
     <h2 class="page-container__title">团长佣金结算（4 级阶梯 · 8/9/10/12%）</h2>
     <p class="page-container__meta">
       原型页 / 模块：P34 · M35-02 ｜ 等级与费率取<strong>结算时的快照</strong>（C2）· 计佣基数 =
-      <strong>实发份数</strong>（不含冲销）· 佣金入账 = M4 跑批（T+1 02:00）的同一执行口
+      <strong>实发件数</strong>（不含冲销）· 佣金入账 = M4 跑批（T+1 02:00）的同一执行口
     </p>
 
     <el-card shadow="never" class="bar">
@@ -177,7 +177,7 @@ onMounted(() => {
           v-model="date"
           type="date"
           value-format="YYYY-MM-DD"
-          placeholder="出餐日（默认今日）"
+          placeholder="发货日（默认今日）"
           @change="reload"
         />
         <el-radio-group v-model="status" @change="reload">
@@ -243,7 +243,7 @@ onMounted(() => {
       <el-table :data="summary.byLevel" size="small">
         <el-table-column prop="levelText" label="等级" width="120" />
         <el-table-column prop="count" label="条数" width="90" align="right" />
-        <el-table-column prop="quantity" label="计入份数" width="110" align="right" />
+        <el-table-column prop="quantity" label="计入件数" width="110" align="right" />
         <el-table-column label="佣金金额" min-width="130" align="right">
           <template #default="{ row }"
             ><strong>{{ signedMoney(row.amountFen) }}</strong></template
@@ -256,7 +256,7 @@ onMounted(() => {
       <!-- 桌面：11 列宽表。窄屏（S8）改渲染下方卡片列表 —— 见 useNarrow() 注释 -->
       <el-table v-if="rows.length && !narrow" :data="rows" size="small" stripe>
         <el-table-column prop="orderNo" label="订单号" min-width="150" />
-        <el-table-column prop="mealDate" label="出餐日" width="105" />
+        <el-table-column prop="mealDate" label="发货日" width="105" />
         <el-table-column prop="leaderName" label="团长" min-width="90" />
         <el-table-column prop="phoneMasked" label="手机号" width="120" />
         <el-table-column label="等级（快照）" width="110">
@@ -268,7 +268,7 @@ onMounted(() => {
         <el-table-column label="计佣基数" min-width="110" align="right">
           <template #default="{ row }">{{ money(row.baseAmountFen) }}</template>
         </el-table-column>
-        <el-table-column prop="quantity" label="份数" width="80" align="right" />
+        <el-table-column prop="quantity" label="件数" width="80" align="right" />
         <el-table-column label="佣金" width="110" align="right">
           <template #default="{ row }">
             <strong :class="{ neg: row.amountFen < 0 }">{{ signedMoney(row.amountFen) }}</strong>
@@ -314,7 +314,7 @@ onMounted(() => {
             <dd>{{ (row.rate * 100).toFixed(0) }}%</dd>
             <dt>计佣基数</dt>
             <dd>{{ money(row.baseAmountFen) }}</dd>
-            <dt>份数</dt>
+            <dt>件数</dt>
             <dd>{{ row.quantity }}</dd>
             <dt>类型</dt>
             <dd>{{ row.typeText }}</dd>

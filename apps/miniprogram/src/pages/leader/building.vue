@@ -23,7 +23,7 @@
         <view class="hero__stats">
           <view class="hero__stat">
             <text class="hero__value">{{ today.totalQuantity }}</text>
-            <text class="hero__unit">今日份数</text>
+            <text class="hero__unit">今日件数</text>
           </view>
           <view class="hero__stat">
             <text class="hero__value">{{ fenToYuanText(war?.today.amountFen ?? 0) }}</text>
@@ -71,7 +71,7 @@
       <!-- ③ 今日成员订餐 -->
       <view class="card">
         <text class="card__title"
-          ><text class="abi abi-16">{{ I.users }}</text> 今日成员订餐</text
+          ><text class="abi abi-16">{{ I.users }}</text> 今日成员预订</text
         >
 
         <view class="simple">
@@ -79,7 +79,7 @@
           <text class="simple__value">{{ memberStats.dinerCount }} 人</text>
         </view>
         <view class="simple">
-          <text class="simple__label simple__label--weak">人均份数</text>
+          <text class="simple__label simple__label--weak">人均件数</text>
           <text class="simple__value">{{ memberStats.avgQuantity }} 份</text>
         </view>
 

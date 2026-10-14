@@ -13,7 +13,7 @@
           {{ summary.suspendedCount }}</b
         >
         —— 只有<b>营业中</b>且<b>已归群</b>的楼栋能开团（当前 {{ summary.canOrderCount }} 栋）；
-        未归群的楼无法分配套餐，用户端会显示「该办公楼今日未开团」。
+        未归群的楼无法分配组合，用户端会显示「该办公楼今日未开团」。
       </template>
     </el-alert>
 
@@ -239,7 +239,7 @@
             />
           </el-select>
           <div class="dialog__tip">
-            未归群的楼<b>无法分配套餐</b>；编辑时清空本项即把该楼移出原楼群。
+            未归群的楼<b>无法分配组合</b>；编辑时清空本项即把该楼移出原楼群。
           </div>
         </el-form-item>
 

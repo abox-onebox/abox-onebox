@@ -9,7 +9,7 @@
     <!-- ─────────────── 工具条 ─────────────── -->
     <div class="toolbar">
       <el-radio-group v-model="dateMode" @change="onDateModeChange">
-        <el-radio-button value="day">按出餐日</el-radio-button>
+        <el-radio-button value="day">按发货日</el-radio-button>
         <el-radio-button value="range">按区间</el-radio-button>
       </el-radio-group>
 
@@ -18,7 +18,7 @@
         v-model="query.mealDate"
         type="date"
         value-format="YYYY-MM-DD"
-        placeholder="出餐日"
+        placeholder="发货日"
         :clearable="true"
         style="width: 160px"
         @change="reload"
@@ -101,7 +101,7 @@
         <span class="stats__value">{{ summary.totalCount }}</span>
       </div>
       <div class="stats__item">
-        <span class="stats__label">有效份数</span>
+        <span class="stats__label">有效件数</span>
         <span class="stats__value stats__value--ok">{{ summary.validQuantity }}</span>
       </div>
       <div class="stats__item">
@@ -147,7 +147,7 @@
           <span class="mono">{{ row.orderNo }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="mealDate" label="出餐日" width="104" />
+      <el-table-column prop="mealDate" label="发货日" width="104" />
       <el-table-column label="用户" width="140">
         <template #default="{ row }">
           <div class="stack">
@@ -167,7 +167,7 @@
       <el-table-column label="团长" width="110">
         <template #default="{ row }">{{ displayOr(row.leaderName) }}</template>
       </el-table-column>
-      <el-table-column label="套餐" min-width="140">
+      <el-table-column label="组合" min-width="140">
         <template #default="{ row }">
           <div class="stack">
             <span>{{ displayOr(row.mainDishName, displayOr(row.setMealName)) }}</span>
@@ -175,7 +175,7 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="份数" width="64" align="right">
+      <el-table-column label="件数" width="64" align="right">
         <template #default="{ row }">{{ row.quantity }}</template>
       </el-table-column>
       <el-table-column label="总额" width="96" align="right">
@@ -240,8 +240,8 @@
     <p class="hint">
       <strong>异常订单口径</strong>：待支付超时 + 退款待审批 + 退款处理中；
       <strong>已取消不算异常</strong>（它是一个正常终态，算进去只会让这个 Tab 永远噪杂）。
-      <strong>改单</strong>：改份数<strong>仅限未支付</strong>订单（已支付的改份数等于补收 / 退款，
-      属支付通道动作 → 请先强制退款再让用户重下单）；改取餐楼须与原楼<strong>同楼群</strong>。
+      <strong>改单</strong>：改件数<strong>仅限未支付</strong>订单（已支付的改件数等于补收 / 退款，
+      属支付通道动作 → 请先强制退款再让用户重下单）；改取货楼须与原楼<strong>同楼群</strong>。
       两者都要求<strong>未过截单</strong>。列表手机号已脱敏 —— 完整号只在「导出
       CSV」中给出，且服务端强制留痕。
     </p>

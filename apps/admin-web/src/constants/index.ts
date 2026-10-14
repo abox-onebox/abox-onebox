@@ -115,13 +115,13 @@ export const ADMIN_NAV = [
     items: [{ path: '/dashboard', title: '工作台', page: '—', module: 'D66', icon: 'dashboard' }],
   },
   {
-    group: '套餐',
+    group: '组合',
     items: [
-      { path: '/meal/matrix', title: '套餐矩阵', page: 'P27', module: 'M31-01', icon: 'layout' },
-      { path: '/meal/edit', title: '新建套餐', page: 'P28', module: 'M31-02/03', icon: 'plus' },
+      { path: '/meal/matrix', title: '组合矩阵', page: 'P27', module: 'M31-01', icon: 'layout' },
+      { path: '/meal/edit', title: '新建组合', page: 'P28', module: 'M31-02/03', icon: 'plus' },
       {
         path: '/meal/template',
-        title: '套餐模板',
+        title: '组合模板',
         page: 'P29',
         module: 'M31-04',
         icon: 'template',
@@ -224,7 +224,7 @@ export const ADMIN_NAV = [
   {
     // M34 · 供应商与出餐：三页是**上游到出餐**的一条链 ——
     //   供应商台账 → 菜品库（菜品是套餐的上游）→ 加工场所打包（出餐当天的作业页）。
-    group: '供应商与出餐',
+    group: '供应商与发货',
     items: [
       { path: '/supplier/list', title: '供应商管理', page: 'P33', module: 'M34', icon: 'store' },
       // ⚠️ M5-15 补登：`/supplier/dish-library`（平台端菜品库）自 M3-x 就已在服务端
@@ -234,7 +234,7 @@ export const ADMIN_NAV = [
       //    但菜品是**套餐 → 模板 → 分配**的上游：找不到入口 = 后面三层都进不去，
       //    人工测试中表现为「后台缺少餐品创建模块」。判据仍是那句：
       //    **授权了就必须有入口**，否则等价于那些页面不存在。
-      { path: '/supplier/dish-library', title: '菜品库', page: 'P33', module: 'M34', icon: 'menu' },
+      { path: '/supplier/dish-library', title: '商品库', page: 'P33', module: 'M34', icon: 'menu' },
       // ⚠️ M4-0：打包任务从供应商端迁到运营后台（原 `GET /supplier/packing-tasks` 已下线）。
       //    闸门要看到**所有**供应商的到位情况，这份信息跨供应商，不能开给供应商端。
       //    它是**运营的日常作业页**（每天都要开包），故给一个**顶级菜单入口**。
@@ -339,7 +339,7 @@ export const ADMIN_NAV = [
       // P1-U2：本页第二个 Tab「口味评价」= D69 口味红黑榜（同页双视角：热度=卖得多，口味=评价好）
       {
         path: '/stats/dish-heat',
-        title: '菜品热度',
+        title: '商品热度',
         page: 'P35',
         module: 'M36-03 · D69',
         icon: 'flame',
@@ -416,7 +416,7 @@ export const SUPPLIER_NAV = [
   { path: '/supplier/workbench', title: '商家工作台', page: 'P21', module: 'M21-01', icon: 'home' },
   {
     path: '/supplier/cook-confirm',
-    title: '出餐确认',
+    title: '发货确认',
     page: 'P22',
     module: 'M21-02',
     icon: 'cook',
@@ -425,7 +425,7 @@ export const SUPPLIER_NAV = [
   //    打包闸门必须看到**所有**供应商的到位情况 —— 开给供应商就是泄露他方经营数据（I1）；
   //    且自营下加工场所属 ABox 自有，原判据「本主体名下有没有启用中集散中心」本身也已失效
   //    （端点整体迁运营后台 `/admin/packing-tasks` · 菜单 `/supplier/packing-center`）。
-  { path: '/supplier/dishes', title: '我的菜品', page: 'P23', module: 'M22-01', icon: 'soup' },
+  { path: '/supplier/dishes', title: '我的商品', page: 'P23', module: 'M22-01', icon: 'soup' },
   {
     path: '/supplier/edit',
     title: '上架申请 / 商家资料',

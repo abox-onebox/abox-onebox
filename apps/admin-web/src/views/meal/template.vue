@@ -1,13 +1,13 @@
 <template>
   <div class="page-container">
-    <h2 class="page-container__title">套餐模板库</h2>
+    <h2 class="page-container__title">组合模板库</h2>
     <p class="page-container__meta">
       模块：M31-04 · 原型 P29 · 接口：D6 模板库 / D7 存为模板 · 落库
       <code>ab_set_meal</code> + <code>ab_set_meal_item</code>
     </p>
 
     <el-form :inline="true" class="filters" @submit.prevent>
-      <el-form-item label="套餐名">
+      <el-form-item label="组合名">
         <el-input v-model="query.keyword" placeholder="模糊匹配" clearable style="width: 180px" />
       </el-form-item>
       <el-form-item label="状态">
@@ -21,7 +21,7 @@
         <el-button @click="resetQuery">重置</el-button>
       </el-form-item>
       <el-form-item class="filters__right">
-        <el-button type="primary" plain @click="goCreate">新建套餐</el-button>
+        <el-button type="primary" plain @click="goCreate">新建组合</el-button>
       </el-form-item>
     </el-form>
 
@@ -29,20 +29,20 @@
       <el-table-column type="expand">
         <template #default="{ row }">
           <div class="detail">
-            <p class="detail__title">菜品明细（一饭四菜）</p>
+            <p class="detail__title">商品明细（本日精选）</p>
             <div class="detail__items">
               <div v-for="item in row.items" :key="`${item.slot}-${item.dishId}`" class="item">
                 <el-tag size="small" effect="plain" class="item__slot">{{ item.slotLabel }}</el-tag>
-                <span class="item__name">{{ item.name ?? `菜品 ${item.dishId}` }}</span>
+                <span class="item__name">{{ item.name ?? `商品 ${item.dishId}` }}</span>
                 <span class="item__sup">供应商 #{{ item.supplierId ?? '—' }}</span>
               </div>
-              <span v-if="!row.items.length" class="muted">该套餐没有菜品明细</span>
+              <span v-if="!row.items.length" class="muted">该组合没有商品明细</span>
             </div>
           </div>
         </template>
       </el-table-column>
       <el-table-column prop="id" label="ID" width="72" />
-      <el-table-column label="套餐名" min-width="160">
+      <el-table-column label="组合名" min-width="160">
         <template #default="{ row }">
           <span class="name">{{ row.name ?? '—' }}</span>
           <div v-if="row.oneLiner" class="name__sub">{{ row.oneLiner }}</div>
@@ -54,7 +54,7 @@
       <el-table-column label="成本（供价和）" width="120">
         <template #default="{ row }">{{ fenToCny(row.costPriceFen) }}</template>
       </el-table-column>
-      <el-table-column label="菜品数" width="90">
+      <el-table-column label="商品数" width="90">
         <template #default="{ row }">{{ row.dishCount }}</template>
       </el-table-column>
       <el-table-column label="在用分配" width="100">
@@ -83,7 +83,7 @@
         </template>
       </el-table-column>
       <template #empty>
-        <el-empty description="暂无套餐模板，点右上「新建套餐」开始" />
+        <el-empty description="暂无组合模板，点右上「新建组合」开始" />
       </template>
     </el-table>
 
@@ -91,21 +91,21 @@
          模板库只涨不消、`usedCount` 只增不减，运营面对一堆近乎同名的套餐无从选择。 -->
     <el-dialog
       v-model="dialogOpen"
-      title="编辑套餐模板"
+      title="编辑组合模板"
       width="620px"
       :close-on-click-modal="false"
     >
       <el-alert v-if="frozen" type="warning" :closable="false" show-icon class="dialog__alert">
         <template #title>
-          该套餐已排进 <b>{{ editing?.usedCount }}</b> 个出餐计划，<b>菜品与售价已冻结</b>：
+          该组合已排进 <b>{{ editing?.usedCount }}</b> 个发货计划，<b>商品与售价已冻结</b>：
           改构成会让供应商按<strong>旧构成</strong>推出来的备料量与菜单对不上，
           改售价会让同一天同一份饭出现两个展示价。名称 / 介绍 / 上下架状态仍可改；
-          要换菜请用「新建套餐」按这个模板另存一条再改。
+          要换商品请用「新建组合」按这个模板另存一条再改。
         </template>
       </el-alert>
 
       <el-form label-width="88px">
-        <el-form-item label="套餐名">
+        <el-form-item label="组合名">
           <el-input v-model="editForm.name" maxlength="64" show-word-limit />
         </el-form-item>
         <el-form-item label="售价（元）">
@@ -128,7 +128,7 @@
           </el-radio-group>
         </el-form-item>
 
-        <el-form-item label="菜品构成">
+        <el-form-item label="商品构成">
           <div class="edit-slots">
             <div v-for="slot in editSlots" :key="slot.value" class="edit-slot">
               <span class="edit-slot__name">{{ slot.label }}</span>
@@ -150,7 +150,7 @@
               </el-select>
             </div>
             <p class="edit-slots__note">
-              主食米饭由集散中心统一供米（¥2/份）· 不建菜品项，故不在此列。
+              随附米饭由集散中心统一供应（¥2/件）· 不建商品项，故不在此列。
             </p>
           </div>
         </el-form-item>
@@ -175,10 +175,10 @@
     />
 
     <p class="hint">
-      <strong>「在用分配」</strong>= 该模板被多少个<strong>未取消</strong>的套餐分配引用 ——
-      模板库里最有用的一列。它同时决定<strong>能改什么</strong>：为 0 时可改名称 / 售价 / 菜品构成；
-      大于 0 时该套餐已进入某天的出餐计划，<strong>菜品与售价冻结</strong>（服务端拒以 `30019`），
-      只能改名称 / 介绍 / 上下架状态，要换菜请用「新建套餐」另存一条再改。
+      <strong>「在用分配」</strong>= 该模板被多少个<strong>未取消</strong>的组合分配引用 ——
+      模板库里最有用的一列。它同时决定<strong>能改什么</strong>：为 0 时可改名称 / 售价 / 商品构成；
+      大于 0 时该组合已进入某天的发货计划，<strong>商品与售价冻结</strong>（服务端拒以 `30019`），
+      只能改名称 / 介绍 / 上下架状态，要换商品请用「新建组合」另存一条再改。
     </p>
   </div>
 </template>
@@ -266,7 +266,7 @@ async function openEdit(row: SetMealTemplateRow): Promise<void> {
       const opt = await fetchDishOptions({});
       dishOptions.value = opt.list;
     } catch (e) {
-      ElMessage.error(e instanceof ApiError ? e.message : '菜品库加载失败');
+      ElMessage.error(e instanceof ApiError ? e.message : '商品库加载失败');
     }
   }
 }
@@ -275,7 +275,7 @@ async function saveEdit(): Promise<void> {
   const row = editing.value;
   if (!row) return;
   if (!editForm.name.trim()) {
-    ElMessage.warning('请填写套餐名');
+    ElMessage.warning('请填写组合名');
     return;
   }
 
@@ -301,7 +301,7 @@ async function saveEdit(): Promise<void> {
   saving.value = true;
   try {
     await updateMealTemplate(row.id, payload);
-    ElMessage.success(`套餐 #${row.id} 已更新`);
+    ElMessage.success(`组合 #${row.id} 已更新`);
     dialogOpen.value = false;
     await reload();
   } catch (e) {
@@ -318,9 +318,9 @@ async function toggleStatus(row: SetMealTemplateRow): Promise<void> {
   try {
     await ElMessageBox.confirm(
       next === 0 && row.usedCount > 0
-        ? `该套餐已被 ${row.usedCount} 个出餐计划引用：停用只影响「新建分配时的候选列表」，已排期的照常出餐。确认${verb}？`
+        ? `该组合已被 ${row.usedCount} 个发货计划引用：停用只影响「新建分配时的候选列表」，已排期的照常发货。确认${verb}？`
         : `确认${verb}「${row.name ?? `#${row.id}`}」？`,
-      `${verb}套餐`,
+      `${verb}组合`,
       { type: 'warning', confirmButtonText: `确认${verb}`, cancelButtonText: '取消' },
     );
   } catch {
@@ -348,7 +348,7 @@ async function reload(page?: number): Promise<void> {
     rows.value = res.list;
     total.value = res.total;
   } catch (e) {
-    ElMessage.error(e instanceof ApiError ? e.message : '套餐模板加载失败');
+    ElMessage.error(e instanceof ApiError ? e.message : '组合模板加载失败');
   } finally {
     loading.value = false;
   }

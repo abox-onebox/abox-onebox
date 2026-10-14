@@ -8,7 +8,7 @@
   >
     <el-descriptions :column="2" border size="small" class="dialog__head">
       <el-descriptions-item label="订单号">{{ order?.orderNo }}</el-descriptions-item>
-      <el-descriptions-item label="出餐日">{{ order?.mealDate }}</el-descriptions-item>
+      <el-descriptions-item label="发货日">{{ order?.mealDate }}</el-descriptions-item>
       <el-descriptions-item label="当前状态">{{ order?.statusText }}</el-descriptions-item>
       <el-descriptions-item label="当前金额">
         {{ fenToCny(order?.totalAmountFen) }}
@@ -27,12 +27,12 @@
     <el-form label-width="90px" class="dialog__form">
       <el-form-item label="改单动作">
         <el-radio-group v-model="form.action" :disabled="!!blockReason">
-          <el-radio value="change_quantity">改份数</el-radio>
-          <el-radio value="change_building">改取餐楼</el-radio>
+          <el-radio value="change_quantity">改件数</el-radio>
+          <el-radio value="change_building">改取货楼</el-radio>
         </el-radio-group>
       </el-form-item>
 
-      <el-form-item v-if="form.action === 'change_quantity'" label="目标份数" required>
+      <el-form-item v-if="form.action === 'change_quantity'" label="目标件数" required>
         <el-input-number v-model="form.quantity" :min="1" :max="100" />
         <span class="dialog__tip">
           当前 {{ order?.quantity }} 份 · 单份 {{ fenToCny(order?.unitPriceFen) }}
@@ -44,7 +44,7 @@
           <el-option v-for="b in sameGroupBuildings" :key="b.id" :label="b.name" :value="b.id" />
         </el-select>
         <span class="dialog__tip">
-          仅可选与原楼同楼群（{{ order?.groupName }}）的办公楼 —— 跨楼群换楼等于同时换掉套餐与集散
+          仅可选与原楼同楼群（{{ order?.groupName }}）的办公楼 —— 跨楼群换楼等于同时换掉组合与集散
         </span>
       </el-form-item>
 
@@ -121,7 +121,7 @@ const localBlockReason = computed(() => {
   if (!o) return null;
   if (o.status === 'pending_pay') return null;
   if (o.status === 'paid' && form.action === 'change_quantity') {
-    return '订单已支付：改份数涉及补收或退款（支付通道动作，一期不支持）。请先强制退款，让用户重新下单';
+    return '订单已支付：改件数涉及补收或退款（支付通道动作，一期不支持）。请先强制退款，让用户重新下单';
   }
   if (o.status === 'paid') return null;
   return `当前状态「${o.statusText}」不支持改单`;
@@ -149,7 +149,7 @@ watch(
       try {
         options.value = await fetchOrderFilterOptions();
       } catch {
-        // 下拉失败不挡改单：份数改单用不到楼栋列表
+        // 下拉失败不挡改单：件数改单用不到楼栋列表
       }
     }
   },

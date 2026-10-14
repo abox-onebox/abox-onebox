@@ -10,7 +10,7 @@
       <!-- 楼栋大标题 -->
       <view class="head">
         <text class="abi abi-deco-40 head__icon">{{ I.home }}</text>
-        <text class="head__building">{{ landing?.building || '本楼订餐' }}</text>
+        <text class="head__building">{{ landing?.building || '本楼预订' }}</text>
         <text class="head__sub">团长邀请你加入</text>
       </view>
 
@@ -30,7 +30,7 @@
         <!-- ⚠️ 时刻来自响应（`landing.deliverAt`）—— 曾写死 `11:30`（PR-02 收口）；
              本页**免登录**，无法借其它接口取值，故随落地响应一并下发 -->
         <text class="card__desc">
-          加入后，你将自动跟随该办公楼订餐，明天 {{ landing?.deliverAt || '' }} 由团长统一取餐分发。
+          加入后，你将自动跟随该办公楼预订，明天 {{ landing?.deliverAt || '' }} 由团长统一取货分发。
         </text>
       </view>
 
@@ -53,14 +53,14 @@
           ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 微信授权登录即可</text
         >
         <text class="promise__line"
-          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 无需填地址、随团长订餐</text
+          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 无需填地址、随团长预订</text
         >
         <!-- ⭐ 2026-10-07 复查⑰：原写「每天 14:00 - 24:00 可预订明日套餐」。
              开团/截单是本仓**可配**的生效时间轴，而 `LeaderInviteLanding` 只下发
              `deliverAt`（送达），没有开团与截单 ⇒ 这里**不写时刻**，而不是抄一份写死的。
              （真要显示时段，应由服务端在 landing 里下发，与本页 `deliverAt` 同源。） -->
         <text class="promise__line"
-          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 可预订明日套餐，随团长统一取餐</text
+          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 可预订明日组合，随团长统一取货</text
         >
       </view>
 
@@ -77,7 +77,7 @@
 
       <!-- ⚠️ 邀请码无效时的如实告知（不假装已加入） -->
       <view v-if="landing && !landing.valid" class="warn">
-        <text class="warn__text">{{ landing.slogan || '邀请码已失效，可正常浏览套餐' }}</text>
+        <text class="warn__text">{{ landing.slogan || '邀请码已失效，可正常浏览组合' }}</text>
       </view>
     </template>
   </view>

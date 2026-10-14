@@ -66,7 +66,7 @@
       <text class="abi abi-deco-28 apply__icon">{{ I.crown }}</text>
       <view class="apply__main">
         <text class="apply__title">我也想成为团长</text>
-        <text class="apply__sub">每天顺路帮忙带餐，8% - 12% 阶梯佣金</text>
+        <text class="apply__sub">每天顺路帮忙带物，8% - 12% 阶梯佣金</text>
       </view>
       <text class="apply__arrow"
         ><text class="abi abi-16">{{ I.chev }}</text></text
@@ -529,7 +529,7 @@ function goAccountCancel(): void {
 function showAbout(): void {
   uni.showModal({
     title: '关于 ABox 一盒',
-    content: `${AGREEMENT_OPERATOR}\n办公楼预定制团餐 · 一饭四菜自提`,
+    content: `${AGREEMENT_OPERATOR}\n办公楼预定制团体组合 · 本日精选自提`,
     showCancel: false,
     confirmText: '知道了',
   });

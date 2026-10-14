@@ -1,6 +1,6 @@
 <template>
   <div class="page-container">
-    <h2 class="page-container__title">菜品库（主荤 / 半荤 / 素菜 / 汤品 / 主食）</h2>
+    <h2 class="page-container__title">商品库（主件 / 辅品 / 素品 / 附品 / 随附）</h2>
     <p class="page-container__meta">
       原型 P33 · 模块 M34 · 接口：<b>扩展</b>（不占 D 号，D33 已被财务占用）·
       <code>GET/POST /admin/dishes</code> · <code>PUT /admin/dishes/:id</code> ·
@@ -34,13 +34,13 @@
     <!-- ─────────────── KPI（同一过滤条件的全量，翻页不跳） ─────────────── -->
     <div class="stats">
       <div class="stats__item">
-        <span class="stats__label">菜品总数</span>
+        <span class="stats__label">商品总数</span>
         <span class="stats__value">{{ summary.totalCount }}</span>
       </div>
       <div class="stats__item">
         <span class="stats__label">上架中</span>
         <span class="stats__value stats__value--ok">{{ summary.onSaleCount }}</span>
-        <span class="stats__sub">可在套餐编排中选用</span>
+        <span class="stats__sub">可在组合编排中选用</span>
       </div>
       <div class="stats__item">
         <span class="stats__label">已下架</span>
@@ -50,7 +50,7 @@
       <div class="stats__item">
         <span class="stats__label">均价（供价）</span>
         <span class="stats__value stats__value--warn">{{ fenToCny(summary.avgPriceFen) }}</span>
-        <span class="stats__sub">按可售菜品口径</span>
+        <span class="stats__sub">按可售商品口径</span>
       </div>
       <div class="stats__item">
         <span class="stats__label">累计销量</span>
@@ -105,7 +105,7 @@
 
       <el-input
         v-model="query.keyword"
-        placeholder="菜品名 / 描述"
+        placeholder="商品名 / 描述"
         clearable
         style="width: 200px"
         @keyup.enter="reload(1)"
@@ -128,19 +128,19 @@
         <el-button :loading="loading" @click="reload(1)">查询</el-button>
         <el-tooltip
           :disabled="canManage"
-          content="仅管理员 / 超级管理员可维护菜品（供价决定毛利）"
+          content="仅管理员 / 超级管理员可维护商品（供价决定毛利）"
           placement="top"
         >
           <span>
             <el-button type="primary" :disabled="!canManage" @click="openCreate"
-              >新增菜品</el-button
+              >新增商品</el-button
             >
           </span>
         </el-tooltip>
       </div>
     </div>
 
-    <!-- ─────────────── 菜品表 ─────────────── -->
+    <!-- ─────────────── 商品表 ─────────────── -->
     <el-table
       v-loading="loading"
       :data="rows"
@@ -150,7 +150,7 @@
     >
       <el-table-column type="selection" width="44" :selectable="isSelectable" />
 
-      <el-table-column label="菜品" min-width="190">
+      <el-table-column label="商品" min-width="190">
         <template #default="{ row }">
           <div class="stack">
             <span class="strong">{{ asRow(row).name }}</span>
@@ -225,7 +225,7 @@
     <!-- ─────────────── 新增 / 编辑弹窗 ─────────────── -->
     <el-dialog
       v-model="editVisible"
-      :title="editForm.id ? '编辑菜品' : '新增菜品'"
+      :title="editForm.id ? '编辑商品' : '新增商品'"
       width="560px"
       :close-on-click-modal="false"
     >
@@ -246,11 +246,11 @@
             />
           </el-select>
           <p v-if="editForm.id" class="field-hint">
-            菜品归属不可改 —— 换供应商等于换一个成本主体，历史结算会指向错的人。
+            商品归属不可改 —— 换供应商等于换一个成本主体，历史结算会指向错的人。
           </p>
         </el-form-item>
 
-        <el-form-item label="菜品名" required>
+        <el-form-item label="商品名" required>
           <el-input
             v-model="editForm.name"
             maxlength="64"
@@ -275,7 +275,7 @@
             <template #append>元</template>
           </el-input>
           <span class="unit-tip">= {{ fenToCny(costPriceFenPreview) }}</span>
-          <p class="field-hint">C9 逐菜协商价。此价计入结算成本项，直接决定平台毛利。</p>
+          <p class="field-hint">C9 逐件协商价。此价计入结算成本项，直接决定平台毛利。</p>
         </el-form-item>
 
         <el-form-item label="描述">
@@ -315,7 +315,7 @@
     >
       <div class="dialog-body">
         <p class="dialog-line">
-          将对选中的 <b>{{ selectedIds.length }}</b> 个菜品执行
+          将对选中的 <b>{{ selectedIds.length }}</b> 件商品执行
           <b>{{ batchForm.status === 1 ? '上架' : '下架' }}</b
           >。
         </p>
@@ -490,7 +490,7 @@ async function submitEdit(): Promise<void> {
     return;
   }
   if (!editForm.name.trim()) {
-    ElMessage.warning('请填写菜品名');
+    ElMessage.warning('请填写商品名');
     return;
   }
   if (!editForm.category) {
@@ -514,7 +514,7 @@ async function submitEdit(): Promise<void> {
         imageUrl: editForm.imageUrl || undefined,
         status: editForm.status,
       });
-      ElMessage.success('菜品已更新');
+      ElMessage.success('商品已更新');
     } else {
       await createDish({
         supplierId: editForm.supplierId,
@@ -525,7 +525,7 @@ async function submitEdit(): Promise<void> {
         imageUrl: editForm.imageUrl || undefined,
         status: editForm.status,
       });
-      ElMessage.success('菜品已创建');
+      ElMessage.success('商品已创建');
     }
     editVisible.value = false;
     await load();

@@ -8,7 +8,7 @@
   "pages": [
     {
       "path": "pages/index/index",
-      "style": { "navigationBarTitleText": "明日套餐" }
+      "style": { "navigationBarTitleText": "明日组合" }
     },
     {
       "path": "pages/order-create/order-create",
@@ -76,7 +76,7 @@
     },
     {
       "path": "pages/leader/pickup",
-      "style": { "navigationBarTitleText": "取餐确认" }
+      "style": { "navigationBarTitleText": "取货确认" }
     },
     {
       "path": "pages/leader/commission",

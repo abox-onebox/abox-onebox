@@ -2,7 +2,7 @@
   <div v-loading="loading" class="page-container">
     <h2 class="page-container__title">核心指标看板</h2>
     <p class="page-container__meta">
-      原型页 / 模块：P35 · M36-01 ｜ 口径见《接口规范》§6.6 ｜ 统计基准：<strong>出餐日</strong>
+      原型页 / 模块：P35 · M36-01 ｜ 口径见《接口规范》§6.6 ｜ 统计基准：<strong>发货日</strong>
     </p>
 
     <el-card shadow="never" class="block">
@@ -135,7 +135,7 @@
           履约成本三项当前值（元/份）：场所摊销 {{ data.costItems.siteFee }} ｜ 打包人工
           {{ data.costItems.packingLaborFee }} ｜ 配送费 {{ data.costItems.deliveryFee }} ——
           可在「系统配置 →
-          履约成本」登记真实值。退款份数的采购款仍要支付给供应商（退款不冲减应付），
+          履约成本」登记真实值。退款件数的采购款仍要支付给供应商（退款不冲减应付），
           故退款场景下经营毛利可能为负，这是正常承担的经营风险。
         </p>
       </el-card>

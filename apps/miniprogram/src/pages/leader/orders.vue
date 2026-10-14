@@ -8,7 +8,7 @@
       <view class="hero__stats">
         <view class="hero__stat">
           <text class="hero__value">{{ summary.quantity }}</text>
-          <text class="hero__unit">总份数</text>
+          <text class="hero__unit">总件数</text>
         </view>
         <view class="hero__stat">
           <text class="hero__value">{{ fenToYuanText(summary.amountFen) }}</text>
@@ -171,7 +171,7 @@ import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 const tabs = [
   { label: '全部', value: '' },
   { label: '待支付', value: OrderStatus.PENDING_PAY },
-  { label: '待出餐', value: OrderStatus.PAID },
+  { label: '待发货', value: OrderStatus.PAID },
   { label: '已送达', value: OrderStatus.DELIVERED },
   { label: '已完成', value: OrderStatus.COMPLETED },
   { label: '退款中', value: OrderStatus.REFUND_APPLYING },

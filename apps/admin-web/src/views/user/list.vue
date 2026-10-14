@@ -8,8 +8,8 @@
 
     <el-alert type="info" :closable="false" class="note">
       <template #title>
-        <b>本页管的是「吃盒饭的人」</b> —— 后台运营账号（客服 / 财务）在「系统 → 账号管理」。
-        两者都叫用户，但没有任何外键关系。
+        <b>本页管的是「订购本平台商品的人」</b> —— 后台运营账号（客服 / 财务）在「系统 →
+        账号管理」。 两者都叫用户，但没有任何外键关系。
       </template>
     </el-alert>
 
@@ -247,8 +247,8 @@
         <h4 class="block-title">最近 10 单</h4>
         <el-table :data="detail.recentOrders" size="small" border>
           <el-table-column prop="orderNo" label="订单号" min-width="150" />
-          <el-table-column prop="mealDate" label="出餐日" width="110" />
-          <el-table-column prop="quantity" label="份数" width="70" align="right" />
+          <el-table-column prop="mealDate" label="发货日" width="110" />
+          <el-table-column prop="quantity" label="件数" width="70" align="right" />
           <el-table-column label="金额" width="90" align="right">
             <template #default="{ row }">{{ fenToCny(row.totalFen) }}</template>
           </el-table-column>

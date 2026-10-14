@@ -8,7 +8,7 @@
 
     <el-alert type="info" :closable="false" class="note">
       <template #title>
-        <b>一楼群一日一套餐</b>（`uk_meal_assignment_date_group`）—— 楼群就是「分发单位」。
+        <b>一楼群一日一组合</b>（`uk_meal_assignment_date_group`）—— 楼群就是「分发单位」。
         原型上展示的「独立分配」（银泰 1 栋红烧肉 / 2
         栋东坡肉）在本结构下需<b>把楼拆成各自的楼群</b>： 这不是限制，而是楼群的定义。<br />
         <b>保存成员楼为整体替换语义</b> —— 不在列表里的楼会被移出本群（变成「未归群」，无法开团）。
@@ -72,7 +72,7 @@
         <el-button :loading="loading" @click="reload()">查询</el-button>
         <el-tooltip
           :disabled="canManage"
-          content="仅管理员 / 超级管理员可改楼群划分（决定哪些楼共享同一套餐与配送）"
+          content="仅管理员 / 超级管理员可改楼群划分（决定哪些楼共享同一组合与配送）"
           placement="top"
         >
           <span>
@@ -124,7 +124,7 @@
               </span>
             </el-tag>
             <span v-if="!g.members.length" class="muted"
-              >（暂无成员楼 · 空楼群不参与套餐分配）</span
+              >（暂无成员楼 · 空楼群不参与组合分配）</span
             >
           </div>
         </div>
@@ -145,7 +145,7 @@
           <div>
             <span class="gcard__label">今日分配</span>
             <div v-if="g.todayAssignment">
-              {{ g.todayAssignment.setMealName ?? `套餐 #${g.todayAssignment.setMealId}` }}
+              {{ g.todayAssignment.setMealName ?? `组合 #${g.todayAssignment.setMealId}` }}
               <el-tag size="small" effect="plain">{{ g.todayAssignment.status }}</el-tag>
             </div>
             <div v-else class="muted">未排（今日不开团）</div>
@@ -153,7 +153,7 @@
           <div>
             <span class="gcard__label">明日分配</span>
             <div v-if="g.tomorrowAssignment">
-              {{ g.tomorrowAssignment.setMealName ?? `套餐 #${g.tomorrowAssignment.setMealId}` }}
+              {{ g.tomorrowAssignment.setMealName ?? `组合 #${g.tomorrowAssignment.setMealId}` }}
               <el-tag size="small" effect="plain">{{ g.tomorrowAssignment.status }}</el-tag>
             </div>
             <div v-else class="muted">未排</div>
@@ -186,7 +186,7 @@
         <el-form-item label="说明" prop="description">
           <el-input
             v-model="form.description"
-            placeholder="可选，如：四栋同址，统一套餐统一配送"
+            placeholder="可选，如：四栋同址，统一组合统一配送"
             maxlength="256"
           />
         </el-form-item>

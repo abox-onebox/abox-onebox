@@ -12,7 +12,7 @@
     </view>
 
     <!-- 首屏骨架 -->
-    <ab-loading v-if="loading && !daily" text="正在取今日套餐" />
+    <ab-loading v-if="loading && !daily" text="正在取今日组合" />
 
     <template v-else-if="daily">
       <!-- 套餐概念大卡（米金渐变） -->
@@ -21,7 +21,7 @@
         <text class="hero-card__date">{{ mealDateCn }}</text>
         <view class="hero-card__pill">
           <text class="hero-card__pill-text">四方好味汇一盒</text>
-          <text class="hero-card__pill-text">每家只出一道拿手菜</text>
+          <text class="hero-card__pill-text">每家只出一件拿手好物</text>
         </view>
       </view>
 
@@ -70,7 +70,7 @@
       <!-- 一饭四菜（主食并入同一卡）· 「来自：X」可点 → 溯源页并定位该出品方（M5-17） -->
       <view class="card">
         <text class="card__title"
-          ><text class="abi abi-16">{{ I.rice }}</text> 一饭四菜</text
+          ><text class="abi abi-16">{{ I.rice }}</text> 本日精选</text
         >
         <view v-for="(d, i) in daily.dishes" :key="i" class="dish-row">
           <view class="dish-row__ico">
@@ -97,7 +97,7 @@
           <view class="dish-row__info">
             <text class="dish-row__name">{{ daily.rice }}</text>
             <view class="dish-row__from-wrap">
-              <text class="dish-row__from">主食 · 集散中心统一供米</text>
+              <text class="dish-row__from">随附 · 集散中心统一供应</text>
             </view>
           </view>
         </view>
@@ -236,7 +236,7 @@ const emptyText = computed(() => {
   return needsBuilding.value ? '你还没有选择办公楼' : '本楼今日未开团';
 });
 
-const emptyHint = computed(() => loadError.value?.message ?? '选好办公楼后即可查看次日套餐');
+const emptyHint = computed(() => loadError.value?.message ?? '选好办公楼后即可查看次日组合');
 
 /**
  * 截单时刻（`HH:mm`）—— **从响应取**，端上不写死

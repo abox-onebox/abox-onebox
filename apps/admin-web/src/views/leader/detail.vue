@@ -203,7 +203,7 @@
               <span class="mono">{{ asCommission(row).orderNo }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="出餐日" width="110">
+          <el-table-column label="发货日" width="110">
             <template #default="{ row }">{{ asCommission(row).mealDate }}</template>
           </el-table-column>
           <el-table-column label="等级 / 费率" width="120">
@@ -214,7 +214,7 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="计佣基数 / 份数" min-width="140">
+          <el-table-column label="计佣基数 / 件数" min-width="140">
             <template #default="{ row }">
               <div class="stack">
                 <span>{{ fenToCny(asCommission(row).baseAmountFen) }}</span>

@@ -127,7 +127,7 @@ const heroTitle = computed(() => {
 const tipText = computed(() => {
   const r = result.value;
   if (!r) return '';
-  if (r.paid) return '已锁定你的那份饭。截单前可在订单详情自助取消；截单后如需退款请联系团长。';
+  if (r.paid) return '已锁定你的那份。截单前可在订单详情自助取消；截单后如需退款请联系团长。';
   if (r.status === 'cancelled') return '30 分钟内未完成支付，订单已自动取消，可回到首页重新下单。';
   return '支付尚未完成。可点击「重新支付」继续，超时未支付订单会自动取消。';
 });

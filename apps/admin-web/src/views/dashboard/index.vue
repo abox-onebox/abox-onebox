@@ -14,7 +14,7 @@
           <b>这一页只回答一个问题：今天有什么必须我来处理的。</b>
           上面是待办 —— 只给计数，点进去处理，明细在各域自己的列表页
           （本页刻意不列明细：两处都列，必然有一处先过时）。
-          下面是<strong>当前角色有权打开的页面</strong>目录。 数字看板（GMV / 份数 /
+          下面是<strong>当前角色有权打开的页面</strong>目录。 数字看板（GMV / 件数 /
           楼宇榜）仍在「数据 → 数据看板」。
         </template>
       </el-alert>
@@ -74,7 +74,7 @@
         <p v-if="todos" class="card__foot">
           <AbIcon name="warn-tri" size="16" /> 「今日逾期未送达」在送达时刻（11:30）之前恒为 0 ——
           未到点不算异常；
-          「明日未排套餐的楼群」只数<strong>完全没排</strong>的楼群，已排待上架的（pending）不算，
+          「明日未排组合的楼群」只数<strong>完全没排</strong>的楼群，已排待上架的（pending）不算，
           否则这张卡在开团前永远非零，很快就会被无视。
         </p>
       </el-card>
@@ -85,7 +85,7 @@
           <el-descriptions-item label="今日配送">
             {{ todos.brief.deliveryArrived }} / {{ todos.brief.deliveryTotal }} 单已送达
           </el-descriptions-item>
-          <el-descriptions-item label="明日套餐">
+          <el-descriptions-item label="明日组合">
             {{ todos.brief.tomorrowGroupsAssigned }} /
             {{ todos.brief.tomorrowGroupsTotal }} 个启用楼群已排
           </el-descriptions-item>
@@ -107,7 +107,7 @@
         <el-descriptions-item label="售价"
           >{{ BIZ.unitPrice.toFixed(2) }} 元/份</el-descriptions-item
         >
-        <el-descriptions-item label="套餐构成">{{
+        <el-descriptions-item label="组合构成">{{
           SET_MEAL_COMPOSITION.rule
         }}</el-descriptions-item>
         <el-descriptions-item label="截单时刻">

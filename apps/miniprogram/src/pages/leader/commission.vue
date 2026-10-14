@@ -64,7 +64,7 @@
       </view>
 
       <button class="btn btn--gold btn--block" hover-class="btn--hover" @tap="goShare">
-        <text class="abi abi-20">{{ I.share }}</text> 邀请同事拼饭
+        <text class="abi abi-20">{{ I.share }}</text> 邀请同事拼团
       </button>
     </view>
 
@@ -119,7 +119,7 @@
       <ab-empty-state
         v-if="!list.length"
         text="暂无佣金记录"
-        hint="取餐分发后按实发份数计佣"
+        hint="取货分发后按实发件数计佣"
         illustration="coins"
       />
 
@@ -170,9 +170,9 @@
       <ab-empty-state
         v-else-if="!list.length"
         text="本期间暂无佣金"
-        hint="佣金在「取餐确认 / 一键分发」后按实发份数计佣，次日自动入账"
+        hint="佣金在「取货确认 / 一键分发」后按实发件数计佣，次日自动入账"
         illustration="coins"
-        action-text="去取餐确认"
+        action-text="去取货确认"
         @action="goPickup"
       />
 

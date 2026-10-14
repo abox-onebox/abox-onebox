@@ -175,11 +175,11 @@ onMounted(() => {
         </div>
       </template>
       <el-table v-if="data?.daily?.length" :data="data.daily" size="small" stripe>
-        <el-table-column prop="date" label="出餐日" width="120" />
+        <el-table-column prop="date" label="发货日" width="120" />
         <el-table-column label="订单数" width="90" align="right">
           <template #default="{ row }">{{ row.orderCount }}</template>
         </el-table-column>
-        <el-table-column label="份数" width="90" align="right">
+        <el-table-column label="件数" width="90" align="right">
           <template #default="{ row }">{{ row.quantity }}</template>
         </el-table-column>
         <el-table-column label="GMV" min-width="120" align="right">

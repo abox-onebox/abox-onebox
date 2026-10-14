@@ -3,11 +3,11 @@
     <!-- ⭐ 版式基准 = prototype/index.html renderP15（v4.10.0）：
          配送状态大卡（绿渐变）→ 总份数四指标 → 分发重点提醒 → 成员列表 → 一键分发主按钮 -->
 
-    <ab-loading v-if="loading && !today" text="正在加载取餐信息" />
+    <ab-loading v-if="loading && !today" text="正在加载取货信息" />
 
     <ab-empty-state
       v-else-if="!today"
-      text="取餐信息加载失败"
+      text="取货信息加载失败"
       hint="请稍后重试"
       illustration="warn-tri"
       action-text="重试"
@@ -22,20 +22,20 @@
         <text class="hero__where">{{ heroWhere }}</text>
         <text class="hero__foot"
           ><text class="abi abi-16">{{ I.info }}</text>
-          送达提醒通过团长群通知；取餐后请及时分发</text
+          送达提醒通过团长群通知；取货后请及时分发</text
         >
       </view>
 
       <!-- ② 本办公楼总份数 -->
       <view class="card">
         <text class="card__title"
-          ><text class="abi abi-16">{{ I.package }}</text> 本办公楼总份数</text
+          ><text class="abi abi-16">{{ I.package }}</text> 本办公楼总件数</text
         >
 
         <view class="stats">
           <view class="stats__item">
             <text class="stats__value">{{ today.totalQuantity }}</text>
-            <text class="stats__label">有效份数</text>
+            <text class="stats__label">有效件数</text>
           </view>
           <view class="stats__item">
             <text class="stats__value stats__value--ok">{{ today.confirmedQuantity }}</text>
@@ -82,7 +82,7 @@
           <text class="kv__v">{{ done.confirmedCount }} 单</text>
         </view>
         <view class="kv">
-          <text class="kv__k">实发份数</text>
+          <text class="kv__k">实发件数</text>
           <text class="kv__v">{{ done.confirmedQuantity }} 份</text>
         </view>
         <view class="kv">
@@ -90,7 +90,7 @@
           <text class="kv__v kv__v--strong">¥{{ done.commissionYuan }}</text>
         </view>
         <text class="done__tips">
-          佣金按「实发份数 × 单价 × {{ (done.rate * 100).toFixed(0) }}%」计佣，
+          佣金按「实发件数 × 单价 × {{ (done.rate * 100).toFixed(0) }}%」计佣，
           将于次日自动入账到余额（届时可在佣金中心查看）
         </text>
         <view class="done__acts">
@@ -171,11 +171,11 @@
           >
         </button>
         <text class="submit__hint">
-          佣金按「实发份数」计佣、次日入账；重复提交不会重复计佣（幂等）
+          佣金按「实发件数」计佣、次日入账；重复提交不会重复计佣（幂等）
         </text>
         <text class="submit__hint">
           <text class="abi abi-16">{{ I.clock }}</text> 超时未操作 →
-          由系统自动确认（口径同上，仍按实发份数计佣）
+          由系统自动确认（口径同上，仍按实发件数计佣）
         </text>
       </view>
     </template>
@@ -286,7 +286,7 @@ const statsFoot = computed(() => {
   const t = today.value;
   if (!t) return '';
   if (t.pendingQuantity === 0 && t.confirmedQuantity > 0) return '（今日已全部分发完毕）';
-  return '（退款订单已从份数中剔除，不参与分发与计佣）';
+  return '（退款订单已从件数中剔除，不参与分发与计佣）';
 });
 
 function isPending(orderNo: string): boolean {
@@ -347,7 +347,7 @@ async function confirm(): Promise<void> {
   const confirmed = await new Promise<boolean>((resolve) => {
     uni.showModal({
       title: '确认分发',
-      content: `将为 ${selected.value.length} 单、共 ${selectedQuantity.value} 份确认取餐并计佣。确认后不可撤销。`,
+      content: `将为 ${selected.value.length} 单、共 ${selectedQuantity.value} 件确认取货并计佣。确认后不可撤销。`,
       confirmText: '确认分发',
       success: (r) => resolve(!!r.confirm),
       fail: () => resolve(false),

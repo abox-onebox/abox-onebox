@@ -23,7 +23,7 @@
           <text class="trace-card__text">{{ data.traceNote }}</text>
         </view>
 
-        <!-- 出品方卡（一菜一卡 · 原型 5 张 = 4 家供应商 + 1 个集散中心） -->
+        <!-- 出品方卡（一物一卡 · 原型 5 张 = 4 家供应商 + 1 个集散中心） -->
         <ab-supplier-card
           v-for="(d, i) in data.dishes"
           :key="`${d.supplier.id}-${d.dishName}-${i}`"
@@ -37,13 +37,13 @@
           @tap="goDetail(d.supplier.id)"
         />
 
-        <!-- 集散中心（主食与打包 · 无资质页，故不可点） -->
+        <!-- 集散中心（随附与打包 · 无资质页，故不可点） -->
         <ab-supplier-card
           v-if="data.distributionCenter"
           avatar-icon="rice"
           :name="data.distributionCenter.name"
-          category="主食"
-          detail="今日出品：米饭与打包"
+          category="随附"
+          detail="今日供应：随附与打包"
           :extra="data.distributionCenter.address"
         />
 
@@ -73,11 +73,11 @@
  * P38 · 今日这盒 · 商家溯源（C8）
  *
  * ⭐ 版式基准 = `prototype/index.html` renderP38（v4.9.1 C8 改版）：
- *   溯源说明卡 → 出品方卡（4 家菜品供应商 + 1 个集散中心）→ 页脚 → 底部「供应商」tab。
+ *   溯源说明卡 → 出品方卡（4 家商品供应商 + 1 个集散中心）→ 页脚 → 底部「供应商」tab。
  *   点出品方卡 → **跳该出品方的资质详情**（`pages/supplier/detail`）。
  *
  * ## 这一页存在的理由
- * 「不喜欢今天的套餐也没关系」—— 用户可以顺着溯源卡找到**具体是哪家做的这道菜**。
+ * 「不喜欢今天的组合也没关系」—— 用户可以顺着溯源卡找到**具体是哪家做的这道菜**。
  * 把「一盒拼配」的透明度变成信任，而不是让人怀疑「这盒到底是谁做的」。
  *
  * ## ⚠️⭐ 2026-10-03：本页**不再提供任何外卖平台跳转**（勿加回来）

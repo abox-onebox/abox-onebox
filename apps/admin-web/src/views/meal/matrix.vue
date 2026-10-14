@@ -1,9 +1,9 @@
 <template>
   <div class="page-container">
-    <h2 class="page-container__title">套餐矩阵</h2>
+    <h2 class="page-container__title">组合矩阵</h2>
     <p class="page-container__meta">
       模块：M31-01 · 原型 P27 · 接口：D1 矩阵 / D2 创建 / D3 编辑 / D4 上架 / D5 批量复制 · 粒度
-      <code>出餐日 × 楼群</code>（<code>ab_meal_assignment</code>）
+      <code>发货日 × 楼群</code>（<code>ab_meal_assignment</code>）
     </p>
 
     <!-- ─────────────── 工具条 ─────────────── -->
@@ -14,8 +14,8 @@
         unlink-panels
         value-format="YYYY-MM-DD"
         range-separator="→"
-        start-placeholder="起始出餐日"
-        end-placeholder="结束出餐日"
+        start-placeholder="起始发货日"
+        end-placeholder="结束发货日"
         :clearable="false"
         style="width: 280px"
         @change="reload"
@@ -93,7 +93,7 @@
                 </span>
               </div>
               <div class="cell__sub">
-                {{ row.cells[date].dishCount }} 菜
+                {{ row.cells[date].dishCount }} 件
                 <template v-if="row.cells[date].distributionCenterName">
                   · {{ row.cells[date].distributionCenterName }}
                 </template>
@@ -124,27 +124,27 @@
     <!-- ─────────────── 新建 / 编辑弹窗 ─────────────── -->
     <el-dialog
       v-model="dialogVisible"
-      :title="dialogMode === 'create' ? '新建套餐分配' : '编辑套餐分配'"
+      :title="dialogMode === 'create' ? '新建组合分配' : '编辑组合分配'"
       width="620px"
       @closed="afterDialogClosed"
     >
       <el-descriptions :column="2" border size="small" class="dialog__head">
-        <el-descriptions-item label="出餐日">{{ form.mealDate }}</el-descriptions-item>
+        <el-descriptions-item label="发货日">{{ form.mealDate }}</el-descriptions-item>
         <el-descriptions-item label="楼群">{{ form.groupName }}</el-descriptions-item>
       </el-descriptions>
 
       <el-form label-width="96px" class="dialog__form">
-        <el-form-item label="套餐模板" required>
+        <el-form-item label="组合模板" required>
           <el-select
             v-model="form.setMealId"
-            placeholder="选择套餐模板"
+            placeholder="选择组合模板"
             filterable
             style="width: 100%"
           >
             <el-option
               v-for="t in templates"
               :key="t.id"
-              :label="`${t.name}（${t.dishCount} 菜 · ¥${fenToYuan(t.priceFen)}）`"
+              :label="`${t.name}（${t.dishCount} 件 · ¥${fenToYuan(t.priceFen)}）`"
               :value="t.id"
             />
           </el-select>
@@ -212,9 +212,9 @@
     </el-dialog>
 
     <!-- ─────────────── 批量复制弹窗 ─────────────── -->
-    <el-dialog v-model="copyVisible" title="批量复制套餐分配" width="560px">
+    <el-dialog v-model="copyVisible" title="批量复制组合分配" width="560px">
       <el-form label-width="110px">
-        <el-form-item label="源出餐日" required>
+        <el-form-item label="源发货日" required>
           <el-date-picker
             v-model="copyForm.fromDate"
             type="date"
@@ -223,7 +223,7 @@
             style="width: 100%"
           />
         </el-form-item>
-        <el-form-item label="目标出餐日" required>
+        <el-form-item label="目标发货日" required>
           <el-date-picker
             v-model="copyForm.targetDates"
             type="dates"
@@ -415,7 +415,7 @@ async function reload(): Promise<void> {
       endDate: range.value?.[1],
     });
   } catch (e) {
-    ElMessage.error(e instanceof ApiError ? e.message : '套餐矩阵加载失败');
+    ElMessage.error(e instanceof ApiError ? e.message : '组合矩阵加载失败');
   } finally {
     loading.value = false;
   }
@@ -431,7 +431,7 @@ async function loadOptions(): Promise<void> {
     distributionCenters.value = dc.list;
   } catch (e) {
     // 选项加载失败不阻断矩阵浏览：矩阵是只读区，弹窗再报错也来得及
-    ElMessage.warning(e instanceof ApiError ? e.message : '套餐 / 集散中心选项加载失败');
+    ElMessage.warning(e instanceof ApiError ? e.message : '组合 / 集散中心选项加载失败');
   }
 }
 
@@ -480,7 +480,7 @@ function afterDialogClosed(): void {
 
 async function submitDialog(): Promise<void> {
   if (!form.setMealId) {
-    ElMessage.warning('请选择套餐模板');
+    ElMessage.warning('请选择组合模板');
     return;
   }
   acting.value = true;
@@ -538,11 +538,11 @@ async function doPublish(action: 'publish' | 'unpublish'): Promise<void> {
 
 async function submitCopy(): Promise<void> {
   if (!copyForm.fromDate) {
-    ElMessage.warning('请选择源出餐日');
+    ElMessage.warning('请选择源发货日');
     return;
   }
   if (!copyForm.targetDates?.length) {
-    ElMessage.warning('请选择至少一个目标出餐日');
+    ElMessage.warning('请选择至少一个目标发货日');
     return;
   }
   acting.value = true;

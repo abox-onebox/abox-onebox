@@ -92,7 +92,7 @@ const diffs = computed<Array<{ label: string; from: string; to: string }>>(() =>
   const show = (v: string | number | null) => (v === null || v === '' ? '（空）' : String(v));
 
   if (form.totalQuantity !== row.totalQuantity) {
-    out.push({ label: '份数', from: show(row.totalQuantity), to: show(form.totalQuantity) });
+    out.push({ label: '件数', from: show(row.totalQuantity), to: show(form.totalQuantity) });
   }
   const texts: Array<[string, string, string | null, string]> = [
     ['司机', 'driverName', row.driverName, form.driverName],
@@ -127,7 +127,7 @@ async function submit() {
   //    虽然不会写库，但会让操作日志里多一堆无意义的字段噪音。
   const body: DeliveryPatchBody = { version: row.version, reason: form.reason.trim() };
   for (const d of diffs.value) {
-    if (d.label === '份数') body.totalQuantity = form.totalQuantity;
+    if (d.label === '件数') body.totalQuantity = form.totalQuantity;
     if (d.label === '司机') body.driverName = form.driverName;
     if (d.label === '司机电话') body.driverPhone = form.driverPhone;
     if (d.label === '车牌') body.plateNo = form.plateNo;
@@ -232,14 +232,14 @@ onMounted(load);
       <div class="head">
         <div>
           <h3>配送单管理</h3>
-          <p class="sub">按楼群查看当日配送单，可人工修正份数 / 司机 / 车牌</p>
+          <p class="sub">按楼群查看当日配送单，可人工修正件数 / 司机 / 车牌</p>
         </div>
         <div class="ops">
           <el-date-picker
             v-model="date"
             type="date"
             value-format="YYYY-MM-DD"
-            placeholder="出餐日"
+            placeholder="发货日"
             clearable
             @change="load"
           />
@@ -266,7 +266,7 @@ onMounted(load);
         show-icon
         :closable="false"
         class="note"
-        title="份数与订单不符有两种成因，本页不区分"
+        title="件数与订单不符有两种成因，本页不区分"
         :description="data?.note ?? ''"
       />
 
@@ -277,17 +277,17 @@ onMounted(load);
         </div>
         <div class="stat">
           <div class="stat__v">{{ data?.summary.totalQuantity ?? 0 }}</div>
-          <div class="stat__l">配送份数</div>
+          <div class="stat__l">配送件数</div>
         </div>
         <div class="stat">
           <div class="stat__v">{{ data?.summary.totalOrderQuantity ?? 0 }}</div>
-          <div class="stat__l">订单份数</div>
+          <div class="stat__l">订单件数</div>
         </div>
         <div class="stat">
           <div class="stat__v" :class="{ 'stat__v--warn': (data?.summary.mismatchCount ?? 0) > 0 }">
             {{ data?.summary.mismatchCount ?? 0 }}
           </div>
-          <div class="stat__l">份数不符</div>
+          <div class="stat__l">件数不符</div>
         </div>
         <div class="stat">
           <div class="stat__v">{{ data?.summary.manualInputCount ?? 0 }}</div>
@@ -296,7 +296,7 @@ onMounted(load);
       </div>
     </el-card>
 
-    <el-empty v-if="!loading && !rows.length" :description="data?.reason ?? '该出餐日没有配送单'" />
+    <el-empty v-if="!loading && !rows.length" :description="data?.reason ?? '该发货日没有配送单'" />
 
     <el-card v-else shadow="never" class="table-card">
       <el-table :data="rows" size="small" border>
@@ -393,14 +393,14 @@ onMounted(load);
     <el-dialog v-model="dialogVisible" title="人工修正配送单" width="560px">
       <div v-if="editing" class="dlg">
         <p class="sub">
-          {{ editing.buildingGroupName ?? `楼群 #${editing.buildingGroupId}` }} · 出餐日
+          {{ editing.buildingGroupName ?? `楼群 #${editing.buildingGroupId}` }} · 发货日
           {{ editing.mealDate }} · 当前版本 v{{ editing.version }}
         </p>
 
         <el-form label-width="90px" class="form">
-          <el-form-item label="配送份数">
+          <el-form-item label="配送件数">
             <el-input-number v-model="form.totalQuantity" :min="0" :max="9999" />
-            <span class="sub hint">按订单算出的份数是 {{ editing.orderQuantity }}</span>
+            <span class="sub hint">按订单算出的件数是 {{ editing.orderQuantity }}</span>
           </el-form-item>
           <el-form-item label="司机">
             <el-input v-model="form.driverName" maxlength="64" placeholder="留空表示不填" />
@@ -461,7 +461,7 @@ onMounted(load);
     <el-dialog v-model="advVisible" title="推进配送状态" width="520px">
       <div v-if="advRow" class="dlg">
         <p class="sub">
-          {{ advRow.buildingGroupName ?? `楼群 #${advRow.buildingGroupId}` }} · 出餐日
+          {{ advRow.buildingGroupName ?? `楼群 #${advRow.buildingGroupId}` }} · 发货日
           {{ advRow.mealDate }} · 当前版本 v{{ advRow.version }}
         </p>
 
@@ -473,7 +473,7 @@ onMounted(load);
 
         <p class="sub adv__hint">
           推进后：<b>配送单</b>状态随之变化，并<template v-if="advTo === 'en_route'">
-            联动该楼群订单 <b>已出餐 → 配送中</b>（状态机 T8）</template
+            联动该楼群订单 <b>已发货 → 配送中</b>（状态机 T8）</template
           ><template v-else-if="advTo === 'arrived'">
             联动该楼群订单 <b>配送中 → 已送达</b>（状态机 T9），订单「送达」之后
             佣金链路才可达</template
@@ -488,7 +488,7 @@ onMounted(load);
           show-icon
           :closable="false"
           title="本楼群有订单还停在「已截单」"
-          description="那些订单不会跟着动（上游出餐未确认）。请先让供应商完成出餐确认，否则这部分订单会一直卡住、佣金也不会产生。"
+          description="那些订单不会跟着动（上游发货未确认）。请先让供应商完成发货确认，否则这部分订单会一直卡住、佣金也不会产生。"
         />
 
         <el-form label-width="90px" class="form">

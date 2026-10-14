@@ -29,9 +29,9 @@
         </view>
       </view>
 
-      <!-- 在册菜品（规模陈述，不是菜单） -->
+      <!-- 在册商品（规模陈述，不是菜单） -->
       <view v-if="data.dishes.length" class="card">
-        <text class="card__title">在册菜品</text>
+        <text class="card__title">在册商品</text>
         <view class="dishes">
           <text v-for="(d, i) in data.dishes" :key="`${d}-${i}`" class="dishes__tag">
             {{ d }}
@@ -60,7 +60,7 @@
  * 供应商资质墙 · 详情（2026-10-03 新增）
  *
  * ## 展示什么
- * 证照名称 / 编号 / 有效期，以及在册菜品。就这些。
+ * 证照名称 / 编号 / 有效期，以及在册商品。就这些。
  *
  * ## ⚠️ 刻意不做什么（改版时勿加回来）
  *   ① **没有跳转**：不出现任何第三方平台名与入口（5.10 互推 → 下架；

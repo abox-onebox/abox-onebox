@@ -2,7 +2,7 @@
   <div v-loading="loading" class="page-container">
     <h2 class="page-container__title">留存分析</h2>
     <p class="page-container__meta">
-      原型页 / 模块：P35 · M36-04 ｜ 按「首单所在自然周」分群 ｜ 统计基准：<strong>出餐日</strong>
+      原型页 / 模块：P35 · M36-04 ｜ 按「首单所在自然周」分群 ｜ 统计基准：<strong>发货日</strong>
     </p>
 
     <el-card shadow="never" class="block">

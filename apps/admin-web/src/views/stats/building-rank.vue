@@ -2,7 +2,7 @@
   <div v-loading="loading" class="page-container">
     <h2 class="page-container__title">楼群 / 办公楼榜单</h2>
     <p class="page-container__meta">
-      原型页 / 模块：P35 · M36-02 ｜ 按 GMV 降序 ｜ 统计基准：<strong>出餐日</strong>
+      原型页 / 模块：P35 · M36-02 ｜ 按 GMV 降序 ｜ 统计基准：<strong>发货日</strong>
     </p>
 
     <el-card shadow="never" class="block">
@@ -30,7 +30,7 @@
         <el-table-column type="index" label="#" width="56" />
         <el-table-column prop="name" label="楼群" min-width="140" />
         <el-table-column prop="orderCount" label="订单数" width="90" align="right" />
-        <el-table-column prop="quantity" label="份数" width="90" align="right" />
+        <el-table-column prop="quantity" label="件数" width="90" align="right" />
         <el-table-column label="GMV" width="120" align="right">
           <template #default="{ row }">{{ fenToCny(row.gmvFen) }}</template>
         </el-table-column>
@@ -59,7 +59,7 @@
         <el-table-column prop="name" label="办公楼" min-width="140" />
         <el-table-column prop="buildingGroupName" label="所属楼群" min-width="120" />
         <el-table-column prop="orderCount" label="订单数" width="90" align="right" />
-        <el-table-column prop="quantity" label="份数" width="90" align="right" />
+        <el-table-column prop="quantity" label="件数" width="90" align="right" />
         <el-table-column label="GMV" width="120" align="right">
           <template #default="{ row }">{{ fenToCny(row.gmvFen) }}</template>
         </el-table-column>

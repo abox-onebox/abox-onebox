@@ -29,7 +29,7 @@
       <view class="card">
         <view class="card__hd">
           <text class="card__title"
-            ><text class="abi abi-16">{{ I.pin }}</text> 出餐进度</text
+            ><text class="abi abi-16">{{ I.pin }}</text> 发货进度</text
           >
           <text class="card__sub">{{ doneCount }}/{{ detail.timeline.length }} 步</text>
         </view>
@@ -80,29 +80,29 @@
       <view class="card">
         <view class="card__hd">
           <text class="card__title"
-            ><text class="abi abi-16">{{ I.rice }}</text> 套餐明细</text
+            ><text class="abi abi-16">{{ I.rice }}</text> 组合明细</text
           >
           <text class="card__sub"
             >{{ formatMealDate(detail.mealDate) }} · × {{ detail.quantity }}</text
           >
         </view>
         <view v-for="dish in detail.dishes" :key="`${dish.slot}-${dish.name}`" class="dish">
-          <text class="dish__slot">{{ SLOT_LABEL[dish.slot] || '菜品' }}</text>
+          <text class="dish__slot">{{ SLOT_LABEL[dish.slot] || '商品' }}</text>
           <text class="dish__name">{{ dish.name }}</text>
           <text class="dish__from">{{
             dish.supplierName ? `来自：${dish.supplierName}` : ''
           }}</text>
         </view>
         <view v-if="!detail.dishes.length" class="dish">
-          <text class="dish__slot">套餐</text>
-          <text class="dish__name">配菜待公布</text>
+          <text class="dish__slot">组合</text>
+          <text class="dish__name">搭配待公布</text>
           <text class="dish__from" />
         </view>
 
         <!-- 金额：单价 → 份数 → 合计 →（余额抵扣）→ 实付 -->
         <view class="sum">
           <view class="sum__row">
-            <text class="sum__label">单价 × 份数</text>
+            <text class="sum__label">单价 × 件数</text>
             <text class="sum__value">
               {{ fenToYuanText(detail.unitPriceFen) }} × {{ detail.quantity }}
             </text>
@@ -129,7 +129,7 @@
       <!-- 取餐方式 -->
       <view class="card">
         <text class="card__title"
-          ><text class="abi abi-16">{{ I.pin }}</text> 取餐方式</text
+          ><text class="abi abi-16">{{ I.pin }}</text> 取货方式</text
         >
         <text class="pickup__who">
           <text class="pickup__strong">{{ leaderName }}</text
@@ -138,7 +138,7 @@
         <!-- ⚠️ 时刻来自响应（`pickup.expectAt`，服务端按生效时间轴派生）—— 曾写死 `11:30`，
              改配置后会与系统行为不一致（PR-02 收口） -->
         <text class="pickup__when"
-          >明日 {{ detail.pickup.expectAt }} 由团长统一取餐并分发至取餐点</text
+          >明日 {{ detail.pickup.expectAt }} 由团长统一取货并分发至取货点</text
         >
         <view class="pickup__acts">
           <button class="ghost-btn" hover-class="ghost-btn--hover" @tap="contactLeader">
@@ -166,10 +166,10 @@
       <view v-if="detail.rating.canRate || detail.rating.rated" class="card">
         <view class="card__hd">
           <text class="card__title"
-            ><text class="abi abi-16">{{ I.edit }}</text> 口味评价</text
+            ><text class="abi abi-16">{{ I.edit }}</text> 满意度评价</text
           >
           <text v-if="detail.rating.rated" class="card__sub">已提交 · 不可修改</text>
-          <text v-else class="card__sub">好吃吗？帮我们把菜单越做越对</text>
+          <text v-else class="card__sub">满意吗？帮我们把清单越做越对</text>
         </view>
 
         <!-- 已评：只读回显（内容由服务端下发，端上不自存第二份） -->
@@ -218,9 +218,9 @@
               :disabled="!canSubmit"
               @tap="submitRating"
             >
-              提交评价{{ pickedCount ? `（已选 ${pickedCount} 道菜）` : '' }}
+              提交评价{{ pickedCount ? `（已选 ${pickedCount} 件商品）` : '' }}
             </button>
-            <text class="rate__hint">没选的菜视为跳过；提交后不可修改</text>
+            <text class="rate__hint">没选的商品视为跳过；提交后不可修改</text>
           </view>
         </template>
       </view>
@@ -229,7 +229,7 @@
       <view class="acts">
         <template v-if="abnormal">
           <button class="btn-primary" hover-class="btn-primary--hover" @tap="goHome">
-            看看今日套餐 ›
+            看看今日组合 ›
           </button>
           <button class="btn-secondary" hover-class="btn-secondary--hover" @tap="goList">
             查看我的全部订单
@@ -342,7 +342,7 @@ const statusHint = computed(() => {
     case OrderStatus.PENDING_PAY:
       return '30 分钟内完成支付，超时订单自动取消';
     case OrderStatus.PAID:
-      return '已锁定你的那份饭，截单前可自助取消';
+      return '已锁定你的那份，截单前可自助取消';
     case OrderStatus.CUT_OFF:
     case OrderStatus.COOKED:
       return '已截单，如需退款请联系团长协助';
@@ -350,7 +350,7 @@ const statusHint = computed(() => {
       // ⚠️ 曾写死 `'配送途中，11:30 送达办公楼'`（PR-02 收口）—— 同上，改用响应值
       return arriveAt.value ? `配送途中，${arriveAt.value} 送达办公楼` : '配送途中，即将送达办公楼';
     case OrderStatus.DELIVERED:
-      return '已送达取餐点，请凭订单号取餐';
+      return '已送达取货点，请凭订单号取货';
     case OrderStatus.COMPLETED:
       return '订单已完成，感谢支持';
     case OrderStatus.CANCELLED:
@@ -395,7 +395,7 @@ const ratedItems = computed(() => {
   const nameOf = new Map(d.dishes.map((x) => [x.dishId, x.name]));
   return d.rating.items.map((it) => ({
     dishId: it.dishId,
-    name: nameOf.get(it.dishId) ?? `菜品#${it.dishId}`,
+    name: nameOf.get(it.dishId) ?? `商品#${it.dishId}`,
     rating: it.rating,
     reason: it.reason,
   }));

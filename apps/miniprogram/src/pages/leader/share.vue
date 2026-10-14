@@ -22,7 +22,7 @@
         <text class="hero__title">分享给同事</text>
         <!-- ⚠️ 原文案是「顺手赚点零花钱」—— 属收益诱导表述（提审红线）。
              改中性：只讲场景便利，不承诺收益。 -->
-        <text class="hero__sub">每天顺路帮同事带餐，省一趟跑腿</text>
+        <text class="hero__sub">每天顺路帮同事带物，省一趟跑腿</text>
 
         <view class="hero__link">
           <text class="hero__link-text">{{ shareLink }}</text>
@@ -71,22 +71,22 @@
           <text class="reward__rate">{{ ratePercent }}%</text>
           <!-- ⚠️ 原文案是「订单分佣（同事每订 1 单 = X% 进账）」——「分佣」「进账」
                都是收益诱导表述（提审红线）。改为中性陈述比例，不写成「每单赚多少」。 -->
-          <text class="reward__desc">订单佣金比例 {{ ratePercent }}%（按实发份数计）</text>
+          <text class="reward__desc">订单佣金比例 {{ ratePercent }}%（按实发件数计）</text>
         </view>
 
         <view class="rule">
           <text class="rule__text">
             <text class="abi abi-16">{{ I.info }}</text> 佣金按<text class="rule__strong"
-              >实发份数</text
-            >计佣：同事取餐确认后才计佣， 次日自动入账到你的余额。
+              >实发件数</text
+            >计佣：同事取货确认后才计佣， 次日自动入账到你的余额。
           </text>
         </view>
 
         <!-- ⚠️ 原按钮名「推荐新团长」：既踩「发展下线」的表述红线，又与**实际行为不符**
-             —— 它调的是 shareToWechat()，做的事是复制「拼饭群」邀请文案发给同事，
+             —— 它调的是 shareToWechat()，做的事是复制「拼团群」邀请文案发给同事，
              与「招新团长」无关。改为与行为一致、且无发展人员含义的说法。 -->
         <button class="btn btn--gold" hover-class="btn--hover" @tap="shareToWechat">
-          <text class="abi abi-20">{{ I.share }}</text> 邀请同事拼饭
+          <text class="abi abi-20">{{ I.share }}</text> 邀请同事拼团
         </button>
       </view>
 
@@ -137,7 +137,7 @@
         </view>
 
         <text class="inv__rule">
-          晋级看两个条件：本月完成份数 +
+          晋级看两个条件：本月完成件数 +
           已转正人数（须同时满足）。被邀请人升到「正式」及以上才算转正。
         </text>
 
@@ -323,7 +323,7 @@ function copyCopy(): void {
 
 /** 转发给好友 / 群：带上邀请码，落地页自动归属团长（C3 推荐关系） */
 onShareAppMessage(() => ({
-  title: material.value?.title ?? 'ABox 一盒 · 一饭四菜 ¥25.80',
+  title: material.value?.title ?? 'ABox 一盒 · 本日精选 ¥25.80',
   path: material.value
     ? `${material.value.path}?${material.value.shareQuery}`
     : '/pages/index/index',

@@ -48,7 +48,7 @@
             v-model="phone"
             class="field__input"
             type="number"
-            placeholder="用于到楼下提醒用户取餐"
+            placeholder="用于到楼下提醒用户取货"
             placeholder-class="field__placeholder"
             :maxlength="11"
           />
@@ -165,7 +165,7 @@ const agreed = ref(false);
 const submitting = ref(false);
 
 const hasBuilding = computed(() => !!userStore.info?.buildingId);
-const buildingText = computed(() => (hasBuilding.value ? '已绑定（见首页取餐点）' : '未绑定'));
+const buildingText = computed(() => (hasBuilding.value ? '已绑定（见首页取货点）' : '未绑定'));
 
 const phoneValid = computed(() => /^1[3-9]\d{9}$/.test(phone.value.trim()));
 const canSubmit = computed(
@@ -220,7 +220,7 @@ function openAgreement(): void {
     content:
       '1) 佣金按等级费率结算，由灵活用工平台代发代扣个税；\n' +
       '2) 见习团长 30 天内未促成订单自动取消资格；\n' +
-      '3) 佣金以「实发份数」为基数计算；\n' +
+      '3) 佣金以「实发件数」为基数计算；\n' +
       '4) 退出团长身份不影响已结算佣金。',
     showCancel: false,
     confirmText: '我知道了',

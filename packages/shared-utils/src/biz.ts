@@ -57,7 +57,7 @@ export const BIZ = {
 export const SET_MEAL_COMPOSITION = {
   requiredSlots: [1, 2, 3, 4] as const,
   stapleSlot: 5,
-  rule: '一饭四菜：需恰好包含「主荤 / 半荤 / 素菜 / 汤」四个档位各一道（主食米饭由集散中心统一供，不建菜品项）',
+  rule: '本日精选：需恰好包含「主件 / 辅品 / 素品 / 附品」四个档位各一道（随附米饭由集散中心统一供，不建商品项）',
 } as const;
 
 /**
@@ -78,11 +78,11 @@ export const SET_MEAL_COMPOSITION = {
  *    （统一会改掉菜品库 / 角标 / 溯源页的真实展示口径）。
  */
 export const SET_MEAL_SLOT_LABEL: Record<number, string> = {
-  1: '主荤',
-  2: '半荤',
-  3: '素菜',
-  4: '汤',
-  5: '主食',
+  1: '主件',
+  2: '辅品',
+  3: '素品',
+  4: '附品',
+  5: '随附',
 };
 
 /**

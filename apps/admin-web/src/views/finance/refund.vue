@@ -40,7 +40,7 @@
         v-model="query.mealDate"
         type="date"
         value-format="YYYY-MM-DD"
-        placeholder="出餐日"
+        placeholder="发货日"
         clearable
         style="width: 160px"
         @change="reload"
@@ -97,7 +97,7 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="出餐日 / 份数" width="130">
+      <el-table-column label="发货日 / 件数" width="130">
         <template #default="{ row }">
           <div class="stack">
             <span>{{ displayOr(asRow(row).mealDate) }}</span>

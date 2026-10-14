@@ -20,7 +20,7 @@
         <el-tag :type="statusTagType(detail.order.status)" effect="dark">
           {{ detail.order.statusText }}
         </el-tag>
-        <span class="toolbar__meal">出餐日 {{ detail.order.mealDate }}</span>
+        <span class="toolbar__meal">发货日 {{ detail.order.mealDate }}</span>
         <div class="toolbar__right">
           <el-tooltip
             :disabled="detail.actions.canAdjust"
@@ -92,7 +92,7 @@
                   {{ (detail.leader.commissionRate * 100).toFixed(0) }}%
                 </span>
               </el-descriptions-item>
-              <el-descriptions-item label="取餐地点">
+              <el-descriptions-item label="取货地点">
                 {{ displayOr(detail.order.buildingName) }}
                 <span class="card__note">{{ detail.order.groupName }} 楼群</span>
               </el-descriptions-item>
@@ -104,7 +104,7 @@
           <el-card shadow="never" class="card">
             <template #header><span class="card__title">金额构成</span></template>
             <el-descriptions :column="1" border size="small">
-              <el-descriptions-item label="单价 × 份数">
+              <el-descriptions-item label="单价 × 件数">
                 {{ fenToCny(detail.order.unitPriceFen) }} × {{ detail.order.quantity }}
               </el-descriptions-item>
               <el-descriptions-item label="订单总额">
@@ -128,29 +128,29 @@
         </el-col>
       </el-row>
 
-      <!-- ─────────────── 套餐菜品 ─────────────── -->
+      <!-- ─────────────── 组合与商品 ─────────────── -->
       <el-card shadow="never" class="card">
         <template #header>
-          <span class="card__title">套餐与菜品</span>
+          <span class="card__title">组合与商品</span>
           <span class="card__note">{{ displayOr(detail.order.setMealName) }}</span>
         </template>
         <el-table :data="detail.dishes" border size="small">
           <el-table-column prop="slotLabel" label="档位" width="90" />
-          <el-table-column prop="name" label="菜品" min-width="180" />
+          <el-table-column prop="name" label="商品" min-width="180" />
           <el-table-column label="供应商" min-width="160">
             <template #default="{ row }">{{ displayOr(row.supplierName) }}</template>
           </el-table-column>
           <el-table-column label="结算价" width="130" align="right">
             <template #default="{ row }">
               <span :class="{ muted: row.shareAmountFen === null }">
-                {{ row.shareAmountFen === null ? '按菜品供价' : fenToCny(row.shareAmountFen) }}
+                {{ row.shareAmountFen === null ? '按商品供价' : fenToCny(row.shareAmountFen) }}
               </span>
             </template>
           </el-table-column>
         </el-table>
         <p class="hint">
           <strong>结算价口径（C9）</strong>：成本项逐菜与供应商协商，<strong>不写死</strong>；
-          应付在 T+1 02:00 跑批时按「有效订单」汇总，此处只是套餐快照。
+          应付在 T+1 02:00 跑批时按「有效订单」汇总，此处只是组合快照。
         </p>
       </el-card>
 
@@ -228,7 +228,7 @@
           <span class="card__note">退款冲销写独立负向行，原记录金额不改写（C9）</span>
         </template>
         <el-table :data="detail.commission" border size="small">
-          <el-table-column prop="mealDate" label="出餐日" width="110" />
+          <el-table-column prop="mealDate" label="发货日" width="110" />
           <el-table-column label="类型" width="90">
             <template #default="{ row }">
               <el-tag
@@ -248,7 +248,7 @@
           <el-table-column label="计佣基数" width="110" align="right">
             <template #default="{ row }">{{ fenToCny(row.baseAmountFen) }}</template>
           </el-table-column>
-          <el-table-column prop="quantity" label="份数" width="80" align="right" />
+          <el-table-column prop="quantity" label="件数" width="80" align="right" />
           <el-table-column label="金额" width="110" align="right">
             <template #default="{ row }">
               <span :class="row.amountFen < 0 ? 'negative' : ''">
@@ -350,7 +350,7 @@
             :rows="2"
             maxlength="200"
             show-word-limit
-            placeholder="必填 —— 例：餐品异物，现场客诉"
+            placeholder="必填 —— 例：商品异物，现场客诉"
           />
         </el-form-item>
         <el-form-item label="原因类型">

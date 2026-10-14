@@ -143,7 +143,7 @@ export class MealAdminController {
     summary: 'D7 存为模板',
     description:
       '入参**不含** supplierId / costPrice：供应商由菜品反查、成本由菜品供价求和，避免手填口径漂移。' +
-      `\n\n菜品项须满足「一饭四菜」：${SET_MEAL_COMPOSITION_RULE}。`,
+      `\n\n菜品项须满足组合构成规则：${SET_MEAL_COMPOSITION_RULE}。`,
   })
   createTemplate(@Body() dto: CreateSetMealTemplateDto, @CurrentAdmin('sub') operatorId: number) {
     return this.mealAdmin.createTemplate(dto, operatorId);

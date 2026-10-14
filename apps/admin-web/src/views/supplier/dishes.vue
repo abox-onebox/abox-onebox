@@ -1,6 +1,6 @@
 <template>
   <div class="page-container">
-    <h2 class="page-container__title">我的菜品（商家端）</h2>
+    <h2 class="page-container__title">我的商品（商家端）</h2>
     <p class="page-container__meta">原型页 / 模块：P23 · M22-01 · 商家端自助</p>
 
     <el-alert type="warning" :closable="false" show-icon class="note">
@@ -12,15 +12,15 @@
     </el-alert>
 
     <el-card shadow="never" class="card">
-      <template #header><span class="card__title">现在要维护菜品，走哪里？</span></template>
+      <template #header><span class="card__title">现在要维护商品，走哪里？</span></template>
       <ol class="steps">
         <li>
-          平台端（运营）在「供应商与出餐 → <strong>菜品库</strong>」维护全部菜品 —— 新增 / 编辑 /
+          平台端（运营）在「供应商与发货 → <strong>商品库</strong>」维护全部商品 —— 新增 / 编辑 /
           上下架。
         </li>
         <li>
-          菜品一旦上架，就会出现在「套餐 → 新建套餐」的选菜列表里， 再经由「套餐模板 → 套餐分配 →
-          上架」进入用户端可见的明日菜单。
+          商品一旦上架，就会出现在「套餐 → 新建套餐」的选菜列表里， 再经由「组合模板 → 组合分配 →
+          上架」进入用户端可见的明日组合。
         </li>
         <li>
           供应商侧目前<strong>已实装</strong>的是

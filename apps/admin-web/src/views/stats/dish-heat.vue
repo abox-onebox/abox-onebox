@@ -1,14 +1,14 @@
 <template>
   <div v-loading="loading" class="page-container">
-    <h2 class="page-container__title">菜品热度</h2>
+    <h2 class="page-container__title">商品热度</h2>
     <p class="page-container__meta">
-      原型页 / 模块：P35 · M36-03 ｜ 统计基准：<strong>出餐日</strong> ｜ 口味评价为 P1-U2 增补（D69
-      · 同页第二 Tab）
+      原型页 / 模块：P35 · M36-03 ｜ 统计基准：<strong>发货日</strong> ｜ 满意度评价为 P1-U2
+      增补（D69 · 同页第二 Tab）
     </p>
 
     <el-tabs v-model="tab" class="tabs" @tab-change="onTabChange">
       <!-- Tab 1 · 菜品热度（D49 · 既有内容不动） -->
-      <el-tab-pane label="菜品热度" name="heat">
+      <el-tab-pane label="商品热度" name="heat">
         <el-card shadow="never" class="block">
           <div class="toolbar">
             <el-radio-group v-model="range" @change="reloadHeat">
@@ -25,20 +25,20 @@
           </div>
           <div v-if="data" class="summary">
             区间 {{ data.range.startDate }} ~ {{ data.range.endDate }} ｜ 共
-            <strong>{{ data.dishCount }}</strong> 个菜品 /
+            <strong>{{ data.dishCount }}</strong> 件商品 /
             <strong>{{ data.totalQuantity }}</strong> 份
           </div>
         </el-card>
 
         <el-card shadow="never" class="block">
           <template #header
-            ><span>菜品份数排行（TOP {{ data?.topN ?? topN }}）</span></template
+            ><span>商品件数排行（TOP {{ data?.topN ?? topN }}）</span></template
           >
           <el-table :data="data?.items ?? []" size="small">
             <el-table-column type="index" label="#" width="56" />
-            <el-table-column prop="dishName" label="菜品" min-width="140" />
+            <el-table-column prop="dishName" label="商品" min-width="140" />
             <el-table-column prop="supplierName" label="供应商" min-width="120" />
-            <el-table-column prop="quantity" label="份数" width="90" align="right" />
+            <el-table-column prop="quantity" label="件数" width="90" align="right" />
             <el-table-column prop="orderCount" label="订单数" width="90" align="right" />
             <el-table-column label="占比" min-width="200">
               <template #default="{ row }">
@@ -55,8 +55,8 @@
             <template #empty><el-empty description="区间内无订单" /></template>
           </el-table>
           <p class="note">
-            口径：一份套餐含多个菜品（一饭四菜），统计时<strong>每个菜品各计一次订单份数</strong> ——
-            即「这份饭里这个菜被送出了多少次」。占比分母是区间内<strong>全部</strong>菜品份数
+            口径：一份组合含多件商品（本日精选），统计时<strong>每个商品各计一次订单件数</strong> ——
+            即「这份饭里这件商品被送出了多少次」。占比分母是区间内<strong>全部</strong>商品件数
             {{ data?.totalQuantity ?? 0 }}，不是 TOP N 之和（按 TOP N
             之和算会让排行末位的占比凭空变大）。
           </p>
@@ -64,7 +64,7 @@
       </el-tab-pane>
 
       <!-- Tab 2 · 口味评价（D69 · P1-U2） -->
-      <el-tab-pane label="口味评价" name="rating">
+      <el-tab-pane label="满意度评价" name="rating">
         <el-card shadow="never" class="block">
           <div class="toolbar">
             <el-radio-group v-model="ratingRange" @change="reloadRating">
@@ -79,13 +79,13 @@
           <div v-if="rating" class="summary">
             区间 {{ rating.range.startDate }} ~ {{ rating.range.endDate }} ｜ 共
             <strong>{{ rating.totalRatings }}</strong> 条评价 /
-            <strong>{{ rating.dishCount }}</strong> 个菜品 ｜ 红线阈值：本月被投诉
+            <strong>{{ rating.dishCount }}</strong> 件商品 ｜ 红线阈值：本月被投诉
             <strong>{{ rating.redLineThreshold }}</strong> 次标红
           </div>
         </el-card>
 
         <el-card v-if="rating" shadow="never" class="block">
-          <template #header><span>本周最差三道菜（P1 验收口径）</span></template>
+          <template #header><span>本周最差三件商品（P1 验收口径）</span></template>
           <template v-if="rating.worstThree.length">
             <div class="worst">
               <div v-for="(w, i) in rating.worstThree" :key="w.dishId" class="worst__item">
@@ -103,10 +103,10 @@
         </el-card>
 
         <el-card shadow="never" class="block">
-          <template #header><span>菜品红黑榜（按投诉次数降序）</span></template>
+          <template #header><span>商品红黑榜（按投诉次数降序）</span></template>
           <el-table :data="rating?.items ?? []" size="small" :row-class-name="rowClass">
             <el-table-column type="index" label="#" width="56" />
-            <el-table-column prop="dishName" label="菜品" min-width="130" />
+            <el-table-column prop="dishName" label="商品" min-width="130" />
             <el-table-column prop="supplierName" label="供应商" min-width="110" />
             <el-table-column prop="ratedCount" label="被评" width="70" align="right" />
             <el-table-column prop="goodCount" label="好吃" width="70" align="right" />
@@ -134,10 +134,10 @@
             </template>
           </el-table>
           <p class="note">
-            口径：用户在订单详情页<strong>逐菜三键</strong>（好吃 / 一般 / 不好，可选填原因），
-            一次提交即定稿不可改；只有已送达 / 已完成的订单可评。菜品与供应商名取
+            口径：用户在订单详情页<strong>逐件三键</strong>（好吃 / 一般 / 不好，可选填原因），
+            一次提交即定稿不可改；只有已送达 / 已完成的订单可评。商品与供应商名取
             <strong>评价落库时的快照</strong>（此后改名不影响历史行）。区间与红线均按
-            <strong>出餐日</strong>计；「本月投诉」按区间终点锚所在自然月。
+            <strong>发货日</strong>计；「本月投诉」按区间终点锚所在自然月。
           </p>
         </el-card>
       </el-tab-pane>

@@ -105,7 +105,7 @@
 
         <view class="pair">
           <button class="btn btn--gold" hover-class="btn--hover" @tap="goShare">
-            <text class="abi abi-20">{{ I.share }}</text> 邀请同事拼饭
+            <text class="abi abi-20">{{ I.share }}</text> 邀请同事拼团
           </button>
           <button class="btn btn--ghost" hover-class="btn--hover" @tap="goCommission">
             升级规则

@@ -23,7 +23,7 @@
     <ab-empty-state
       v-else-if="!list.length"
       :text="activeStatus ? '暂无相关订单' : '还没有订单'"
-      :hint="activeStatus ? '换个筛选看看' : '回到首页挑一份今日套餐吧'"
+      :hint="activeStatus ? '换个筛选看看' : '回到首页挑一份今日组合吧'"
       illustration="receipt"
       :action-text="activeStatus ? '看全部订单' : '去首页'"
       @action="onEmptyAction"
@@ -44,7 +44,7 @@
           </view>
 
           <view class="order__bd">
-            <text class="order__dish">{{ item.mainDishName || '一饭四菜' }}</text>
+            <text class="order__dish">{{ item.mainDishName || '本日精选' }}</text>
             <text class="order__qty">共 {{ item.quantity }} 份</text>
           </view>
 
@@ -106,7 +106,7 @@ interface Tab {
 
 const tabs: Tab[] = [
   { label: '全部', value: '' },
-  { label: '待出餐', value: OrderStatus.PAID },
+  { label: '待发货', value: OrderStatus.PAID },
   { label: '已完成', value: OrderStatus.COMPLETED },
   { label: '已取消', value: OrderStatus.CANCELLED },
 ];

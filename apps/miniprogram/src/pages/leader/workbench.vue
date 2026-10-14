@@ -31,11 +31,11 @@
             {{ fenToYuanText(data.today.commissionFen) }}（{{ ratePercent }}%）
           </text>
           <button class="war__btn" hover-class="war__btn--hover" @tap="goPickup">
-            <text class="abi abi-20">{{ I.rice }}</text> 立即去取餐分发 ›
+            <text class="abi abi-20">{{ I.rice }}</text> 立即去取货分发 ›
           </button>
           <text class="war__foot"
             ><text class="abi abi-16">{{ I.info }}</text>
-            佣金按「实发份数」结算，取餐确认后才计佣</text
+            佣金按「实发件数」结算，取货确认后才计佣</text
           >
         </block>
 
@@ -84,7 +84,7 @@
 
         <view class="level__acts">
           <button class="level__btn" hover-class="level__btn--hover" @tap="goShare">
-            <text class="abi abi-20">{{ I.share }}</text> 邀请同事拼饭
+            <text class="abi abi-20">{{ I.share }}</text> 邀请同事拼团
           </button>
           <button
             class="level__btn level__btn--ghost"
@@ -114,7 +114,7 @@
       <!-- 取餐点（原型未画，但配送信息对团长有用 → 保留为轻量行） -->
       <view class="pickup">
         <text class="pickup__hd"
-          ><text class="abi abi-16">{{ I.truck }}</text> 取餐点 · {{ data.pickup.statusText }}</text
+          ><text class="abi abi-16">{{ I.truck }}</text> 取货点 · {{ data.pickup.statusText }}</text
         >
         <text class="pickup__point">{{ displayOr(data.pickup.point, '待分配办公楼 / 楼层') }}</text>
         <text class="pickup__meta">
@@ -240,7 +240,7 @@ const war = computed<{
   if (d.pickup.status === 'arrived') {
     return {
       kind: 'arrived',
-      head: '餐已送达办公楼下！',
+      head: '货已送达办公楼下！',
       mainIcon: 'clock',
       main: `${displayOr(d.pickup.buildingName, '本办公楼')} · ${d.pickup.expectAt}`,
       sub: '',
@@ -253,7 +253,7 @@ const war = computed<{
       head: `今日 ${formatMealDate(d.today.mealDate)}`,
       mainIcon: 'check',
       main:
-        `已取餐分发 ${d.today.completedQuantity}/${d.today.quantity}` +
+        `已取货分发 ${d.today.completedQuantity}/${d.today.quantity}` +
         (d.today.refundCount > 0 ? `（${d.today.refundCount} 单退款已跳过）` : ''),
       sub: '佣金已计，次日自动入账到余额',
     };
@@ -297,7 +297,7 @@ const entries = computed(
     },
     {
       icon: 'rice',
-      label: '今日取餐',
+      label: '今日取货',
       desc: pickup.value ? pendingDesc.value : (data.value?.pickup.statusText ?? '待确认分发'),
       path: '/pages/leader/pickup',
     },

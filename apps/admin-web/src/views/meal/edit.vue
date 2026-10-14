@@ -1,6 +1,6 @@
 <template>
   <div class="page-container">
-    <h2 class="page-container__title">新建套餐 / 存为模板</h2>
+    <h2 class="page-container__title">新建组合 / 存为模板</h2>
     <p class="page-container__meta">
       模块：M31-02 / M31-03 · 原型 P28 · 接口：D7 存为模板 · 落库
       <code>ab_set_meal</code> + <code>ab_set_meal_item</code>
@@ -12,11 +12,11 @@
         <el-card shadow="never" class="card">
           <template #header><span class="card__title">基本信息</span></template>
           <el-form label-width="96px" label-position="left">
-            <el-form-item label="套餐名" required>
+            <el-form-item label="组合名" required>
               <el-input
                 v-model="form.name"
                 maxlength="64"
-                placeholder="如：红烧肉套餐"
+                placeholder="如：红烧肉组合"
                 show-word-limit
               />
             </el-form-item>
@@ -35,7 +35,7 @@
               <el-input
                 v-model="form.oneLiner"
                 maxlength="128"
-                placeholder="招牌红烧肉 · 一饭四菜"
+                placeholder="招牌红烧肉 · 本日精选"
               />
             </el-form-item>
             <el-form-item label="封面图">
@@ -47,7 +47,7 @@
         <el-card shadow="never" class="card">
           <template #header>
             <div class="card__header">
-              <span class="card__title">一饭四菜 · 选菜</span>
+              <span class="card__title">本日精选 · 选品</span>
               <el-button link type="primary" @click="clearItems">清空</el-button>
             </div>
           </template>
@@ -57,12 +57,14 @@
               <strong>{{ compositionRule }}</strong>
             </p>
             <p>
-              同一道菜不能重复出现（「两道素菜」须是两道<strong>不同</strong>的素菜）；
-              四个菜位<strong>缺一不可</strong> —— 服务端会逐档校验，缺档直接打回。
+              同一件商品不能重复出现（四个必选档位各选一道、互不相同）； 四个档位<strong
+                >缺一不可</strong
+              >
+              —— 服务端会逐档校验，缺档直接打回。
             </p>
             <p>
-              <strong>供应商与成本无需手填</strong>：提交时由菜品反查
-              <code>ab_dish.supplier_id</code>、由菜品供价求和 —— 手填迟早会填出「记着 A 家的菜、
+              <strong>供应商与成本无需手填</strong>：提交时由商品反查
+              <code>ab_dish.supplier_id</code>、由商品供价求和 —— 手填迟早会填出「记着 A 家的菜、
               却算着 B 家的钱」，结算时才发现对不上。
             </p>
           </el-alert>
@@ -100,7 +102,7 @@
           </div>
 
           <!--
-            主食档：**只读说明**，不是可选项。
+            随附档（主食）：**只读说明**，不是可选项。
             ⭐ M5-15：此前这里也是一个可选的下拉框（「五个档位各选一道菜」），
                于是「一饭四菜」在界面上被理解成 5 项 —— 与种子数据（4 项、主食不建 item）
                互相矛盾。米饭由集散中心统一供米（¥2/份），建成菜品项会让同一份 ¥2
@@ -109,16 +111,16 @@
           <div v-if="stapleSlot" class="slot slot--staple">
             <div class="slot__label">
               <span class="slot__name">{{ stapleSlot.label }}</span>
-              <span class="slot__tag">随餐</span>
+              <span class="slot__tag">随附</span>
             </div>
             <div class="slot__staple-note">
-              由集散中心统一供米（¥2/份）· <strong>不建菜品项</strong> ——
-              因此不在此选择，也不计入本页的菜品成本合计。
+              由集散中心统一供应（¥2/件）· <strong>不建商品项</strong> ——
+              因此不在此选择，也不计入本页的商品成本合计。
             </div>
           </div>
 
           <div v-if="!dishOptions.length && !loadingDishes" class="muted empty">
-            菜品库为空或全部下架 —— 菜品由供应商在商家端上架（D23–D32）。
+            商品库为空或全部下架 —— 商品由供应商在商家端上架（D23–D32）。
           </div>
         </el-card>
       </el-col>
@@ -129,7 +131,7 @@
           <template #header><span class="card__title">成本预览</span></template>
 
           <el-descriptions :column="1" border size="small">
-            <el-descriptions-item label="已选菜位">
+            <el-descriptions-item label="已选档位">
               <strong :class="pickedCount === requiredSlots.length ? 'ok' : 'bad'">
                 {{ pickedCount }}/{{ requiredSlots.length }}</strong
               >
@@ -154,12 +156,12 @@
           <el-divider />
 
           <p class="side-note">
-            <strong>另存现有套餐</strong
-            >：若只想在某个已有套餐上改两道菜，用下面的「基于已有套餐另存」， 不必重新挑一遍。
+            <strong>另存现有组合</strong
+            >：若只想在某个已有组合上改两件商品，用下面的「基于已有组合另存」， 不必重新挑一遍。
           </p>
           <el-select
             v-model="form.sourceSetMealId"
-            placeholder="不基于任何套餐"
+            placeholder="不基于任何组合"
             filterable
             clearable
             style="width: 100%"
@@ -168,7 +170,7 @@
             <el-option
               v-for="t in templates"
               :key="t.id"
-              :label="`${t.name}（${t.dishCount} 菜）`"
+              :label="`${t.name}（${t.dishCount} 件）`"
               :value="t.id"
             />
           </el-select>
@@ -176,7 +178,7 @@
           <div class="actions">
             <el-button @click="reset">重置</el-button>
             <el-button type="primary" :loading="submitting" @click="submit">
-              保存为套餐模板
+              保存为组合模板
             </el-button>
           </div>
         </el-card>
@@ -190,7 +192,7 @@
  * 新建套餐 / 存为模板（D7）· 原型 P28
  *
  * ## 页面与接口的对应关系
- * 「一饭四菜」在本页 = **四个菜位（主荤/半荤/素菜/汤）各选一道**，
+ * 「本日精选」在本页 = **四个必选档位（主件/辅品/素品/附品）各选一道**，
  * 提交走 D7 `POST /admin/meal/templates`，落 `ab_set_meal` + `ab_set_meal_item`。
  *
  * ⭐ M5-15 修正：此前本页按「**五个**档位各选一道（含主食）」渲染，且只把 1 号档标成
@@ -260,7 +262,7 @@ const slots = ref<SlotOption[]>(
   })),
 );
 
-/** 可选的菜位（= 必选档位）。主食档不是菜位，单独渲染成只读说明。 */
+/** 可选的档位（= 必选档位）。随附档不是档位，单独渲染成只读说明。 */
 const requiredSlots = computed(() => slots.value.filter((s) => !s.isStaple));
 const stapleSlot = computed(() => slots.value.find((s) => s.isStaple) ?? null);
 
@@ -282,7 +284,7 @@ const grossFen = computed(() => {
   return priceFen - costTotalFen.value;
 });
 
-/** 同一道菜不允许占两个档位 —— D7 服务端会拒，前端先禁掉，别让运营白填 */
+/** 同一件商品不允许占两个档位 —— D7 服务端会拒，前端先禁掉，别让运营白填 */
 function isDishUsed(dishId: number, exceptSlot: number): boolean {
   return requiredSlots.value.some((s) => s.value !== exceptSlot && picked[s.value] === dishId);
 }
@@ -300,7 +302,7 @@ function reset(): void {
   clearItems();
 }
 
-/** 基于已有套餐另存：把它的菜品明细回填到各档位，便于「改两道菜再存」 */
+/** 基于已有套餐另存：把它的商品明细回填到各档位，便于「改两道菜再存」 */
 function onSourceChange(id: number | undefined): void {
   clearItems();
   if (!id) return;
@@ -308,7 +310,7 @@ function onSourceChange(id: number | undefined): void {
   if (!tpl) return;
   const selectable = new Set(requiredSlots.value.map((s) => s.value));
   for (const item of tpl.items) {
-    // 只回填**可选的菜位**：主食档不建 item，即便历史数据里有也不回填
+    // 只回填**可选的档位**：随附档不建 item，即便历史数据里有也不回填
     if (selectable.has(item.slot)) picked[item.slot] = item.dishId;
   }
   if (!form.name && tpl.name) form.name = `${tpl.name}（副本）`;
@@ -322,12 +324,12 @@ async function load(): Promise<void> {
       fetchMealTemplates({ page: 1, pageSize: 100 }),
     ]);
     dishes.value = opt.list;
-    // ⭐ 档位表与「一饭四菜」判据都取服务端下发的同一份（口径唯一，前端不硬编码）
+    // ⭐ 档位表与「本日精选」判据都取服务端下发的同一份（口径唯一，前端不硬编码）
     if (opt.slots?.length) slots.value = opt.slots;
     if (opt.composition?.rule) compositionRule.value = opt.composition.rule;
     templates.value = tpl.list;
   } catch (e) {
-    ElMessage.error(e instanceof ApiError ? e.message : '菜品 / 套餐数据加载失败');
+    ElMessage.error(e instanceof ApiError ? e.message : '商品 / 组合数据加载失败');
   } finally {
     loadingDishes.value = false;
   }
@@ -335,12 +337,12 @@ async function load(): Promise<void> {
 
 async function submit(): Promise<void> {
   if (!form.name.trim()) {
-    ElMessage.warning('请填写套餐名');
+    ElMessage.warning('请填写组合名');
     return;
   }
 
   // 「一饭四菜」提交前自检 —— 服务端也会拦，但先在这里说清缺哪一档，
-  // 免得运营提交一次才看到「缺半荤」。
+  // 免得运营提交一次才看到「缺某一档」。
   const empty = requiredSlots.value.filter((s) => picked[s.value] === undefined);
   if (empty.length) {
     ElMessage.warning(`还差 ${empty.map((s) => s.label).join(' / ')} —— ${compositionRule.value}`);
@@ -356,7 +358,7 @@ async function submit(): Promise<void> {
       coverUrl: form.coverUrl || undefined,
       items: pickedEntries.value.map((e) => ({ dishId: e.dishId, slot: e.slot })),
     });
-    ElMessage.success(`套餐 #${res.id}「${res.name}」已保存`);
+    ElMessage.success(`组合 #${res.id}「${res.name}」已保存`);
     await router.push('/meal/template');
   } catch (e) {
     ElMessage.error(e instanceof ApiError ? e.message : '保存失败');
@@ -436,7 +438,7 @@ onMounted(() => {
     font-size: $fs-caption;
   }
 
-  /** 主食档标记（「随餐」）—— 与「必选」刻意区分：它不是可选项 */
+  /** 随附档标记（「随餐」→「随附」）—— 与「必选」刻意区分：它不是可选项 */
   &__tag {
     padding: 0 4px;
     border: 1px solid $c-border;
@@ -445,7 +447,7 @@ onMounted(() => {
     font-size: $fs-caption;
   }
 
-  /** 主食档那一行：只读说明，没有下拉框，因此整行弱化显示 */
+  /** 随附档那一行：只读说明，没有下拉框，因此整行弱化显示 */
   &--staple {
     align-items: flex-start;
     padding-bottom: $space-2;

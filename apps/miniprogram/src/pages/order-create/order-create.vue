@@ -21,7 +21,7 @@
       <!-- 套餐清单卡 -->
       <view class="card">
         <view class="card__hd">
-          <text class="card__title">明日套餐（{{ quantity }} 份）</text>
+          <text class="card__title">明日组合（{{ quantity }} 件）</text>
           <view class="stepper">
             <view class="stepper__btn" :class="{ 'is-disabled': quantity <= 1 }" @tap="decQuantity">
               <text>−</text>
@@ -41,7 +41,7 @@
           <text class="menu-row__from">来自：{{ d.supplierName }}</text>
         </view>
         <view v-if="daily.rice" class="menu-row">
-          <text class="menu-row__name">米饭</text>
+          <text class="menu-row__name">随附（米饭）</text>
           <text class="menu-row__from">来自：集散中心</text>
         </view>
         <view class="menu-total">
@@ -66,7 +66,7 @@
         <!-- 取餐信息（M5-17：把「这一单的团长是谁 / 佣金归谁」写清楚） -->
         <view class="card">
           <text class="card__title">
-            <text class="abi abi-16">{{ I.pin }}</text> 取餐信息（{{
+            <text class="abi abi-16">{{ I.pin }}</text> 取货信息（{{
               daily.leader?.source === 'bound' ? '跟随团长' : '本楼团长'
             }}）
           </text>
@@ -81,7 +81,7 @@
             TA；如需更换，请通过该楼团长的邀请链接进入。
           </text>
           <!-- ⚠️ 时刻来自响应（`daily.deliverAt`）—— 曾写死 `11:30`（PR-02 收口） -->
-          <text class="pickup-row__hint">明天 {{ daily.deliverAt }} 由团长统一取餐并分发</text>
+          <text class="pickup-row__hint">明天 {{ daily.deliverAt }} 由团长统一取货并分发</text>
           <view class="pickup-row__tip">
             <text
               ><text class="abi abi-16">{{ I.info }}</text> 有问题？微信直接联系团长沟通</text
@@ -234,7 +234,7 @@ const canSubmit = computed(() => !!daily.value?.canOrder && !submitting.value);
 const cutoffRefundHint = computed(() => {
   const t = formatTime(daily.value?.cutoffAt);
   const when = t && t !== '--' ? `截单后（T-1 ${t}）` : '截单后';
-  return `${when}订单进入备餐流程，不支持自助退款，需由团长发起代退申请，平台审批后原路退回。`;
+  return `${when}订单进入备货流程，不支持自助退款，需由团长发起代退申请，平台审批后原路退回。`;
 });
 
 const orderedSummary = computed(() => {

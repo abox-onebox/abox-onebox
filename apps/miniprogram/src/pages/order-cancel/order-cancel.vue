@@ -12,7 +12,7 @@
                  `OrderDetailResult`（它的时刻字段是**送达** `pickup.expectAt`，没有截单时刻），
                  故退化为**不含时刻**的表述，而不是去抄一个写死的 24:00 ——
                  需要截单时刻的页面（首页横幅 / 下单页）一律从 `daily.cutoffAt` 取。 -->
-            截单后订单已进入备餐流程，需由团长发起代退申请，平台审批后原路退回。
+            截单后订单已进入备货流程，需由团长发起代退申请，平台审批后原路退回。
           </text>
         </view>
 
@@ -47,11 +47,11 @@
           </view>
           <view class="card">
             <view class="card__row">
-              <text class="card__label">出餐日</text>
+              <text class="card__label">发货日</text>
               <text class="card__value">{{ formatMealDate(detail.mealDate) }}</text>
             </view>
             <view class="card__row">
-              <text class="card__label">份数</text>
+              <text class="card__label">件数</text>
               <text class="card__value">× {{ detail.quantity }}</text>
             </view>
             <view class="card__row">

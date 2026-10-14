@@ -192,15 +192,15 @@
         <h3 class="sect">手动编排 · 截单提醒</h3>
         <el-card shadow="never" class="card">
           <p class="card__desc">
-            受众：{{ orch?.audienceLabel ?? '近 14 天下过单、且目标出餐日尚未下单的用户' }}
+            受众：{{ orch?.audienceLabel ?? '近 14 天下过单、且目标发货日尚未下单的用户' }}
           </p>
           <p class="card__meta">
-            真源《系统地图》F5「'忘了下单'和'忘了取餐'是最冤的两笔损失」——
-            本区就是「忘了下单」的执行口（「忘了取餐」由「团长送达通知」承载）。
+            真源《系统地图》F5「'忘了下单'和'忘了取货'是最冤的两笔损失」——
+            本区就是「忘了下单」的执行口（「忘了取货」由「团长送达通知」承载）。
             注意：自动跑批待微信订阅消息模板审核通过后接入，在此之前由运营在此手动触发。
           </p>
           <div class="form__row">
-            <span class="form__label">目标出餐日</span>
+            <span class="form__label">目标发货日</span>
             <el-date-picker
               v-model="orchDate"
               type="date"
@@ -417,7 +417,7 @@ async function runOrchestrate(dryRun: boolean): Promise<void> {
 
 /** 编排结果摘要（把「一条没发出去」与「发失败了」分开说） */
 function orchSummary(r: OrchestrateResult): string {
-  const parts = [`目标出餐日 ${r.mealDate}`, `受众 ${r.audienceSize} 人`];
+  const parts = [`目标发货日 ${r.mealDate}`, `受众 ${r.audienceSize} 人`];
   if (!r.dryRun) {
     parts.push(`投递 ${r.delivered} 条（成功 ${r.ok} / 失败 ${r.failed}）`);
   }

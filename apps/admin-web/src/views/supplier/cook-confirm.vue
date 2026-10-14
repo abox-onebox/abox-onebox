@@ -127,10 +127,10 @@ async function submit() {
         `已提交：新增确认 ${res.summary.confirmed} 项，跳过 ${res.summary.skipped} 项（此前已确认）`,
       );
     } else {
-      ElMessage.success(`出餐确认成功：${res.summary.confirmed} 项`);
+      ElMessage.success(`发货确认成功：${res.summary.confirmed} 项`);
     }
     if (res.summary.allDone) {
-      ElMessage.success('本日出餐任务已全部确认完成，集散中心可以开始打包。');
+      ElMessage.success('本日发货任务已全部确认完成，集散中心可以开始打包。');
     }
     await load();
   } catch (e) {
@@ -148,9 +148,9 @@ onMounted(load);
     <el-card shadow="never">
       <div class="head">
         <div>
-          <h3>出餐确认</h3>
+          <h3>发货确认</h3>
           <p class="sub">
-            {{ data?.supplier?.name ?? '—' }} · 出餐日 {{ date || '—' }} · 截止
+            {{ data?.supplier?.name ?? '—' }} · 发货日 {{ date || '—' }} · 截止
             {{ data?.deadline?.text ?? '—' }}
           </p>
         </div>
@@ -167,7 +167,7 @@ onMounted(load);
       show-icon
       :closable="false"
       style="margin-top: 12px"
-      :title="overdue ? '已过出餐确认截止时间' : '当前不能出餐（资质或证照问题）'"
+      :title="overdue ? '已过出餐确认截止时间' : '当前不能发货（资质或证照问题）'"
       :description="
         overdue
           ? '系统不再受理补确认。请联系运营线下处理 —— 时间戳必须诚实，对账与追责都以它为准。'
@@ -186,7 +186,7 @@ onMounted(load);
           全选待确认（{{ pendingRows.length }}）
         </el-checkbox>
         <div class="bar-right">
-          <span class="hint">实送份数留空 = 足额送达；短送请填实际值并备注原因</span>
+          <span class="hint">实送件数留空 = 足额送达；短送请填实际值并备注原因</span>
           <el-button
             type="primary"
             :loading="submitting"
@@ -207,10 +207,10 @@ onMounted(load);
             />
           </template>
         </el-table-column>
-        <el-table-column prop="dishName" label="菜品" min-width="120" />
+        <el-table-column prop="dishName" label="商品" min-width="120" />
         <el-table-column prop="centerName" label="集散中心" min-width="180" />
-        <el-table-column prop="planQuantity" label="应送份数" width="100" align="right" />
-        <el-table-column label="实送份数" width="130">
+        <el-table-column prop="planQuantity" label="应送件数" width="100" align="right" />
+        <el-table-column label="实送件数" width="130">
           <template #default="{ row }">
             <el-input-number
               v-model="actual[row.key]"
@@ -245,7 +245,7 @@ onMounted(load);
         </el-table-column>
       </el-table>
 
-      <el-empty v-if="!loading && !rows.length" description="当日没有需要确认的出餐明细" />
+      <el-empty v-if="!loading && !rows.length" description="当日没有需要确认的发货明细" />
     </el-card>
   </div>
 </template>
