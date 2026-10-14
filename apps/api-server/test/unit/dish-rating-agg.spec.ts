@@ -1,7 +1,7 @@
-import { aggregateDishRatings } from '../../src/modules/rating/rating.service';
+import { aggregateItemRatings } from '../../src/modules/rating/rating.service';
 
 /**
- * P1-U2 · aggregateDishRatings 纯函数口径锁定
+ * P1-U2 · aggregateItemRatings 纯函数口径锁定
  *
  * e2e-m3 §40 走 HTTP 路径；本文件钉**纯逻辑**的三条易碎口径：
  *   ① 月界：badCount（区间）与 monthBadCount（锚点月）必须**分道** ——
@@ -10,7 +10,7 @@ import { aggregateDishRatings } from '../../src/modules/rating/rating.service';
  *   ③ 边界含端点 + 锚点后一行都不算。
  */
 
-const row = (over: Partial<Parameters<typeof aggregateDishRatings>[0][number]>) => ({
+const row = (over: Partial<Parameters<typeof aggregateItemRatings>[0][number]>) => ({
   dishId: 1,
   dishName: '菜',
   supplierId: 1,
@@ -22,9 +22,9 @@ const row = (over: Partial<Parameters<typeof aggregateDishRatings>[0][number]>) 
   ...over,
 });
 
-describe('aggregateDishRatings（口味红黑榜聚合纯函数）', () => {
+describe('aggregateItemRatings（口味红黑榜聚合纯函数）', () => {
   it('空输入 → 空视图（空是合法业务态，不是错误）', () => {
-    const v = aggregateDishRatings([], '2026-01-04', '2026-01-10');
+    const v = aggregateItemRatings([], '2026-01-04', '2026-01-10');
     expect(v.totalRatings).toBe(0);
     expect(v.dishCount).toBe(0);
     expect(v.items).toEqual([]);
@@ -32,7 +32,7 @@ describe('aggregateDishRatings（口味红黑榜聚合纯函数）', () => {
   });
 
   it('⭐ 月界命门：上月差评进 badCount、不进 monthBadCount（两者分道）', () => {
-    const v = aggregateDishRatings(
+    const v = aggregateItemRatings(
       [
         row({ mealDate: '2026-01-05', rating: 3, id: 1 }),
         row({ mealDate: '2026-01-06', rating: 3, id: 2 }),
@@ -48,7 +48,7 @@ describe('aggregateDishRatings（口味红黑榜聚合纯函数）', () => {
   });
 
   it('红线：monthBadCount ≥ 3 才 redLine（计数分母与「最近原因」条数上限）', () => {
-    const v = aggregateDishRatings(
+    const v = aggregateItemRatings(
       [
         row({ mealDate: '2026-01-05', rating: 3, reason: 'r1', id: 1 }),
         row({ mealDate: '2026-01-06', rating: 3, reason: 'r2', id: 2 }),
@@ -66,7 +66,7 @@ describe('aggregateDishRatings（口味红黑榜聚合纯函数）', () => {
   });
 
   it('区间含端点：startDate/endDate 当日的行都算，锚点后的行一行不算', () => {
-    const v = aggregateDishRatings(
+    const v = aggregateItemRatings(
       [
         row({ mealDate: '2026-01-04', rating: 1, id: 1 }), // = startDate（含）
         row({ mealDate: '2026-01-10', rating: 1, id: 2 }), // = endDate（含）
@@ -82,7 +82,7 @@ describe('aggregateDishRatings（口味红黑榜聚合纯函数）', () => {
   });
 
   it('黑榜序：投诉次数降序 → 同投诉次数下样本越少越扎眼（差评率高者前）→ dishId 稳定序', () => {
-    const v = aggregateDishRatings(
+    const v = aggregateItemRatings(
       [
         // 甲：2 投诉 / 10 评（差评率 0.2）
         ...Array.from({ length: 10 }, (_, i) =>
@@ -104,7 +104,7 @@ describe('aggregateDishRatings（口味红黑榜聚合纯函数）', () => {
   });
 
   it('worstThree 只收有投诉的菜（无差评的菜不进「最差」名单）', () => {
-    const v = aggregateDishRatings(
+    const v = aggregateItemRatings(
       [row({ dishId: 1, rating: 1, id: 1 }), row({ dishId: 2, rating: 3, id: 2 })],
       '2026-01-04',
       '2026-01-10',

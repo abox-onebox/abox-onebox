@@ -12,7 +12,7 @@
     </el-alert>
 
     <el-card shadow="never" class="card">
-      <template #header><span class="card__title">现在要改资料 / 报菜品，走哪里？</span></template>
+      <template #header><span class="card__title">现在要改资料 / 报商品，走哪里？</span></template>
       <ol class="steps">
         <li>
           <strong>供应商资料</strong>（名称 / 联系人 / 结算账户 / 资质证照）： 运营在「供应商与出餐
@@ -20,8 +20,8 @@
           这也是<strong>资质合规的留痕点</strong>（谁在什么时候补了什么证）。
         </li>
         <li>
-          <strong>菜品上架</strong>：一期的菜品由运营在「供应商与出餐 → 菜品库」代维护，
-          见同组菜单「我的菜品」页的说明。
+          <strong>商品上架</strong>：一期的商品由运营在「供应商与出餐 → 商品库」代维护，
+          见同组菜单「我的商品」页的说明。
         </li>
         <li>
           供应商侧目前<strong>已实装</strong>的是
@@ -35,12 +35,12 @@
       <template #header><span class="card__title">这个缺口是怎么登记的</span></template>
       <p class="para">
         本页对应 <b>M22-02 上架申请</b> 与 <b>M24 商家资料</b>的<strong>商家端</strong>部分。
-        两者都需要「提交 → 平台审核」的状态机（否则供应商可以自己把菜品挂上架、 自己改结算账户 ——
+        两者都需要「提交 → 平台审核」的状态机（否则供应商可以自己把商品挂上架、 自己改结算账户 ——
         前者影响成本口径，后者是资金风险）。
       </p>
       <p class="para">
         <AbIcon name="warn-tri" size="16" />
-        已登记在《ABox一盒悬而未决登记册》，与「我的菜品」同批。
+        已登记在《ABox一盒悬而未决登记册》，与「我的商品」同批。
         <strong>一期由平台代维护，功能上不缺东西。</strong>
       </p>
     </el-card>
@@ -51,7 +51,7 @@
 /**
  * 商家端 · 上架申请 / 商家资料（P24 / P26 · M22-02 · M24）—— **未实装说明页**
  *
- * ⚠️ 与「我的菜品」同一处理：把无信息的占位页换成**如实说明**
+ * ⚠️ 与「我的商品」同一处理：把无信息的占位页换成**如实说明**
  *    （一期口径 / 现在走哪里 / 缺口登记在哪）。
  *
  * ⚠️ 本页同时是「**供应商侧不能自助**」这条口径的说明位：
@@ -62,7 +62,7 @@
  * ⚠️ **指路文案是本页唯一的产出，故必须指向「现值」**（外部测试报告 PR-09 · 2026-09-21 收口）：
  *    ① 分组名一律取 `apps/admin-web/src/constants/index.ts` 的 `ADMIN_NAV`
  *      —— M5-16 已由 6 组重整为 **8 组，其中没有名为「业务」的组**，
- *      供应商相关两页现挂在「**供应商与出餐**」组（`/supplier/list` 供应商管理 · `/supplier/dish-library` 菜品库）；
+ *      供应商相关两页现挂在「**供应商与出餐**」组（`/supplier/list` 供应商管理 · `/supplier/dish-library` 商品库）；
  *    ② 已剔除**不再由运营维护**的字段：`ab_supplier.type`（M4-0 起 D27 整条路由下线、
  *      `form.vue` 的 `typeOptions`/`typeLocked` 一并删除，该列仅作历史字段保留）。
  *    指到一个不存在的分组 = 把「缺口已登记」变成「**按提示也走不通**」——

@@ -7,7 +7,7 @@ import { fetchPackingTasks, type PackingCenter, type PackingData } from '@/api/p
 /**
  * 加工场所打包任务（运营后台 · 原供应商端 S3 · 原型 P22 的下游）
  *
- * 闸门语义：该场所当日**所有**菜品均已确认送达，才 `ready=true`。
+ * 闸门语义：该场所当日**所有**商品均已确认送达，才 `ready=true`。
  * 未到齐时列出 `blockers` —— 未到齐就开包，会包出缺菜的餐。
  *
  * ⚠️ 一次返回**全部启用中的加工场所**（含各场所的供应商到位情况）。
@@ -102,7 +102,7 @@ onMounted(load);
           show-icon
           :closable="false"
           style="margin-top: 8px"
-          title="以下菜品尚未确认送达，请先催供应商"
+          title="以下商品尚未确认送达，请先催供应商"
           :description="
             c.blockers
               .map((b) => `${b.supplierName}·${b.dishName}（${b.planQuantity} 份）`)
@@ -132,7 +132,7 @@ onMounted(load);
           <el-col :span="6">
             <el-card shadow="never" class="kpi">
               <div class="kpi-v">{{ c.summary.confirmedDishCount }}/{{ c.summary.dishCount }}</div>
-              <div class="kpi-l">到位菜品</div>
+              <div class="kpi-l">到位商品</div>
             </el-card>
           </el-col>
         </el-row>
@@ -158,10 +158,10 @@ onMounted(load);
           </el-table-column>
         </el-table>
 
-        <h4 style="margin: 16px 0 8px">菜品到位情况</h4>
+        <h4 style="margin: 16px 0 8px">商品到位情况</h4>
         <el-table :data="c.dishes" size="small" border>
           <el-table-column prop="supplierName" label="供应商" min-width="120" />
-          <el-table-column prop="dishName" label="菜品" min-width="120" />
+          <el-table-column prop="dishName" label="商品" min-width="120" />
           <el-table-column label="采购单价" width="110" align="right">
             <template #default="{ row }">{{ money(row.unitPriceFen) }}</template>
           </el-table-column>

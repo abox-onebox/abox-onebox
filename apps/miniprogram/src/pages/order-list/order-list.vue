@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- ⭐ 版式基准 = prototype/index.html renderP6（v4.10.0）：
-         分段筛选条（带计数）→ 订单卡（日期 + 状态胶囊 / 菜品摘要 / 金额）→ 空态 -->
+         分段筛选条（带计数）→ 订单卡（日期 + 状态胶囊 / 商品摘要 / 金额）→ 空态 -->
 
     <!-- 分段筛选条 -->
     <view class="seg">

@@ -98,7 +98,7 @@ export interface StatsBuildingRankResult {
   totalGmvFen: number;
 }
 
-/** D49 菜品热度行 */
+/** D49 商品热度行 */
 export interface StatsDishHeatRow {
   dishId: number;
   dishName: string;
@@ -113,7 +113,7 @@ export interface StatsDishHeatResult {
   range: StatsRangeView;
   topN: number;
   items: StatsDishHeatRow[];
-  /** 区间内全部菜品份数（占比分母） */
+  /** 区间内全部商品份数（占比分母） */
   totalQuantity: number;
   dishCount: number;
 }
@@ -155,8 +155,8 @@ export const fetchBuildingRank = (params: StatsQuery = {}) =>
 export const fetchDishHeat = (params: StatsQuery & { topN?: number } = {}) =>
   http.get<StatsDishHeatResult>('/admin/stats/dish-heat', params);
 
-/** D69 口味红黑榜行（P1-U2 · 菜品热度页第二 Tab） */
-export interface StatsDishRatingRow {
+/** D69 口味红黑榜行（P1-U2 · 商品热度页第二 Tab） */
+export interface StatsItemRatingRow {
   dishId: number;
   dishName: string;
   supplierId: number;
@@ -174,7 +174,7 @@ export interface StatsDishRatingRow {
   recentReasons: string[];
 }
 
-export interface StatsDishRatingResult {
+export interface StatsItemRatingResult {
   range: StatsRangeView;
   /** 红线阈值（服务端下发，端上不写死） */
   redLineThreshold: number;
@@ -182,11 +182,11 @@ export interface StatsDishRatingResult {
   dishCount: number;
   /** 本周最差三道菜（P1 验收判据的直接答案） */
   worstThree: Array<{ dishId: number; dishName: string; badCount: number }>;
-  items: StatsDishRatingRow[];
+  items: StatsItemRatingRow[];
 }
 
-export const fetchDishRating = (params: StatsQuery & { date?: string } = {}) =>
-  http.get<StatsDishRatingResult>('/admin/stats/dish-rating', params);
+export const fetchItemRating = (params: StatsQuery & { date?: string } = {}) =>
+  http.get<StatsItemRatingResult>('/admin/stats/dish-rating', params);
 
 export const fetchRetention = (params: StatsQuery = {}) =>
   http.get<StatsRetentionResult>('/admin/stats/retention', params);

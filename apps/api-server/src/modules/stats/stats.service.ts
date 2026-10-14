@@ -23,7 +23,7 @@ import {
   StatsRange,
   resolveStatsRange,
 } from './stats.constants';
-import type { DishHeatQueryDto, StatsQueryDto } from './dto/stats.dto';
+import type { ItemHeatQueryDto, StatsQueryDto } from './dto/stats.dto';
 
 /** 统计区间（出参回显 · 保证「同档 = 同区间」，端上不再自己算日期） */
 export interface StatsRangeView {
@@ -509,7 +509,7 @@ export class StatsService {
    * D49 · 商品热度
    * ------------------------------------------------------------------ */
 
-  async dishHeat(q: DishHeatQueryDto): Promise<StatsDishHeatView> {
+  async itemHeat(q: ItemHeatQueryDto): Promise<StatsDishHeatView> {
     const range = this.resolveRange(q.range, q.date);
     const topN = Math.min(q.topN ?? DISH_HEAT_DEFAULT_TOP_N, DISH_HEAT_MAX_TOP_N);
     const validOrders = await this.loadValidOrdersInRange(range);

@@ -77,7 +77,7 @@ export const routes: RouteRecordRaw[] = [
       //
       // ⚠️ 为什么必须分开：`/supplier/dishes`、`/supplier/edit` 两个 key 同时在
       //    `admin-role.ts` 的 `ADMIN_MENU_KEYS` 与 `SUPPLIER_MENU_KEYS` 里（脚手架遗留）。
-      //    若平台页占住这两个 path，商家点「我的菜品」会进入一个调 `/admin/dishes` 的页面，
+      //    若平台页占住这两个 path，商家点「我的商品」会进入一个调 `/admin/dishes` 的页面，
       //    拿 10003（`JwtAuthGuard` 按 `typ` 拒绝）——页面直接坏掉。
       //    故平台端新增页一律另起非冲突 path；商家端两个 path 保留给 P23/P24/P26。
 

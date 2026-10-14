@@ -69,7 +69,7 @@ export const SUPPLIER_AUDIT_STATUS_LABEL: Record<SupplierAuditStatus, string> = 
  * 资质有效期状态（**派生值，不落库**）
  *
  * 由 `license_expire_at` 与「今天（北京时间）」实时算出，三个档位对应三套界面动作：
- * `normal` 不必提示 / `expiring` 提醒补办 / `expired` 必须下架关联菜品。
+ * `normal` 不必提示 / `expiring` 提醒补办 / `expired` 必须下架关联商品。
  * 落库会立刻产生「字段说没过期、日期说过期了」的双真相。
  */
 export enum LicenseState {
@@ -147,7 +147,7 @@ export const SUPPLIER_STATUS_LABEL: Record<number, string> = {
 };
 
 /**
- * 菜品档位（`ab_dish.category`）· **品类轴的唯一真源**
+ * 商品档位（`ab_dish.category`）· **品类轴的唯一真源**
  *
  * ⚠️ 本项目有**两条轴**，各有各的中文，**别互相映射、也别合并**：
  *   · **品类轴（本枚举 · 字符串）**：`ab_dish.category`，回答「**这道菜本身是什么**」——
@@ -159,7 +159,7 @@ export const SUPPLIER_STATUS_LABEL: Record<number, string> = {
  *   两轴**概念相邻、字段 / 枚举仍分离**（category 取值 main/half/veg/soup/staple 与 slot 1–5 仍是两个独立字段）——
  *   **展示词现已对齐为同一套**（主件 / 辅品 / 素品 / 附品 / 随附），这是有意的口径统一，不是合并两轴；
  *   不要因为「中文相同」就误判为字段合并、把 category 直接塞进 slot。
- *   把两者合并会立刻产生「菜品档位 ↔ 套餐槽位」互相污染的连锁改造，故保持分离，
+ *   把两者合并会立刻产生「商品档位 ↔ 套餐槽位」互相污染的连锁改造，故保持分离，
  *   并在《接口规范》§6.4 的扩展接口处登记该差异。
  *
  * 📌 历史（2026-09-21 清理）：本仓库曾另有一个 `DishSlot` 枚举

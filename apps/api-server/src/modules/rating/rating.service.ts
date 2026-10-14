@@ -3,8 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 
 import type {
-  DishRatingRow,
-  DishRatingView,
+  ItemRatingRow,
+  ItemRatingView,
   OrderRatingView,
   RatingSubmitResult,
 } from '@abox/shared-types';
@@ -16,7 +16,7 @@ import { ItemRating, Order } from '../../database/entities/order.entity';
 import { SetMealItem } from '../../database/entities/meal.entity';
 import { Item, Supplier } from '../../database/entities/supplier.entity';
 import { resolveStatsRange } from '../stats/stats.constants';
-import type { DishRatingQueryDto, RatingSubmitReqDto } from './dto/rating.dto';
+import type { ItemRatingQueryDto, RatingSubmitReqDto } from './dto/rating.dto';
 import {
   RATING_ALLOWED_STATUSES,
   RATING_RECENT_REASONS_MAX,
@@ -62,11 +62,11 @@ export interface RatingAggRow {
  * @param startDate  区间出餐日起（含）
  * @param endDate    区间出餐日止（含）；「本月投诉」= endDate 所在自然月
  */
-export function aggregateDishRatings(
+export function aggregateItemRatings(
   rows: RatingAggRow[],
   startDate: string,
   endDate: string,
-): Omit<DishRatingView, 'range' | 'redLineThreshold'> {
+): Omit<ItemRatingView, 'range' | 'redLineThreshold'> {
   const monthPrefix = endDate.slice(0, 7); // YYYY-MM（锚点月）
 
   type Acc = {
@@ -118,7 +118,7 @@ export function aggregateDishRatings(
     }
   }
 
-  const items: DishRatingRow[] = [...acc.values()]
+  const items: ItemRatingRow[] = [...acc.values()]
     .map((v) => ({
       dishId: v.dishId,
       dishName: v.dishName,
@@ -289,7 +289,7 @@ export class RatingService {
 
   /* -------------------- D69 · 口味红黑榜（后台） -------------------- */
 
-  async dishRating(q: DishRatingQueryDto): Promise<DishRatingView> {
+  async itemRating(q: ItemRatingQueryDto): Promise<ItemRatingView> {
     const range = resolveStatsRange(q.range, q.date);
 
     // 只取需要的列；聚合在纯函数里完成（跨 mysql/sqlite 逐分一致 · 同 D49 选型理由）
@@ -306,7 +306,7 @@ export class RatingService {
       }),
     );
 
-    const agg = aggregateDishRatings(rows, range.startDate, range.endDate);
+    const agg = aggregateItemRatings(rows, range.startDate, range.endDate);
 
     return {
       range,

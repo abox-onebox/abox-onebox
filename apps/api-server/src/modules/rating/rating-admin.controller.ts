@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { Roles } from '../../common/decorators/auth.decorator';
 import { AdminGuard } from '../../common/guards/admin.guard';
-import { DishRatingQueryDto } from './dto/rating.dto';
+import { ItemRatingQueryDto } from './dto/rating.dto';
 import { RatingService } from './rating.service';
 
 /**
@@ -30,7 +30,7 @@ export class RatingAdminController {
       '最近差评原因；`worstThree` 直接回答 P1 验收判据「本周最差的三道菜」。' +
       '区间与 D47–D50 同源（today/7d/30d · 出餐日 · date 为终点锚）。',
   })
-  dishRating(@Query() q: DishRatingQueryDto) {
-    return this.ratingService.dishRating(q);
+  itemRating(@Query() q: ItemRatingQueryDto) {
+    return this.ratingService.itemRating(q);
   }
 }

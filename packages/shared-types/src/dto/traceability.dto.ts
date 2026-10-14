@@ -17,7 +17,7 @@
  * 推荐尚未合作的主体背书。
  *
  * ## 与原型 P38 的对应
- * 原型把 5 张卡片画成「4 家菜品供应商 + 1 个集散中心」—— 本契约**照此结构**：
+ * 原型把 5 张卡片画成「4 家商品供应商 + 1 个集散中心」—— 本契约**照此结构**：
  * `dishes[]` 是那 4 张（`ab_set_meal_item` 一行一菜一供应商），
  * `distributionCenter` 是第 5 张（主食 / 打包）。
  */
@@ -97,7 +97,7 @@ export interface TraceabilitySupplierView {
 }
 
 /** 一道菜的出品溯源 */
-export interface TraceabilityDishView {
+export interface TraceabilityItemView {
   dishName: string;
   category: string | null;
   imageUrl: string | null;
@@ -115,7 +115,7 @@ export interface TraceabilityTodayResult {
   mealDate: string;
   setName: string | null;
   /** 本餐出品方逐菜列出（一行一菜一供应商） */
-  dishes: TraceabilityDishView[];
+  dishes: TraceabilityItemView[];
   /** 集散中心；当日无分配时为 null */
   distributionCenter: TraceabilityCenterView | null;
   /** 页面顶部溯源说明文案（服务端下发，端上不拼） */

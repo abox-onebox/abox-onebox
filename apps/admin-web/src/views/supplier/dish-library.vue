@@ -9,13 +9,13 @@
     </p>
 
     <!--
-      ⚠️ 路径隔离：本页是**平台端**（运营看全部供应商的菜品与供价），落在
+      ⚠️ 路径隔离：本页是**平台端**（运营看全部供应商的商品与供价），落在
         `/supplier/dish-library`。
         不要挪回 `/supplier/dishes` —— 那是《目录结构 v2.0》§10.2 分配给**商家端**
-        P23「我的菜品」（M22-01）的路径（`views/supplier/dishes.vue`），
+        P23「我的商品」（M22-01）的路径（`views/supplier/dishes.vue`），
         且在 `admin-role.ts` 的 `SUPPLIER_MENU_KEYS` 里注册给 role=supplier。
         两角色共用同一 admin-web，路径一撞就会出现「商家点进平台页、调 /admin/* 接口拿 10003」。
-        商家端「我的菜品」将来走 `/supplier/dishes` + `/supplier/*` 接口（主体是商家自己）。
+        商家端「我的商品」将来走 `/supplier/dishes` + `/supplier/*` 接口（主体是商家自己）。
     -->
 
     <!-- 供价是本批次最容易被误读的一个数：它是成本，不是售价 -->
@@ -350,7 +350,7 @@ import {
   createDish,
   fetchAdminDishes,
   updateDish,
-  type DishRow,
+  type ItemRow,
   type Option,
 } from '@/api/supplier';
 import { ApiError } from '@/api/request';
@@ -360,7 +360,7 @@ const route = useRoute();
 
 const loading = ref(false);
 const submitting = ref(false);
-const rows = ref<DishRow[]>([]);
+const rows = ref<ItemRow[]>([]);
 const total = ref(0);
 const selectedIds = ref<number[]>([]);
 
@@ -386,7 +386,7 @@ const notes = reactive<Record<string, string>>({});
 
 const canManage = computed(() => page.actions.canManage);
 
-/** 入口来自「供应商名录 → 菜品库」时带 supplierId，直接落到筛选上 */
+/** 入口来自「供应商名录 → 商品库」时带 supplierId，直接落到筛选上 */
 const query = reactive({
   supplierId: route.query.supplierId ? Number(route.query.supplierId) : undefined,
   category: undefined as string | undefined,
@@ -414,11 +414,11 @@ const batchVisible = ref(false);
 const batchForm = reactive({ status: 0, reason: '' });
 
 /** el-table 插槽的 row 是宽松 DefaultRow，入口断言一次，避免 `as` 扩散到模板 */
-function asRow(raw: unknown): DishRow {
-  return raw as DishRow;
+function asRow(raw: unknown): ItemRow {
+  return raw as ItemRow;
 }
 
-/** 归属供应商的菜品才可批量操作 —— 未挂供应商的行没有成本主体，改动无意义 */
+/** 归属供应商的商品才可批量操作 —— 未挂供应商的行没有成本主体，改动无意义 */
 function isSelectable(raw: unknown): boolean {
   return Number(asRow(raw).supplierId) > 0;
 }
@@ -448,7 +448,7 @@ async function load(): Promise<void> {
     Object.assign(notes, res.notes ?? {});
     selectedIds.value = [];
   } catch (e) {
-    ElMessage.error(e instanceof ApiError ? e.message : '加载菜品库失败');
+    ElMessage.error(e instanceof ApiError ? e.message : '加载商品库失败');
   } finally {
     loading.value = false;
   }
@@ -471,7 +471,7 @@ function openCreate(): void {
   editVisible.value = true;
 }
 
-function openEdit(row: DishRow): void {
+function openEdit(row: ItemRow): void {
   editForm.id = row.id;
   editForm.supplierId = row.supplierId;
   editForm.name = row.name;
@@ -566,7 +566,7 @@ async function submitBatch(): Promise<void> {
   }
 }
 
-async function toggleStatus(row: DishRow): Promise<void> {
+async function toggleStatus(row: ItemRow): Promise<void> {
   const toOff = row.status === 1;
   try {
     await updateDish(row.id, { status: toOff ? 0 : 1 });

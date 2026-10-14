@@ -19,7 +19,7 @@
     <el-alert v-if="summary.expiredCount > 0" type="warning" :closable="false" class="note">
       <template #title>
         <b>资质过期联动</b>：{{ summary.expiredCount }} 家供应商的食品经营许可证已过期 ——
-        系统在保存证照有效期时会<b>自动下架其关联菜品</b>（123 号令：证照过期不得出餐）。
+        系统在保存证照有效期时会<b>自动下架其关联商品</b>（123 号令：证照过期不得出餐）。
         点上方筛选「已过期」优先处理。
       </template>
     </el-alert>
@@ -43,7 +43,7 @@
       <div class="stats__item">
         <span class="stats__label">资质已过期</span>
         <span class="stats__value stats__value--danger">{{ summary.expiredCount }}</span>
-        <span class="stats__sub">已联动下架关联菜品</span>
+        <span class="stats__sub">已联动下架关联商品</span>
       </div>
       <div class="stats__item">
         <span class="stats__label">待审核</span>
@@ -111,7 +111,7 @@
       <div class="toolbar__right">
         <el-button :loading="loading" @click="reload(1)">查询</el-button>
         <el-button @click="goCenters">集散中心配置</el-button>
-        <el-button @click="goDishes">菜品库</el-button>
+        <el-button @click="goDishes">商品库</el-button>
         <el-tooltip
           :disabled="canManage"
           content="仅管理员 / 超级管理员可维护供应商（决定钱付给谁）"
@@ -150,7 +150,7 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="菜品数" width="90" align="center">
+      <el-table-column label="商品数" width="90" align="center">
         <template #default="{ row }">
           <span>{{ asRow(row).dishCount }}</span>
         </template>
@@ -457,7 +457,7 @@ async function submitAudit(): Promise<void> {
 /**
  * 启停走 D25（供应商模块没有单独的停用接口）。
  *
- * ⚠️ 停用**不会**顺带下架菜品：菜品上下架在菜品库单独管（那是供应能力的表达，
+ * ⚠️ 停用**不会**顺带下架商品：商品上下架在商品库单独管（那是供应能力的表达，
  *    这与「证照过期强制下架」不同 —— 后者是合规硬性的，前者是经营判断）。
  */
 async function toggleStatus(row: SupplierRow): Promise<void> {

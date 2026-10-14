@@ -31,7 +31,7 @@ export interface PackingCenter {
   centerAddress: string;
   contactName: string | null;
   contactPhone: string | null;
-  /** 该场所当日所有菜品均已确认送达 —— 未到齐不要开包 */
+  /** 该场所当日所有商品均已确认送达 —— 未到齐不要开包 */
   ready: boolean;
   blockers: Array<{ supplierName: string; dishName: string; planQuantity: number; status: string }>;
   dishes: PackingDish[];

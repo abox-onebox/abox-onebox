@@ -77,7 +77,7 @@
             inactive-text="已停用"
           />
           <div class="hint">
-            本页是供应商启停的<b>唯一入口</b>。停用不会自动下架菜品（菜品上下架在菜品库单独管）；
+            本页是供应商启停的<b>唯一入口</b>。停用不会自动下架商品（商品上下架在商品库单独管）；
             但资质未通过或证照过期时，即便启用也不能出餐。
           </div>
         </el-form-item>
@@ -118,7 +118,7 @@
           />
           <div class="hint">
             <AbIcon name="warn-tri" size="16" />
-            保存为<b>过去日期</b>时，系统会<b>同时下架该供应商的全部在架菜品</b>并回报数量 （123
+            保存为<b>过去日期</b>时，系统会<b>同时下架该供应商的全部在架商品</b>并回报数量 （123
             号令：证照过期不得出餐）。通过资质审核也要求此字段未过期。
           </div>
         </el-form-item>
@@ -186,7 +186,7 @@
         <div class="section__title">关联信息（只读）</div>
         <div class="readonly-grid">
           <div class="ro-item">
-            <span class="ro-label">菜品数</span>
+            <span class="ro-label">商品数</span>
             <span class="ro-value">{{ detail.supplier.dishCount }}</span>
           </div>
           <div class="ro-item">
@@ -361,10 +361,10 @@ async function submit(): Promise<void> {
         payeeType: form.payeeType,
         status: form.status,
       });
-      // 副作用必须显式告知：否则运营会以为菜品「自己消失了」
+      // 副作用必须显式告知：否则运营会以为商品「自己消失了」
       if (res.unpublishedDishCount > 0) {
         ElMessage.warning(
-          `已保存。因证照有效期已过期，联动下架了 ${res.unpublishedDishCount} 道在架菜品`,
+          `已保存。因证照有效期已过期，联动下架了 ${res.unpublishedDishCount} 道在架商品`,
         );
       } else {
         ElMessage.success('已保存');

@@ -198,7 +198,7 @@
  */
 import { computed, ref } from 'vue';
 import { onShow } from '@dcloudio/uni-app';
-import type { HomeDailyResult, MealDishView } from '@abox/shared-types';
+import type { HomeDailyResult, MealItemView } from '@abox/shared-types';
 import { LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
 
 import { fetchDaily } from '@/api/meal';
@@ -401,7 +401,7 @@ function goWorkbench(): void {
  *
  * `supplierId` 缺失时（异常数据）静默不跳 —— 此时 `›` 也不会渲染，用户看不出可点。
  */
-function openSupplier(d: MealDishView): void {
+function openSupplier(d: MealItemView): void {
   if (!d.supplierId) return;
   navigateTo(buildUrl('/pages/traceability/traceability', { supplierId: d.supplierId }));
 }

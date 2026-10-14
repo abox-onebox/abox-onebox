@@ -260,7 +260,7 @@ export function fetchAdminOrders(params: AdminOrdersQuery): Promise<AdminOrdersP
   return http.get<AdminOrdersPage>('/admin/orders', params);
 }
 
-/** D9 订单详情（含菜品、支付、退款、佣金、时间线、操作日志、可操作性判据） */
+/** D9 订单详情（含商品、支付、退款、佣金、时间线、操作日志、可操作性判据） */
 export function fetchAdminOrderDetail(orderNo: string): Promise<AdminOrderDetail> {
   return http.get<AdminOrderDetail>(`/admin/orders/${orderNo}`);
 }

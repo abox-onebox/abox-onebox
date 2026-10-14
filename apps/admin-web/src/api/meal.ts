@@ -107,7 +107,7 @@ export interface CopyAssignmentsResult {
   note: string;
 }
 
-/** D6/D7 套餐模板里的菜品项 */
+/** D6/D7 套餐模板里的商品项 */
 export interface SetMealItemRow {
   dishId: number;
   slot: number;
@@ -167,8 +167,8 @@ export interface UpdateTemplatePayload {
   items?: Array<{ dishId: number; slot: number }>;
 }
 
-/** 菜品选择器（D7 编排页候选菜品） */
-export interface DishOption {
+/** 商品选择器（D7 编排页候选商品） */
+export interface ItemOption {
   id: number;
   name: string;
   category: string | null;
@@ -180,19 +180,19 @@ export interface DishOption {
   status: number;
 }
 
-export interface DishOptions {
+export interface ItemOptions {
   /** 档位选项由服务端给出 —— 端上不维护第二份「1=主荤…」映射 */
   slots: Array<{
     value: number;
     label: string;
     /** 属于「一饭四菜」的四个菜位（必选） */
     required: boolean;
-    /** 主食档 —— **不作为菜品项**，界面只做只读说明 */
+    /** 主食档 —— **不作为商品项**，界面只做只读说明 */
     isStaple: boolean;
   }>;
   /** 「一饭四菜」构成判据（提示文案与提交前自检共用同一句） */
   composition: { requiredSlots: number[]; stapleSlot: number; rule: string };
-  list: DishOption[];
+  list: ItemOption[];
   total: number;
 }
 
@@ -243,7 +243,7 @@ export function fetchMealTemplates(
   return http.get<PageResult<SetMealTemplateRow>>('/admin/meal/templates', params);
 }
 
-/** D7 存为模板（入参不含 supplierId / costPrice —— 由菜品反查与求和） */
+/** D7 存为模板（入参不含 supplierId / costPrice —— 由商品反查与求和） */
 export function createMealTemplate(payload: CreateTemplatePayload): Promise<SetMealTemplateRow> {
   return http.post<SetMealTemplateRow>('/admin/meal/templates', payload);
 }
@@ -262,9 +262,9 @@ export function updateMealTemplate(
   return http.put<SetMealTemplateRow>(`/admin/meal/templates/${id}`, payload);
 }
 
-/** 菜品选择器 */
-export function fetchDishOptions(params: { keyword?: string }): Promise<DishOptions> {
-  return http.get<DishOptions>('/admin/meal/dishes', params);
+/** 商品选择器 */
+export function fetchItemOptions(params: { keyword?: string }): Promise<ItemOptions> {
+  return http.get<ItemOptions>('/admin/meal/dishes', params);
 }
 
 /**

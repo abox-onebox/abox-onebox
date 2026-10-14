@@ -223,15 +223,15 @@ export const ADMIN_NAV = [
   },
   {
     // M34 · 供应商与出餐：三页是**上游到出餐**的一条链 ——
-    //   供应商台账 → 菜品库（菜品是套餐的上游）→ 加工场所打包（出餐当天的作业页）。
+    //   供应商台账 → 商品库（商品是套餐的上游）→ 加工场所打包（出餐当天的作业页）。
     group: '供应商与发货',
     items: [
       { path: '/supplier/list', title: '供应商管理', page: 'P33', module: 'M34', icon: 'store' },
-      // ⚠️ M5-15 补登：`/supplier/dish-library`（平台端菜品库）自 M3-x 就已在服务端
+      // ⚠️ M5-15 补登：`/supplier/dish-library`（平台端商品库）自 M3-x 就已在服务端
       //    `ADMIN_MENU_KEYS` 里授权、路由也在（`routes.ts:96`）、后端 CRUD 也齐
       //    （`POST/PUT /admin/dishes` + `batch-status`），**却从来没进过本表** ——
-      //    原先只能从「供应商管理 → 菜品库」按钮下钻（`supplier/list.vue:487`）。
-      //    但菜品是**套餐 → 模板 → 分配**的上游：找不到入口 = 后面三层都进不去，
+      //    原先只能从「供应商管理 → 商品库」按钮下钻（`supplier/list.vue:487`）。
+      //    但商品是**套餐 → 模板 → 分配**的上游：找不到入口 = 后面三层都进不去，
       //    人工测试中表现为「后台缺少餐品创建模块」。判据仍是那句：
       //    **授权了就必须有入口**，否则等价于那些页面不存在。
       { path: '/supplier/dish-library', title: '商品库', page: 'P33', module: 'M34', icon: 'menu' },

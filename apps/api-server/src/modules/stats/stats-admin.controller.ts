@@ -4,7 +4,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../../common/decorators/auth.decorator';
 import { AdminGuard } from '../../common/guards/admin.guard';
 
-import { DishHeatQueryDto, StatsQueryDto } from './dto/stats.dto';
+import { ItemHeatQueryDto, StatsQueryDto } from './dto/stats.dto';
 import { StatsService } from './stats.service';
 
 /**
@@ -58,8 +58,8 @@ export class StatsAdminController {
       '按「套餐 → 商品」展开后统计每个商品被发出的份数（一份套餐里的每个菜各计一次订单份数），' +
       '降序取 TOP N。`share` 的分母是区间内**全部**商品份数，不是 TOP N 之和。',
   })
-  dishHeat(@Query() q: DishHeatQueryDto) {
-    return this.stats.dishHeat(q);
+  itemHeat(@Query() q: ItemHeatQueryDto) {
+    return this.stats.itemHeat(q);
   }
 
   @Get('retention')

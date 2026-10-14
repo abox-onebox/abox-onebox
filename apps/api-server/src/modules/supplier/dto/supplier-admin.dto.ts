@@ -440,7 +440,7 @@ export class AdminDishesQueryDto {
   pageSize?: number;
 }
 
-export class DishIdParamDto {
+export class ItemIdParamDto {
   @ApiProperty({ description: '商品 id' })
   @Type(() => Number)
   @IsInt()
@@ -496,7 +496,7 @@ export class CreateDishDto {
 }
 
 /** 编辑商品（不含 supplierId —— 换供应商＝换一个供价主体，请新建商品） */
-export class UpdateDishDto {
+export class UpdateItemDto {
   @ApiPropertyOptional({ description: '商品名' })
   @IsOptional()
   @IsString()

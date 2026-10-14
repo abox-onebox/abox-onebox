@@ -3,7 +3,7 @@
  */
 
 /** 套餐内一道菜的展示视图（严禁包含供价 / 分账 / 供应商状态 —— C8） */
-export interface MealDishView {
+export interface MealItemView {
   name: string;
   /** 档位：1 主件 / 2 辅品 / 3 素品 / 4 附品 / 5 随附 */
   slot: number;
@@ -19,7 +19,7 @@ export interface MealDishView {
    *
    * ⚠️ 与 C8 不冲突：id 是**内部主键**，既不是合作状态、也不是供价 / 分账。
    *    但它确实是「可枚举的供应商编号」—— 故本字段只在**已能看见该供应商展示名**
-   *    的接口里出现（U1 菜品行 / U5 溯源卡），不下发到任何无名场景。
+   *    的接口里出现（U1 商品行 / U5 溯源卡），不下发到任何无名场景。
    */
   supplierId: number;
 }
@@ -70,7 +70,7 @@ export interface HomeDailyResult {
   reason: string | null;
   /** 套餐名 */
   setName: string | null;
-  dishes: MealDishView[];
+  dishes: MealItemView[];
   /** 主食说明（统一供米） */
   rice: string | null;
   /** 单价（分）· 锁定 2580 */

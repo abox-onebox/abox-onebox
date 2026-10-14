@@ -116,7 +116,7 @@ async function onGenerate() {
     await ElMessageBox.confirm(
       `将为「${date.value}」的出餐计划生成应付结算单。\n\n` +
         '口径：按**实收量 × 逐菜协商价**（出餐计划生成时冻结的快照），对象只有供应商；' +
-        '同一（供应商 · 菜品 · 出餐日）已有单则自动跳过 —— 可安全重复执行。',
+        '同一（供应商 · 商品 · 出餐日）已有单则自动跳过 —— 可安全重复执行。',
       '生成应付单',
       { confirmButtonText: '确认生成', cancelButtonText: '取消', type: 'warning' },
     );
@@ -274,7 +274,7 @@ onMounted(() => {
     >
       <el-table :data="exceptions" size="small" class="exc__table">
         <el-table-column prop="supplierName" label="供应商" min-width="120" />
-        <el-table-column prop="dishName" label="菜品" min-width="110" />
+        <el-table-column prop="dishName" label="商品" min-width="110" />
         <el-table-column prop="planQuantity" label="计划量" width="80" align="right" />
         <el-table-column label="原因" width="110">
           <template #default="{ row }">
@@ -290,7 +290,7 @@ onMounted(() => {
         <el-table-column prop="shareNo" label="应付单号" min-width="150" />
         <el-table-column prop="mealDate" label="出餐日" width="110" />
         <el-table-column prop="supplierName" label="供应商" min-width="110" />
-        <el-table-column prop="dishName" label="菜品" min-width="110" />
+        <el-table-column prop="dishName" label="商品" min-width="110" />
         <el-table-column label="实收量" width="90" align="right">
           <template #default="{ row }">{{ row.quantity }}</template>
         </el-table-column>

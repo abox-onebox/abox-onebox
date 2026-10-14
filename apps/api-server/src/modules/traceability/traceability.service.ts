@@ -7,7 +7,7 @@ import type {
   SupplierQualificationEntry,
   SupplierQualificationItem,
   SupplierQualificationListResult,
-  TraceabilityDishView,
+  TraceabilityItemView,
   TraceabilityQualification,
   TraceabilitySupplierView,
   TraceabilityTodayResult,
@@ -123,7 +123,7 @@ export class TraceabilityService {
         : Promise.resolve(null),
     ]);
 
-    let dishes: TraceabilityDishView[] = [];
+    let dishes: TraceabilityItemView[] = [];
 
     if (items.length) {
       const [dishRows, supplierRows] = await Promise.all([
@@ -346,7 +346,7 @@ export class TraceabilityService {
    * 这里把核验项**从本次出参里的实际资质并集**取出来，声明与数据不可能漂移。
    */
   private buildTraceNote(
-    dishes: TraceabilityDishView[],
+    dishes: TraceabilityItemView[],
     center: DistributionCenter | null,
   ): string {
     const supplierCount = new Set(dishes.map((d) => d.supplier.name)).size;

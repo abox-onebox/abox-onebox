@@ -7,7 +7,7 @@ import type {
   HomeHistoryItem,
   HomeLeaderInfo,
   HomeLeaderSource,
-  MealDishView,
+  MealItemView,
 } from '@abox/shared-types';
 import { OrderStatus } from '@abox/shared-types';
 import { LeaderStatus } from '@abox/shared-types';
@@ -308,7 +308,7 @@ export class MealService {
   }
 
   /** 套餐商品视图（含供应商展示名与 id，不含任何价格/分账字段 —— C8） */
-  private async itemsOfSetMeal(setMealId: number): Promise<MealDishView[]> {
+  private async itemsOfSetMeal(setMealId: number): Promise<MealItemView[]> {
     const items = await this.setMealItemRepo.find({ where: { setMealId }, order: { slot: 'ASC' } });
     if (items.length === 0) return [];
 

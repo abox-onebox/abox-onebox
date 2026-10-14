@@ -105,8 +105,8 @@
             随附档（主食）：**只读说明**，不是可选项。
             ⭐ M5-15：此前这里也是一个可选的下拉框（「五个档位各选一道菜」），
                于是「一饭四菜」在界面上被理解成 5 项 —— 与种子数据（4 项、主食不建 item）
-               互相矛盾。米饭由集散中心统一供米（¥2/份），建成菜品项会让同一份 ¥2
-               同时进「菜品成本」与「主食成本」，结算时才发现重复计。
+               互相矛盾。米饭由集散中心统一供米（¥2/份），建成商品项会让同一份 ¥2
+               同时进「商品成本」与「主食成本」，结算时才发现重复计。
           -->
           <div v-if="stapleSlot" class="slot slot--staple">
             <div class="slot__label">
@@ -200,11 +200,11 @@
  *    而种子数据（7 个模板）与 `seed.ts` 的注释一直是「4 项，主食由集散中心统一供米、
  *    不建 item」。两份表述互相矛盾 → 现已收敛到 `@abox/shared-utils` 的
  *    `SET_MEAL_COMPOSITION`，本页的「必选/随餐」与提示文案全部取自**服务端下发**的
- *    `DishOptions.composition` / `slots[].required|isStaple`，不再本地硬编码。
+ *    `ItemOptions.composition` / `slots[].required|isStaple`，不再本地硬编码。
  *
  * ## 两个刻意不放在前端的字段
  * `supplierId` 与 `costPrice` **不由前端提交** —— 服务端按 `dishId` 反查供应商、
- * 按菜品供价求和。前端只显示预览，不参与计算口径。理由见 DTO 注释。
+ * 按商品供价求和。前端只显示预览，不参与计算口径。理由见 DTO 注释。
  *
  * ⚠️「参考毛利」不是真毛利：C9 等式里还有场地费/打包人工/配送费/团长佣金四项。
  *    本页只减了供价，所以数字偏乐观 —— UI 上写明了，避免被当成决策依据。
@@ -213,8 +213,8 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 
-import { createMealTemplate, fetchDishOptions, fetchMealTemplates } from '@/api/meal';
-import type { DishOption, SetMealTemplateRow } from '@/api/meal';
+import { createMealTemplate, fetchItemOptions, fetchMealTemplates } from '@/api/meal';
+import type { ItemOption, SetMealTemplateRow } from '@/api/meal';
 import { ApiError } from '@/api/request';
 import { SET_MEAL_COMPOSITION, SET_MEAL_SLOT_LABEL } from '@abox/shared-utils';
 import { UNIT_PRICE } from '@/constants';
@@ -232,7 +232,7 @@ const router = useRouter();
 
 const loadingDishes = ref(false);
 const submitting = ref(false);
-const dishes = ref<DishOption[]>([]);
+const dishes = ref<ItemOption[]>([]);
 const templates = ref<SetMealTemplateRow[]>([]);
 
 /** 「一饭四菜」构成判据 —— 优先用服务端下发的那一份（口径唯一） */
@@ -267,7 +267,7 @@ const requiredSlots = computed(() => slots.value.filter((s) => !s.isStaple));
 const stapleSlot = computed(() => slots.value.find((s) => s.isStaple) ?? null);
 
 const dishMap = computed(() => new Map(dishes.value.map((d) => [d.id, d])));
-/** 已上架菜品（服务端只回 status=1）—— 直接绑定，无需再过滤 */
+/** 已上架商品（服务端只回 status=1）—— 直接绑定，无需再过滤 */
 const dishOptions = computed(() => dishes.value);
 
 const pickedEntries = computed(() =>
@@ -320,7 +320,7 @@ async function load(): Promise<void> {
   loadingDishes.value = true;
   try {
     const [opt, tpl] = await Promise.all([
-      fetchDishOptions({}),
+      fetchItemOptions({}),
       fetchMealTemplates({ page: 1, pageSize: 100 }),
     ]);
     dishes.value = opt.list;

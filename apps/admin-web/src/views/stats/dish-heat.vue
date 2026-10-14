@@ -7,7 +7,7 @@
     </p>
 
     <el-tabs v-model="tab" class="tabs" @tab-change="onTabChange">
-      <!-- Tab 1 · 菜品热度（D49 · 既有内容不动） -->
+      <!-- Tab 1 · 商品热度（D49 · 既有内容不动） -->
       <el-tab-pane label="商品热度" name="heat">
         <el-card shadow="never" class="block">
           <div class="toolbar">
@@ -146,13 +146,13 @@
 </template>
 
 <script setup lang="ts">
-// 菜品热度页 —— D49 /admin/stats/dish-heat（原型 P35 · M36-03）
+// 商品热度页 —— D49 /admin/stats/dish-heat（原型 P35 · M36-03）
 //            + D69 /admin/stats/dish-rating（P1-U2 口味红黑榜 · 同页第二 Tab）
 import { onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 
-import { fetchDishHeat, fetchDishRating, STATS_RANGE_OPTIONS, TOP_N_OPTIONS } from '@/api/stats';
-import type { StatsDishHeatResult, StatsDishRatingResult, StatsRangeValue } from '@/api/stats';
+import { fetchDishHeat, fetchItemRating, STATS_RANGE_OPTIONS, TOP_N_OPTIONS } from '@/api/stats';
+import type { StatsDishHeatResult, StatsItemRatingResult, StatsRangeValue } from '@/api/stats';
 
 const loading = ref(false);
 const range = ref<StatsRangeValue>('7d');
@@ -162,13 +162,13 @@ const data = ref<StatsDishHeatResult | null>(null);
 const tab = ref('heat');
 const ratingLoading = ref(false);
 const ratingRange = ref<StatsRangeValue>('7d');
-const rating = ref<StatsDishRatingResult | null>(null);
+const rating = ref<StatsItemRatingResult | null>(null);
 
 const pct = (v: number | null | undefined) =>
   v === null || v === undefined ? '—' : `${(Number(v) * 100).toFixed(1)}%`;
 
 /** 红线行整行淡红底（除 tag 外再给一层「扫一眼就能看见」的信号） */
-const rowClass = ({ row }: { row: StatsDishRatingResult['items'][number] }) =>
+const rowClass = ({ row }: { row: StatsItemRatingResult['items'][number] }) =>
   row.redLine ? 'row-redline' : '';
 
 async function reloadHeat() {
@@ -185,7 +185,7 @@ async function reloadHeat() {
 async function reloadRating() {
   ratingLoading.value = true;
   try {
-    rating.value = await fetchDishRating({ range: ratingRange.value });
+    rating.value = await fetchItemRating({ range: ratingRange.value });
   } catch (e) {
     ElMessage.error((e as Error).message || '加载失败');
   } finally {

@@ -116,7 +116,7 @@ export interface SupplierDetail {
     bankAccountMasked: string | null;
     invoiceTitle: string | null;
   };
-  dishes: DishRow[];
+  dishes: ItemRow[];
   // ⚠️ M4-0 删除 `distributionCenters`：加工场所属 ABox 自有，不挂在供应商名下。
   recentShares: Array<{
     id: number;
@@ -174,7 +174,7 @@ export interface UpdateSupplierResult {
   status: number;
   licenseExpireAt: string | null;
   licenseState: string;
-  /** 因证照落成过期而**联动下架**的菜品数（>0 时前端必须明确提示）*/
+  /** 因证照落成过期而**联动下架**的商品数（>0 时前端必须明确提示）*/
   unpublishedDishCount: number;
   canServe: boolean;
 }
@@ -245,10 +245,10 @@ export const setTakeoutLinks = (
 ) => http.put<TakeoutOut>(`/admin/suppliers/${id}/takeout-links`, data);
 
 // ============================================================================
-// 扩展 · 菜品库
+// 扩展 · 商品库
 // ============================================================================
 
-export interface DishRow {
+export interface ItemRow {
   id: number;
   supplierId: number;
   supplierName: string | null;
@@ -276,7 +276,7 @@ export interface DishesQuery {
   pageSize?: number;
 }
 
-export interface DishesPage extends PageResult<DishRow> {
+export interface ItemsPage extends PageResult<ItemRow> {
   summary: {
     totalCount: number;
     onSaleCount: number;
@@ -291,7 +291,7 @@ export interface DishesPage extends PageResult<DishRow> {
 }
 
 export const fetchAdminDishes = (params: DishesQuery) =>
-  http.get<DishesPage>('/admin/dishes', params);
+  http.get<ItemsPage>('/admin/dishes', params);
 
 export const createDish = (data: {
   supplierId: number;

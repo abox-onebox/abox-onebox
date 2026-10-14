@@ -18,7 +18,7 @@ import {
   CopyAssignmentsDto,
   CreateAssignmentDto,
   CreateSetMealTemplateDto,
-  DishOptionQueryDto,
+  ItemOptionQueryDto,
   MealMatrixQueryDto,
   PublishAssignmentDto,
   SET_MEAL_COMPOSITION_RULE,
@@ -113,7 +113,7 @@ export class MealAdminController {
       '只返回上架商品。商品**管理**属供应商模块（D23–D32），此处仅供编排页挑选，' +
       '因此刻意不放在 admin/supplier/* —— 编排页不该依赖尚未落地的模块。',
   })
-  dishOptions(@Query() q: DishOptionQueryDto) {
+  dishOptions(@Query() q: ItemOptionQueryDto) {
     return this.mealAdmin.dishOptions(q.keyword);
   }
 

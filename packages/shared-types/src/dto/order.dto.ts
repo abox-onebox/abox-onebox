@@ -14,7 +14,7 @@ export interface OrderListItem {
   /** 单价快照（分） */
   unitPriceFen: number;
   totalAmountFen: number;
-  /** 主菜名（列表展示用，取套餐 slot=1 菜品） */
+  /** 主菜名（列表展示用，取套餐 slot=1 商品） */
   mainDishName: string | null;
   createdAt: string;
 }
@@ -50,10 +50,10 @@ export interface OrderPickupInfo {
  * `canRate` / `rated` 互补但**不是互斥全集**（还有「未送达不可评」这一段）：
  *   · `rated=true`  ⇒ `canRate=false`，`items` 非空（已评内容，回显用）
  *   · `rated=false && canRate=true` ⇒ 可评（端上出评价卡）
- *   · `rated=false && canRate=false` ⇒ 尚未送达（或该单无菜品明细）—— 端上不出卡
+ *   · `rated=false && canRate=false` ⇒ 尚未送达（或该单无商品明细）—— 端上不出卡
  */
 export interface OrderRatingView {
-  /** 当前状态可评价（已送达/已完成 且 未评过 且 有菜品明细） */
+  /** 当前状态可评价（已送达/已完成 且 未评过 且 有商品明细） */
   canRate: boolean;
   /** 已提交过评价（一次提交即定稿，不可改 —— 2026-09-25 裁决） */
   rated: boolean;
@@ -76,7 +76,7 @@ export interface OrderDetailResult {
   payAmountFen: number;
   remark: string | null;
   /**
-   * ⚠️ `dishId`（P1-U2 新增）：评价提交按 `dishId` 定位菜品 ——
+   * ⚠️ `dishId`（P1-U2 新增）：评价提交按 `dishId` 定位商品 ——
    * `ab_dish.name` 无唯一约束（A3），按名字定位会把评价记到别家同名菜头上。
    */
   dishes: Array<{ dishId: number; name: string; slot: number; supplierName: string | null }>;

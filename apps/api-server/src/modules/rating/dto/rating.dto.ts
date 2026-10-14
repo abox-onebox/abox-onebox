@@ -16,7 +16,7 @@ import { StatsQueryDto } from '../../stats/dto/stats.dto';
 import { RATING_LEVELS, RATING_WORST_COUNT } from '../rating.constants';
 
 /** 单菜评价入参 */
-export class DishRatingItemDto {
+export class ItemRatingItemDto {
   @ApiProperty({
     description: '商品 id（须属于该订单的套餐；name 无唯一约束，按 id 定位）',
     example: 3,
@@ -47,14 +47,14 @@ export class DishRatingItemDto {
 export class RatingSubmitReqDto {
   @ApiProperty({
     description: '逐菜评价（至少 1 项；未提交的菜视为跳过）',
-    type: [DishRatingItemDto],
+    type: [ItemRatingItemDto],
   })
   @IsArray()
   @ArrayMinSize(1, { message: '至少评价一道菜' })
   @ArrayMaxSize(20, { message: '单次最多 20 项（一饭四菜上限 + 冗余）' })
   @ValidateNested({ each: true })
-  @Type(() => DishRatingItemDto)
-  items!: DishRatingItemDto[];
+  @Type(() => ItemRatingItemDto)
+  items!: ItemRatingItemDto[];
 }
 
 /**
@@ -63,7 +63,7 @@ export class RatingSubmitReqDto {
  * 区间校验**只声明一次**（stats.dto），这里零新增字段 —— 换任何一档，
  * 五个看板端点得到同一个区间。
  */
-export class DishRatingQueryDto extends StatsQueryDto {}
+export class ItemRatingQueryDto extends StatsQueryDto {}
 
 /** 「最差三道菜」展示形态（worstThree 出参） */
 export const WORST_COUNT_FOR_DOC = RATING_WORST_COUNT;

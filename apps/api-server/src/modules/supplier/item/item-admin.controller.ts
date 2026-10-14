@@ -8,8 +8,8 @@ import {
   AdminDishesQueryDto,
   BatchDishStatusDto,
   CreateDishDto,
-  DishIdParamDto,
-  UpdateDishDto,
+  ItemIdParamDto,
+  UpdateItemDto,
 } from '../dto/supplier-admin.dto';
 import { ItemAdminService } from './item-admin.service';
 
@@ -89,7 +89,7 @@ export class ItemAdminController {
       '⚠️ **不含 `supplierId`** —— 换供应商请新建商品并下架旧的：' +
       '历史分账流水按 `item_id` 归属，改主体会让已出的结算单与商品对不上。',
   })
-  update(@Param() p: DishIdParamDto, @Body() dto: UpdateDishDto) {
+  update(@Param() p: ItemIdParamDto, @Body() dto: UpdateItemDto) {
     return this.itemAdmin.update(p.id, dto);
   }
 }

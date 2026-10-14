@@ -170,7 +170,7 @@ export const fetchShareExceptions = (date: string, supplierId?: number) =>
  * 生成应付单（幂等 · 可重跑）
  *
  * 跑批（T+1 02:00）与运营手动补跑**共用同一执行口**，因此不会出现
- * 「跑批一种算法、点按钮另一种」。同一（供应商 · 菜品 · 出餐日）已有单则跳过。
+ * 「跑批一种算法、点按钮另一种」。同一（供应商 · 商品 · 出餐日）已有单则跳过。
  */
 export const generateSupplierShares = (payload: GenerateSharesPayload) =>
   http.post<GenerateSharesResult>('/admin/supplier-shares/generate', payload);

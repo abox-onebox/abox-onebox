@@ -340,7 +340,7 @@ export class UpdateSetMealTemplateDto {
  *
  * 只做**只读挑选**：商品的管理属供应商模块（D23–D32）。
  */
-export class DishOptionQueryDto {
+export class ItemOptionQueryDto {
   @ApiPropertyOptional({ description: '按商品名模糊匹配' })
   @IsOptional()
   @IsString()

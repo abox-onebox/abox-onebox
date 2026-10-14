@@ -91,7 +91,7 @@ export interface SupplierQualificationDetail {
   serving: boolean;
   /** 证照逐条；未通过核验或不在供时为空数组（原因写在 `note` 里，不静默留白） */
   entries: SupplierQualificationEntry[];
-  /** 该出品方在册的菜品名（最多 6 个，只取上架的） */
+  /** 该出品方在册的商品名（最多 6 个，只取上架的） */
   dishes: string[];
   /**
    * 说明文案（服务端生成）

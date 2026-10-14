@@ -202,8 +202,8 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
-import { fetchDishOptions, fetchMealTemplates, updateMealTemplate } from '@/api/meal';
-import type { DishOption, SetMealTemplateRow, UpdateTemplatePayload } from '@/api/meal';
+import { fetchItemOptions, fetchMealTemplates, updateMealTemplate } from '@/api/meal';
+import type { ItemOption, SetMealTemplateRow, UpdateTemplatePayload } from '@/api/meal';
 import { ApiError } from '@/api/request';
 import { SET_MEAL_COMPOSITION, SET_MEAL_SLOT_LABEL } from '@abox/shared-utils';
 import { fenToCny } from '@/utils/format';
@@ -226,7 +226,7 @@ const query = reactive({
 const dialogOpen = ref(false);
 const saving = ref(false);
 const editing = ref<SetMealTemplateRow | null>(null);
-const dishOptions = ref<DishOption[]>([]);
+const dishOptions = ref<ItemOption[]>([]);
 
 const editForm = reactive({
   name: '',
@@ -263,7 +263,7 @@ async function openEdit(row: SetMealTemplateRow): Promise<void> {
 
   if (!dishOptions.value.length) {
     try {
-      const opt = await fetchDishOptions({});
+      const opt = await fetchItemOptions({});
       dishOptions.value = opt.list;
     } catch (e) {
       ElMessage.error(e instanceof ApiError ? e.message : '商品库加载失败');

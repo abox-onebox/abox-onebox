@@ -13,10 +13,10 @@ import {
   AdminDishesQueryDto,
   BatchDishStatusDto,
   CreateDishDto,
-  UpdateDishDto,
+  UpdateItemDto,
 } from '../dto/supplier-admin.dto';
 
-type DishListResult = PageResult<Record<string, unknown>> & {
+type ItemListResult = PageResult<Record<string, unknown>> & {
   summary: Record<string, unknown>;
   categoryOptions: Array<Record<string, unknown>>;
   supplierOptions: Array<Record<string, unknown>>;
@@ -52,7 +52,7 @@ export class ItemAdminService {
   ) {}
 
   /** 商品库列表（可按供应商 / 档位 / 上下架 / 菜名筛选） */
-  async list(q: AdminDishesQueryDto, viewerRole: string): Promise<DishListResult> {
+  async list(q: AdminDishesQueryDto, viewerRole: string): Promise<ItemListResult> {
     const { page, pageSize, skip } = normalizePage(q);
     const qb = this.itemRepo.createQueryBuilder('d').where('d.deleted_at IS NULL');
 
@@ -136,7 +136,7 @@ export class ItemAdminService {
    * ⚠️ 刻意不含 `supplierId`：换供应商＝历史分账流水（按 `item_id` 归属）全部改挂到新主体，
    *    已出的结算单会与商品对不上。要换主体请新建商品并下架旧的。
    */
-  async update(id: number, dto: UpdateDishDto) {
+  async update(id: number, dto: UpdateItemDto) {
     const d = await this.assertDish(id);
     if (dto.name !== undefined) d.name = dto.name;
     if (dto.category !== undefined) d.category = dto.category;
