@@ -329,7 +329,7 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     description:
       '策略标识（非金额）：供应商供价与各供应商**逐菜协商**，落在采购价表与出餐计划快照里，' +
       '不是本配置能定义的单一数字。',
-    consumedBy: '仅作口径记录 —— 实际供价取 `ab_supplier_dish_daily.unit_price` 冻结快照',
+    consumedBy: '仅作口径记录 —— 实际供价取 `ab_supplier_item_daily.unit_price` 冻结快照',
   },
   {
     key: 'settlement.supplier_total_default',

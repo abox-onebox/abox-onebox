@@ -17,7 +17,7 @@ import { RatingService } from './rating.service';
  *    幂等层命中会返回首次**成功结果**，那等于把「不可改」裁决变成「重放当成功」，
  *    语义正好相反。
  * ⚠️ 用户侧写操作**不写 ab_operation_log**（那是后台操作者审计表，用户动作的
- *    留痕就是 `ab_dish_rating` 行本身）。
+ *    留痕就是 `ab_item_rating` 行本身）。
  */
 @ApiTags('订单')
 @ApiBearerAuth()

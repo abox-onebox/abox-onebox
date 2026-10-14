@@ -7,7 +7,7 @@ import { OrderStatus } from '@abox/shared-types';
  * 服务层（提交闸门 / 聚合）、控制器（Swagger 描述）、e2e（断言）全部 import 本文件。
  *
  * 四项裁决（2026-09-25 · P1-U2 开工前）：
- *   ① 粒度 = 逐菜三键；② 红黑榜落点 = 菜品热度页第二 Tab；
+ *   ① 粒度 = 逐菜三键；② 红黑榜落点 = 商品热度页第二 Tab；
  *   ③ 红线阈值 = 代码常量（不进 ab_config —— 避开 D-1 fallback 恒不生效缺陷）；
  *   ④ 一次提交即定稿、不可改。
  */
@@ -25,7 +25,7 @@ import { OrderStatus } from '@abox/shared-types';
  */
 export const RATING_ALLOWED_STATUSES: string[] = [OrderStatus.DELIVERED, OrderStatus.COMPLETED];
 
-/** 评价档位：1 好吃 / 2 一般 / 3 不好（落库值 = ab_dish_rating.rating） */
+/** 评价档位：1 好吃 / 2 一般 / 3 不好（落库值 = ab_item_rating.rating） */
 export const RATING_LEVELS = [1, 2, 3] as const;
 export type RatingLevel = (typeof RATING_LEVELS)[number];
 

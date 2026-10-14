@@ -1,7 +1,7 @@
 import { registerAs } from '@nestjs/config';
 
 /**
- * 对象存储配置（菜品图 / 营业执照 / 头像）
+ * 对象存储配置（商品图 / 营业执照 / 头像）
  *   cos   —— 腾讯云 COS（生产）
  *   minio —— 本地容器（贴近生产的 S3 语义，docker compose --profile oss up -d）
  *   local —— 本地磁盘（零依赖，文件落 ./data/uploads，由 /static 暴露）

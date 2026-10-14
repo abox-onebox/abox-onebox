@@ -8,7 +8,7 @@ import { ErrorCode } from '../../../common/constants/error-code';
 import { BizException } from '../../../common/exceptions/biz.exception';
 import { toFen, toYuan } from '../../../common/utils/money';
 import { normalizePage, paginate, PageResult } from '../../../common/utils/response';
-import { Dish, Supplier } from '../../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../../database/entities/supplier.entity';
 import {
   AdminDishesQueryDto,
   BatchDishStatusDto,
@@ -25,13 +25,13 @@ type DishListResult = PageResult<Record<string, unknown>> & {
 };
 
 /**
- * 后台 · 菜品库服务（原型 P33「菜品库」页 · 扩展接口，无 D 编号）
+ * 后台 · 商品库服务（原型 P33「商品库」页 · 扩展接口，无 D 编号）
  *
  * ## 为什么必须有这个模块（不是一个「可选的锦上添花」）
  *
- * D7 明确：套餐编排**不收 `supplierId` / `costPrice`**，「供应商由菜品反查
- * （`ab_dish.supplier_id`）、成本由菜品供价求和」。也就是说**菜品是唯一的供价载体**。
- * 在 M3-6 之前，`ab_dish` 只有种子数据能写 —— 运营想加一道菜、想按新协商价
+ * D7 明确：套餐编排**不收 `supplierId` / `costPrice`**，「供应商由商品反查
+ * （`ab_item.supplier_id`）、成本由商品供价求和」。也就是说**商品是唯一的供价载体**。
+ * 在 M3-6 之前，`ab_item` 只有种子数据能写 —— 运营想加一道菜、想按新协商价
  * 改一道菜，都无接口可用，只能改库。这是真实的功能缺口，不是设计偏好。
  *
  * ## 三条纪律
@@ -39,22 +39,22 @@ type DishListResult = PageResult<Record<string, unknown>> & {
  * 1. **供价是钱，改动要留痕**：`cost_price` 直接决定供应商应付与平台毛利（C9 等式），
  *    故新增/改价都走 `@OperationLog`；且入参用「分」，落库用 `money()` 两位小数串，
  *    杜绝 `7.5 * 100 = 750.0000000000001` 这类浮点暗雷。
- * 2. **换供应商 = 新建菜品**：编辑接口刻意**不含 `supplierId`** —— 同一道菜换个商家做，
- *    历史分账流水（`ab_supplier_share.dish_id`）会全部指向新主体，账就串了。
+ * 2. **换供应商 = 新建商品**：编辑接口刻意**不含 `supplierId`** —— 同一道菜换个商家做，
+ *    历史分账流水（`ab_supplier_share.item_id`）会全部指向新主体，账就串了。
  * 3. **批量下架必填原因**：证照过期联动、食安检查、商家退出都会引发批量下架，
  *    事后复盘时要能回答「这批菜是谁、因为什么下的」。
  */
 @Injectable()
-export class DishAdminService {
+export class ItemAdminService {
   constructor(
-    @InjectRepository(Dish) private readonly dishRepo: Repository<Dish>,
+    @InjectRepository(Item) private readonly itemRepo: Repository<Item>,
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
   ) {}
 
-  /** 菜品库列表（可按供应商 / 档位 / 上下架 / 菜名筛选） */
+  /** 商品库列表（可按供应商 / 档位 / 上下架 / 菜名筛选） */
   async list(q: AdminDishesQueryDto, viewerRole: string): Promise<DishListResult> {
     const { page, pageSize, skip } = normalizePage(q);
-    const qb = this.dishRepo.createQueryBuilder('d').where('d.deleted_at IS NULL');
+    const qb = this.itemRepo.createQueryBuilder('d').where('d.deleted_at IS NULL');
 
     if (q.supplierId) qb.andWhere('d.supplier_id = :sid', { sid: q.supplierId });
     if (q.category) qb.andWhere('d.category = :cat', { cat: q.category });
@@ -70,7 +70,7 @@ export class DishAdminService {
       .take(pageSize)
       .getManyAndCount();
 
-    // 供应商名一次性映射（N+1 防呆）：菜品列表天然要显示「这道菜谁做的」
+    // 供应商名一次性映射（N+1 防呆）：商品列表天然要显示「这道菜谁做的」
     const supplierIds = [...new Set(all.map((d) => Number(d.supplierId)))];
     const suppliers = supplierIds.length
       ? await this.supplierRepo.find({ where: { id: In(supplierIds) } })
@@ -104,20 +104,20 @@ export class DishAdminService {
       actions: { canManage: viewerRole === 'super_admin' || viewerRole === 'admin' },
       notes: {
         category:
-          '档位取值 main 主荤 / half 半荤 / veg 素菜 / soup 汤品 / staple 主食 —— 这是**品类轴**，落点 `ab_dish.category`；' +
+          '档位取值 main 主荤 / half 半荤 / veg 素菜 / soup 汤品 / staple 主食 —— 这是**品类轴**，落点 `ab_item.category`；' +
           '**与套餐槽位是两条轴**（档位轴，落点 `ab_set_meal_item.slot`，数字 1–5：主荤/半荤/素菜/汤/主食），不要互相映射。',
         costPrice:
           '供价（costPriceFen）为**逐菜协商价**（C9），不是固定口径；它是 D7 套餐成本与' +
-          '供应商应付的唯一来源（编排页不收供应商与成本，全部由菜品反查）。',
+          '供应商应付的唯一来源（编排页不收供应商与成本，全部由商品反查）。',
       },
     };
   }
 
-  /** 新增菜品 */
+  /** 新增商品 */
   async create(dto: CreateDishDto) {
     await this.assertSupplier(dto.supplierId);
-    const saved = await this.dishRepo.save(
-      this.dishRepo.create({
+    const saved = await this.itemRepo.save(
+      this.itemRepo.create({
         supplierId: dto.supplierId,
         name: dto.name,
         category: dto.category,
@@ -131,10 +131,10 @@ export class DishAdminService {
   }
 
   /**
-   * 编辑菜品
+   * 编辑商品
    *
-   * ⚠️ 刻意不含 `supplierId`：换供应商＝历史分账流水（按 `dish_id` 归属）全部改挂到新主体，
-   *    已出的结算单会与菜品对不上。要换主体请新建菜品并下架旧的。
+   * ⚠️ 刻意不含 `supplierId`：换供应商＝历史分账流水（按 `item_id` 归属）全部改挂到新主体，
+   *    已出的结算单会与商品对不上。要换主体请新建商品并下架旧的。
    */
   async update(id: number, dto: UpdateDishDto) {
     const d = await this.assertDish(id);
@@ -145,7 +145,7 @@ export class DishAdminService {
     if (dto.status !== undefined) d.status = dto.status;
     if (dto.costPriceFen !== undefined) d.costPrice = this.yuanStr(dto.costPriceFen);
     d.version += 1;
-    await this.dishRepo.save(d);
+    await this.itemRepo.save(d);
     return {
       id: Number(d.id),
       name: d.name,
@@ -160,30 +160,30 @@ export class DishAdminService {
    * 批量上下架
    *
    * 下架**必须给原因**：批量下架是「一道菜在多个办公楼同时消失」的动作，
-   * 而它会连带影响已上架的套餐（D7 反查菜品供价），事后复盘必须能回答
+   * 而它会连带影响已上架的套餐（D7 反查商品供价），事后复盘必须能回答
    * 「谁在什么时候、因为什么把这一批菜下了」。
    */
   async batchStatus(dto: BatchDishStatusDto) {
     const ids = [...new Set(dto.ids)];
-    if (!ids.length) throw new BizException(ErrorCode.PARAM_INVALID, '请至少选择一道菜品');
+    if (!ids.length) throw new BizException(ErrorCode.PARAM_INVALID, '请至少选择一道商品');
     if (dto.status === 0 && (!dto.reason || dto.reason.trim().length < 2)) {
       throw new BizException(ErrorCode.PARAM_INVALID, '批量下架必须填写原因（≥2 字）');
     }
 
-    const found = await this.dishRepo.find({ where: { id: In(ids) } });
+    const found = await this.itemRepo.find({ where: { id: In(ids) } });
     if (found.length !== ids.length) {
       throw new BizException(
         ErrorCode.NOT_FOUND,
-        `有 ${ids.length - found.length} 道菜品不存在，请刷新后重试（不做「部分成功」）`,
+        `有 ${ids.length - found.length} 道商品不存在，请刷新后重试（不做「部分成功」）`,
       );
     }
 
     const target = found.filter((d) => d.status !== dto.status);
     if (!target.length) {
-      throw new BizException(ErrorCode.PARAM_INVALID, '所选菜品均已是目标状态，无需变更');
+      throw new BizException(ErrorCode.PARAM_INVALID, '所选商品均已是目标状态，无需变更');
     }
 
-    await this.dishRepo.update({ id: In(target.map((d) => Number(d.id))) }, { status: dto.status });
+    await this.itemRepo.update({ id: In(target.map((d) => Number(d.id))) }, { status: dto.status });
     return {
       requested: ids.length,
       changed: target.length,
@@ -196,7 +196,7 @@ export class DishAdminService {
 
   // ---------------------------------------------------------------- 私有
 
-  private decorate(d: Dish, nameMap: Map<number, string>) {
+  private decorate(d: Item, nameMap: Map<number, string>) {
     const supplierId = Number(d.supplierId);
     return {
       id: Number(d.id),
@@ -222,9 +222,9 @@ export class DishAdminService {
     return toYuan(fen).toFixed(2);
   }
 
-  private async assertDish(id: number): Promise<Dish> {
-    const d = await this.dishRepo.findOne({ where: { id } });
-    if (!d || d.deletedAt) throw new BizException(ErrorCode.NOT_FOUND, `菜品不存在：#${id}`);
+  private async assertDish(id: number): Promise<Item> {
+    const d = await this.itemRepo.findOne({ where: { id } });
+    if (!d || d.deletedAt) throw new BizException(ErrorCode.NOT_FOUND, `商品不存在：#${id}`);
     return d;
   }
 

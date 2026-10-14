@@ -255,7 +255,7 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
       enabled: 0,
       wechatTemplateId: null,
       groupContent:
-        '【出餐通知】{{mealDate}} 需向 {{centerName}} 交付 {{dishCount}} 个菜品，请在 09:30 前完成出餐确认。',
+        '【出餐通知】{{mealDate}} 需向 {{centerName}} 交付 {{dishCount}} 个商品，请在 09:30 前完成出餐确认。',
     },
   },
   {

@@ -46,10 +46,10 @@ export class StatsQueryDto {
   date?: string;
 }
 
-/** D49 · 菜品热度查询（在通用区间之上多一个 TOP N） */
+/** D49 · 商品热度查询（在通用区间之上多一个 TOP N） */
 export class DishHeatQueryDto extends StatsQueryDto {
   @ApiPropertyOptional({
-    description: `返回前 N 个菜品，默认 ${DISH_HEAT_DEFAULT_TOP_N}，上限 ${DISH_HEAT_MAX_TOP_N}`,
+    description: `返回前 N 个商品，默认 ${DISH_HEAT_DEFAULT_TOP_N}，上限 ${DISH_HEAT_MAX_TOP_N}`,
     default: DISH_HEAT_DEFAULT_TOP_N,
     example: 10,
   })

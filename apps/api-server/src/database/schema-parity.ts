@@ -211,6 +211,21 @@ const ADD_COLUMN_RE =
  */
 const MODIFY_COLUMN_RE =
   /MODIFY COLUMN\s+`([A-Za-z0-9_]+)`\s+([A-Z]+(?:\(\d+(?:,\d+)?\))?(?:\s+UNSIGNED)?)/gi;
+/**
+ * RENAME TABLE `old` TO `new` —— 破坏性改名迁移的表改名。
+ * 必须把源A 里的表名也改掉，否则「实体已改名、迁移只 RENAME 了」会被判成「实体多了张表」（红）。
+ * 仅消费：把 schema map 里的 `old` 键整体搬到 `new`。
+ */
+const RENAME_TABLE_RE = /RENAME TABLE\s+`([A-Za-z0-9_]+)`\s+TO\s+`([A-Za-z0-9_]+)`/gi;
+/**
+ * ALTER TABLE `t` CHANGE `old` `new` [TYPE] —— 列改名（破坏性改名迁移）。
+ * 可能同时改类型，故解析出 type 一并更新（与 MODIFY 同口径）；本项目只改名不改类型。
+ */
+const CHANGE_RE =
+  /ALTER TABLE\s+`([A-Za-z0-9_]+)`\s+CHANGE\s+`([A-Za-z0-9_]+)`\s+`([A-Za-z0-9_]+)`(?:\s+([A-Z]+(?:\(\d+(?:,\d+)?\))?))?/gi;
+/** ALTER TABLE `t` RENAME INDEX `old` TO `new` —— 索引改名；索引不计入 schema-parity，仅消费掉 */
+const RENAME_INDEX_RE =
+  /ALTER TABLE\s+`([A-Za-z0-9_]+)`\s+RENAME INDEX\s+`([A-Za-z0-9_]+)`\s+TO\s+`([A-Za-z0-9_]+)`/gi;
 /** 索引/约束行：这些行上的反引号标识符不是列名 */
 const INDEX_LINE_RE = /^(PRIMARY|UNIQUE|KEY|INDEX|CONSTRAINT|FOREIGN)\b/;
 
@@ -250,6 +265,9 @@ export function migrationSchema(): { schema: Schema; stats: { tables: number; co
     let createSeen = 0;
     let addSeen = 0;
     let modifySeen = 0;
+    let renameTableSeen = 0;
+    let changeSeen = 0;
+    let renameIndexSeen = 0;
 
     for (const { pat, label } of UNSUPPORTED_IN_MIGRATION) {
       if (pat.test(scope)) {
@@ -306,15 +324,59 @@ export function migrationSchema(): { schema: Schema; stats: { tables: number; co
       }
     }
 
+    // ---- RENAME TABLE（破坏性改名迁移：表改名）----
+    for (const m of scope.matchAll(RENAME_TABLE_RE)) {
+      renameTableSeen += 1;
+      const [oldT, newT] = [m[1], m[2]];
+      const cols = schema.get(oldT);
+      if (cols) {
+        // 把整张表的列 map 从 old 键搬到 new 键；若 new 已存在（极不应发生）则保留已有的、丢弃 old
+        if (!schema.has(newT)) schema.set(newT, cols);
+        schema.delete(oldT);
+      }
+    }
+
+    // ---- CHANGE（破坏性改名迁移：列改名，可能顺带改类型）----
+    for (const m of scope.matchAll(CHANGE_RE)) {
+      changeSeen += 1;
+      const [table, oldC, newC, typeTok] = [m[1], m[2], m[3], m[4]];
+      const cols = schema.get(table);
+      const existing = cols?.get(oldC);
+      if (existing) {
+        cols!.delete(oldC);
+        const shape: ColumnShape = { ...existing };
+        if (typeTok) shape.type = normType(typeTok);
+        cols!.set(newC, shape);
+      }
+    }
+
+    // ---- RENAME INDEX（破坏性改名迁移：索引改名；索引不计入 schema-parity，仅消费掉）----
+    Array.from(scope.matchAll(RENAME_INDEX_RE)).forEach(() => {
+      renameIndexSeen += 1;
+    });
+
     // ---- 解析器完备性自检：源码里出现的次数必须与解析到的条数相等 ----
     const createCount = (scope.match(/CREATE TABLE IF NOT EXISTS/gi) ?? []).length;
     const addCount = (scope.match(/ADD COLUMN/gi) ?? []).length;
     const modifyCount = (scope.match(/MODIFY COLUMN/gi) ?? []).length;
-    if (createCount !== createSeen || addCount !== addSeen || modifyCount !== modifySeen) {
+    const renameTableCount = (scope.match(new RegExp(RENAME_TABLE_RE.source, 'gi')) ?? []).length;
+    const changeCount = (scope.match(new RegExp(CHANGE_RE.source, 'gi')) ?? []).length;
+    const renameIndexCount = (scope.match(new RegExp(RENAME_INDEX_RE.source, 'gi')) ?? []).length;
+    if (
+      createCount !== createSeen ||
+      addCount !== addSeen ||
+      modifyCount !== modifySeen ||
+      renameTableCount !== renameTableSeen ||
+      changeCount !== changeSeen ||
+      renameIndexCount !== renameIndexSeen
+    ) {
       throw new Error(
         `${f} 解析条数不符：CREATE TABLE 源码 ${createCount} / 解析 ${createSeen}，` +
           `ADD COLUMN 源码 ${addCount} / 解析 ${addSeen}，` +
-          `MODIFY COLUMN 源码 ${modifyCount} / 解析 ${modifySeen} —— 有语句被漏读，先修解析器`,
+          `MODIFY COLUMN 源码 ${modifyCount} / 解析 ${modifySeen}，` +
+          `RENAME TABLE 源码 ${renameTableCount} / 解析 ${renameTableSeen}，` +
+          `CHANGE 源码 ${changeCount} / 解析 ${changeSeen}，` +
+          `RENAME INDEX 源码 ${renameIndexCount} / 解析 ${renameIndexSeen} —— 有语句被漏读，先修解析器`,
       );
     }
   }

@@ -6,7 +6,7 @@ import { DistributionCenter } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { MealAssignment, SetMeal, SetMealItem } from '../../database/entities/meal.entity';
 import { Order } from '../../database/entities/order.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
 import { HomeController, InviteController } from './meal.controller';
 import { MealAdminController } from './meal-admin.controller';
@@ -30,7 +30,7 @@ import { MealService } from './meal.service';
       MealAssignment,
       SetMeal,
       SetMealItem,
-      Dish,
+      Item,
       Supplier,
       Building,
       BuildingGroup,

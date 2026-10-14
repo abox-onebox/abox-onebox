@@ -99,7 +99,7 @@ export class SupplierAdminController {
 
   @Get(':id')
   @ApiOperation({
-    summary: 'D23 附属 · 供应商详情（档案 + 菜品 + 应付 + 操作日志）',
+    summary: 'D23 附属 · 供应商详情（档案 + 商品 + 应付 + 操作日志）',
     description:
       '含真实联系电话与脱敏后的银行账号。⚠️ 银行账号原文**任何后台接口都不回**，' +
       '付款登记时由财务线下核对（服务端只存不回，避免日志/截图泄露）。' +
@@ -131,7 +131,7 @@ export class SupplierAdminController {
     summary: 'D25 编辑供应商（含启停）',
     description:
       '部分更新，只改传了的字段。⚠️ 一个隐式副作用会在出参回报：' +
-      '把 `licenseExpireAt` 改成过去 → **同步下架关联菜品**并回 `unpublishedDishCount`。' +
+      '把 `licenseExpireAt` 改成过去 → **同步下架关联商品**并回 `unpublishedDishCount`。' +
       '本接口是供应商启停的**唯一入口**（D 系列没有单独的停用接口）。' +
       '⚠️ M4-0 起不再收 `type`（供应商类型已停用，传上来即 10001）。',
   })

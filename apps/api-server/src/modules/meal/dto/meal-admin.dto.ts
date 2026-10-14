@@ -41,7 +41,7 @@ export const TEMPLATE_MAX_ITEMS = 8;
  *
  * 业务口径（品牌物料与《里程碑计划》的同一句话）：**¥25.80/份 · 一饭四菜**。
  * 四个菜位 = 主荤 / 半荤 / 素菜 / 汤，**各一份，不缺不重**；
- * 主食（米饭）由集散中心统一供米，**不作为菜品项**（见共享常量的注释）。
+ * 主食（米饭）由集散中心统一供米，**不作为商品项**（见共享常量的注释）。
  *
  * ⚠️ 为什么必须**机械强制**而不是只写文案：此前接口没有任何下界 ——
  *    一个只有 1–2 项的套餐也能建成、能上架，而用户端横幅照旧写「一饭四菜」。
@@ -182,9 +182,9 @@ export class SetMealTemplateQueryDto {
   pageSize?: number;
 }
 
-/** D7 模板菜品项（档位 1 主荤 / 2 半荤 / 3 素菜 / 4 汤 / 5 主食） */
+/** D7 模板商品项（档位 1 主荤 / 2 半荤 / 3 素菜 / 4 汤 / 5 主食） */
 export class SetMealItemInputDto {
-  @ApiProperty({ description: '菜品 ID（ab_dish.id）', example: 1 })
+  @ApiProperty({ description: '商品 ID（ab_item.id）', example: 1 })
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -200,8 +200,8 @@ export class SetMealItemInputDto {
 /**
  * D7 存为模板
  *
- * ⚠️ **入参不含 `supplierId` / `costPrice`**：供应商由菜品自身反查
- *    （`ab_dish.supplier_id`），成本价由菜品供价求和 —— 让运营手填这两个字段，
+ * ⚠️ **入参不含 `supplierId` / `costPrice`**：供应商由商品自身反查
+ *    （`ab_item.supplier_id`），成本价由商品供价求和 —— 让运营手填这两个字段，
  *    迟早会填出「套餐记着 A 家的菜、却算着 B 家的钱」，结算时才发现对不上。
  */
 export class CreateSetMealTemplateDto {
@@ -240,7 +240,7 @@ export class CreateSetMealTemplateDto {
   coverUrl?: string;
 
   @ApiPropertyOptional({
-    description: `菜品项（1–${TEMPLATE_MAX_ITEMS} 项）；用 sourceSetMealId 另存时可不传`,
+    description: `商品项（1–${TEMPLATE_MAX_ITEMS} 项）；用 sourceSetMealId 另存时可不传`,
     type: [SetMealItemInputDto],
   })
   @IsOptional()
@@ -250,7 +250,7 @@ export class CreateSetMealTemplateDto {
   @Type(() => SetMealItemInputDto)
   items?: SetMealItemInputDto[];
 
-  @ApiPropertyOptional({ description: '以此为蓝本另存（复制其菜品明细），与 items 二选一' })
+  @ApiPropertyOptional({ description: '以此为蓝本另存（复制其商品明细），与 items 二选一' })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -322,7 +322,7 @@ export class UpdateSetMealTemplateDto {
 
   @ApiPropertyOptional({
     description:
-      '菜品项 —— **整组替换**（不是增量）。必须满足「一饭四菜」：' +
+      '商品项 —— **整组替换**（不是增量）。必须满足「一饭四菜」：' +
       SET_MEAL_COMPOSITION_RULE +
       '；已排期时不可改。',
     type: [SetMealItemInputDto],
@@ -336,12 +336,12 @@ export class UpdateSetMealTemplateDto {
 }
 
 /**
- * 菜品选择器查询（D7 编排页的候选菜品）
+ * 商品选择器查询（D7 编排页的候选商品）
  *
- * 只做**只读挑选**：菜品的管理属供应商模块（D23–D32）。
+ * 只做**只读挑选**：商品的管理属供应商模块（D23–D32）。
  */
 export class DishOptionQueryDto {
-  @ApiPropertyOptional({ description: '按菜品名模糊匹配' })
+  @ApiPropertyOptional({ description: '按商品名模糊匹配' })
   @IsOptional()
   @IsString()
   @MaxLength(32)

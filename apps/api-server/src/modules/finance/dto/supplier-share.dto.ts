@@ -16,7 +16,7 @@ import {
  * 应付结算（S9 · **后台侧**）请求 DTO —— M3-9
  *
  * 口径唯一权威源：《ABox一盒自营结算口径定义v1.0.md》§四（计费基数与出单规则）/ §九（接口口径）
- *   · 计费基数 = **实收量**（`ab_supplier_dish_daily.actual_quantity`；未申报则 = 计划量）
+ *   · 计费基数 = **实收量**（`ab_supplier_item_daily.actual_quantity`；未申报则 = 计划量）
  *   · 单价 = 逐菜协商采购价（**出餐计划生成时冻结的快照**，见 service 头注）
  *   · 应付对象**只剩供应商**（`payee_type=distribution_center` 已冻结，新单不再产生）
  *

@@ -385,11 +385,11 @@ export class SetTakeoutLinksDto {
 }
 
 // ============================================================================
-// 扩展 · 菜品库维护（D7 依赖 `ab_dish.supplier_id` 反查供应商，必须有维护入口）
+// 扩展 · 商品库维护（D7 依赖 `ab_item.supplier_id` 反查供应商，必须有维护入口）
 // ============================================================================
 
 /**
- * 菜品档位 · **唯一真源在 `@abox/shared-types` 的 `DishCategory`**
+ * 商品档位 · **唯一真源在 `@abox/shared-types` 的 `DishCategory`**
  *
  * ⚠️ 不在此另写一份字符串数组：端上要显示中文档位名（主荤/半荤/素菜/汤品/主食），
  *    两处各写一套，就等着「后端认 main、前端显示成主菜」的漂移。
@@ -409,7 +409,7 @@ export class AdminDishesQueryDto {
 
   @ApiPropertyOptional({ description: '档位过滤', enum: DISH_CATEGORIES })
   @IsOptional()
-  @IsIn(DISH_CATEGORIES as unknown as string[], { message: '菜品档位不合法' })
+  @IsIn(DISH_CATEGORIES as unknown as string[], { message: '商品档位不合法' })
   category?: string;
 
   @ApiPropertyOptional({ description: '上下架：1 上架 / 0 下架' })
@@ -418,7 +418,7 @@ export class AdminDishesQueryDto {
   @IsIn([0, 1], { message: '状态需为 1（上架）或 0（下架）' })
   status?: number;
 
-  @ApiPropertyOptional({ description: '关键词：菜品名' })
+  @ApiPropertyOptional({ description: '关键词：商品名' })
   @IsOptional()
   @IsString()
   @MaxLength(32)
@@ -441,14 +441,14 @@ export class AdminDishesQueryDto {
 }
 
 export class DishIdParamDto {
-  @ApiProperty({ description: '菜品 id' })
+  @ApiProperty({ description: '商品 id' })
   @Type(() => Number)
   @IsInt()
   @Min(1)
   id!: number;
 }
 
-/** 新增菜品（供价**逐菜协商** · C9，必填且 > 0） */
+/** 新增商品（供价**逐菜协商** · C9，必填且 > 0） */
 export class CreateDishDto {
   @ApiProperty({ description: '供应商 id' })
   @Type(() => Number)
@@ -456,14 +456,14 @@ export class CreateDishDto {
   @Min(1)
   supplierId!: number;
 
-  @ApiProperty({ description: '菜品名' })
+  @ApiProperty({ description: '商品名' })
   @IsString()
-  @MinLength(2, { message: '菜品名至少 2 个字' })
+  @MinLength(2, { message: '商品名至少 2 个字' })
   @MaxLength(64)
   name!: string;
 
   @ApiProperty({ description: '档位', enum: DISH_CATEGORIES })
-  @IsIn(DISH_CATEGORIES as unknown as string[], { message: '菜品档位不合法' })
+  @IsIn(DISH_CATEGORIES as unknown as string[], { message: '商品档位不合法' })
   category!: string;
 
   @ApiProperty({
@@ -476,7 +476,7 @@ export class CreateDishDto {
   @Max(1000000)
   costPriceFen!: number;
 
-  @ApiPropertyOptional({ description: '菜品描述 / 卖点' })
+  @ApiPropertyOptional({ description: '商品描述 / 卖点' })
   @IsOptional()
   @IsString()
   @MaxLength(512)
@@ -495,18 +495,18 @@ export class CreateDishDto {
   status?: number;
 }
 
-/** 编辑菜品（不含 supplierId —— 换供应商＝换一个供价主体，请新建菜品） */
+/** 编辑商品（不含 supplierId —— 换供应商＝换一个供价主体，请新建商品） */
 export class UpdateDishDto {
-  @ApiPropertyOptional({ description: '菜品名' })
+  @ApiPropertyOptional({ description: '商品名' })
   @IsOptional()
   @IsString()
-  @MinLength(2, { message: '菜品名至少 2 个字' })
+  @MinLength(2, { message: '商品名至少 2 个字' })
   @MaxLength(64)
   name?: string;
 
   @ApiPropertyOptional({ description: '档位', enum: DISH_CATEGORIES })
   @IsOptional()
-  @IsIn(DISH_CATEGORIES as unknown as string[], { message: '菜品档位不合法' })
+  @IsIn(DISH_CATEGORIES as unknown as string[], { message: '商品档位不合法' })
   category?: string;
 
   @ApiPropertyOptional({ description: '供价（分）' })
@@ -517,7 +517,7 @@ export class UpdateDishDto {
   @Max(1000000)
   costPriceFen?: number;
 
-  @ApiPropertyOptional({ description: '菜品描述' })
+  @ApiPropertyOptional({ description: '商品描述' })
   @IsOptional()
   @IsString()
   @MaxLength(512)
@@ -536,9 +536,9 @@ export class UpdateDishDto {
   status?: number;
 }
 
-/** 批量上下架（下架关联菜品的联动动作也要可追溯，故单独成一个显式接口） */
+/** 批量上下架（下架关联商品的联动动作也要可追溯，故单独成一个显式接口） */
 export class BatchDishStatusDto {
-  @ApiProperty({ description: '菜品 id 列表', type: [Number] })
+  @ApiProperty({ description: '商品 id 列表', type: [Number] })
   @IsArray()
   @Type(() => Number)
   @IsInt({ each: true })

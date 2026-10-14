@@ -6,29 +6,29 @@ import { DistributionCenter, SupplierShare } from '../../database/entities/finan
 import { MealAssignment, SetMealItem } from '../../database/entities/meal.entity';
 import { AdminUser, OperationLog } from '../../database/entities/system.entity';
 import {
-  Dish,
+  Item,
   Supplier,
-  SupplierDishCenterDaily,
-  SupplierDishDaily,
+  SupplierItemCenterDaily,
+  SupplierItemDaily,
 } from '../../database/entities/supplier.entity';
 import { FinanceModule } from '../finance/finance.module';
 import { SupplierAdminController } from './supplier-admin.controller';
 import { SupplierAdminService } from './supplier-admin.service';
-import { DishAdminController } from './dish/dish-admin.controller';
-import { DishAdminService } from './dish/dish-admin.service';
+import { ItemAdminController } from './item/item-admin.controller';
+import { ItemAdminService } from './item/item-admin.service';
 import { PackingAdminController } from './packing-admin.controller';
 import { SupplierController } from './supplier.controller';
 import { SupplierService } from './supplier.service';
 
 /**
- * 供应商 + 菜品 模块 · 见《接口规范 v1.0》§6.4 与《目录结构 v2.0》
+ * 供应商 + 商品 模块 · 见《接口规范 v1.0》§6.4 与《目录结构 v2.0》
  *
  * ## 四个控制器，三套主体，别搞混
  *   · `SupplierController`（`@Controller('supplier')`）—— **供应商端** S 系列，
  *     供应商 Web 看自己的出餐计划 / 确认出餐（role=supplier，**M3-8 实装 S1–S2**；
  *     ⚠️ S3 打包任务已随自营口径下线，见下）
  *   · `SupplierAdminController`（`@Controller('admin/suppliers')`）—— **运营后台** D23–D28
- *   · `DishAdminController`（`@Controller('admin/dishes')`）—— **运营后台** 菜品库扩展
+ *   · `ItemAdminController`（`@Controller('admin/dishes')`）—— **运营后台** 商品库扩展
  *   · `PackingAdminController`（`@Controller('admin/packing-tasks')`）—— **运营后台**
  *     加工场所打包任务（M4-0 承接原供应商端 S3；实现仍只有 `SupplierService.packingTasks()` 一份）
  *
@@ -48,9 +48,9 @@ import { SupplierService } from './supplier.service';
     FinanceModule,
     TypeOrmModule.forFeature([
       Supplier,
-      Dish,
-      SupplierDishDaily,
-      SupplierDishCenterDaily,
+      Item,
+      SupplierItemDaily,
+      SupplierItemCenterDaily,
       DistributionCenter,
       SupplierShare,
       BuildingGroup,
@@ -64,10 +64,10 @@ import { SupplierService } from './supplier.service';
   controllers: [
     SupplierController,
     SupplierAdminController,
-    DishAdminController,
+    ItemAdminController,
     PackingAdminController,
   ],
-  providers: [SupplierService, SupplierAdminService, DishAdminService],
-  exports: [SupplierService, SupplierAdminService, DishAdminService],
+  providers: [SupplierService, SupplierAdminService, ItemAdminService],
+  exports: [SupplierService, SupplierAdminService, ItemAdminService],
 })
 export class SupplierModule {}

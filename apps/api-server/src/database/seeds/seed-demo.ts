@@ -13,7 +13,7 @@ import { addDays, todayBj } from '../../common/utils/time';
  * **一张订单都没有**。于是把环境交给人工测试时：
  *   · 看板的 GMV / 成本 / 毛利全是 0（A2 的判据「有数，不是 0」直接无从判起）；
  *   · 财务的余额 / 佣金 / 发票 / 对账四页全空（A12 / A13 / A14 / A17）；
- *   · 统计的楼栋排行 / 菜品热度 / 留存没内容（A18）；
+ *   · 统计的楼栋排行 / 商品热度 / 留存没内容（A18）；
  *   · 配送单页没有可推进的单（A7b / A7c）；
  *   · 订单列表看不到 11 态的任何一态（A5 / A6）。
  * 本文件把这块补上：**覆盖主业务场景 + 典型边界**，让「照清单点」这件事真的点得下去。
@@ -736,7 +736,7 @@ const REFUNDS: DemoRefundSpec[] = [
     status: 'applying',
     applySource: 'leader',
     reasonType: 'quality',
-    reason: '菜品偏咸，用户要求全额退',
+    reason: '商品偏咸，用户要求全额退',
     dayOffset: -2,
     auditorId: null,
     auditRemark: null,
@@ -1049,10 +1049,10 @@ async function wipeDemo(dates: string[]): Promise<void> {
     dates,
   );
   await dataSource.query(
-    `DELETE FROM ab_supplier_dish_center_daily WHERE produce_date IN (${ph})`,
+    `DELETE FROM ab_supplier_item_center_daily WHERE produce_date IN (${ph})`,
     dates,
   );
-  await dataSource.query(`DELETE FROM ab_supplier_dish_daily WHERE produce_date IN (${ph})`, dates);
+  await dataSource.query(`DELETE FROM ab_supplier_item_daily WHERE produce_date IN (${ph})`, dates);
   await dataSource.query(
     `DELETE FROM ab_meal_assignment WHERE meal_date IN (${ph}) AND building_group_id IN (${DEMO_GROUPS.join(',')})`,
     dates,
@@ -1161,10 +1161,10 @@ async function main(): Promise<void> {
     setMealPriceOf.set(Number(r.id), Number(r.price));
   }
   const setMealItems = (await dataSource.query(
-    'SELECT set_meal_id, dish_id, supplier_id, slot FROM ab_set_meal_item',
-  )) as Array<{ set_meal_id: number; dish_id: number; supplier_id: number; slot: number }>;
+    'SELECT set_meal_id, item_id, supplier_id, slot FROM ab_set_meal_item',
+  )) as Array<{ set_meal_id: number; item_id: number; supplier_id: number; slot: number }>;
   const dishCostOf = new Map<number, number>();
-  for (const r of (await dataSource.query('SELECT id, cost_price FROM ab_dish')) as Array<{
+  for (const r of (await dataSource.query('SELECT id, cost_price FROM ab_item')) as Array<{
     id: number;
     cost_price: string;
   }>) {
@@ -1228,17 +1228,17 @@ async function main(): Promise<void> {
     const gid = Number(gidRaw);
     const smId = smOfGroup.get(key);
     for (const it of setMealItems.filter((i) => i.set_meal_id === smId)) {
-      const k = `${date}|${it.supplier_id}|${it.dish_id}`;
+      const k = `${date}|${it.supplier_id}|${it.item_id}`;
       plannedDate.set(k, (plannedDate.get(k) ?? 0) + soldCount);
       sdCenter.push({
         supplier_id: it.supplier_id,
-        dish_id: it.dish_id,
+        item_id: it.item_id,
         produce_date: date,
         distribution_center_id: dcOfGroup.get(gid),
         plan_quantity: soldCount,
         // ⭐ 边界：T-9 的四季鲜蔬**短送 1 份** —— 出餐确认必须留痕（对账依据）
         actual_quantity:
-          date === dayOf(-9) && it.dish_id === 4 ? Math.max(0, soldCount - 1) : soldCount,
+          date === dayOf(-9) && it.item_id === 4 ? Math.max(0, soldCount - 1) : soldCount,
         status: 'confirmed',
         confirmed_at: atUtc(date, '09:10'),
         confirmed_by: 3,
@@ -1249,10 +1249,10 @@ async function main(): Promise<void> {
       });
     }
   }
-  // 父行按 (供应商, 菜, 日) 汇总；`ab_supplier_dish_center_daily` 有唯一索引，需要去重合并
+  // 父行按 (供应商, 菜, 日) 汇总；`ab_supplier_item_center_daily` 有唯一索引，需要去重合并
   const merged = new Map<string, Record<string, unknown>>();
   for (const r of sdCenter) {
-    const k = `${r.produce_date}|${r.supplier_id}|${r.dish_id}|${r.distribution_center_id}`;
+    const k = `${r.produce_date}|${r.supplier_id}|${r.item_id}|${r.distribution_center_id}`;
     if (merged.has(k)) {
       const prev = merged.get(k) as Record<string, unknown>;
       prev.plan_quantity = Number(prev.plan_quantity) + Number(r.plan_quantity);
@@ -1261,13 +1261,13 @@ async function main(): Promise<void> {
       merged.set(k, { ...r });
     }
   }
-  await ins('ab_supplier_dish_center_daily', [...merged.values()]);
+  await ins('ab_supplier_item_center_daily', [...merged.values()]);
 
   for (const [k, plan] of plannedDate.entries()) {
     const [date, supId, dishId] = k.split('|');
     sdDaily.push({
       supplier_id: Number(supId),
-      dish_id: Number(dishId),
+      item_id: Number(dishId),
       produce_date: date,
       plan_quantity: plan,
       actual_quantity: plan,
@@ -1279,7 +1279,7 @@ async function main(): Promise<void> {
       updated_at: atUtc(date, '09:10'),
     });
   }
-  await ins('ab_supplier_dish_daily', sdDaily);
+  await ins('ab_supplier_item_daily', sdDaily);
   console.log(
     `→ 分配 ${assignmentRows.length} 行 · 生产计划 ${sdDaily.length} 行 · 分场所明细 ${merged.size} 行`,
   );
@@ -1509,7 +1509,7 @@ async function main(): Promise<void> {
     const items = setMealItems.filter((i) => i.set_meal_id === o.setMealId && i.slot !== 5);
     for (const it of items) {
       shareSeq += 1;
-      const unit = dishCostOf.get(it.dish_id) ?? 0;
+      const unit = dishCostOf.get(it.item_id) ?? 0;
       /**
        * ⭐ 发票三态样本（**按供应商**，因为发票视图是按「供应商 × 月」聚合的）：
        *
@@ -1533,7 +1533,7 @@ async function main(): Promise<void> {
         meal_date: date,
         payee_type: 'supplier',
         payee_id: it.supplier_id,
-        dish_id: it.dish_id,
+        item_id: it.item_id,
         quantity: o.quantity,
         unit_price: unit.toFixed(2),
         amount: (unit * o.quantity).toFixed(2),

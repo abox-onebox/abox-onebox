@@ -192,11 +192,11 @@ export enum ErrorCode {
    */
   DELIVERY_STATUS_ILLEGAL = 30018,
   /**
-   * 扩展（M5-15）：套餐模板**已进入排期**，菜品与售价不能再改（D7b 编辑模板）
+   * 扩展（M5-15）：套餐模板**已进入排期**，商品与售价不能再改（D7b 编辑模板）
    *
    * 判据：该模板被**至少一个未取消的分配**（`ab_meal_assignment.status != 'cancelled'`）引用。
    * 此时它已经是「某天某个楼群卖的那份饭」——
-   *   · 改 `items`：当天已上架的菜品构成会**追溯变化**（用户端看到的菜变了，
+   *   · 改 `items`：当天已上架的商品构成会**追溯变化**（用户端看到的菜变了，
    *     而供应商那边的备料量是照**旧构成**推的）→ 备料与菜单对不上；
    *   · 改 `price`：`ab_set_meal.price` 是用户端「明日套餐」的**展示价**，
    *     改一下就是同一份饭在同一天两个价。
@@ -389,10 +389,10 @@ export enum ErrorCode {
    *    系统里的时间戳必须诚实（对账与追责都以它为准）。
    */
   COOK_CONFIRM_OVERDUE = 50009,
-  /** 扩展（M3-8）：当日无该菜品生产计划（S2 目标项不存在 / 不属于本供应商） */
+  /** 扩展（M3-8）：当日无该商品生产计划（S2 目标项不存在 / 不属于本供应商） */
   PRODUCE_PLAN_NOT_FOUND = 50010,
   /**
-   * 扩展（M3-8）：集散中心不在该菜品的配送范围（S2）
+   * 扩展（M3-8）：集散中心不在该商品的配送范围（S2）
    *
    * 越界确认必须拦：否则供应商能把 A 片的份数确认到 B 片头上，S3 在 B 片
    * 会显示「已到齐」而实物没到 —— 打包线在错误的时点开动。
@@ -471,7 +471,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.MEAL_NOT_PUBLISHED]: '该办公楼今日未开团',
   [ErrorCode.DELIVERY_STATUS_ILLEGAL]: '配送单当前状态不支持该推进（履约流只能向前）',
   [ErrorCode.MEAL_TEMPLATE_IN_USE]:
-    '该套餐已排进某天的出餐计划，菜品与售价不能再改（可改名称，或另存为新模板）',
+    '该套餐已排进某天的出餐计划，商品与售价不能再改（可改名称，或另存为新模板）',
   [ErrorCode.BALANCE_AMOUNT_INVALID]: '余额抵扣金额不合法',
   [ErrorCode.LEADER_NOT_FOUND]: '团长不存在或已停用',
   [ErrorCode.MEAL_NOT_FOUND]: '套餐不存在',
@@ -527,8 +527,8 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.DISTRIBUTION_CENTER_NOT_FOUND]: '集散中心不存在或已停用',
   [ErrorCode.SUPPLIER_TYPE_CONFLICT]: '供应商类型与关联集散中心冲突',
   [ErrorCode.COOK_CONFIRM_OVERDUE]: '已过出餐确认截止时间（09:30），请联系运营线下处理',
-  [ErrorCode.PRODUCE_PLAN_NOT_FOUND]: '当日无该菜品生产计划',
-  [ErrorCode.COOK_CONFIRM_CENTER_MISMATCH]: '集散中心不在该菜品的配送范围',
+  [ErrorCode.PRODUCE_PLAN_NOT_FOUND]: '当日无该商品生产计划',
+  [ErrorCode.COOK_CONFIRM_CENTER_MISMATCH]: '集散中心不在该商品的配送范围',
   [ErrorCode.SUPPLIER_SHARE_NOT_PAYABLE]: '应付单不存在或当前状态不可操作',
   [ErrorCode.PAYMENT_VOUCHER_REQUIRED]: '请填写银行回单号（付款完成的唯一凭证）',
   [ErrorCode.BUILDING_NOT_FOUND]: '办公楼不存在',

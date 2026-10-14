@@ -56,7 +56,7 @@ import { HealthController } from './health/health.controller';
     FinanceModule,
     MessageModule,
     StatsModule,
-    // 口味评价（P1-U2 · U20 提交 + D69 红黑榜 · 第 28 张表 ab_dish_rating）
+    // 口味评价（P1-U2 · U20 提交 + D69 红黑榜 · 第 28 张表 ab_item_rating）
     RatingModule,
     AdminModule,
     // 工作台聚合（D66 · M5-16）：放最后 —— 它是纯读、无副作用，

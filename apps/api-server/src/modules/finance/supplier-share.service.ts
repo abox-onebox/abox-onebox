@@ -15,7 +15,7 @@ import { money, round2, toFen } from '../../common/utils/money';
 import { genShareNo } from '../../common/utils/order-no';
 import { addDays, toBjIso, todayBj } from '../../common/utils/time';
 import { SupplierShare } from '../../database/entities/finance.entity';
-import { Dish, Supplier, SupplierDishDaily } from '../../database/entities/supplier.entity';
+import { Item, Supplier, SupplierItemDaily } from '../../database/entities/supplier.entity';
 import {
   GenerateSharesDto,
   RegisterPaymentDto,
@@ -31,14 +31,14 @@ import {
  *
  * ## 一句话口径
  * **应付 = 实收量 × 逐菜协商采购价**，对象**只有供应商**（半成品采购款），按
- * `(供应商, 菜品, 出餐日)` 一行出单；财务**人工对公转账**后回填银行回单号（C10）。
+ * `(供应商, 商品, 出餐日)` 一行出单；财务**人工对公转账**后回填银行回单号（C10）。
  * 场所摊销 / 打包人工 / 配送费是 ABox 自身成本，**不出付款单**，只进成本核算（§3.1）。
  *
  * ## 计费基数是「实收量」而不是「订单销量」
  * 这是本次路线裁定带来的最大变化。旧口径下应付 = 「用户实际买走多少份 × 分成比例」，
  * 用户退款还要反向冲减；自营下采购的本质是「**供应商交了多少，我付多少**」——
  * 与用户卖没卖出去无关（半成品在出餐日已交付并投入使用）。因此：
- *   · 基数取 `ab_supplier_dish_daily.actual_quantity`（S2 出餐确认申报的实送量，
+ *   · 基数取 `ab_supplier_item_daily.actual_quantity`（S2 出餐确认申报的实送量，
  *     未申报 = 计划量，语义见 §4.1）
  *   · ⭐ **用户退款不冲减本表**（`reversal.service.ts` 已按此回退，见 §5.1）
  *   · `type='reversal'` 改义为「应付单生成后发现算错」的**纠错冲销**，不再由退款触发
@@ -53,7 +53,7 @@ import {
  *      挂下期抵扣，这是 C9「原记录一律不得改写」在本表的落地。
  *
  * ## 幂等
- * 幂等键 = `(供应商, 菜品, 出餐日)` 且 `type='normal'`：已存在则跳过（进 `skipped`）。
+ * 幂等键 = `(供应商, 商品, 出餐日)` 且 `type='normal'`：已存在则跳过（进 `skipped`）。
  * 跑批支持**重跑**（先 fail-closed 的项在补确认后重跑即可补出），重复跑不会多出单。
  * ⚠️ 刻意把该键放在**软件层**而非 DB 唯一索引：本表还要容纳 `type='reversal'` 的负行
  *   （同一键会有正负两行），唯一索引会把合法的冲销行一起挡掉。
@@ -69,9 +69,9 @@ export class SupplierShareService {
   constructor(
     @InjectRepository(SupplierShare) private readonly shareRepo: Repository<SupplierShare>,
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
-    @InjectRepository(Dish) private readonly dishRepo: Repository<Dish>,
-    @InjectRepository(SupplierDishDaily)
-    private readonly dailyRepo: Repository<SupplierDishDaily>,
+    @InjectRepository(Item) private readonly itemRepo: Repository<Item>,
+    @InjectRepository(SupplierItemDaily)
+    private readonly dailyRepo: Repository<SupplierItemDaily>,
   ) {}
 
   // =====================================================================
@@ -89,7 +89,7 @@ export class SupplierShareService {
     const { date, supplierId } = dto;
     const { candidates, exceptions } = await this.scan(date, supplierId);
 
-    // 幂等闸门：同一 (供应商, 菜品, 出餐日) 已有 normal 行 → 跳过
+    // 幂等闸门：同一 (供应商, 商品, 出餐日) 已有 normal 行 → 跳过
     const existed = await this.shareRepo.find({
       where: {
         mealDate: date,
@@ -183,10 +183,10 @@ export class SupplierShareService {
           '计费基数 = **实收量**（供应商出餐确认申报的实送份数；未申报视为足额）。' +
           '短送即少付，无需人工对账 —— 请供应商如实申报。',
         priceRule:
-          '单价 = 逐菜协商采购价，取**出餐计划生成时冻结的快照**（`ab_supplier_dish_daily.unit_price`）；' +
-          '计划缺该值时回落到菜品当前协商价。计划冻结后改价**不影响已生成计划的出单**。',
+          '单价 = 逐菜协商采购价，取**出餐计划生成时冻结的快照**（`ab_supplier_item_daily.unit_price`）；' +
+          '计划缺该值时回落到商品当前协商价。计划冻结后改价**不影响已生成计划的出单**。',
         idempotentRule:
-          '同一（供应商 · 菜品 · 出餐日）已有应付行则跳过 —— 本接口可安全重跑，不会重复出单。',
+          '同一（供应商 · 商品 · 出餐日）已有应付行则跳过 —— 本接口可安全重跑，不会重复出单。',
         exceptionRule:
           '未出单的项在 `exceptions` 里给出原因；补齐后（如催供应商确认出餐）重跑本接口即可补出。',
       },
@@ -470,7 +470,7 @@ export class SupplierShareService {
     const dishIds = [...new Set(dailies.map((d) => d.dishId))];
     const [suppliers, dishes] = await Promise.all([
       this.supplierRepo.find({ where: { id: In(supplierIds) } }),
-      this.dishRepo.find({ where: { id: In(dishIds) } }),
+      this.itemRepo.find({ where: { id: In(dishIds) } }),
     ]);
     const supplierOf = new Map(suppliers.map((s) => [s.id, s]));
     const dishOf = new Map(dishes.map((d) => [d.id, d]));
@@ -481,7 +481,7 @@ export class SupplierShareService {
     for (const d of dailies) {
       const supplier = supplierOf.get(d.supplierId);
       const supplierName = supplier?.name ?? `供应商 ${d.supplierId}`;
-      const dishName = dishOf.get(d.dishId)?.name ?? `菜品 ${d.dishId}`;
+      const dishName = dishOf.get(d.dishId)?.name ?? `商品 ${d.dishId}`;
       const planQuantity = Number(d.planQuantity);
 
       const reject = (reason: ShareExceptionReason) => {
@@ -537,16 +537,16 @@ export class SupplierShareService {
   /**
    * 采购单价（逐菜协商）
    *
-   * ⭐ 取值优先级：`ab_supplier_dish_daily.unit_price`（**出餐计划生成时冻结的快照**）
-   *    → `ab_dish.cost_price`（兜底）。
+   * ⭐ 取值优先级：`ab_supplier_item_daily.unit_price`（**出餐计划生成时冻结的快照**）
+   *    → `ab_item.cost_price`（兜底）。
    *
-   * 为什么不直接用 `ab_dish.cost_price`（口径文档 §4.1 表格的初版写法）：
+   * 为什么不直接用 `ab_item.cost_price`（口径文档 §4.1 表格的初版写法）：
    *   出餐计划一旦生成即**冻结**（M3-8 的核心纪律），计划里的 `unit_price` 就是当日
-   *   对供应商的**承诺价**。若事后有人改了菜品采购价、出单时按新价算，就会出现
+   *   对供应商的**承诺价**。若事后有人改了商品采购价、出单时按新价算，就会出现
    *   「T 日按 ¥7.50 交货、结算时按 ¥8.00 付」—— 供应商对账时必然拒绝。
    *   **谁被冻结，就按谁结算。** 该修正已回报《自营结算口径定义 v1.0》§4.1。
    */
-  private unitPriceOf(daily: SupplierDishDaily, dish?: Dish): string {
+  private unitPriceOf(daily: SupplierItemDaily, dish?: Item): string {
     const frozen = Number(daily.unitPrice ?? 0);
     if (frozen > 0) return daily.unitPrice;
     return dish?.costPrice ?? '0.00';
@@ -558,7 +558,7 @@ export class SupplierShareService {
     const dishIds = [...new Set(rows.map((r) => r.dishId).filter((v): v is number => !!v))];
     const [suppliers, dishes] = await Promise.all([
       this.supplierRepo.find({ where: { id: In(supplierIds) } }),
-      this.dishRepo.find({ where: { id: In(dishIds) } }),
+      this.itemRepo.find({ where: { id: In(dishIds) } }),
     ]);
     const supplierOf = new Map(suppliers.map((s) => [s.id, s]));
     const dishOf = new Map(dishes.map((d) => [d.id, d]));
@@ -575,7 +575,7 @@ export class SupplierShareService {
         supplierId: r.payeeId,
         supplierName: supplierOf.get(r.payeeId)?.name ?? `供应商 ${r.payeeId}`,
         dishId: r.dishId ?? null,
-        dishName: r.dishId ? (dishOf.get(r.dishId)?.name ?? `菜品 ${r.dishId}`) : null,
+        dishName: r.dishId ? (dishOf.get(r.dishId)?.name ?? `商品 ${r.dishId}`) : null,
         /** 实收量（采购计费基数） */
         quantity: Number(r.quantity),
         unitPriceFen: toFen(Number(r.unitPrice)),
@@ -621,7 +621,7 @@ export class SupplierShareService {
 /** 应付对象类型 —— 自营口径下**只剩供应商**（《自营结算口径定义 v1.0》§3.2） */
 const PAYEE_SUPPLIER = 'supplier';
 
-/** `ab_supplier_dish_daily.status`（沿用 M3-8 三值，未扩枚举） */
+/** `ab_supplier_item_daily.status`（沿用 M3-8 三值，未扩枚举） */
 const DAILY_PENDING = 'pending';
 const DAILY_DONE = 'done';
 

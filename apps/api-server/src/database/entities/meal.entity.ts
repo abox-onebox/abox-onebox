@@ -69,7 +69,7 @@ export class SetMeal {
   updatedAt!: Date;
 }
 
-/** ab_set_meal_item 套餐菜品明细（一饭四菜：主荤/半荤/素菜/汤/主食） */
+/** ab_set_meal_item 套餐商品明细（一饭四菜：主荤/半荤/素菜/汤/主食） */
 @Entity('ab_set_meal_item')
 export class SetMealItem {
   @PkColumn()
@@ -79,7 +79,7 @@ export class SetMealItem {
   @Column({ name: 'set_meal_id', type: 'bigint', transformer: bigintTransformer })
   setMealId!: number;
 
-  @Column({ name: 'dish_id', type: 'bigint', transformer: bigintTransformer })
+  @Column({ name: 'item_id', type: 'bigint', transformer: bigintTransformer })
   dishId!: number;
 
   @Index('idx_set_meal_item_supplier')

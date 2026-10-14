@@ -108,9 +108,9 @@ export class MealAdminController {
 
   @Get('dishes')
   @ApiOperation({
-    summary: '菜品选择器（D7 编排页候选菜品 · 只读）',
+    summary: '商品选择器（D7 编排页候选商品 · 只读）',
     description:
-      '只返回上架菜品。菜品**管理**属供应商模块（D23–D32），此处仅供编排页挑选，' +
+      '只返回上架商品。商品**管理**属供应商模块（D23–D32），此处仅供编排页挑选，' +
       '因此刻意不放在 admin/supplier/* —— 编排页不该依赖尚未落地的模块。',
   })
   dishOptions(@Query() q: DishOptionQueryDto) {
@@ -130,7 +130,7 @@ export class MealAdminController {
 
   @Get('templates')
   @ApiOperation({
-    summary: 'D6 套餐模板库（含菜品明细与在用次数）',
+    summary: 'D6 套餐模板库（含商品明细与在用次数）',
     description: 'usedCount = 被多少个未取消的分配引用，模板库里最有用的一列。',
   })
   listTemplates(@Query() q: SetMealTemplateQueryDto) {
@@ -142,8 +142,8 @@ export class MealAdminController {
   @ApiOperation({
     summary: 'D7 存为模板',
     description:
-      '入参**不含** supplierId / costPrice：供应商由菜品反查、成本由菜品供价求和，避免手填口径漂移。' +
-      `\n\n菜品项须满足组合构成规则：${SET_MEAL_COMPOSITION_RULE}。`,
+      '入参**不含** supplierId / costPrice：供应商由商品反查、成本由商品供价求和，避免手填口径漂移。' +
+      `\n\n商品项须满足组合构成规则：${SET_MEAL_COMPOSITION_RULE}。`,
   })
   createTemplate(@Body() dto: CreateSetMealTemplateDto, @CurrentAdmin('sub') operatorId: number) {
     return this.mealAdmin.createTemplate(dto, operatorId);

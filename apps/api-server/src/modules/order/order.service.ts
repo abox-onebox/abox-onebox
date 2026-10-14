@@ -41,7 +41,7 @@ import { TeamLeader } from '../../database/entities/leader.entity';
 import { MealAssignment, SetMealItem } from '../../database/entities/meal.entity';
 import { Order, PaymentLog, Refund } from '../../database/entities/order.entity';
 import { OperationLog } from '../../database/entities/system.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
 import { WX_PAY_PROVIDER, WxPayProvider } from '../../providers/wx-pay/wx-pay.provider';
 import { RefundApplyPayload } from '../../queues/queue-payloads';
@@ -163,8 +163,8 @@ export class OrderService {
     @InjectRepository(TeamLeader) private readonly leaderRepo: Repository<TeamLeader>,
     @InjectRepository(MealAssignment)
     private readonly assignmentRepo: Repository<MealAssignment>,
-    @InjectRepository(SetMealItem) private readonly itemRepo: Repository<SetMealItem>,
-    @InjectRepository(Dish) private readonly dishRepo: Repository<Dish>,
+    @InjectRepository(SetMealItem) private readonly setMealItemRepo: Repository<SetMealItem>,
+    @InjectRepository(Item) private readonly itemRepo: Repository<Item>,
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
     private readonly dataSource: DataSource,
     private readonly bizConfig: BizConfigService,
@@ -399,7 +399,7 @@ export class OrderService {
     const order = await this.loadOwnOrder(userId, orderNo);
 
     const [items, leader] = await Promise.all([
-      this.itemRepo.find({ where: { setMealId: order.setMealId }, order: { slot: 'ASC' } }),
+      this.setMealItemRepo.find({ where: { setMealId: order.setMealId }, order: { slot: 'ASC' } }),
       order.teamLeaderId
         ? this.leaderRepo.findOne({ where: { id: order.teamLeaderId } })
         : Promise.resolve(null),
@@ -407,7 +407,7 @@ export class OrderService {
 
     const dishNames = new Map(
       (
-        await this.dishRepo.find({
+        await this.itemRepo.find({
           where: { id: In(items.map((i) => i.dishId).concat([0])) },
         })
       ).map((d) => [d.id, d.name]),
@@ -450,12 +450,12 @@ export class OrderService {
       remark: order.remark ?? null,
       dishes: items.map((i) => ({
         /**
-         * ⭐ `dishId`（P1-U2 新增）：评价提交按 id 定位菜品 ——
-         * `ab_dish.name` 无唯一约束（A3 批次不变量），按名字定位会把评价
+         * ⭐ `dishId`（P1-U2 新增）：评价提交按 id 定位商品 ——
+         * `ab_item.name` 无唯一约束（A3 批次不变量），按名字定位会把评价
          * 记到别家同名菜头上。
          */
         dishId: Number(i.dishId),
-        name: dishNames.get(i.dishId) ?? `菜品 ${i.dishId}`,
+        name: dishNames.get(i.dishId) ?? `商品 ${i.dishId}`,
         slot: i.slot,
         supplierName: supNames.get(i.supplierId) ?? null,
       })),
@@ -653,7 +653,7 @@ export class OrderService {
    * ## ⭐ 为什么顺带回写 `sold_count`（本次修复的真实缺口）
    * `ab_meal_assignment.sold_count` 注释写着「已订份数（实时累加）」，但**全仓没有任何
    * 累加点** —— 下单不加、取消不减、退款不管，它只在种子里被赋过值。而供应商的
-   * 备料量（`ab_supplier_dish_daily.plan_quantity`）正是拿它当聚合基数，
+   * 备料量（`ab_supplier_item_daily.plan_quantity`）正是拿它当聚合基数，
    * 于是**跑批推给供应商的份数恒为 0**（`ensureProducePlan` 里那句
    * 「`sold_count=0` 的分配很常见」其实不是「常见」，是「唯一可能」）。
    *
@@ -1592,10 +1592,12 @@ export class OrderService {
     const setMealIds = [...new Set(orders.map((o) => o.setMealId))];
     if (setMealIds.length === 0) return map;
 
-    const items = await this.itemRepo.find({ where: { setMealId: In(setMealIds), slot: 1 } });
+    const items = await this.setMealItemRepo.find({
+      where: { setMealId: In(setMealIds), slot: 1 },
+    });
     if (items.length === 0) return map;
 
-    const dishes = await this.dishRepo.find({ where: { id: In(items.map((i) => i.dishId)) } });
+    const dishes = await this.itemRepo.find({ where: { id: In(items.map((i) => i.dishId)) } });
     const dishNames = new Map(dishes.map((d) => [d.id, d.name]));
     for (const it of items) {
       map.set(it.setMealId, dishNames.get(it.dishId) ?? null);

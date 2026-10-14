@@ -109,7 +109,7 @@ export class Supplier {
     precision: 5,
     scale: 4,
     default: 0,
-    comment: '⚠️ 废弃（C9 后按菜品协商采购价），仅为兼容历史数据，新逻辑不得读取',
+    comment: '⚠️ 废弃（C9 后按商品协商采购价），仅为兼容历史数据，新逻辑不得读取',
   })
   shareRate!: string;
 
@@ -169,14 +169,14 @@ export class Supplier {
   deletedAt?: Date | null;
 }
 
-/** ab_dish 菜品库（沿用 v1.0） */
-@Entity('ab_dish')
-@Index('idx_dish_category', ['category', 'status'])
-export class Dish {
+/** ab_item 商品库（沿用 v1.0） */
+@Entity('ab_item')
+@Index('idx_item_category', ['category', 'status'])
+export class Item {
   @PkColumn()
   id!: number;
 
-  @Index('idx_dish_supplier')
+  @Index('idx_item_supplier')
   @Column({ name: 'supplier_id', type: 'bigint', transformer: bigintTransformer })
   supplierId!: number;
 
@@ -199,7 +199,7 @@ export class Dish {
     transformer: moneyTransformer,
     precision: 8,
     scale: 2,
-    comment: '菜品供价（C9 修订：与供应商**逐菜协商**，非固定口径）',
+    comment: '商品供价（C9 修订：与供应商**逐菜协商**，非固定口径）',
   })
   costPrice!: string;
 
@@ -232,18 +232,18 @@ export class Dish {
   deletedAt?: Date | null;
 }
 
-/** ab_supplier_dish_daily 供应商每日生产哪道菜（ER v2.1 §3.5） */
-@Entity('ab_supplier_dish_daily')
-@Index('idx_supplier_dish_date', ['produceDate', 'status'])
-@Index('uk_supplier_dish_date', ['supplierId', 'dishId', 'produceDate'], { unique: true })
-export class SupplierDishDaily {
+/** ab_supplier_item_daily 供应商每日生产哪道菜（ER v2.1 §3.5） */
+@Entity('ab_supplier_item_daily')
+@Index('idx_supplier_item_date', ['produceDate', 'status'])
+@Index('uk_supplier_item_date', ['supplierId', 'dishId', 'produceDate'], { unique: true })
+export class SupplierItemDaily {
   @PkColumn()
   id!: number;
 
   @Column({ name: 'supplier_id', type: 'bigint', transformer: bigintTransformer })
   supplierId!: number;
 
-  @Column({ name: 'dish_id', type: 'bigint', transformer: bigintTransformer })
+  @Column({ name: 'item_id', type: 'bigint', transformer: bigintTransformer })
   dishId!: number;
 
   @Column({ name: 'produce_date', type: 'date' })
@@ -282,7 +282,7 @@ export class SupplierDishDaily {
 }
 
 /**
- * ab_supplier_dish_center_daily 供应商-菜品-**集散中心**-日 交付确认明细（M3-8 · S2 载体）
+ * ab_supplier_item_center_daily 供应商-商品-**集散中心**-日 交付确认明细（M3-8 · S2 载体）
  *
  * ## 为什么不把这条明细塞进父表的 JSON 列
  * 粒度天然是**一对多**：一道菜同一天要分别送到 N 个集散中心。
@@ -293,21 +293,21 @@ export class SupplierDishDaily {
  *   ③ S3 要按集散中心 join 出「所有供应商的到位情况」，JSON 到不了。
  * 故参照 `ab_set_meal_item`（套餐 → 菜 → 供应商）的明细独立成表风格。
  *
- * ⚠️ 与父表的关系：本表是明细、父表 `ab_supplier_dish_daily` 是**日计划总量**。
+ * ⚠️ 与父表的关系：本表是明细、父表 `ab_supplier_item_daily` 是**日计划总量**。
  *    父表 `status` 由本表派生驱动 —— 全部分中心 confirmed 时，父表才置 `done`。
  */
-@Entity('ab_supplier_dish_center_daily')
-@Index('idx_sddc_date_center', ['produceDate', 'distributionCenterId'])
-@Index('uk_sddc', ['supplierId', 'dishId', 'produceDate', 'distributionCenterId'], { unique: true })
-export class SupplierDishCenterDaily {
+@Entity('ab_supplier_item_center_daily')
+@Index('idx_sidc_date_center', ['produceDate', 'distributionCenterId'])
+@Index('uk_sidc', ['supplierId', 'dishId', 'produceDate', 'distributionCenterId'], { unique: true })
+export class SupplierItemCenterDaily {
   @PkColumn()
   id!: number;
 
-  @Index('idx_sddc_supplier')
+  @Index('idx_sidc_supplier')
   @Column({ name: 'supplier_id', type: 'bigint', transformer: bigintTransformer })
   supplierId!: number;
 
-  @Column({ name: 'dish_id', type: 'bigint', transformer: bigintTransformer })
+  @Column({ name: 'item_id', type: 'bigint', transformer: bigintTransformer })
   dishId!: number;
 
   @Column({ name: 'produce_date', type: 'date', comment: '出餐日（= 套餐日 T，非确认操作日）' })

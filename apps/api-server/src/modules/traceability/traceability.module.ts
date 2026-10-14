@@ -4,7 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Building } from '../../database/entities/building.entity';
 import { DistributionCenter } from '../../database/entities/finance.entity';
 import { MealAssignment, SetMeal, SetMealItem } from '../../database/entities/meal.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../database/entities/supplier.entity';
 import { TraceabilityController } from './traceability.controller';
 import { TraceabilityService } from './traceability.service';
 
@@ -28,7 +28,7 @@ import { TraceabilityService } from './traceability.service';
       MealAssignment,
       SetMeal,
       SetMealItem,
-      Dish,
+      Item,
       Supplier,
       DistributionCenter,
       Building,

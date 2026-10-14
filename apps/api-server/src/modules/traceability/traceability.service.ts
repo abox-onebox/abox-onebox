@@ -27,7 +27,7 @@ import { tomorrowBj } from '../../common/utils/time';
 import { Building } from '../../database/entities/building.entity';
 import { DistributionCenter } from '../../database/entities/finance.entity';
 import { MealAssignment, SetMeal, SetMealItem } from '../../database/entities/meal.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../database/entities/supplier.entity';
 
 /**
  * 今日这盒 · 商家溯源服务（**U5** · 《接口规范 v1.0》§3.2 · 原型 P38 · M5-14）
@@ -41,7 +41,7 @@ import { Dish, Supplier } from '../../database/entities/supplier.entity';
  * `status`（合作中 / 备选）、`commission`、`shareRate`、备选商家清单、联系方式。
  * 能跳转 ≠ 是合作伙伴；平台一旦下发「哪些是备选商家」，就等于替未合作主体背书。
  *
- * ## 与 `MealService.dishesOfSetMeal` 的关系（为什么不复用）
+ * ## 与 `MealService.itemsOfSetMeal` 的关系（为什么不复用）
  * 两者都从 `ab_set_meal_item` 出发，但**出参粒度不同**且**背的道不同**：
  *   · U1 只到「菜名 + 档位 + 图片 + 供应商展示名」，是**下单页**的菜单视图；
  *   · U5 还要带**该供应商的资质**，是**溯源页**的证据视图
@@ -51,7 +51,7 @@ import { Dish, Supplier } from '../../database/entities/supplier.entity';
  * 共享的是**底层读取口**（实体 / 资质判据），不是出参。
  *
  * ## N+1 收敛
- * 菜品与供应商各一次 `IN` 批量取，供应商视图**按 id 缓存**（一家供两道菜时
+ * 商品与供应商各一次 `IN` 批量取，供应商视图**按 id 缓存**（一家供两道菜时
  * 不重复解析 `takeout_links`）。整页固定 4 次查询，与菜数无关。
  *
  * ## 缓存
@@ -60,10 +60,10 @@ import { Dish, Supplier } from '../../database/entities/supplier.entity';
  * **低频只读**且查询已收敛为常数条。引入缓存层要连带处理失效与一致性，
  * 收益不抵成本。待真有缓存基础设施时再补（已在《接口规范》变更记录登记）。
  */
-/** 详情页最多展示几个在册菜品（规模陈述用，不做分页） */
+/** 详情页最多展示几个在册商品（规模陈述用，不做分页） */
 const MAX_DETAIL_DISHES = 6;
 
-/** `ab_dish.status` = 1 上架（与实体头注同值；此处具名只为可读性） */
+/** `ab_item.status` = 1 上架（与实体头注同值；此处具名只为可读性） */
 const DISH_ON_SALE = 1;
 
 @Injectable()
@@ -71,8 +71,8 @@ export class TraceabilityService {
   constructor(
     @InjectRepository(MealAssignment) private readonly assignmentRepo: Repository<MealAssignment>,
     @InjectRepository(SetMeal) private readonly setMealRepo: Repository<SetMeal>,
-    @InjectRepository(SetMealItem) private readonly itemRepo: Repository<SetMealItem>,
-    @InjectRepository(Dish) private readonly dishRepo: Repository<Dish>,
+    @InjectRepository(SetMealItem) private readonly setMealItemRepo: Repository<SetMealItem>,
+    @InjectRepository(Item) private readonly itemRepo: Repository<Item>,
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
     @InjectRepository(DistributionCenter)
     private readonly centerRepo: Repository<DistributionCenter>,
@@ -114,7 +114,10 @@ export class TraceabilityService {
 
     const [setMeal, items, center] = await Promise.all([
       this.setMealRepo.findOne({ where: { id: assignment.setMealId } }),
-      this.itemRepo.find({ where: { setMealId: assignment.setMealId }, order: { slot: 'ASC' } }),
+      this.setMealItemRepo.find({
+        where: { setMealId: assignment.setMealId },
+        order: { slot: 'ASC' },
+      }),
       assignment.distributionCenterId
         ? this.centerRepo.findOne({ where: { id: assignment.distributionCenterId } })
         : Promise.resolve(null),
@@ -124,7 +127,7 @@ export class TraceabilityService {
 
     if (items.length) {
       const [dishRows, supplierRows] = await Promise.all([
-        this.dishRepo.find({ where: { id: In(items.map((i) => i.dishId)) } }),
+        this.itemRepo.find({ where: { id: In(items.map((i) => i.dishId)) } }),
         this.supplierRepo.find({ where: { id: In([...new Set(items.map((i) => i.supplierId))]) } }),
       ]);
 
@@ -153,7 +156,7 @@ export class TraceabilityService {
       dishes = items.map((i) => {
         const dish = dishMap.get(Number(i.dishId));
         return {
-          dishName: dish?.name ?? `菜品 #${i.dishId}`,
+          dishName: dish?.name ?? `商品 #${i.dishId}`,
           category: dish?.category ?? null,
           imageUrl: dish?.imageUrl ?? null,
           supplier: viewOf(Number(i.supplierId)),
@@ -242,7 +245,7 @@ export class TraceabilityService {
         }))
       : [];
 
-    const dishRows = await this.dishRepo.find({
+    const dishRows = await this.itemRepo.find({
       where: { supplierId: id, status: DISH_ON_SALE, deletedAt: IsNull() },
       order: { saleCount: 'DESC' },
       take: MAX_DETAIL_DISHES,
@@ -352,8 +355,8 @@ export class TraceabilityService {
     if (supplierCount > 0) {
       parts.push(
         center
-          ? `这一盒由 ${supplierCount} 家菜品供应商 + 1 个集散中心（${center.name}）联合出品。`
-          : `这一盒由 ${supplierCount} 家菜品供应商联合出品。`,
+          ? `这一盒由 ${supplierCount} 家商品供应商 + 1 个集散中心（${center.name}）联合出品。`
+          : `这一盒由 ${supplierCount} 家商品供应商联合出品。`,
       );
     }
 

@@ -53,10 +53,10 @@ export class StatsAdminController {
 
   @Get('dish-heat')
   @ApiOperation({
-    summary: 'D49 菜品热度（P35 · M36-03）',
+    summary: 'D49 商品热度（P35 · M36-03）',
     description:
-      '按「套餐 → 菜品」展开后统计每个菜品被发出的份数（一份套餐里的每个菜各计一次订单份数），' +
-      '降序取 TOP N。`share` 的分母是区间内**全部**菜品份数，不是 TOP N 之和。',
+      '按「套餐 → 商品」展开后统计每个商品被发出的份数（一份套餐里的每个菜各计一次订单份数），' +
+      '降序取 TOP N。`share` 的分母是区间内**全部**商品份数，不是 TOP N 之和。',
   })
   dishHeat(@Query() q: DishHeatQueryDto) {
     return this.stats.dishHeat(q);

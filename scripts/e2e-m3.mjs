@@ -2587,12 +2587,12 @@ async function main() {
     // ⚠️ 直写 SQL 而非调 S9 接口：S9 出单在 §21 单独验收，此处只做「退款副作用」的因果对照。
     const shareNoB = `E2ESK${stamp}B`;
     const dishOfB = readDb(
-      'SELECT dish_id FROM ab_set_meal_item WHERE set_meal_id = (SELECT set_meal_id FROM ab_order WHERE order_no = ?) LIMIT 1',
+      'SELECT item_id FROM ab_set_meal_item WHERE set_meal_id = (SELECT set_meal_id FROM ab_order WHERE order_no = ?) LIMIT 1',
       [noB],
     );
     writeDb(
-      "INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, dish_id, quantity, unit_price, amount, type, channel, status) VALUES (?, ?, ?, 'supplier', 1, ?, 100, '7.50', '750.00', 'normal', 'manual', 'pending')",
-      [shareNoB, bjToday(), bjToday(), Number(dishOfB?.dish_id)],
+      "INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, item_id, quantity, unit_price, amount, type, channel, status) VALUES (?, ?, ?, 'supplier', 1, ?, 100, '7.50', '750.00', 'normal', 'manual', 'pending')",
+      [shareNoB, bjToday(), bjToday(), Number(dishOfB?.item_id)],
     );
 
     const balBefore = readDb('SELECT balance FROM ab_balance WHERE user_id = 1001');
@@ -4668,7 +4668,7 @@ async function main() {
     'D25 把证照有效期改成**过去** → 同步下架关联菜品，并回报 `unpublishedDishCount=2`（不做「偷偷改了却不说」）',
     `state=${uExpired.body?.data?.licenseState} unpublished=${uExpired.body?.data?.unpublishedDishCount}`,
   );
-  const dishAfterExpire = readRows('SELECT id, status FROM ab_dish WHERE supplier_id = ?', [
+  const dishAfterExpire = readRows('SELECT id, status FROM ab_item WHERE supplier_id = ?', [
     supAId,
   ]);
   assert(
@@ -4928,7 +4928,7 @@ async function main() {
    *   且标签 `DISH_SLOT_LABEL` 与真源漂移；4 处注释把它描述成真实存在，
    *   于是「同一件事有了两份表述」（正是本批在收的病根）。该枚举已**整文件删除**。
    *   ⇒ 断言改为盯**真正要承诺的那件事**：出参必须把「品类轴」与「档位轴」**显式说清**，
-   *     并**逐字点名两条轴的物理落点**（`ab_dish.category` / `ab_set_meal_item.slot`）——
+   *     并**逐字点名两条轴的物理落点**（`ab_item.category` / `ab_set_meal_item.slot`）——
    *     这才是「写在契约里，而不是留给下一个人去猜」；
    *     断言一个**已删除的枚举名**只会让下一个读的人去找一个不存在的东西。
    *   ⚠️ 断言总数不变（仍 1066）—— 这是**改写**不是新增。
@@ -4936,9 +4936,9 @@ async function main() {
   assert(
     typeof dishList.body?.data?.notes?.category === 'string' &&
       dishList.body.data.notes.category.includes('两条轴') &&
-      dishList.body.data.notes.category.includes('ab_dish.category') &&
+      dishList.body.data.notes.category.includes('ab_item.category') &&
       dishList.body.data.notes.category.includes('ab_set_meal_item.slot'),
-    '菜品库出参**显式标注**「品类轴（`ab_dish.category`）」与「档位轴（`ab_set_meal_item.slot`）」是两条轴（写在契约里，而不是留给下一个人去猜）',
+    '菜品库出参**显式标注**「品类轴（`ab_item.category`）」与「档位轴（`ab_set_meal_item.slot`）」是两条轴（写在契约里，而不是留给下一个人去猜）',
     `note=${dishList.body?.data?.notes?.category?.slice(0, 30)}…`,
   );
   assert(
@@ -4962,7 +4962,7 @@ async function main() {
     `count=${dishBySup.body?.data?.list?.length}`,
   );
 
-  const dishDb = readDb('SELECT cost_price FROM ab_dish WHERE id = ?', [dA1Id]);
+  const dishDb = readDb('SELECT cost_price FROM ab_item WHERE id = ?', [dA1Id]);
   assert(
     Math.abs(Number(dishDb?.cost_price) - 7.5) < 1e-9,
     '菜品供价以「分」入参 → 落库为 **7.50 元整**（750 分 ÷ 100，不出现 7.4999…）',
@@ -4976,7 +4976,7 @@ async function main() {
   assert(
     dishUpdate.body?.code === 0 &&
       dishUpdate.body?.data?.costPriceFen === 880 &&
-      dishUpdate.body?.data?.categoryLabel === '半荤',
+      dishUpdate.body?.data?.categoryLabel === '辅品',
     '菜品改供价 + 改档位成功（供价是 C9 等式的输入项，改一个数字就改了供应商应付与平台毛利）',
     `fen=${dishUpdate.body?.data?.costPriceFen} cat=${dishUpdate.body?.data?.categoryLabel}`,
   );
@@ -5041,7 +5041,7 @@ async function main() {
     "错误码 10004 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
     `message=${JSON.stringify(batchGhost.body?.message)}`,
   );
-  const dishStill = readDb('SELECT status FROM ab_dish WHERE id = ?', [dA1Id]);
+  const dishStill = readDb('SELECT status FROM ab_item WHERE id = ?', [dA1Id]);
   assert(
     Number(dishStill?.status) === 0,
     '批量整体拒绝时**一行都没改**（不是「改了一半再报错」）',
@@ -5339,7 +5339,7 @@ async function main() {
   });
   assert(
     opDish.body?.code === 10003 &&
-      !readDb('SELECT id FROM ab_dish WHERE name = ?', ['e2e 越权菜品']),
+      !readDb('SELECT id FROM ab_item WHERE name = ?', ['e2e 越权菜品']),
     '两级白名单⑧：operator 改菜品（供价是 C9 输入项）→ 10003 且无记录',
     `code=${opDish.body?.code}`,
   );
@@ -6124,7 +6124,7 @@ async function main() {
     assert(
       (wbData?.dishes?.[0]?.unitPriceFen ?? 0) > 0 &&
         Number.isInteger(wbData?.dishes?.[0]?.unitPriceFen),
-      'S1 金额出参为**整数分**（unitPriceFen 取 ab_dish.cost_price = 7.50 → 750）',
+      'S1 金额出参为**整数分**（unitPriceFen 取 ab_item.cost_price = 7.50 → 750）',
       `unitPriceFen=${wbData?.dishes?.[0]?.unitPriceFen}`,
     );
     assert(
@@ -6135,11 +6135,11 @@ async function main() {
 
     // 惰性生成落库：父行 + 分中心明细
     const lazyDaily = readDb(
-      'SELECT id, plan_quantity, status FROM ab_supplier_dish_daily WHERE supplier_id = 1 AND dish_id = 1 AND produce_date = ?',
+      'SELECT id, plan_quantity, status FROM ab_supplier_item_daily WHERE supplier_id = 1 AND item_id = 1 AND produce_date = ?',
       [TMR],
     );
     const lazyDetail = readDb(
-      'SELECT id, plan_quantity, status FROM ab_supplier_dish_center_daily WHERE supplier_id = 1 AND dish_id = 1 AND produce_date = ? AND distribution_center_id = 1',
+      'SELECT id, plan_quantity, status FROM ab_supplier_item_center_daily WHERE supplier_id = 1 AND item_id = 1 AND produce_date = ? AND distribution_center_id = 1',
       [TMR],
     );
     assert(
@@ -6175,7 +6175,7 @@ async function main() {
       `ready=${pk1Center?.ready} blockers=${JSON.stringify((pk1Center?.blockers ?? []).map((b) => b.supplierName))}`,
     );
     const allDetailsTmr = readRows(
-      'SELECT supplier_id, plan_quantity FROM ab_supplier_dish_center_daily WHERE produce_date = ? AND distribution_center_id = 1',
+      'SELECT supplier_id, plan_quantity FROM ab_supplier_item_center_daily WHERE produce_date = ? AND distribution_center_id = 1',
       [TMR],
     );
     assert(
@@ -6294,7 +6294,7 @@ async function main() {
       `code=${cf1.body?.code} confirmed=${(cf1.body?.data?.confirmed ?? []).length} allDone=${cf1.body?.data?.summary?.allDone}`,
     );
     const cfDetailDb = readDb(
-      'SELECT status, actual_quantity, confirmed_by, confirmed_at FROM ab_supplier_dish_center_daily WHERE supplier_id = 1 AND produce_date = ? AND distribution_center_id = 1',
+      'SELECT status, actual_quantity, confirmed_by, confirmed_at FROM ab_supplier_item_center_daily WHERE supplier_id = 1 AND produce_date = ? AND distribution_center_id = 1',
       [TMR],
     );
     assert(
@@ -6306,7 +6306,7 @@ async function main() {
       `status=${cfDetailDb?.status} actual=${cfDetailDb?.actual_quantity} by=${cfDetailDb?.confirmed_by} 期望by=${supAccountId}`,
     );
     const cfDailyDb = readDb(
-      'SELECT status, actual_quantity, completed_at FROM ab_supplier_dish_daily WHERE supplier_id = 1 AND dish_id = 1 AND produce_date = ?',
+      'SELECT status, actual_quantity, completed_at FROM ab_supplier_item_daily WHERE supplier_id = 1 AND item_id = 1 AND produce_date = ?',
       [TMR],
     );
     assert(
@@ -6336,7 +6336,7 @@ async function main() {
 
     // ---- G. 闸门翻转：其余 3 家到位后 ready=true ----
     writeDb(
-      "UPDATE ab_supplier_dish_center_daily SET status = 'confirmed', actual_quantity = plan_quantity, confirmed_at = datetime('now') WHERE produce_date = ? AND distribution_center_id = 1 AND supplier_id <> 1",
+      "UPDATE ab_supplier_item_center_daily SET status = 'confirmed', actual_quantity = plan_quantity, confirmed_at = datetime('now') WHERE produce_date = ? AND distribution_center_id = 1 AND supplier_id <> 1",
       [TMR],
     );
     const pk2 = await call('GET', `/admin/packing-tasks?date=${TMR}`, { token: adminToken });
@@ -6385,7 +6385,7 @@ async function main() {
 
     // ---- I. 短送留痕 ----
     writeDb(
-      "UPDATE ab_supplier_dish_center_daily SET status = 'pending', actual_quantity = NULL, confirmed_at = NULL, confirmed_by = NULL WHERE supplier_id = 1 AND produce_date = ? AND distribution_center_id = 1",
+      "UPDATE ab_supplier_item_center_daily SET status = 'pending', actual_quantity = NULL, confirmed_at = NULL, confirmed_by = NULL WHERE supplier_id = 1 AND produce_date = ? AND distribution_center_id = 1",
       [TMR],
     );
     const shortShip = await call('POST', '/supplier/meal/cook-confirm', {
@@ -6398,7 +6398,7 @@ async function main() {
       },
     });
     const shortDb = readDb(
-      'SELECT status, plan_quantity, actual_quantity, remark FROM ab_supplier_dish_center_daily WHERE supplier_id = 1 AND produce_date = ? AND distribution_center_id = 1',
+      'SELECT status, plan_quantity, actual_quantity, remark FROM ab_supplier_item_center_daily WHERE supplier_id = 1 AND produce_date = ? AND distribution_center_id = 1',
       [TMR],
     );
     assert(
@@ -6478,19 +6478,19 @@ async function main() {
     const S9D = addDaysStr(bjToday(), 90);
     const supAId = 1; // 三味屋（种子 · 资质已核验 · canServe=true）
     const supBId = 2; // 四季鲜蔬
-    const dishRows = readRows('SELECT id FROM ab_dish ORDER BY id LIMIT 2');
+    const dishRows = readRows('SELECT id FROM ab_item ORDER BY id LIMIT 2');
     const dish1 = Number(dishRows[0]?.id ?? 1);
     const dish2 = Number(dishRows[1]?.id ?? dish1);
 
     /** 生产计划父行夹具（S9 只读父行的实收量，不读分中心明细） */
     const DAILY_INSERT =
-      'INSERT INTO ab_supplier_dish_daily (supplier_id, dish_id, produce_date, plan_quantity, actual_quantity, unit_price, status) VALUES (?, ?, ?, ?, ?, ?, ?)';
+      'INSERT INTO ab_supplier_item_daily (supplier_id, item_id, produce_date, plan_quantity, actual_quantity, unit_price, status) VALUES (?, ?, ?, ?, ?, ?, ?)';
 
     // 幂等清理：删掉本日出餐计划与应付行（两处都要删 —— 只删计划的话，
     // 上一次跑留下的应付行会让幂等闸门一直跳过，断言永远看不到 created）。
     // ⚠️ 应付行还要多删 S9D-1：I 段会**自造**一条「另一出餐日」的 pending 行，
     //    用来证明供应商端的待付合计**跨日期**（不删的话重跑会累加，合计断言必红）。
-    writeDb('DELETE FROM ab_supplier_dish_daily WHERE produce_date = ?', [S9D]);
+    writeDb('DELETE FROM ab_supplier_item_daily WHERE produce_date = ?', [S9D]);
     writeDb('DELETE FROM ab_supplier_share WHERE meal_date IN (?, ?)', [S9D, addDaysStr(S9D, -1)]);
 
     // ---------------------------------------------------------- A. 空日基线
@@ -6509,13 +6509,13 @@ async function main() {
     //  ② supB/dish1：cooking（部分中心已确认）→ **fail-closed 不出单**
     //  ③ supB/dish2：done 但实收 0 → **不出单**（没有采购事实）
     //  ⚠️ 夹具单价刻意取 ¥9.90 —— 与菜品当前成本价不同，用来证明出单取的是
-    //     「出餐计划生成时**冻结**的价」，而不是出单时刻的 `ab_dish.cost_price`。
+    //     「出餐计划生成时**冻结**的价」，而不是出单时刻的 `ab_item.cost_price`。
     const FROZEN = '9.90';
     writeDb(DAILY_INSERT, [supAId, dish1, S9D, 100, 96, FROZEN, 'done']);
     writeDb(DAILY_INSERT, [supBId, dish1, S9D, 80, null, FROZEN, 'cooking']);
     writeDb(DAILY_INSERT, [supBId, dish2, S9D, 0, 0, FROZEN, 'done']);
 
-    const dishCost = readDb('SELECT cost_price FROM ab_dish WHERE id = ?', [dish1]);
+    const dishCost = readDb('SELECT cost_price FROM ab_item WHERE id = ?', [dish1]);
     assert(
       Math.round(Number(dishCost?.cost_price) * 100) !== 990,
       'S9 前置：夹具单价 ¥9.90 ≠ 菜品当前成本价（否则「冻结价优先」这条断言就验证不到任何东西）',
@@ -6615,7 +6615,7 @@ async function main() {
     writeDb("UPDATE ab_supplier SET audit_status = 'pending' WHERE id = ?", [supBId]);
     // 把 supB/dish1 补成「已确认完成 · 实收 80」→ 若非资质问题，它本该能出单
     writeDb(
-      "UPDATE ab_supplier_dish_daily SET status = 'done', actual_quantity = 80 WHERE supplier_id = ? AND dish_id = ? AND produce_date = ?",
+      "UPDATE ab_supplier_item_daily SET status = 'done', actual_quantity = 80 WHERE supplier_id = ? AND item_id = ? AND produce_date = ?",
       [supBId, dish1, S9D],
     );
     const excLic = await call('GET', `/admin/supplier-shares/exceptions?date=${S9D}`, {
@@ -6823,7 +6823,7 @@ async function main() {
     //    两个数**不相等**才证明「合计没有被日期过滤」。
     const CROSS_DAY = addDaysStr(S9D, -1);
     writeDb(
-      "INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, dish_id, quantity, unit_price, amount, type, channel, status) VALUES (?, ?, ?, 'supplier', ?, ?, 10, '5.00', '50.00', 'normal', 'manual', 'pending')",
+      "INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, item_id, quantity, unit_price, amount, type, channel, status) VALUES (?, ?, ?, 'supplier', ?, ?, 10, '5.00', '50.00', 'normal', 'manual', 'pending')",
       [`E2ESK${stamp}CROSS`, CROSS_DAY, CROSS_DAY, supAId, dish1],
     );
     const dbPending = readDb(
@@ -7713,7 +7713,7 @@ async function main() {
 
       const supId = Number(supRow.id);
       const INS_SHARE =
-        "INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, dish_id, quantity, unit_price, amount, type, channel, status) VALUES (?, ?, ?, 'supplier', ?, ?, ?, ?, ?, ?, 'manual', ?)";
+        "INSERT INTO ab_supplier_share (share_no, share_date, meal_date, payee_type, payee_id, item_id, quantity, unit_price, amount, type, channel, status) VALUES (?, ?, ?, 'supplier', ?, ?, ?, ?, ?, ?, 'manual', ?)";
       writeDb(INS_SHARE, [
         `${PREFIX}S1`,
         D0,
@@ -7994,9 +7994,9 @@ async function main() {
       const heatFull = (
         await call('GET', '/admin/stats/dish-heat?range=7d&topN=50', { token: adminToken })
       ).body?.data;
-      const m1Dishes = readRows('SELECT dish_id FROM ab_set_meal_item WHERE set_meal_id = ?', [m1]);
+      const m1Dishes = readRows('SELECT item_id FROM ab_set_meal_item WHERE set_meal_id = ?', [m1]);
       const gained = m1Dishes.filter((dd) =>
-        heatFull.items.some((it) => it.dishId === Number(dd.dish_id)),
+        heatFull.items.some((it) => it.dishId === Number(dd.item_id)),
       );
       assert(
         gained.length >= 1,
@@ -8010,8 +8010,8 @@ async function main() {
       // ⭐ 这恰恰是 D49 必须**按菜品合并**而非按套餐展开的直接证据 —— 拆开就两行各 5。
       const dishSetOf = (mealId) =>
         new Set(
-          readRows('SELECT dish_id FROM ab_set_meal_item WHERE set_meal_id = ?', [mealId]).map(
-            (r) => Number(r.dish_id),
+          readRows('SELECT item_id FROM ab_set_meal_item WHERE set_meal_id = ?', [mealId]).map(
+            (r) => Number(r.item_id),
           ),
         );
       // 本节**有效**夹具订单（与 D47 计入 GMV 的 4 条同集合；未支付/已退款/已取消三单不计）
@@ -8025,7 +8025,7 @@ async function main() {
         validFixtures.reduce((s, o) => s + (o.dishes.has(dishId) ? o.qty : 0), 0);
 
       for (const dd of gained.slice(0, 3)) {
-        const id = Number(dd.dish_id);
+        const id = Number(dd.item_id);
         const qBefore = beforeHeat.items.find((it) => it.dishId === id)?.quantity ?? 0;
         const qAfter = heatFull.items.find((it) => it.dishId === id)?.quantity ?? 0;
         const expect = expectDelta(id);
@@ -10852,7 +10852,7 @@ async function main() {
         `sold_count=${sold28?.sold_count}`,
       );
       const plan28row = readDb(
-        'SELECT COUNT(*) AS c, COUNT(DISTINCT plan_quantity) AS d, MIN(plan_quantity) AS mn, MAX(plan_quantity) AS mx, COALESCE(SUM(plan_quantity), 0) AS s FROM ab_supplier_dish_daily WHERE produce_date = ?',
+        'SELECT COUNT(*) AS c, COUNT(DISTINCT plan_quantity) AS d, MIN(plan_quantity) AS mn, MAX(plan_quantity) AS mx, COALESCE(SUM(plan_quantity), 0) AS s FROM ab_supplier_item_daily WHERE produce_date = ?',
         [D28P],
       );
       assert(
@@ -10863,7 +10863,7 @@ async function main() {
       assert(
         Number(plan28?.totalQuantity) === Number(plan28row?.s) &&
           Number(plan28?.supplierCount) >= 1,
-        '§28 截单出参的供应商侧合计与落库的 `ab_supplier_dish_daily` 合计**相等**（出参一份口径、落库另一份口径时，运营看到的「今天要备 N 份」与表里的数会对不上，且**不报任何错**）',
+        '§28 截单出参的供应商侧合计与落库的 `ab_supplier_item_daily` 合计**相等**（出参一份口径、落库另一份口径时，运营看到的「今天要备 N 份」与表里的数会对不上，且**不报任何错**）',
         `出参=${plan28?.totalQuantity} 落库=${plan28row?.s} 供应商数=${plan28?.supplierCount}`,
       );
 
@@ -11051,8 +11051,8 @@ async function main() {
         );
       }
       writeDb('DELETE FROM ab_delivery_record WHERE meal_date IN (?, ?)', [D28P, D28W]);
-      writeDb('DELETE FROM ab_supplier_dish_center_daily WHERE produce_date = ?', [D28P]);
-      writeDb('DELETE FROM ab_supplier_dish_daily WHERE produce_date = ?', [D28P]);
+      writeDb('DELETE FROM ab_supplier_item_center_daily WHERE produce_date = ?', [D28P]);
+      writeDb('DELETE FROM ab_supplier_item_daily WHERE produce_date = ?', [D28P]);
       writeDb('DELETE FROM ab_meal_assignment WHERE meal_date IN (?, ?, ?, ?)', [
         D28F,
         D28P,
@@ -11090,7 +11090,7 @@ async function main() {
           ])?.c ?? -1,
         ),
         p: Number(
-          readDb('SELECT COUNT(*) AS c FROM ab_supplier_dish_daily WHERE produce_date = ?', [D28P])
+          readDb('SELECT COUNT(*) AS c FROM ab_supplier_item_daily WHERE produce_date = ?', [D28P])
             ?.c ?? -1,
         ),
         b: Number(
@@ -14193,7 +14193,7 @@ async function main() {
       // 它们的分中心明细只能靠这条派生路径生成（§20 C 步同一手法）。
       await call('GET', `/admin/packing-tasks?date=${TMR35}`, { token: adminToken });
       const swRow35 = readDb(
-        'SELECT dish_id AS did FROM ab_supplier_dish_center_daily WHERE produce_date = ? AND distribution_center_id = ? AND supplier_id = 1 AND plan_quantity > 0 ORDER BY id LIMIT 1',
+        'SELECT item_id AS did FROM ab_supplier_item_center_daily WHERE produce_date = ? AND distribution_center_id = ? AND supplier_id = 1 AND plan_quantity > 0 ORDER BY id LIMIT 1',
         [TMR35, DC35],
       );
       assert(
@@ -14206,7 +14206,7 @@ async function main() {
         // 夹具：其余三家「已送达」。**只摆「上游已完成」这个前提**，
         // 不碰任何订单状态 —— 订单的推进必须由下一行的接口调用**因果地**产生。
         const others35 = writeDb(
-          "UPDATE ab_supplier_dish_center_daily SET status = 'confirmed', actual_quantity = plan_quantity, confirmed_at = datetime('now') WHERE produce_date = ? AND distribution_center_id = ? AND supplier_id <> 1",
+          "UPDATE ab_supplier_item_center_daily SET status = 'confirmed', actual_quantity = plan_quantity, confirmed_at = datetime('now') WHERE produce_date = ? AND distribution_center_id = ? AND supplier_id <> 1",
           [TMR35, DC35],
         );
         const row35pre = readDb('SELECT status FROM ab_order WHERE order_no = ?', [no35]);
@@ -15614,8 +15614,8 @@ async function main() {
     // ⚠️ `all` 套跑时 e2e:m1 先于本套跑，其 U20 已写入 4 行评价 —— m1 的断言在
     //    m1 内已闭环、且其后无任何节再读评价表，故此处清表取得「空态」这一被测状态
     //    （同 §39 开头记 base39 的动机：让每一节都从已知状态出发）。
-    writeDb('DELETE FROM ab_dish_rating');
-    // ⚠️ 必须先于夹具插入：seed 零订单 ⇒ ab_dish_rating 天然为空，
+    writeDb('DELETE FROM ab_item_rating');
+    // ⚠️ 必须先于夹具插入：seed 零订单 ⇒ ab_item_rating 天然为空，
     //    「空 = 空数组而非 null / totalRatings=0 而非报错」是端上首屏渲染的契约。
     const empty40 = (
       await call('GET', `${RATING40}?range=7d&date=${ANCHOR40}`, { token: adminToken })
@@ -15648,7 +15648,7 @@ async function main() {
     // 菜D：1 条「不好」在 2026-01-11（**锚点之后** ⇒ 永不出现）
     const U2_PREFIX40 = 'e2e-u2-rating-';
     const rows40 = [
-      // [order_no 后缀, dish_id, dish_name, supplier_id, supplier_name, slot, meal_date, rating, reason]
+      // [order_no 后缀, item_id, item_name, supplier_id, supplier_name, slot, meal_date, rating, reason]
       ['a1', 1, '测试菜A', 1, '测试供应商一', 1, '2026-01-08', 3, 'r-A3'],
       ['a2', 1, '测试菜A', 1, '测试供应商一', 1, '2026-01-09', 3, 'r-A2'],
       ['a3', 1, '测试菜A', 1, '测试供应商一', 1, '2026-01-10', 3, 'r-A1'],
@@ -15663,8 +15663,8 @@ async function main() {
     let ins40 = 0;
     for (const [suf, dishId, dishName, supId, supName, slot, mealDate, rating, reason] of rows40) {
       ins40 += writeDb(
-        `INSERT INTO ab_dish_rating
-           (order_id, order_no, user_id, meal_date, dish_id, dish_name, supplier_id, supplier_name, slot, rating, reason, created_at)
+        `INSERT INTO ab_item_rating
+           (order_id, order_no, user_id, meal_date, item_id, item_name, supplier_id, supplier_name, slot, rating, reason, created_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           990000 + ins40,
@@ -15810,7 +15810,7 @@ async function main() {
     );
 
     // ---------------------------------------------------------- F. 还原（只删本节夹具）
-    const del40 = writeDb('DELETE FROM ab_dish_rating WHERE order_no LIKE ?', [`${U2_PREFIX40}%`]);
+    const del40 = writeDb('DELETE FROM ab_item_rating WHERE order_no LIKE ?', [`${U2_PREFIX40}%`]);
     assert(
       del40 === rows40.length,
       '§40(F) 夹具还原：10 行已清（表回到空态，别把演示数据留给后面的节）',

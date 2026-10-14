@@ -5,7 +5,7 @@ import { Building, BuildingGroup } from '../../database/entities/building.entity
 import { Commission, SupplierShare } from '../../database/entities/finance.entity';
 import { SetMealItem } from '../../database/entities/meal.entity';
 import { Order } from '../../database/entities/order.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../database/entities/supplier.entity';
 
 import { StatsAdminController } from './stats-admin.controller';
 import { StatsService } from './stats.service';
@@ -34,9 +34,9 @@ import { StatsService } from './stats.service';
       // 榜单名称（楼群/楼栋可能已软删 → 找不到名时回退 `#id`）
       Building,
       BuildingGroup,
-      // 菜品热度：套餐 → 菜品 展开
+      // 商品热度：套餐 → 商品 展开
       SetMealItem,
-      Dish,
+      Item,
       Supplier,
     ]),
   ],

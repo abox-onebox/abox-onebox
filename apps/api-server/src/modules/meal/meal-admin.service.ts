@@ -18,7 +18,7 @@ import {
 import { Building, BuildingGroup } from '../../database/entities/building.entity';
 import { DistributionCenter } from '../../database/entities/finance.entity';
 import { MealAssignment, SetMeal, SetMealItem } from '../../database/entities/meal.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../database/entities/supplier.entity';
 import {
   CopyAssignmentsDto,
   CreateAssignmentDto,
@@ -137,8 +137,8 @@ export class MealAdminService {
   constructor(
     @InjectRepository(MealAssignment) private readonly assignmentRepo: Repository<MealAssignment>,
     @InjectRepository(SetMeal) private readonly setMealRepo: Repository<SetMeal>,
-    @InjectRepository(SetMealItem) private readonly itemRepo: Repository<SetMealItem>,
-    @InjectRepository(Dish) private readonly dishRepo: Repository<Dish>,
+    @InjectRepository(SetMealItem) private readonly setMealItemRepo: Repository<SetMealItem>,
+    @InjectRepository(Item) private readonly itemRepo: Repository<Item>,
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
     @InjectRepository(DistributionCenter) private readonly dcRepo: Repository<DistributionCenter>,
     @InjectRepository(BuildingGroup) private readonly groupRepo: Repository<BuildingGroup>,
@@ -203,7 +203,7 @@ export class MealAdminService {
       };
     });
 
-    // 批量取套餐名 / 菜品数 / 集散中心名，避免网格里 N+1 查询
+    // 批量取套餐名 / 商品数 / 集散中心名，避免网格里 N+1 查询
     const setMealIds = [...new Set(assignments.map((a) => a.setMealId))];
     const dcIds = [
       ...new Set(
@@ -216,7 +216,7 @@ export class MealAdminService {
     const [setMeals, itemCounts, dcs] = await Promise.all([
       setMealIds.length ? this.setMealRepo.find({ where: { id: In(setMealIds) } }) : [],
       setMealIds.length
-        ? this.itemRepo
+        ? this.setMealItemRepo
             .createQueryBuilder('i')
             .select('i.set_meal_id', 'setMealId')
             .addSelect('COUNT(*)', 'n')
@@ -630,10 +630,10 @@ export class MealAdminService {
     const [rows, total] = await qb.getManyAndCount();
     const ids = rows.map((r) => r.id);
     const items = ids.length
-      ? await this.itemRepo.find({ where: { setMealId: In(ids) }, order: { slot: 'ASC' } })
+      ? await this.setMealItemRepo.find({ where: { setMealId: In(ids) }, order: { slot: 'ASC' } })
       : [];
     const dishIds = [...new Set(items.map((i) => i.dishId))];
-    const dishes = dishIds.length ? await this.dishRepo.find({ where: { id: In(dishIds) } }) : [];
+    const dishes = dishIds.length ? await this.itemRepo.find({ where: { id: In(dishIds) } }) : [];
     const dishMap = new Map(dishes.map((d) => [d.id, d]));
 
     // 该模板被多少个「未取消的分配」用过 —— 模板库里最有用的一列
@@ -664,7 +664,7 @@ export class MealAdminService {
           dishId: i.dishId,
           slot: i.slot,
           slotLabel: SLOT_LABEL[i.slot] ?? String(i.slot),
-          name: dishMap.get(i.dishId)?.name ?? `菜品 ${i.dishId}`,
+          name: dishMap.get(i.dishId)?.name ?? `商品 ${i.dishId}`,
           supplierId: i.supplierId,
         })),
         usedCount: usedMap.get(r.id) ?? 0,
@@ -679,8 +679,8 @@ export class MealAdminService {
   // ==========================================================================
 
   /**
-   * 菜品项两种来源：显式 `items[]` 或 `sourceSetMealId`（另存现有套餐）。
-   * `supplierId` 由菜品反查、`costPrice` 由菜品供价求和 —— 见 DTO 注释里的理由。
+   * 商品项两种来源：显式 `items[]` 或 `sourceSetMealId`（另存现有套餐）。
+   * `supplierId` 由商品反查、`costPrice` 由商品供价求和 —— 见 DTO 注释里的理由。
    */
   async createTemplate(dto: CreateSetMealTemplateDto, operatorId?: number) {
     const { plan, dishMap } = await this.resolvePlanAndDishes(dto.items, dto.sourceSetMealId);
@@ -748,7 +748,7 @@ export class MealAdminService {
 
     // ---- 构成类字段：整组替换（不是增量），并重算成本 ----
     let plan: Array<{ dishId: number; slot: number }> | null = null;
-    let dishMap: Map<number, Dish> | null = null;
+    let dishMap: Map<number, Item> | null = null;
     if (dto.items !== undefined) {
       const resolved = await this.resolvePlanAndDishes(dto.items, undefined);
       plan = resolved.plan;
@@ -779,13 +779,16 @@ export class MealAdminService {
     // 未改构成时，明细要按**库里现存**的那一组回显（不能拿请求里的部分数据凑）
     let viewPlan: Array<{ dishId: number; slot: number }> = plan ?? [];
     if (!plan) {
-      const rows = await this.itemRepo.find({ where: { setMealId: id }, order: { slot: 'ASC' } });
+      const rows = await this.setMealItemRepo.find({
+        where: { setMealId: id },
+        order: { slot: 'ASC' },
+      });
       viewPlan = rows.map((r) => ({ dishId: r.dishId, slot: r.slot }));
     }
-    let viewDishMap: Map<number, Dish> = dishMap ?? new Map<number, Dish>();
+    let viewDishMap: Map<number, Item> = dishMap ?? new Map<number, Item>();
     if (!dishMap) {
       const ids = [...new Set(viewPlan.map((p) => p.dishId))];
-      const dishes = ids.length ? await this.dishRepo.find({ where: { id: In(ids) } }) : [];
+      const dishes = ids.length ? await this.itemRepo.find({ where: { id: In(ids) } }) : [];
       viewDishMap = new Map(dishes.map((d) => [d.id, d]));
     }
 
@@ -820,22 +823,22 @@ export class MealAdminService {
   // ==========================================================================
 
   /**
-   * 归一化「菜品项从哪来」+ 三道校验，**一次性**返回 `plan` 与 `dishMap`。
+   * 归一化「商品项从哪来」+ 三道校验，**一次性**返回 `plan` 与 `dishMap`。
    *
    * ⚠️ 两个调用点（D7 新建 / D7b 编辑）必须走同一份实现 ——
    *    否则"新建时强制一饭四菜、编辑时却放行"这种漏洞迟早出现。
    *
    * ⚠️ **校验顺序是契约的一部分**（e2e 逐条断言它）：
    *     ① 同一道菜重复       → `10001`（「两道素菜」得是两道**不同**的素菜）
-   *     ② 菜品不存在 / 已下架 → `30008`
+   *     ② 商品不存在 / 已下架 → `30008`
    *     ③ 一饭四菜构成       → `10001`
    *    ① → ② → ③ 不能调换：请求里若有「不存在的菜」，
-   *    运营要看到的是"菜品不存在"，而不是被一句"缺了半荤"盖过去。
+   *    运营要看到的是"商品不存在"，而不是被一句"缺了半荤"盖过去。
    */
   private async resolvePlanAndDishes(
     items: SetMealItemInputDto[] | undefined,
     sourceSetMealId: number | undefined,
-  ): Promise<{ plan: Array<{ dishId: number; slot: number }>; dishMap: Map<number, Dish> }> {
+  ): Promise<{ plan: Array<{ dishId: number; slot: number }>; dishMap: Map<number, Item> }> {
     let plan: Array<{ dishId: number; slot: number }>;
 
     if (items?.length) {
@@ -843,9 +846,9 @@ export class MealAdminService {
     } else if (sourceSetMealId) {
       const src = await this.setMealRepo.findOne({ where: { id: sourceSetMealId } });
       if (!src) throw new BizException(ErrorCode.MEAL_NOT_FOUND);
-      const srcItems = await this.itemRepo.find({ where: { setMealId: src.id } });
+      const srcItems = await this.setMealItemRepo.find({ where: { setMealId: src.id } });
       if (srcItems.length === 0) {
-        throw new BizException(ErrorCode.MEAL_NOT_FOUND, '被复制的套餐没有菜品明细');
+        throw new BizException(ErrorCode.MEAL_NOT_FOUND, '被复制的套餐没有商品明细');
       }
       plan = srcItems.map((i) => ({ dishId: i.dishId, slot: i.slot }));
     } else {
@@ -858,7 +861,7 @@ export class MealAdminService {
       throw new BizException(ErrorCode.PARAM_INVALID, '同一道菜不能重复出现');
     }
 
-    // ② 菜品必须存在且上架
+    // ② 商品必须存在且上架
     const dishMap = await this.assertDishesUsable(plan);
 
     // ③ 一饭四菜
@@ -871,10 +874,10 @@ export class MealAdminService {
    * 「一饭四菜」机械判据（M5-15 · 此前**只写在文案与种子数据里**）
    *
    * 需求：恰好覆盖 `SET_MEAL_REQUIRED_SLOTS`（主荤 / 半荤 / 素菜 / 汤）**各一道**，
-   * 且**不得**出现 `slot=5`（主食米饭由集散中心统一供米，不建菜品项 ——
+   * 且**不得**出现 `slot=5`（主食米饭由集散中心统一供米，不建商品项 ——
    * 建了会把 ¥2 重复计进成本）。
    *
-   * ⚠️ 本方法必须排在「重复菜」与「菜品存在性」**之后**调用
+   * ⚠️ 本方法必须排在「重复菜」与「商品存在性」**之后**调用
    *    （顺序契约写在 `resolvePlanAndDishes` 的注释里）。
    */
   private assertComposition(plan: Array<{ dishId: number; slot: number }>): void {
@@ -890,7 +893,7 @@ export class MealAdminService {
         parts.push(
           `多了不允许的档位 ${[...new Set(extra)]
             .map((s) => SLOT_LABEL[s] ?? s)
-            .join(' / ')}（主食米饭由集散中心统一供，不建菜品项）`,
+            .join(' / ')}（主食米饭由集散中心统一供，不建商品项）`,
         );
       }
       throw new BizException(
@@ -900,47 +903,47 @@ export class MealAdminService {
     }
   }
 
-  /** 菜品存在性 + 上架状态校验，返回 id → 菜品 映射（新建 / 编辑共用） */
+  /** 商品存在性 + 上架状态校验，返回 id → 商品 映射（新建 / 编辑共用） */
   private async assertDishesUsable(
     plan: Array<{ dishId: number; slot: number }>,
-  ): Promise<Map<number, Dish>> {
+  ): Promise<Map<number, Item>> {
     const dishIds = plan.map((p) => p.dishId);
-    const dishes = await this.dishRepo.find({ where: { id: In(dishIds) } });
+    const dishes = await this.itemRepo.find({ where: { id: In(dishIds) } });
     const dishMap = new Map(dishes.map((d) => [d.id, d]));
     const missing = dishIds.filter((id) => !dishMap.has(id));
     if (missing.length) {
-      throw new BizException(ErrorCode.MEAL_NOT_FOUND, `菜品不存在：${missing.join(', ')}`);
+      throw new BizException(ErrorCode.MEAL_NOT_FOUND, `商品不存在：${missing.join(', ')}`);
     }
     const offShelf = dishIds.filter((id) => dishMap.get(id)?.status !== 1);
     if (offShelf.length) {
-      throw new BizException(ErrorCode.MEAL_NOT_FOUND, `菜品已下架：${offShelf.join(', ')}`);
+      throw new BizException(ErrorCode.MEAL_NOT_FOUND, `商品已下架：${offShelf.join(', ')}`);
     }
     return dishMap;
   }
 
-  /** 成本 = 各菜品供价求和（C9：逐菜协商价，不用供应商整体分成比例） */
+  /** 成本 = 各商品供价求和（C9：逐菜协商价，不用供应商整体分成比例） */
   private sumCost(
     plan: Array<{ dishId: number; slot: number }>,
-    dishMap: Map<number, Dish>,
+    dishMap: Map<number, Item>,
   ): string {
     return plan
       .reduce((sum, p) => sum + Number(dishMap.get(p.dishId)?.costPrice ?? 0), 0)
       .toFixed(2);
   }
 
-  /** 构造待落库的明细行（`supplierId` / 分账单价均由菜品反查，不由前端提交） */
+  /** 构造待落库的明细行（`supplierId` / 分账单价均由商品反查，不由前端提交） */
   private buildItems(
     m: EntityManager,
     setMealId: number,
     plan: Array<{ dishId: number; slot: number }>,
-    dishMap: Map<number, Dish>,
+    dishMap: Map<number, Item>,
   ): SetMealItem[] {
     return plan.map((p) =>
       m.create(SetMealItem, {
         setMealId,
         dishId: p.dishId,
         supplierId: dishMap.get(p.dishId)!.supplierId,
-        // 分账单价 = 该菜品供价（C9：逐菜协商价）
+        // 分账单价 = 该商品供价（C9：逐菜协商价）
         shareAmount: dishMap.get(p.dishId)!.costPrice,
         slot: p.slot,
       }),
@@ -948,21 +951,21 @@ export class MealAdminService {
   }
 
   // ==========================================================================
-  // 辅助 · 菜品选择器（D7 编排页的前置数据源）
+  // 辅助 · 商品选择器（D7 编排页的前置数据源）
   // ==========================================================================
 
   /**
-   * 菜品库（供 D7「选菜品组成一饭四菜」）
+   * 商品库（供 D7「选商品组成一饭四菜」）
    *
-   * 菜品的**管理**属供应商模块（D23–D32），本接口只做**只读挑选用**，
+   * 商品的**管理**属供应商模块（D23–D32），本接口只做**只读挑选用**，
    * 因此刻意不放进 `admin/supplier/*` —— 编排页不该依赖尚未落地的模块。
    *
-   * 只返回上架菜品（`status=1`）：编排页选中一道已下架的菜，D7 提交时必被
-   * `createTemplate` 的「菜品已下架」校验打回 —— 与其让运营在提交后才发现，
+   * 只返回上架商品（`status=1`）：编排页选中一道已下架的菜，D7 提交时必被
+   * `createTemplate` 的「商品已下架」校验打回 —— 与其让运营在提交后才发现，
    * 不如根本不给选。类别倒序排列（主荤在前），贴合「一饭四菜」的选菜顺序。
    */
   async dishOptions(keyword?: string) {
-    const qb = this.dishRepo
+    const qb = this.itemRepo
       .createQueryBuilder('d')
       .where('d.status = :st', { st: 1 })
       .orderBy('d.category', 'ASC')
@@ -979,7 +982,7 @@ export class MealAdminService {
     return {
       // 档位选项由服务端给出：端上不需要维护一份「1=主荤…」的映射（口径唯一）
       // ⭐ M5-15：每项带上「是否必选 / 是否主食档」，后台据此把主食渲染成**只读说明**
-      //    而不是一个可选的菜品槽（主食由集散中心统一供，不建菜品项）。
+      //    而不是一个可选的商品槽（主食由集散中心统一供，不建商品项）。
       slots: Object.entries(SLOT_LABEL).map(([value, label]) => {
         const v = Number(value);
         return {
@@ -1075,7 +1078,7 @@ export class MealAdminService {
   private templateView(
     sm: SetMeal,
     plan: Array<{ dishId: number; slot: number }>,
-    dishMap: Map<number, Dish>,
+    dishMap: Map<number, Item>,
   ) {
     return {
       id: sm.id,

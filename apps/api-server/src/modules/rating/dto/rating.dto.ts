@@ -18,7 +18,7 @@ import { RATING_LEVELS, RATING_WORST_COUNT } from '../rating.constants';
 /** 单菜评价入参 */
 export class DishRatingItemDto {
   @ApiProperty({
-    description: '菜品 id（须属于该订单的套餐；name 无唯一约束，按 id 定位）',
+    description: '商品 id（须属于该订单的套餐；name 无唯一约束，按 id 定位）',
     example: 3,
   })
   @Type(() => Number)

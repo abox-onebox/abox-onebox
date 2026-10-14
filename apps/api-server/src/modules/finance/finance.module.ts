@@ -10,7 +10,7 @@ import {
 } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { Order, PaymentLog, Refund } from '../../database/entities/order.entity';
-import { Dish, Supplier, SupplierDishDaily } from '../../database/entities/supplier.entity';
+import { Item, Supplier, SupplierItemDaily } from '../../database/entities/supplier.entity';
 import { OperationLog } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
@@ -79,8 +79,8 @@ import { WithdrawAdminService } from './withdraw-admin.service';
  *    `OrderModule` 自身也持有 `Refund` 实体（历史原因：`RefundService` 曾住在
  *    order 模块），TypeORM `forFeature` 重复注册同一实体是合法的，不会产生双份表。
  *
- * ⚠️ M3-9 为何直接 forFeature `Supplier` / `Dish` / `SupplierDishDaily` 而不依赖
- *    `SupplierModule`：出单要按 (供应商, 菜品) 读**出餐计划的实收量**，属实体级读取。
+ * ⚠️ M3-9 为何直接 forFeature `Supplier` / `Item` / `SupplierItemDaily` 而不依赖
+ *    `SupplierModule`：出单要按 (供应商, 商品) 读**出餐计划的实收量**，属实体级读取。
  *    为此 import `SupplierModule` 会在 FinanceModule ↔ SupplierModule 之间拉出一条
  *    服务依赖（将来供应商端若要复用财务服务就成环），而实体级依赖不构成模块循环
  *    —— 与 M3-5 `TeamLeaderModule`、M3-6 `SupplierModule` 的既有处理一致。
@@ -102,8 +102,8 @@ import { WithdrawAdminService } from './withdraw-admin.service';
       User,
       // M3-9 应付结算（S9）读取口径所需
       Supplier,
-      Dish,
-      SupplierDishDaily,
+      Item,
+      SupplierItemDaily,
       // ⭐ M4-3：`RefundService` 在「退款重试入队失败」时要落一条 `module=queue`
       //    操作日志（那是「账务已冲销、钱却没退也没重试」的唯一留痕）。
       //    ⚠️ **必须在此显式注册**：`CommonModule` 虽然 `@Global()` 且

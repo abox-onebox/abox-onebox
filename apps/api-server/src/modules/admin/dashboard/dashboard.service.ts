@@ -73,7 +73,7 @@ export interface WorkbenchTodosResult {
  * ③ **本端点只数数、不列明细。** 明细在各域自己的列表页。
  *    若这里开始返回列表，它就会长成第二个订单中心（两份列表必然漂移）。
  *
- * ⚠️ **刻意不含「供应商出餐进度」**：那是 `ab_supplier_dish_daily` 的 `pending/cooking/done`，
+ * ⚠️ **刻意不含「供应商出餐进度」**：那是 `ab_supplier_item_daily` 的 `pending/cooking/done`，
  *    属于供应商端 / 后台「加工场所打包」页的**实时进度盘**，不是「必须由某个后台角色去批」
  *    的待办。放进工作台只会造出第二份进度口径，并在它滞后时制造假告警。
  *

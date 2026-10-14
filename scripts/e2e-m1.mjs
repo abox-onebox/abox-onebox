@@ -163,7 +163,7 @@ function oneShotCode(tag) {
  *
  * ## 为什么删 `ab_user` 一行就够（实测，不是推断）
  * 现造账号只做过一次登录，实测它在全部 8 张带 `user_id` 的表里都是 **0 行**
- * （`ab_balance` / `ab_balance_log` / `ab_dish_rating` / `ab_message` / `ab_order`
+ * （`ab_balance` / `ab_balance_log` / `ab_item_rating` / `ab_message` / `ab_order`
  * / `ab_refund` / `ab_team_leader` / `ab_withdraw`）⇒ 删父行不留孤儿。
  *
  * ## 为什么以 `id` 定位，且删前先读回 `openid`
@@ -1154,10 +1154,10 @@ async function run() {
         `rated=${ra?.rated} items=${ra?.items?.length}`,
       );
 
-      // 落库快照：dish_name / supplier_name 为真实快照（非兜底占位），reason 已 trim
+      // 落库快照：item_name / supplier_name 为真实快照（非兜底占位），reason 已 trim
       const rows = rdb
         .prepare(
-          'SELECT dish_name, supplier_name, rating, reason FROM ab_dish_rating WHERE order_no = ? ORDER BY slot',
+          'SELECT item_name, supplier_name, rating, reason FROM ab_item_rating WHERE order_no = ? ORDER BY slot',
         )
         .all(ratingOrderNo);
       assert(rows.length === 4, 'U20 落库恰 4 行（整批单事务）', `rows=${rows.length}`);
@@ -1168,8 +1168,8 @@ async function run() {
         `reason=${JSON.stringify(badRow?.reason)}`,
       );
       assert(
-        rows.every((x) => x.dish_name && !/^菜品#/.test(x.dish_name)),
-        'U20 落库 dish_name 为真实快照（菜改名/下架不影响历史行）',
+        rows.every((x) => x.item_name && !/^菜品#/.test(x.item_name)),
+        'U20 落库 item_name 为真实快照（菜改名/下架不影响历史行）',
       );
       assert(
         rows.every((x) => x.supplier_name && !/^供应商#/.test(x.supplier_name)),
@@ -1182,7 +1182,7 @@ async function run() {
       // 判据一并移除），但留一张 delivered 单仍会让后续两套按当日单量取数时多出一单
       // —— 污染依旧存在，只是换了个表现，删除动作不能省。
       const delR40 = rdb
-        .prepare('DELETE FROM ab_dish_rating WHERE order_no = ?')
+        .prepare('DELETE FROM ab_item_rating WHERE order_no = ?')
         .run(ratingOrderNo);
       const delP40 = rdb
         .prepare('DELETE FROM ab_payment_log WHERE order_no = ?')

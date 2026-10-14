@@ -69,7 +69,7 @@ export class TraceabilityController {
   @ApiOperation({
     summary: '供应商资质墙 · 详情（免登录只读）',
     description:
-      '逐条给出该出品方的证照（名称 / 编号 / 有效期）与在册菜品名。\n\n' +
+      '逐条给出该出品方的证照（名称 / 编号 / 有效期）与在册商品名。\n\n' +
       '⚠️ **不在供时 `entries` 为空数组，原因写在 `note` 里** —— ' +
       '既不能把过期证照摆出来（用户会当成仍然有效），也不能让用户对着空白页发愣。\n\n' +
       '`id` 非法时 400（`PARAM_INVALID`），不存在时 404（`NOT_FOUND`）。',

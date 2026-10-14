@@ -10,7 +10,7 @@ import { Building, BuildingGroup } from '../../database/entities/building.entity
 import { Commission, SupplierShare } from '../../database/entities/finance.entity';
 import { SetMealItem } from '../../database/entities/meal.entity';
 import { Order } from '../../database/entities/order.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../database/entities/supplier.entity';
 
 import {
   COMMISSION_VOID_STATUSES,
@@ -111,28 +111,28 @@ export interface StatsBuildingRankView {
   totalGmvFen: number;
 }
 
-/** D49 菜品热度行 */
+/** D49 商品热度行 */
 export interface StatsDishHeatRow {
   dishId: number;
   dishName: string;
   supplierId: number;
   supplierName: string;
-  /** 该菜品被发出的份数（= 含它的订单份数之和） */
+  /** 该商品被发出的份数（= 含它的订单份数之和） */
   quantity: number;
-  /** 含该菜品的订单数 */
+  /** 含该商品的订单数 */
   orderCount: number;
-  /** 占区间全部菜品份数的比例（0–1 保留 4 位小数） */
+  /** 占区间全部商品份数的比例（0–1 保留 4 位小数） */
   share: number;
 }
 
-/** D49 菜品热度 */
+/** D49 商品热度 */
 export interface StatsDishHeatView {
   range: StatsRangeView;
   topN: number;
   items: StatsDishHeatRow[];
-  /** 区间内**全部**菜品份数（分母 —— 按 topN 之和算占比会得出「份额合计 100%」的假象） */
+  /** 区间内**全部**商品份数（分母 —— 按 topN 之和算占比会得出「份额合计 100%」的假象） */
   totalQuantity: number;
-  /** 区间内出现过的菜品数 */
+  /** 区间内出现过的商品数 */
   dishCount: number;
 }
 
@@ -506,7 +506,7 @@ export class StatsService {
   }
 
   /* ------------------------------------------------------------------ *
-   * D49 · 菜品热度
+   * D49 · 商品热度
    * ------------------------------------------------------------------ */
 
   async dishHeat(q: DishHeatQueryDto): Promise<StatsDishHeatView> {
@@ -516,7 +516,7 @@ export class StatsService {
 
     const setMealIds = [...new Set(validOrders.map((o) => Number(o.setMealId)))];
 
-    // 套餐 → 菜品 展开（`ab_set_meal_item`）
+    // 套餐 → 商品 展开（`ab_set_meal_item`）
     const items = setMealIds.length
       ? await this.dataSource
           .getRepository(SetMealItem)
@@ -533,7 +533,7 @@ export class StatsService {
       dishesOf.set(k, arr);
     }
 
-    // 一份套餐里的每个菜品都跟着「订单份数」计一次 —— 即「这一份饭里这个菜被送出了几次」
+    // 一份套餐里的每个商品都跟着「订单份数」计一次 —— 即「这一份饭里这个菜被送出了几次」
     const acc = new Map<number, { quantity: number; orderCount: number; supplierId: number }>();
     for (const o of validOrders) {
       const qty = Number(o.quantity ?? 0);
@@ -553,7 +553,7 @@ export class StatsService {
     const dishIds = [...acc.keys()];
     const dishRows = dishIds.length
       ? await this.dataSource
-          .getRepository(Dish)
+          .getRepository(Item)
           .createQueryBuilder('d')
           .select(['d.id', 'd.name', 'd.supplierId'])
           .where('d.id IN (:...ids)', { ids: dishIds })
@@ -574,12 +574,12 @@ export class StatsService {
     const list: StatsDishHeatRow[] = [...acc.entries()]
       .map(([dishId, v]) => ({
         dishId,
-        dishName: dishName.get(dishId) ?? `菜品#${dishId}`,
+        dishName: dishName.get(dishId) ?? `商品#${dishId}`,
         supplierId: v.supplierId,
         supplierName: supplierName.get(v.supplierId) ?? `供应商#${v.supplierId}`,
         quantity: v.quantity,
         orderCount: v.orderCount,
-        // ⚠️ 分母是**全部**菜品份数，不是 topN 之和
+        // ⚠️ 分母是**全部**商品份数，不是 topN 之和
         share: ratio(v.quantity, totalQuantity) ?? 0,
       }))
       .sort((a, b) => b.quantity - a.quantity || a.dishId - b.dishId);

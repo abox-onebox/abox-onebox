@@ -7,7 +7,7 @@ import { Building, BuildingGroup } from '../entities/building.entity';
 import { DistributionCenter } from '../entities/finance.entity';
 import { LeaderInvite, TeamLeader } from '../entities/leader.entity';
 import { MealAssignment, SetMeal, SetMealItem } from '../entities/meal.entity';
-import { Dish, Supplier, SupplierDishDaily } from '../entities/supplier.entity';
+import { Item, Supplier, SupplierItemDaily } from '../entities/supplier.entity';
 import { AdminUser, MessageTemplate, SysConfig } from '../entities/system.entity';
 import { User } from '../entities/user.entity';
 import { addDays, cutoffAtOf, publishAtOf, todayBj, tomorrowBj } from '../../common/utils/time';
@@ -17,7 +17,7 @@ import { MESSAGE_TEMPLATE_SPECS } from '../../modules/admin/template/message-tem
  * 种子数据（依据《种子数据清单 v1.0》）
  *
  * 覆盖：5 楼群 · 12 办公楼 · 5 示例团长 · 4 已核验供货方 + 6 备选 · 4 加工场所 ·
- *       菜品库 · 7 套餐模板 · 全局配置 · 7 日内菜单/分配
+ *       商品库 · 7 套餐模板 · 全局配置 · 7 日内菜单/分配
  *
  * 纪律：
  *  1. **生产环境禁止导入**（NODE_ENV=production 直接退出）
@@ -28,7 +28,7 @@ import { MESSAGE_TEMPLATE_SPECS } from '../../modules/admin/template/message-tem
 const UNIT_PRICE = '25.80'; // C1 锁定：套餐统一售价
 
 /**
- * C9 示例值 · 供应商供价合计（4 家菜品供应商）
+ * C9 示例值 · 供应商供价合计（4 家商品供应商）
  * ⚠️ **非固定口径**：实际以供价表「与各供应商逐菜协商价」为准，
  *    本值仅供本地种子 / 演示使用，禁止在业务逻辑中当作常量校验。
  */
@@ -445,12 +445,12 @@ async function main(): Promise<void> {
     },
   ]);
 
-  // ---------- 5. 菜品库 ----------
+  // ---------- 5. 商品库 ----------
   // 说明：清单 §五 明确 8 道；另补 4 道主菜以支撑 §六 的 7 个套餐模板
-  // ⚠️ C9 修订：`costPrice` 为**菜品供价示例值**，实际以「与各供应商逐菜协商价」为准（非固定口径）
-  const dishRepo = dataSource.getRepository(Dish);
-  await dishRepo.clear();
-  await dishRepo.save([
+  // ⚠️ C9 修订：`costPrice` 为**商品供价示例值**，实际以「与各供应商逐菜协商价」为准（非固定口径）
+  const itemRepo = dataSource.getRepository(Item);
+  await itemRepo.clear();
+  await itemRepo.save([
     {
       id: 1,
       supplierId: 1,
@@ -943,7 +943,7 @@ async function main(): Promise<void> {
     },
   ]);
   // slot：1 主荤 / 2 半荤 / 3 素菜 / 4 汤 / 5 主食
-  // 主食由集散中心统一供米（¥2/份），不计入供应商菜品成本，故不建 item
+  // 主食由集散中心统一供米（¥2/份），不计入供应商商品成本，故不建 item
   await smiRepo.save([
     { setMealId: 1, dishId: 1, supplierId: 1, slot: 1, shareAmount: '7.50' },
     { setMealId: 1, dishId: 6, supplierId: 3, slot: 2, shareAmount: '1.50' },
@@ -1039,7 +1039,7 @@ async function main(): Promise<void> {
     },
   ]);
 
-  const sddRepo = dataSource.getRepository(SupplierDishDaily);
+  const sddRepo = dataSource.getRepository(SupplierItemDaily);
   await sddRepo.save([
     {
       supplierId: 1,
@@ -1114,7 +1114,7 @@ async function main(): Promise<void> {
     推荐关系: await invRepo.count(),
     供应商: await supRepo.count(),
     集散中心: await dcRepo.count(),
-    菜品: await dishRepo.count(),
+    商品: await itemRepo.count(),
     套餐: await smRepo.count(),
     套餐明细: await smiRepo.count(),
     配置: await cfgRepo.count(),

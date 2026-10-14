@@ -26,10 +26,10 @@ import { DistributionCenter } from '../../database/entities/finance.entity';
 import { MealAssignment, SetMealItem } from '../../database/entities/meal.entity';
 import { Order } from '../../database/entities/order.entity';
 import {
-  Dish,
+  Item,
   Supplier,
-  SupplierDishCenterDaily,
-  SupplierDishDaily,
+  SupplierItemCenterDaily,
+  SupplierItemDaily,
 } from '../../database/entities/supplier.entity';
 import { OperationLog } from '../../database/entities/system.entity';
 import {
@@ -50,12 +50,12 @@ import {
  */
 const confirmDeadlineText = (): string => formatTimeOfDay(currentTimeline().cookConfirmDeadline);
 
-/** `ab_supplier_dish_center_daily.status` 值域（二态） */
+/** `ab_supplier_item_center_daily.status` 值域（二态） */
 const DETAIL_PENDING = 'pending';
 const DETAIL_CONFIRMED = 'confirmed';
 
 /**
- * `ab_supplier_dish_daily.status` 值域 —— **刻意沿用既有三值，不扩枚举**
+ * `ab_supplier_item_daily.status` 值域 —— **刻意沿用既有三值，不扩枚举**
  *
  * 既有值域（ER v2.1 §3.6）：`pending` / `cooking` / `done`。
  * 分中心维度的「部分确认」正好落在 `cooking`（在制 / 在途），
@@ -100,7 +100,7 @@ export interface ProducePlanFreezeResult {
 export interface OrderAdvanceResult {
   /** 本次真正推进 `cut_off → cooked` 的订单数 */
   cooked: number;
-  /** 本轮「菜品全部到齐」的加工场所数 */
+  /** 本轮「商品全部到齐」的加工场所数 */
   readyCenterCount: number;
   /** 达标场所（id + 名） */
   readyCenters: Array<{ centerId: number; centerName: string }>;
@@ -125,15 +125,15 @@ export interface OrderAdvanceResult {
  *    无需给 e2e 开后门注入时钟。过期一律 **fail-closed**（50009），
  *    不允许「补确认」把错过的时点抹平：系统里的时间戳必须诚实，对账与追责都以它为准。
  *
- * 3. **生产计划可派生但必须落库**：`ab_supplier_dish_daily` / `..._center_daily`
- *    的来源是「当日 active 的套餐分配 × 套餐菜品构成 × 已售份数」，完全可实时算出。
+ * 3. **生产计划可派生但必须落库**：`ab_supplier_item_daily` / `..._center_daily`
+ *    的来源是「当日 active 的套餐分配 × 套餐商品构成 × 已售份数」，完全可实时算出。
  *    但**仍然落库** —— 因为生产计划是给供应商的**承诺数**，一旦生成即**冻结**：
  *    若截单后再有人改单（D11/D12），不能让供应商的备料量在背后悄悄变化。
  *    故采用**惰性 ensure**：首次访问时生成，之后只读（重复调用幂等，不重算）。
  *    改单后要刷新计划属运营动作，见本文件末尾 `notes` 的待办登记。
  *
  * ⚠️ **自营路线下的语义待复核**（2026-09-16 用户裁定：单主体自营，供应商供半成品）：
- *    本文件的 `cook-confirm` 确认的是「**本供应商当日菜品生产完成 / 已交付**」，
+ *    本文件的 `cook-confirm` 确认的是「**本供应商当日商品生产完成 / 已交付**」，
  *    这是一个**两条路线下都成立**的中性语义；「送到哪个集散中心」的交互粒度（原型 P22）
  *    在自营下仍有效（半成品也要按点送达加工场所）。但「谁是出餐主体」在自营下变为
  *    ABox 自己（持证加工场所），需要一次口径复核 —— 见 `ref/资质与合规.md` §八。
@@ -145,13 +145,13 @@ export class SupplierService {
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
-    @InjectRepository(Dish) private readonly dishRepo: Repository<Dish>,
-    @InjectRepository(SupplierDishDaily) private readonly dailyRepo: Repository<SupplierDishDaily>,
-    @InjectRepository(SupplierDishCenterDaily)
-    private readonly detailRepo: Repository<SupplierDishCenterDaily>,
+    @InjectRepository(Item) private readonly itemRepo: Repository<Item>,
+    @InjectRepository(SupplierItemDaily) private readonly dailyRepo: Repository<SupplierItemDaily>,
+    @InjectRepository(SupplierItemCenterDaily)
+    private readonly detailRepo: Repository<SupplierItemCenterDaily>,
     @InjectRepository(DistributionCenter) private readonly dcRepo: Repository<DistributionCenter>,
     @InjectRepository(MealAssignment) private readonly maRepo: Repository<MealAssignment>,
-    @InjectRepository(SetMealItem) private readonly itemRepo: Repository<SetMealItem>,
+    @InjectRepository(SetMealItem) private readonly setMealItemRepo: Repository<SetMealItem>,
     @InjectRepository(Building) private readonly buildingRepo: Repository<Building>,
     @InjectRepository(BuildingGroup) private readonly groupRepo: Repository<BuildingGroup>,
   ) {}
@@ -208,7 +208,7 @@ export class SupplierService {
 
       return {
         dishId: d.dishId,
-        dishName: dish?.name ?? `菜品 ${d.dishId}`,
+        dishName: dish?.name ?? `商品 ${d.dishId}`,
         category: dish?.category ?? null,
         imageUrl: dish?.imageUrl ?? null,
         unitPriceFen: toFen(Number(d.unitPrice)),
@@ -328,8 +328,8 @@ export class SupplierService {
         if (!daily) {
           throw new BizException(
             ErrorCode.PRODUCE_PLAN_NOT_FOUND,
-            `当日没有「${dishMap.get(item.dishId)?.name ?? `菜品 ${item.dishId}`}」的生产计划，` +
-              '无法确认（请核对出餐日与菜品，或联系运营）',
+            `当日没有「${dishMap.get(item.dishId)?.name ?? `商品 ${item.dishId}`}」的生产计划，` +
+              '无法确认（请核对出餐日与商品，或联系运营）',
           );
         }
 
@@ -339,7 +339,7 @@ export class SupplierService {
         if (!detail) {
           throw new BizException(
             ErrorCode.COOK_CONFIRM_CENTER_MISMATCH,
-            `「${dishMap.get(item.dishId)?.name ?? `菜品 ${item.dishId}`}」当日不送往` +
+            `「${dishMap.get(item.dishId)?.name ?? `商品 ${item.dishId}`}」当日不送往` +
               `「${centerMap.get(item.distributionCenterId)?.name ?? `集散中心 ${item.distributionCenterId}`}」，` +
               '无法确认（配送范围由该集散中心服务的楼群决定）',
           );
@@ -381,7 +381,7 @@ export class SupplierService {
       for (const dishId of touched) {
         const daily = dailyOf.get(dishId);
         if (!daily) continue;
-        const rows = await m.find(SupplierDishCenterDaily, {
+        const rows = await m.find(SupplierItemCenterDaily, {
           where: { supplierId: supplier.id, dishId, produceDate: dto.date },
         });
         const confirmedQty = rows
@@ -396,7 +396,7 @@ export class SupplierService {
         await m.save(daily);
       }
 
-      // ⭐⭐ M5-8：出餐确认的**下游** —— 把「菜品到齐」的加工场所下的订单推进为 `cooked`（状态机 T7）
+      // ⭐⭐ M5-8：出餐确认的**下游** —— 把「商品到齐」的加工场所下的订单推进为 `cooked`（状态机 T7）
       //
       // 放在**同一个事务**里是刻意的：若「明细已确认」提交而「订单已出餐」回滚，
       // 就留下「菜到齐了、但订单系统里没人知道」的中间态 —— 而它的表现是
@@ -453,10 +453,10 @@ export class SupplierService {
   // =====================================================================
 
   /**
-   * 把「菜品到齐」的加工场所下的订单推进为 `cooked`（**状态机 T7**）
+   * 把「商品到齐」的加工场所下的订单推进为 `cooked`（**状态机 T7**）
    *
    * ## 为什么需要它（《缺陷与陷阱》#79 · 2026-09-18 用户裁定「补实现」）
-   * `cookConfirm` 此前只写 `ab_supplier_dish_daily` / `..._center_daily`，
+   * `cookConfirm` 此前只写 `ab_supplier_item_daily` / `..._center_daily`，
    * **从不碰 `ab_order`**；`delivery.service` 也只读 `cut_off` 订单生成配送单、不推状态。
    * 合起来的结果是 `ab_order.status` 里的 `cooked` / `delivering` / `delivered`
    * **全仓零写入点** —— 订单支付后永远停在 `cut_off`，而下游三条链**全部不可达**：
@@ -496,8 +496,8 @@ export class SupplierService {
     operatorId: number | null | undefined,
   ): Promise<OrderAdvanceResult> {
     // ---- ① 本轮「菜到齐」的加工场所 -------------------------------------
-    const details = await m.find(SupplierDishCenterDaily, { where: { produceDate: date } });
-    const byCenter = new Map<number, SupplierDishCenterDaily[]>();
+    const details = await m.find(SupplierItemCenterDaily, { where: { produceDate: date } });
+    const byCenter = new Map<number, SupplierItemCenterDaily[]>();
     for (const d of details) {
       const dcId = Number(d.distributionCenterId);
       const list = byCenter.get(dcId) ?? [];
@@ -575,7 +575,7 @@ export class SupplierService {
           toStatus: OrderStatus.COOKED,
           // 出餐确认由**供应商账号**发起（admin 域主体）→ source=admin、操作者可追溯
           source: 'admin',
-          reason: '供应商出餐确认：该加工场所当日菜品已全部到齐（状态机 T7）',
+          reason: '供应商出餐确认：该加工场所当日商品已全部到齐（状态机 T7）',
         },
       });
     }
@@ -611,7 +611,7 @@ export class SupplierService {
    *    到货明细（I1：不泄露他方经营数据）。故端点整体迁运营后台、供应商端 S3 **下线**
    *    （路由删除 → 10004），本方法不再收 `supplierId`，返回**全部启用中的加工场所**。
    *
-   * **前置闸门 `ready`**：该场所当日**所有**应到菜品都已确认送达，才 `ready=true`。
+   * **前置闸门 `ready`**：该场所当日**所有**应到商品都已确认送达，才 `ready=true`。
    * 否则列出 `blockers`。这是原型那句「出餐确认后将推送给集散中心，由兼职打包并安排货拉拉配送」
    * 的落地 —— 未到齐就开包，会包出缺菜的餐。
    */
@@ -659,7 +659,7 @@ export class SupplierService {
           supplierId: r.supplierId,
           supplierName: supplierNames.get(r.supplierId) ?? `供应商 ${r.supplierId}`,
           dishId: r.dishId,
-          dishName: dish?.name ?? `菜品 ${r.dishId}`,
+          dishName: dish?.name ?? `商品 ${r.dishId}`,
           unitPriceFen: toFen(Number(dailyOf.get(key)?.unitPrice ?? 0)),
           planQuantity: Number(r.planQuantity),
           actualQuantity: r.actualQuantity ?? null,
@@ -726,7 +726,7 @@ export class SupplierService {
           '本页是**运营后台作业视图**：一次返回**全部启用中的加工场所**（含各场所的供应商到位情况）。' +
           '该信息跨供应商，**不对供应商端开放** —— 原 `GET /supplier/packing-tasks` 已随自营口径下线（M4-0）。',
         gateRule:
-          '「可开始打包」= 该加工场所当日所有菜品均已确认送达。未到齐时请先催未确认的供应商，不要开包。',
+          '「可开始打包」= 该加工场所当日所有商品均已确认送达。未到齐时请先催未确认的供应商，不要开包。',
         routeRule:
           '路线号（R1…Rn）按「主加工场所 id 升序」派生；站点顺序按楼栋 id 升序。' +
           '本接口**不返回距离与单段时长** —— 无地图数据，原型上的 km/分钟是演示值，不做承诺。',
@@ -749,8 +749,8 @@ export class SupplierService {
    *      生成出来只会让 P22 长出一串「0 份」的空卡片。
    *   ② **已有父行不重算** —— 父行是「已冻结的承诺数」。种子 / 运营已备好计划时，
    *      只需补建缺失的**明细**（历史数据只有父行的场景）。
-   *   ③ `unit_price` 取 `ab_dish.cost_price`（菜品属性）而非 `ab_set_meal_item.share_amount`
-   *      —— 供价是「逐菜协商」的菜品属性，同一道菜在不同套餐里不应有两个供价。
+   *   ③ `unit_price` 取 `ab_item.cost_price`（商品属性）而非 `ab_set_meal_item.share_amount`
+   *      —— 供价是「逐菜协商」的商品属性，同一道菜在不同套餐里不应有两个供价。
    */
   /**
    * 截单后**覆盖刷新**生产计划量（4.2 第三段 · 由 `tasks/cutoff.task.ts` 委托）
@@ -788,8 +788,8 @@ export class SupplierService {
       existingDetails.map((d) => [`${d.supplierId}:${d.dishId}:${d.distributionCenterId}`, d]),
     );
 
-    const insDaily: Array<Partial<SupplierDishDaily>> = [];
-    const insDetails: Array<Partial<SupplierDishCenterDaily>> = [];
+    const insDaily: Array<Partial<SupplierItemDaily>> = [];
+    const insDetails: Array<Partial<SupplierItemCenterDaily>> = [];
     let updatedDaily = 0;
     let updatedDetails = 0;
     let skippedFrozen = 0;
@@ -902,7 +902,7 @@ export class SupplierService {
     if (usable.length) {
       const setMealIds = [...new Set(usable.map((a) => a.setMealId))];
       const items = setMealIds.length
-        ? await this.itemRepo.find({ where: { setMealId: In(setMealIds) } })
+        ? await this.setMealItemRepo.find({ where: { setMealId: In(setMealIds) } })
         : [];
       const itemsOf = new Map<number, SetMealItem[]>();
       for (const it of items) {
@@ -953,8 +953,8 @@ export class SupplierService {
       existingDetails.map((d) => `${d.supplierId}:${d.dishId}:${d.distributionCenterId}`),
     );
 
-    const newDaily: Array<Partial<SupplierDishDaily>> = [];
-    const newDetails: Array<Partial<SupplierDishCenterDaily>> = [];
+    const newDaily: Array<Partial<SupplierItemDaily>> = [];
+    const newDetails: Array<Partial<SupplierItemCenterDaily>> = [];
 
     for (const plan of plans.values()) {
       // ⚠️ 只生成**确有产量**的计划：`status=active` 但 `sold_count=0` 的分配很常见
@@ -1086,10 +1086,10 @@ export class SupplierService {
     return row?.date ?? tomorrowBj();
   }
 
-  private async dishMapOf(ids: number[]): Promise<Map<number, Dish>> {
+  private async dishMapOf(ids: number[]): Promise<Map<number, Item>> {
     const uniq = [...new Set(ids)].filter((id) => Number.isFinite(id));
     if (!uniq.length) return new Map();
-    const rows = await this.dishRepo.find({ where: { id: In(uniq) } });
+    const rows = await this.itemRepo.find({ where: { id: In(uniq) } });
     return new Map(rows.map((r) => [r.id, r]));
   }
 
@@ -1105,8 +1105,8 @@ export class SupplierService {
     return new Map(rows.map((r) => [r.id, r.name]));
   }
 
-  private groupByDish(rows: SupplierDishCenterDaily[]): Map<number, SupplierDishCenterDaily[]> {
-    const map = new Map<number, SupplierDishCenterDaily[]>();
+  private groupByDish(rows: SupplierItemCenterDaily[]): Map<number, SupplierItemCenterDaily[]> {
+    const map = new Map<number, SupplierItemCenterDaily[]>();
     for (const r of rows) {
       const list = map.get(r.dishId) ?? [];
       list.push(r);

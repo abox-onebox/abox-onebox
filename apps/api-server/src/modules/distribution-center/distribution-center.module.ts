@@ -22,7 +22,7 @@ import { DistributionCenterService } from './distribution-center.service';
  * ## ⚠️ M4-0：加工场所打包任务**不在本模块**
  *   原供应商端 S3 `GET /supplier/packing-tasks` 已随自营口径迁到运营后台
  *   `GET /admin/packing-tasks`（`SupplierModule` 的 `PackingAdminController`）。
- *   留在这里的是「场所配置」，那边的派生还需要供应商 / 菜品 / 生产计划域的数据 ——
+ *   留在这里的是「场所配置」，那边的派生还需要供应商 / 商品 / 生产计划域的数据 ——
  *   实现只有 `SupplierService.packingTasks()` 一份，此处不重复实现、也不反向依赖它。
  *
  * ## 为什么注入 `MealAssignment` 这个「别的域」的实体

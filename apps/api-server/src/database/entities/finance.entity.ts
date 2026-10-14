@@ -149,7 +149,7 @@ export class Commission {
  *   本表语义从「分账流水」改为「**半成品采购应付**」：
  *   - **payee_type 恒 `supplier`**；`distribution_center` **冻结**（历史可读，新单不再产生 ——
  *     加工场所属 ABox 自己，付场地费给自己无财务意义）
- *   - **quantity = 实收量**（`ab_supplier_dish_daily.actual_quantity`），**不是订单销量**；
+ *   - **quantity = 实收量**（`ab_supplier_item_daily.actual_quantity`），**不是订单销量**；
  *     `unit_price` = 逐菜协商采购价；`amount` = quantity × unit_price
  *   - `invoice_no` 重要性上升（自营下是税前扣除凭证）
  *   - ⭐ **用户退款不再冲减本表**（半成品在出餐日已交付）—— `type='reversal'` 改义为
@@ -191,11 +191,11 @@ export class SupplierShare {
   payeeId!: number;
 
   @Column({
-    name: 'dish_id',
+    name: 'item_id',
     type: 'bigint',
     transformer: bigintTransformer,
     nullable: true,
-    comment: '菜品（采购应付按菜品逐项计）',
+    comment: '商品（采购应付按商品逐项计）',
   })
   dishId?: number | null;
 
@@ -208,7 +208,7 @@ export class SupplierShare {
     transformer: moneyTransformer,
     precision: 8,
     scale: 2,
-    comment: '单位结算金额（按菜品协商价 / 场地费 / 打包人工 / 配送费分项落库）',
+    comment: '单位结算金额（按商品协商价 / 场地费 / 打包人工 / 配送费分项落库）',
   })
   unitPrice!: string;
 

@@ -28,7 +28,7 @@ import { TeamLeader } from '../../database/entities/leader.entity';
 import { MealAssignment, SetMeal, SetMealItem } from '../../database/entities/meal.entity';
 import { Order, PaymentLog, Refund } from '../../database/entities/order.entity';
 import { OperationLog } from '../../database/entities/system.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
 import { FUND_ACTION_ROLES } from '../finance/finance.constants';
 import { RefundService } from '../finance/refund.service';
@@ -99,8 +99,8 @@ export class OrderAdminService {
     @InjectRepository(BuildingGroup) private readonly groupRepo: Repository<BuildingGroup>,
     @InjectRepository(TeamLeader) private readonly leaderRepo: Repository<TeamLeader>,
     @InjectRepository(SetMeal) private readonly setMealRepo: Repository<SetMeal>,
-    @InjectRepository(SetMealItem) private readonly itemRepo: Repository<SetMealItem>,
-    @InjectRepository(Dish) private readonly dishRepo: Repository<Dish>,
+    @InjectRepository(SetMealItem) private readonly setMealItemRepo: Repository<SetMealItem>,
+    @InjectRepository(Item) private readonly itemRepo: Repository<Item>,
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
     @InjectRepository(MealAssignment)
     private readonly assignmentRepo: Repository<MealAssignment>,
@@ -174,7 +174,7 @@ export class OrderAdminService {
 
     const [decorated] = await this.decorate([order], true);
     const [items, refund, payment, logs, leader, commission] = await Promise.all([
-      this.itemRepo.find({ where: { setMealId: order.setMealId }, order: { slot: 'ASC' } }),
+      this.setMealItemRepo.find({ where: { setMealId: order.setMealId }, order: { slot: 'ASC' } }),
       this.refundRepo.findOne({ where: { orderId: Number(order.id) }, order: { id: 'DESC' } }),
       this.paymentRepo.findOne({ where: { orderId: Number(order.id) }, order: { id: 'DESC' } }),
       this.opLogRepo.find({
@@ -189,7 +189,7 @@ export class OrderAdminService {
     ]);
 
     const dishNames = new Map(
-      (await this.dishRepo.find({ where: { id: In(items.map((i) => i.dishId).concat([0])) } })).map(
+      (await this.itemRepo.find({ where: { id: In(items.map((i) => i.dishId).concat([0])) } })).map(
         (d) => [Number(d.id), d.name],
       ),
     );
@@ -218,7 +218,7 @@ export class OrderAdminService {
         slot: i.slot,
         slotLabel: SLOT_LABEL[i.slot] ?? `档位 ${i.slot}`,
         dishId: Number(i.dishId),
-        name: dishNames.get(Number(i.dishId)) ?? `菜品 ${i.dishId}`,
+        name: dishNames.get(Number(i.dishId)) ?? `商品 ${i.dishId}`,
         supplierId: Number(i.supplierId),
         supplierName: supNames.get(Number(i.supplierId)) ?? null,
         shareAmountFen: i.shareAmount != null ? toFen(Number(i.shareAmount)) : null,
@@ -716,12 +716,12 @@ export class OrderAdminService {
       this.leaderRepo.find({ where: { id: In(leaderIds) } }),
       this.setMealRepo.find({ where: { id: In(setMealIds) } }),
       this.refundRepo.find({ where: { orderId: In(orderIds) }, order: { id: 'DESC' } }),
-      this.itemRepo.find({ where: { setMealId: In(setMealIds), slot: 1 } }),
+      this.setMealItemRepo.find({ where: { setMealId: In(setMealIds), slot: 1 } }),
     ]);
 
     const dishNames = new Map(
       (
-        await this.dishRepo.find({
+        await this.itemRepo.find({
           where: { id: In(items.map((i) => i.dishId).concat([0])) },
         })
       ).map((d) => [Number(d.id), d.name]),

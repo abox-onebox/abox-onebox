@@ -31,7 +31,7 @@ import { Building } from '../../database/entities/building.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { MealAssignment, SetMeal, SetMealItem } from '../../database/entities/meal.entity';
 import { Order } from '../../database/entities/order.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
 import { SLOT_LABEL } from './dto/meal.dto';
 
@@ -40,7 +40,7 @@ import { SLOT_LABEL } from './dto/meal.dto';
  *
  * 覆盖《接口规范 v1.0》§3.1：U1 明日套餐、U2 历史套餐归档
  *
- * ⚠️ C8 硬约束：发给用户端的菜品视图**严禁**包含供应商状态、供价、分账比例、
+ * ⚠️ C8 硬约束：发给用户端的商品视图**严禁**包含供应商状态、供价、分账比例、
  *    备选商家清单与供应商联系方式。本服务只输出菜名 / 档位 / 图片 / 供应商**展示名与 id**。
  *
  * ⭐ M5-17：`dishes[].supplierId` 与 `leader.source` 为本批新增（见各自字段头注）；
@@ -53,8 +53,8 @@ export class MealService {
   constructor(
     @InjectRepository(MealAssignment) private readonly assignmentRepo: Repository<MealAssignment>,
     @InjectRepository(SetMeal) private readonly setMealRepo: Repository<SetMeal>,
-    @InjectRepository(SetMealItem) private readonly itemRepo: Repository<SetMealItem>,
-    @InjectRepository(Dish) private readonly dishRepo: Repository<Dish>,
+    @InjectRepository(SetMealItem) private readonly setMealItemRepo: Repository<SetMealItem>,
+    @InjectRepository(Item) private readonly itemRepo: Repository<Item>,
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
     @InjectRepository(Building) private readonly buildingRepo: Repository<Building>,
     @InjectRepository(TeamLeader) private readonly leaderRepo: Repository<TeamLeader>,
@@ -88,7 +88,7 @@ export class MealService {
 
     const [setMeal, dishes, leader, existingOrders] = await Promise.all([
       this.setMealRepo.findOne({ where: { id: assignment.setMealId } }),
-      this.dishesOfSetMeal(assignment.setMealId),
+      this.itemsOfSetMeal(assignment.setMealId),
       this.resolveLeader(userId),
       /**
        * ⭐ 一人一日**可多单**（2026-10-03 口径变更）：故这里必须 `find` 全量未取消单，
@@ -173,7 +173,7 @@ export class MealService {
     for (const a of rows) {
       const [setMeal, dishes, ordersCount] = await Promise.all([
         this.setMealRepo.findOne({ where: { id: a.setMealId } }),
-        this.dishesOfSetMeal(a.setMealId),
+        this.itemsOfSetMeal(a.setMealId),
         this.orderRepo.count({
           where: { mealDate: a.mealDate, buildingGroupId, status: Not(OrderStatus.CANCELLED) },
         }),
@@ -307,13 +307,13 @@ export class MealService {
     };
   }
 
-  /** 套餐菜品视图（含供应商展示名与 id，不含任何价格/分账字段 —— C8） */
-  private async dishesOfSetMeal(setMealId: number): Promise<MealDishView[]> {
-    const items = await this.itemRepo.find({ where: { setMealId }, order: { slot: 'ASC' } });
+  /** 套餐商品视图（含供应商展示名与 id，不含任何价格/分账字段 —— C8） */
+  private async itemsOfSetMeal(setMealId: number): Promise<MealDishView[]> {
+    const items = await this.setMealItemRepo.find({ where: { setMealId }, order: { slot: 'ASC' } });
     if (items.length === 0) return [];
 
     const [dishes, suppliers] = await Promise.all([
-      this.dishRepo.find({ where: { id: In(items.map((i) => i.dishId)) } }),
+      this.itemRepo.find({ where: { id: In(items.map((i) => i.dishId)) } }),
       this.supplierRepo.find({ where: { id: In([...new Set(items.map((i) => i.supplierId))]) } }),
     ]);
 
@@ -323,7 +323,7 @@ export class MealService {
     return items.map((i) => {
       const dish = dishMap.get(i.dishId);
       return {
-        name: dish?.name ?? `菜品 ${i.dishId}`,
+        name: dish?.name ?? `商品 ${i.dishId}`,
         slot: i.slot,
         category: dish?.category ?? SLOT_LABEL[i.slot] ?? null,
         imageUrl: dish?.imageUrl ?? null,

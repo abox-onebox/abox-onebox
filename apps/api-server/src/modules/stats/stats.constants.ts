@@ -7,7 +7,7 @@ import { shiftBizDate } from '@abox/shared-utils';
  * ⚠️ 为什么要有这个文件：
  *   看板的每个数都是「多张表 + 一组状态 + 一个时间轴」聚合出来的，
  *   而**同一指标极容易在两个端点里各算一套**（D47 的 GMV 与 D48 的楼群 GMV、
- *   D49 的菜品份数）—— 一旦两处口径漂移，运营会看到「总额 ¥4,798 但分项加起来 ¥4,301」，
+ *   D49 的商品份数）—— 一旦两处口径漂移，运营会看到「总额 ¥4,798 但分项加起来 ¥4,301」，
  *   从此不再信任任何一个数。故：状态集合、区间定义、基数选择**全部收在本文件**。
  *
  * 权威口径出处：《接口规范 v1.0》§6.6「关键指标口径」+「M3-11 实现口径」
@@ -95,10 +95,10 @@ export const PURCHASE_VOID_STATUSES: string[] = ['cancelled', 'reversed'];
 /** 佣金「已失效」状态（同上：冲销后原 `normal` 行翻 `cancelled`，负行有效） */
 export const COMMISSION_VOID_STATUSES: string[] = ['cancelled'];
 
-/** 菜品热度默认 TOP N */
+/** 商品热度默认 TOP N */
 export const DISH_HEAT_DEFAULT_TOP_N = 10;
 
-/** 菜品热度 TOP N 上限（防一次拉全量菜品拖垮页面） */
+/** 商品热度 TOP N 上限（防一次拉全量商品拖垮页面） */
 export const DISH_HEAT_MAX_TOP_N = 50;
 
 /** 留存分析默认观察的 cohort 周数 */

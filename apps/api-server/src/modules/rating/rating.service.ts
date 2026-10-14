@@ -12,9 +12,9 @@ import type {
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { toBjIso } from '../../common/utils/time';
-import { DishRating, Order } from '../../database/entities/order.entity';
+import { ItemRating, Order } from '../../database/entities/order.entity';
 import { SetMealItem } from '../../database/entities/meal.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../database/entities/supplier.entity';
 import { resolveStatsRange } from '../stats/stats.constants';
 import type { DishRatingQueryDto, RatingSubmitReqDto } from './dto/rating.dto';
 import {
@@ -27,7 +27,7 @@ import {
 /**
  * P1-U2 口味评价服务 —— U20 提交（用户侧）+ D69 聚合（后台红黑榜）
  *
- * 真源：《创业系统地图与开发路线 v1.0》U2「口味评价与菜品迭代闭环」。
+ * 真源：《创业系统地图与开发路线 v1.0》U2「口味评价与商品迭代闭环」。
  *
  * ## 两个端点为什么放在同一个服务
  * 「提交的口径」与「聚合的口径」必须互相知道：聚合只数 `rating=3`（不好）当投诉、
@@ -158,14 +158,14 @@ export function aggregateDishRatings(
 export class RatingService {
   constructor(
     private readonly dataSource: DataSource,
-    @InjectRepository(DishRating)
-    private readonly ratingRepo: Repository<DishRating>,
+    @InjectRepository(ItemRating)
+    private readonly ratingRepo: Repository<ItemRating>,
     @InjectRepository(Order)
     private readonly orderRepo: Repository<Order>,
     @InjectRepository(SetMealItem)
-    private readonly itemRepo: Repository<SetMealItem>,
-    @InjectRepository(Dish)
-    private readonly dishRepo: Repository<Dish>,
+    private readonly setMealItemRepo: Repository<SetMealItem>,
+    @InjectRepository(Item)
+    private readonly itemRepo: Repository<Item>,
     @InjectRepository(Supplier)
     private readonly supplierRepo: Repository<Supplier>,
   ) {}
@@ -203,8 +203,8 @@ export class RatingService {
       });
     }
 
-    // 菜品必须属于该单的套餐（快照来源也在这里取：ab_set_meal_item + ab_dish/ab_supplier）
-    const items = await this.itemRepo.find({
+    // 商品必须属于该单的套餐（快照来源也在这里取：ab_set_meal_item + ab_item/ab_supplier）
+    const items = await this.setMealItemRepo.find({
       where: { setMealId: Number(order.setMealId) },
       order: { slot: 'ASC' },
     });
@@ -214,16 +214,16 @@ export class RatingService {
       const mealItem = itemByDish.get(it.dishId);
       if (!mealItem) {
         // 10001：请求内容与订单事实不符（客户端拼错/换单后重放），不是业务态
-        throw new BizException(ErrorCode.PARAM_INVALID, `菜品 ${it.dishId} 不在本单套餐内`);
+        throw new BizException(ErrorCode.PARAM_INVALID, `商品 ${it.dishId} 不在本单套餐内`);
       }
       if (seen.has(it.dishId)) {
-        throw new BizException(ErrorCode.PARAM_INVALID, `菜品 ${it.dishId} 重复提交`);
+        throw new BizException(ErrorCode.PARAM_INVALID, `商品 ${it.dishId} 重复提交`);
       }
       seen.add(it.dishId);
     }
 
     // 名字快照（落库后改名/下架/软删都不影响历史行）
-    const dishRows = await this.dishRepo.find({ where: { id: In([...seen]) } });
+    const dishRows = await this.itemRepo.find({ where: { id: In([...seen]) } });
     const dishName = new Map(dishRows.map((d) => [Number(d.id), d.name]));
     const supplierRows = await this.supplierRepo.find({
       where: { id: In([...new Set(items.map((i) => Number(i.supplierId)))]) },
@@ -240,8 +240,8 @@ export class RatingService {
         userId,
         mealDate: order.mealDate,
         dishId: it.dishId,
-        // 快照兜底：菜品行已被硬删（软删不影响 name 读取）时仍要有可展示的名字
-        dishName: dishName.get(it.dishId) ?? `菜品#${it.dishId}`,
+        // 快照兜底：商品行已被硬删（软删不影响 name 读取）时仍要有可展示的名字
+        dishName: dishName.get(it.dishId) ?? `商品#${it.dishId}`,
         supplierId: sid,
         supplierName: supplierName.get(sid) ?? `供应商#${sid}`,
         slot: mealItem.slot,
@@ -253,7 +253,7 @@ export class RatingService {
 
     // 整批单事务：要么全落、要么全不落（半批落库会让「已评 2 个菜」既不能续评也不能重评）
     await this.dataSource.transaction(async (em) => {
-      await em.save(DishRating, rows);
+      await em.save(ItemRating, rows);
     });
 
     return {

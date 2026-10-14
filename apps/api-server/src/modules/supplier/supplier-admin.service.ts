@@ -22,7 +22,7 @@ import { readTakeoutLinks } from '../../common/utils/takeout';
 import { addDays, monthRangeOf, toBjIso, todayBj } from '../../common/utils/time';
 import { SupplierShare } from '../../database/entities/finance.entity';
 import { AdminUser, OperationLog } from '../../database/entities/system.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../database/entities/supplier.entity';
 import {
   AdminSuppliersQueryDto,
   AuditSupplierDto,
@@ -62,7 +62,7 @@ type SupplierListResult = PageResult<Record<string, unknown>> & {
  * 2. **证照有效期是合规闸门，不是展示字段**：123 号令要求平台核验入网商户证照，
  *    证照过期即不得出餐。故 `license_expire_at` 参与三件事：
  *    · D26 审核通过时**已在过去 → 直接 50001**（不给「带病通过」留后门）
- *    · D25 编辑时若把有效期改成过去 → **同步下架其关联菜品**（原型 P33 的联动行为）
+ *    · D25 编辑时若把有效期改成过去 → **同步下架其关联商品**（原型 P33 的联动行为）
  *    · D23 列表算出 `licenseState` 供筛选与告警（**派生值不落库**，避免双真相）
  *
  * 3. ⭐ **供应商类型的整条链路已停用**（自营口径 · 2026-09-16）：
@@ -92,7 +92,7 @@ export class SupplierAdminService {
 
   constructor(
     @InjectRepository(Supplier) private readonly supplierRepo: Repository<Supplier>,
-    @InjectRepository(Dish) private readonly dishRepo: Repository<Dish>,
+    @InjectRepository(Item) private readonly itemRepo: Repository<Item>,
     @InjectRepository(SupplierShare) private readonly shareRepo: Repository<SupplierShare>,
     @InjectRepository(AdminUser) private readonly adminRepo: Repository<AdminUser>,
     @InjectRepository(OperationLog) private readonly opLogRepo: Repository<OperationLog>,
@@ -129,7 +129,7 @@ export class SupplierAdminService {
 
     const ids = all.map((s) => Number(s.id));
     const [dishMap, shareMap, auditNameMap] = await Promise.all([
-      this.countGroup('d', 'd.supplier_id', this.dishRepo, ids),
+      this.countGroup('d', 'd.supplier_id', this.itemRepo, ids),
       this.monthShareMap(ids),
       this.adminNameMap(all.map((s) => Number(s.auditedBy ?? 0)).filter(Boolean)),
     ]);
@@ -161,7 +161,7 @@ export class SupplierAdminService {
           '⚠️ 能跳转 ≠ 是合作伙伴 —— C8 约束下平台永不下发「哪些是备选商家」。',
         licenseState:
           'licenseState 为**派生值**（由 licenseExpireAt 与北京时间当天实时算出），不落库；' +
-          'expiring 阈值 30 天。已过期会让关联菜品被联动下架，建议筛选 expired 优先处理。',
+          'expiring 阈值 30 天。已过期会让关联商品被联动下架，建议筛选 expired 优先处理。',
         supplierRole:
           '自营口径下供应商只有一种角色：**半成品供货方**（供货 + 报价）。' +
           '菜单由 ABox 定、热加工与打包在 ABox 自有加工场所完成 —— ' +
@@ -170,11 +170,11 @@ export class SupplierAdminService {
     };
   }
 
-  /** D23 附属 · 详情（档案 + 菜品 + 近 30 条采购应付 + 操作日志） */
+  /** D23 附属 · 详情（档案 + 商品 + 近 30 条采购应付 + 操作日志） */
   async detail(id: number) {
     const s = await this.assertSupplier(id);
     const [dishes, shares, logs] = await Promise.all([
-      this.dishRepo.find({ where: { supplierId: id }, order: { id: 'ASC' } }),
+      this.itemRepo.find({ where: { supplierId: id }, order: { id: 'ASC' } }),
       this.shareRepo.find({
         where: { payeeType: PAYEE_SUPPLIER, payeeId: id },
         order: { id: 'DESC' },
@@ -184,7 +184,7 @@ export class SupplierAdminService {
     ]);
     const [shareMap, dishCountMap] = await Promise.all([
       this.monthShareMap([id]),
-      this.countGroup('d', 'd.supplier_id', this.dishRepo, [id]),
+      this.countGroup('d', 'd.supplier_id', this.itemRepo, [id]),
     ]);
 
     return {
@@ -263,7 +263,7 @@ export class SupplierAdminService {
    * D25 编辑供应商
    *
    * ⚠️ 一个隐式副作用，在出参里显式回报（不做「偷偷改了却不说」）：
-   *   · `licenseExpireAt` 被改成过去 → **同步下架其关联菜品**，回报 `unpublishedDishCount`
+   *   · `licenseExpireAt` 被改成过去 → **同步下架其关联商品**，回报 `unpublishedDishCount`
    *
    * ⚠️ M4-0 起不再处理 `type`（DTO 已移除，传上来即 10001）。
    */
@@ -284,9 +284,9 @@ export class SupplierAdminService {
     let unpublishedDishCount = 0;
     if (dto.licenseExpireAt !== undefined) {
       s.licenseExpireAt = dto.licenseExpireAt;
-      // 证照落成过期 → 关联菜品同步下架（原型 P33 的合规联动 · 123 号令）
+      // 证照落成过期 → 关联商品同步下架（原型 P33 的合规联动 · 123 号令）
       if (this.licenseStateOf(dto.licenseExpireAt) === LicenseState.EXPIRED) {
-        const r = await this.dishRepo.update({ supplierId: id, status: 1 }, { status: 0 });
+        const r = await this.itemRepo.update({ supplierId: id, status: 1 }, { status: 0 });
         unpublishedDishCount = r.affected ?? 0;
       }
     }
@@ -298,7 +298,7 @@ export class SupplierAdminService {
       status: s.status,
       licenseExpireAt: s.licenseExpireAt ?? null,
       licenseState: this.licenseStateOf(s.licenseExpireAt),
-      /** 联动下架了几道菜 —— 不回报的话，运营会以为菜品是自己消失的 */
+      /** 联动下架了几道菜 —— 不回报的话，运营会以为商品是自己消失的 */
       unpublishedDishCount,
       canServe: this.canServe(s),
     };
@@ -511,7 +511,7 @@ export class SupplierAdminService {
       auditRejectedCount: count((s) => s.auditStatus === SupplierAuditStatus.REJECTED),
       /** P33 KPI「资质 30 天内到期」*/
       expiringCount: count((s) => state(s) === LicenseState.EXPIRING),
-      /** P33 KPI「已过期」（会让关联菜品被联动下架）*/
+      /** P33 KPI「已过期」（会让关联商品被联动下架）*/
       expiredCount: count((s) => state(s) === LicenseState.EXPIRED),
       canServeCount: count((s) => this.canServe(s)),
       // ⚠️ M4-0：`dishCount` / `distributeCount` / `bothCount` / `dcTotalCount` 四项已删除。
@@ -558,7 +558,7 @@ export class SupplierAdminService {
     };
   }
 
-  private decorateDish(d: Dish) {
+  private decorateDish(d: Item) {
     return {
       id: Number(d.id),
       supplierId: Number(d.supplierId),

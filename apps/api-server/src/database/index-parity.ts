@@ -65,6 +65,22 @@ const ALTER_ADD_INDEX_RE =
 const CREATE_TABLE_RE =
   /CREATE TABLE IF NOT EXISTS\s+`([A-Za-z0-9_]+)`\s*\(([\s\S]*?)\n\s*\)\s*ENGINE/gi;
 const COL_IN_LIST_RE = /`([A-Za-z0-9_]+)`/g;
+/**
+ * RENAME TABLE `old` TO `new` —— 破坏性改名迁移的表改名。
+ * 必须把源A 里该表的索引 map 也改掉，否则 `mig.get('ab_item')` 为 undefined，
+ * 会被 `continue` 静默跳过（见 diffIndexes：表级缺失不在这里报），造成「改名表的索引从不参与对账」的假绿。
+ */
+const RENAME_TABLE_RE = /RENAME TABLE\s+`([A-Za-z0-9_]+)`\s+TO\s+`([A-Za-z0-9_]+)`/gi;
+/** ALTER TABLE `t` RENAME INDEX `old` TO `new` —— 破坏性改名迁移的索引改名 */
+const RENAME_INDEX_RE =
+  /ALTER TABLE\s+`([A-Za-z0-9_]+)`\s+RENAME INDEX\s+`([A-Za-z0-9_]+)`\s+TO\s+`([A-Za-z0-9_]+)`/gi;
+/**
+ * ALTER TABLE `t` CHANGE `old` `new` [TYPE] —— 列改名（破坏性改名迁移）。
+ * 索引列清单里若引用了被改名的列，必须同步替换，否则「实体已用新列名、迁移索引还写旧列名」
+ * 会被判成「索引列不一致」（实际生产里 CHANGE 列后索引自动跟随新列名，是假差异）。
+ */
+const CHANGE_RE =
+  /ALTER TABLE\s+`([A-Za-z0-9_]+)`\s+CHANGE\s+`([A-Za-z0-9_]+)`\s+`([A-Za-z0-9_]+)`(?:\s+([A-Z]+(?:\(\d+(?:,\d+)?\))?))?/gi;
 
 /**
  * ⚠️ 必须先剥注释再扫描：迁移的**文件头注释**里就写着
@@ -110,6 +126,9 @@ export function migrationIndexes(): {
 
     let keySeen = 0;
     let alterSeen = 0;
+    let renameTableSeen = 0;
+    let renameIndexSeen = 0;
+    let changeSeen = 0;
 
     for (const m of scope.matchAll(CREATE_TABLE_RE)) {
       for (const k of m[2].matchAll(KEY_IN_TABLE_RE)) {
@@ -122,9 +141,61 @@ export function migrationIndexes(): {
       put(m[1], m[3], !!m[2], colsOf(m[4]));
     }
 
+    // 收集列改名（破坏性改名迁移：列改名会影响索引列清单，必须同步替换）
+    const colRename: Map<string, Map<string, string>> = new Map();
+    for (const m of scope.matchAll(CHANGE_RE)) {
+      changeSeen += 1;
+      const [table, oldC, newC] = [m[1], m[2], m[3]];
+      const mm = colRename.get(table) ?? new Map<string, string>();
+      mm.set(oldC, newC);
+      colRename.set(table, mm);
+    }
+
+    // ---- RENAME TABLE（破坏性改名迁移：表改名，连带把索引 map 一并搬过去）----
+    for (const m of scope.matchAll(RENAME_TABLE_RE)) {
+      renameTableSeen += 1;
+      const [oldT, newT] = [m[1], m[2]];
+      const idx = schema.get(oldT);
+      if (idx) {
+        if (!schema.has(newT)) schema.set(newT, idx);
+        schema.delete(oldT);
+      }
+      // 列改名 map 若以旧表名为键，也一并搬过去
+      const cr = colRename.get(oldT);
+      if (cr) {
+        if (!colRename.has(newT)) colRename.set(newT, cr);
+        colRename.delete(oldT);
+      }
+    }
+
+    // 应用列改名到索引列清单（迁移侧 DDL 文本仍写旧列名，但生产里 CHANGE 后索引自动跟随新列名）
+    for (const [table, idxMap] of schema) {
+      const cr = colRename.get(table);
+      if (!cr) continue;
+      for (const shape of idxMap.values()) {
+        shape.columns = shape.columns.map((c) => cr.get(c) ?? c);
+      }
+    }
+
+    // ---- RENAME INDEX（破坏性改名迁移：索引改名）----
+    for (const m of scope.matchAll(RENAME_INDEX_RE)) {
+      renameIndexSeen += 1;
+      const [table, oldI, newI] = [m[1], m[2], m[3]];
+      const idx = schema.get(table);
+      const shape = idx?.get(oldI);
+      if (shape) {
+        idx!.delete(oldI);
+        idx!.set(newI, shape);
+      }
+    }
+
     // ---- 解析器完备性自检：源码里出现的次数必须与解析到的条数相等 ----
     const keyCount = (scope.match(/(UNIQUE\s+)?KEY\s+`/gi) ?? []).length;
     const alterCount = (scope.match(/ADD\s+(UNIQUE\s+)?INDEX\s+`/gi) ?? []).length;
+    const renameTableCount = (scope.match(/RENAME TABLE\s+`/gi) ?? []).length;
+    const renameIndexCount = (scope.match(/RENAME INDEX\s+`/gi) ?? []).length;
+    const changeCount = (scope.match(/ALTER TABLE\s+`([A-Za-z0-9_]+)`\s+CHANGE\s+`/gi) ?? [])
+      .length;
     if (keyCount !== keySeen) {
       throw new Error(
         `${f}：CREATE TABLE 体里的索引源码 ${keyCount} 处 / 解析 ${keySeen} 处 —— 有语句被漏读，先修解析器`,
@@ -133,6 +204,21 @@ export function migrationIndexes(): {
     if (alterCount !== alterSeen) {
       throw new Error(
         `${f}：ALTER … ADD INDEX 源码 ${alterCount} 处 / 解析 ${alterSeen} 处 —— 有语句被漏读，先修解析器`,
+      );
+    }
+    if (renameTableCount !== renameTableSeen) {
+      throw new Error(
+        `${f}：RENAME TABLE 源码 ${renameTableCount} 处 / 解析 ${renameTableSeen} 处 —— 有语句被漏读，先修解析器`,
+      );
+    }
+    if (renameIndexCount !== renameIndexSeen) {
+      throw new Error(
+        `${f}：RENAME INDEX 源码 ${renameIndexCount} 处 / 解析 ${renameIndexSeen} 处 —— 有语句被漏读，先修解析器`,
+      );
+    }
+    if (changeCount !== changeSeen) {
+      throw new Error(
+        `${f}：CHANGE 源码 ${changeCount} 处 / 解析 ${changeSeen} 处 —— 有语句被漏读，先修解析器`,
       );
     }
   }

@@ -6,7 +6,7 @@ import { Balance, BalanceLog, Commission } from '../../database/entities/finance
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { MealAssignment, SetMeal, SetMealItem } from '../../database/entities/meal.entity';
 import { DeliveryRecord, Order, PaymentLog, Refund } from '../../database/entities/order.entity';
-import { Dish, Supplier } from '../../database/entities/supplier.entity';
+import { Item, Supplier } from '../../database/entities/supplier.entity';
 import { OperationLog } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
 import { FinanceModule } from '../finance/finance.module';
@@ -48,7 +48,7 @@ import { OrderService } from './order.service';
       SetMeal,
       MealAssignment,
       SetMealItem,
-      Dish,
+      Item,
       Supplier,
       DeliveryRecord,
       OperationLog,

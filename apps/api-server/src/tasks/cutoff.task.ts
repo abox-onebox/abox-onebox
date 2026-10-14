@@ -18,7 +18,7 @@ export interface CutoffOutcome {
  * 口径：《订单状态机与全链路流转 v1.0》§3 T-1 24:00
  *   ① `pending_pay → cancelled`（批量，解冻余额）
  *   ② `paid → cut_off`（锁定，**不可逆**）
- *   ③ 汇总各菜品份数 → 推送 N 家供应商备料量
+ *   ③ 汇总各商品份数 → 推送 N 家供应商备料量
  *
  * ## 为什么这个任务是**两个域的组合**，而它自己不写业务
  * 三段里前两段属订单域（`OrderService.cutoffByDate`）、第三段属供应商域

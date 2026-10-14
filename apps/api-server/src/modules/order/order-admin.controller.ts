@@ -123,7 +123,7 @@ export class OrderAdminController {
   @ApiOperation({
     summary: 'D9 订单详情 + 操作日志 + 佣金明细',
     description:
-      '含订单快照、菜品明细、支付流水、退款单、时间线、该单的后台操作日志，' +
+      '含订单快照、商品明细、支付流水、退款单、时间线、该单的后台操作日志，' +
       '以及 actions{canAdjust,canForceRefund,可退金额} —— 按钮可用性口径唯一在服务端，' +
       '且**已按角色分流**（与 D10/D11 的 `@Roles` 同一白名单，不会出现「按钮亮着却点不动」）。',
   })
