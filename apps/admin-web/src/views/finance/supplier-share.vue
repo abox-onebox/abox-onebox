@@ -274,7 +274,7 @@ onMounted(() => {
     >
       <el-table :data="exceptions" size="small" class="exc__table">
         <el-table-column prop="supplierName" label="供应商" min-width="120" />
-        <el-table-column prop="dishName" label="商品" min-width="110" />
+        <el-table-column prop="itemName" label="商品" min-width="110" />
         <el-table-column prop="planQuantity" label="计划量" width="80" align="right" />
         <el-table-column label="原因" width="110">
           <template #default="{ row }">
@@ -290,7 +290,7 @@ onMounted(() => {
         <el-table-column prop="shareNo" label="应付单号" min-width="150" />
         <el-table-column prop="mealDate" label="出餐日" width="110" />
         <el-table-column prop="supplierName" label="供应商" min-width="110" />
-        <el-table-column prop="dishName" label="商品" min-width="110" />
+        <el-table-column prop="itemName" label="商品" min-width="110" />
         <el-table-column label="实收量" width="90" align="right">
           <template #default="{ row }">{{ row.quantity }}</template>
         </el-table-column>
@@ -366,7 +366,7 @@ onMounted(() => {
         <el-descriptions-item label="应付单号">{{ payTarget.shareNo }}</el-descriptions-item>
         <el-descriptions-item label="供应商">{{ payTarget.supplierName }}</el-descriptions-item>
         <el-descriptions-item label="采购内容">
-          {{ payTarget.dishName }} · 实收 {{ payTarget.quantity }} 份 ×
+          {{ payTarget.itemName }} · 实收 {{ payTarget.quantity }} 份 ×
           {{ money(payTarget.unitPriceFen) }}
         </el-descriptions-item>
         <el-descriptions-item label="应付金额">

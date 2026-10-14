@@ -134,7 +134,7 @@
           <span class="card__title">组合与商品</span>
           <span class="card__note">{{ displayOr(detail.order.setMealName) }}</span>
         </template>
-        <el-table :data="detail.dishes" border size="small">
+        <el-table :data="detail.items" border size="small">
           <el-table-column prop="slotLabel" label="档位" width="90" />
           <el-table-column prop="name" label="商品" min-width="180" />
           <el-table-column label="供应商" min-width="160">

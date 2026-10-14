@@ -80,7 +80,7 @@ export class SetMealItem {
   setMealId!: number;
 
   @Column({ name: 'item_id', type: 'bigint', transformer: bigintTransformer })
-  dishId!: number;
+  itemId!: number;
 
   @Index('idx_set_meal_item_supplier')
   @Column({

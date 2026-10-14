@@ -188,8 +188,8 @@ export class OrderAdminService {
       this.commissionRepo.find({ where: { orderId: Number(order.id) }, order: { id: 'ASC' } }),
     ]);
 
-    const dishNames = new Map(
-      (await this.itemRepo.find({ where: { id: In(items.map((i) => i.dishId).concat([0])) } })).map(
+    const itemNames = new Map(
+      (await this.itemRepo.find({ where: { id: In(items.map((i) => i.itemId).concat([0])) } })).map(
         (d) => [Number(d.id), d.name],
       ),
     );
@@ -214,11 +214,11 @@ export class OrderAdminService {
 
     return {
       order: decorated,
-      dishes: items.map((i) => ({
+      items: items.map((i) => ({
         slot: i.slot,
         slotLabel: SLOT_LABEL[i.slot] ?? `档位 ${i.slot}`,
-        dishId: Number(i.dishId),
-        name: dishNames.get(Number(i.dishId)) ?? `商品 ${i.dishId}`,
+        itemId: Number(i.itemId),
+        name: itemNames.get(Number(i.itemId)) ?? `商品 ${i.itemId}`,
         supplierId: Number(i.supplierId),
         supplierName: supNames.get(Number(i.supplierId)) ?? null,
         shareAmountFen: i.shareAmount != null ? toFen(Number(i.shareAmount)) : null,
@@ -719,10 +719,10 @@ export class OrderAdminService {
       this.setMealItemRepo.find({ where: { setMealId: In(setMealIds), slot: 1 } }),
     ]);
 
-    const dishNames = new Map(
+    const itemNames = new Map(
       (
         await this.itemRepo.find({
-          where: { id: In(items.map((i) => i.dishId).concat([0])) },
+          where: { id: In(items.map((i) => i.itemId).concat([0])) },
         })
       ).map((d) => [Number(d.id), d.name]),
     );
@@ -733,7 +733,7 @@ export class OrderAdminService {
     const leaderMap = new Map(leaders.map((l) => [Number(l.id), l]));
     const setMealMap = new Map(setMeals.map((s) => [Number(s.id), s]));
     const mainDishMap = new Map(
-      items.map((i) => [Number(i.setMealId), dishNames.get(Number(i.dishId)) ?? null]),
+      items.map((i) => [Number(i.setMealId), itemNames.get(Number(i.itemId)) ?? null]),
     );
     // 一单多条退款时取最新那条（order by id DESC，先到先占）
     const refundMap = new Map<number, Refund>();
@@ -767,7 +767,7 @@ export class OrderAdminService {
           : null,
         setMealId: Number(o.setMealId),
         setMealName: setMealMap.get(Number(o.setMealId))?.name ?? null,
-        mainDishName: mainDishMap.get(Number(o.setMealId)) ?? null,
+        mainItemName: mainDishMap.get(Number(o.setMealId)) ?? null,
         remark: o.remark ?? null,
         /**
          * 取消来源与理由（2026-10-04 补口径）

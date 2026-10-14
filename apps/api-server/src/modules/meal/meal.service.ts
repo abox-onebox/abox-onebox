@@ -43,7 +43,7 @@ import { SLOT_LABEL } from './dto/meal.dto';
  * ⚠️ C8 硬约束：发给用户端的商品视图**严禁**包含供应商状态、供价、分账比例、
  *    备选商家清单与供应商联系方式。本服务只输出菜名 / 档位 / 图片 / 供应商**展示名与 id**。
  *
- * ⭐ M5-17：`dishes[].supplierId` 与 `leader.source` 为本批新增（见各自字段头注）；
+ * ⭐ M5-17：`items[].supplierId` 与 `leader.source` 为本批新增（见各自字段头注）；
  *    `resolveLeader` 的在职判据与 `OrderService.resolveLeader` 对齐（缺陷 ⑫ 收口）。
  */
 @Injectable()
@@ -86,7 +86,7 @@ export class MealService {
       throw new BizException(ErrorCode.MEAL_NOT_PUBLISHED, `${targetDate} 该办公楼未开团`);
     }
 
-    const [setMeal, dishes, leader, existingOrders] = await Promise.all([
+    const [setMeal, items, leader, existingOrders] = await Promise.all([
       this.setMealRepo.findOne({ where: { id: assignment.setMealId } }),
       this.itemsOfSetMeal(assignment.setMealId),
       this.resolveLeader(userId),
@@ -133,7 +133,7 @@ export class MealService {
       countdownSec: secondsToCutoff(targetDate),
       reason,
       setName: setMeal?.name ?? null,
-      dishes,
+      items,
       rice: '东北长粒香米饭（集散中心统一供米）',
       priceFen,
       // MVP 不设总份数上限（供应商按备料量生产），故返回 null 表示不限量；
@@ -171,7 +171,7 @@ export class MealService {
 
     const list: HomeHistoryItem[] = [];
     for (const a of rows) {
-      const [setMeal, dishes, ordersCount] = await Promise.all([
+      const [setMeal, items, ordersCount] = await Promise.all([
         this.setMealRepo.findOne({ where: { id: a.setMealId } }),
         this.itemsOfSetMeal(a.setMealId),
         this.orderRepo.count({
@@ -181,7 +181,7 @@ export class MealService {
       list.push({
         mealDate: a.mealDate,
         setName: setMeal?.name ?? null,
-        dishNames: dishes.map((d) => d.name),
+        itemNames: items.map((d) => d.name),
         priceFen: Math.round(Number(setMeal?.price ?? 0) * 100),
         ordersCount,
       });
@@ -309,21 +309,24 @@ export class MealService {
 
   /** 套餐商品视图（含供应商展示名与 id，不含任何价格/分账字段 —— C8） */
   private async itemsOfSetMeal(setMealId: number): Promise<MealItemView[]> {
-    const items = await this.setMealItemRepo.find({ where: { setMealId }, order: { slot: 'ASC' } });
-    if (items.length === 0) return [];
+    const dishes = await this.setMealItemRepo.find({
+      where: { setMealId },
+      order: { slot: 'ASC' },
+    });
+    if (dishes.length === 0) return [];
 
-    const [dishes, suppliers] = await Promise.all([
-      this.itemRepo.find({ where: { id: In(items.map((i) => i.dishId)) } }),
-      this.supplierRepo.find({ where: { id: In([...new Set(items.map((i) => i.supplierId))]) } }),
+    const [items, suppliers] = await Promise.all([
+      this.itemRepo.find({ where: { id: In(dishes.map((i) => i.itemId)) } }),
+      this.supplierRepo.find({ where: { id: In([...new Set(dishes.map((i) => i.supplierId))]) } }),
     ]);
 
-    const dishMap = new Map(dishes.map((d) => [d.id, d]));
+    const dishMap = new Map(items.map((d) => [d.id, d]));
     const supMap = new Map(suppliers.map((s) => [s.id, s]));
 
-    return items.map((i) => {
-      const dish = dishMap.get(i.dishId);
+    return dishes.map((i) => {
+      const dish = dishMap.get(i.itemId);
       return {
-        name: dish?.name ?? `商品 ${i.dishId}`,
+        name: dish?.name ?? `商品 ${i.itemId}`,
         slot: i.slot,
         category: dish?.category ?? SLOT_LABEL[i.slot] ?? null,
         imageUrl: dish?.imageUrl ?? null,

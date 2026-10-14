@@ -100,8 +100,8 @@ export interface StatsBuildingRankResult {
 
 /** D49 商品热度行 */
 export interface StatsDishHeatRow {
-  dishId: number;
-  dishName: string;
+  itemId: number;
+  itemName: string;
   supplierId: number;
   supplierName: string;
   quantity: number;
@@ -115,7 +115,7 @@ export interface StatsDishHeatResult {
   items: StatsDishHeatRow[];
   /** 区间内全部商品份数（占比分母） */
   totalQuantity: number;
-  dishCount: number;
+  itemCount: number;
 }
 
 /** D50 留存出参 */
@@ -157,8 +157,8 @@ export const fetchDishHeat = (params: StatsQuery & { topN?: number } = {}) =>
 
 /** D69 口味红黑榜行（P1-U2 · 商品热度页第二 Tab） */
 export interface StatsItemRatingRow {
-  dishId: number;
-  dishName: string;
+  itemId: number;
+  itemName: string;
   supplierId: number;
   supplierName: string;
   ratedCount: number;
@@ -179,9 +179,9 @@ export interface StatsItemRatingResult {
   /** 红线阈值（服务端下发，端上不写死） */
   redLineThreshold: number;
   totalRatings: number;
-  dishCount: number;
+  itemCount: number;
   /** 本周最差三道菜（P1 验收判据的直接答案） */
-  worstThree: Array<{ dishId: number; dishName: string; badCount: number }>;
+  worstThree: Array<{ itemId: number; itemName: string; badCount: number }>;
   items: StatsItemRatingRow[];
 }
 

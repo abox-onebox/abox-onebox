@@ -6,13 +6,13 @@ import { aggregateItemRatings } from '../../src/modules/rating/rating.service';
  * e2e-m3 §40 走 HTTP 路径；本文件钉**纯逻辑**的三条易碎口径：
  *   ① 月界：badCount（区间）与 monthBadCount（锚点月）必须**分道** ——
  *      上月旧账进区间不进月度，否则「本月投诉 ≥3 标红」月初天天误报；
- *   ② 黑榜序：投诉次数降序 → 同投诉次数下样本越少越扎眼 → dishId 稳定序；
+ *   ② 黑榜序：投诉次数降序 → 同投诉次数下样本越少越扎眼 → itemId 稳定序；
  *   ③ 边界含端点 + 锚点后一行都不算。
  */
 
 const row = (over: Partial<Parameters<typeof aggregateItemRatings>[0][number]>) => ({
-  dishId: 1,
-  dishName: '菜',
+  itemId: 1,
+  itemName: '菜',
   supplierId: 1,
   supplierName: '供应商',
   mealDate: '2026-01-10',
@@ -26,7 +26,7 @@ describe('aggregateItemRatings（口味红黑榜聚合纯函数）', () => {
   it('空输入 → 空视图（空是合法业务态，不是错误）', () => {
     const v = aggregateItemRatings([], '2026-01-04', '2026-01-10');
     expect(v.totalRatings).toBe(0);
-    expect(v.dishCount).toBe(0);
+    expect(v.itemCount).toBe(0);
     expect(v.items).toEqual([]);
     expect(v.worstThree).toEqual([]);
   });
@@ -76,39 +76,39 @@ describe('aggregateItemRatings（口味红黑榜聚合纯函数）', () => {
       '2026-01-10',
     );
     expect(v.totalRatings).toBe(2);
-    expect(v.dishCount).toBe(1);
+    expect(v.itemCount).toBe(1);
     expect(v.items[0].goodCount).toBe(2);
     expect(v.items[0].badCount).toBe(0);
   });
 
-  it('黑榜序：投诉次数降序 → 同投诉次数下样本越少越扎眼（差评率高者前）→ dishId 稳定序', () => {
+  it('黑榜序：投诉次数降序 → 同投诉次数下样本越少越扎眼（差评率高者前）→ itemId 稳定序', () => {
     const v = aggregateItemRatings(
       [
         // 甲：2 投诉 / 10 评（差评率 0.2）
         ...Array.from({ length: 10 }, (_, i) =>
-          row({ dishId: 10, dishName: '甲', rating: i < 2 ? 3 : 1, id: i + 1 }),
+          row({ itemId: 10, itemName: '甲', rating: i < 2 ? 3 : 1, id: i + 1 }),
         ),
         // 乙：2 投诉 / 4 评（差评率 0.5）—— 与甲同投诉数，样本更少更扎眼 ⇒ 排前
         ...Array.from({ length: 4 }, (_, i) =>
-          row({ dishId: 20, dishName: '乙', rating: i < 2 ? 3 : 1, id: 20 + i }),
+          row({ itemId: 20, itemName: '乙', rating: i < 2 ? 3 : 1, id: 20 + i }),
         ),
         // 丙：1 投诉（垫底）
-        row({ dishId: 30, dishName: '丙', rating: 3, id: 30 }),
-        row({ dishId: 30, dishName: '丙', rating: 1, id: 31 }),
+        row({ itemId: 30, itemName: '丙', rating: 3, id: 30 }),
+        row({ itemId: 30, itemName: '丙', rating: 1, id: 31 }),
       ],
       '2026-01-04',
       '2026-01-10',
     );
-    expect(v.items.map((i) => i.dishName)).toEqual(['乙', '甲', '丙']);
-    expect(v.worstThree.map((w) => w.dishName)).toEqual(['乙', '甲', '丙']);
+    expect(v.items.map((i) => i.itemName)).toEqual(['乙', '甲', '丙']);
+    expect(v.worstThree.map((w) => w.itemName)).toEqual(['乙', '甲', '丙']);
   });
 
   it('worstThree 只收有投诉的菜（无差评的菜不进「最差」名单）', () => {
     const v = aggregateItemRatings(
-      [row({ dishId: 1, rating: 1, id: 1 }), row({ dishId: 2, rating: 3, id: 2 })],
+      [row({ itemId: 1, rating: 1, id: 1 }), row({ itemId: 2, rating: 3, id: 2 })],
       '2026-01-04',
       '2026-01-10',
     );
-    expect(v.worstThree.map((w) => w.dishId)).toEqual([2]);
+    expect(v.worstThree.map((w) => w.itemId)).toEqual([2]);
   });
 });

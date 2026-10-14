@@ -17,7 +17,7 @@ const loading = ref(false);
 const date = ref('');
 const data = ref<WorkbenchData | null>(null);
 
-const dishes = computed<PortalDish[]>(() => data.value?.dishes ?? []);
+const items = computed<PortalDish[]>(() => data.value?.items ?? []);
 const isEmpty = computed(() => data.value?.summary?.empty === true);
 const deadline = computed(() => data.value?.deadline);
 
@@ -134,10 +134,10 @@ onMounted(load);
       description="当日没有派到生产计划（未开团或截单后尚未生成）"
     />
 
-    <el-card v-for="d in dishes" :key="d.dishId" shadow="never" style="margin-top: 12px">
+    <el-card v-for="d in items" :key="d.itemId" shadow="never" style="margin-top: 12px">
       <div class="dish-head">
         <div class="dish-title">
-          <strong>{{ d.dishName }}</strong>
+          <strong>{{ d.itemName }}</strong>
           <el-tag size="small" type="info" effect="plain" style="margin-left: 8px">
             {{ d.category ?? '—' }}
           </el-tag>

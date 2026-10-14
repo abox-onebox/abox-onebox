@@ -244,7 +244,7 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     channels: ['wechat_subscribe'],
     trigger: '截单后（T-1 24:00 之后）',
     mandatory: false,
-    variables: ['mealDate', 'centerName', 'dishCount'],
+    variables: ['mealDate', 'centerName', 'itemCount'],
     // 收件人是**供应商**（独立主体、不是用户小程序身份）→ 不由用户端请求授权
     requestSubscribe: false,
     consumedBy: '—（一期无投递点）',
@@ -255,7 +255,7 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
       enabled: 0,
       wechatTemplateId: null,
       groupContent:
-        '【出餐通知】{{mealDate}} 需向 {{centerName}} 交付 {{dishCount}} 个商品，请在 09:30 前完成出餐确认。',
+        '【出餐通知】{{mealDate}} 需向 {{centerName}} 交付 {{itemCount}} 个商品，请在 09:30 前完成出餐确认。',
     },
   },
   {

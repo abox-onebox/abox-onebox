@@ -35,9 +35,9 @@ export const RATING_LEVEL_LABELS: Record<number, string> = {
 
 /** D69 红黑榜单行 */
 export interface ItemRatingRow {
-  dishId: number;
+  itemId: number;
   /** 评价落库时的**快照名**（商品可能被改名/下架，聚合展示不追新名） */
-  dishName: string;
+  itemName: string;
   supplierId: number;
   supplierName: string;
   /** 区间内被评次数 */
@@ -71,9 +71,9 @@ export interface ItemRatingView {
   /** 区间内评价总行数 */
   totalRatings: number;
   /** 参与聚合的商品数 */
-  dishCount: number;
+  itemCount: number;
   /** 本周（区间内）最差三道菜（badCount≥1 者按 badCount 降序取前 3）—— P1 验收判据的直接答案 */
-  worstThree: Array<{ dishId: number; dishName: string; badCount: number }>;
-  /** 全量商品行（按 badCount 降序、ratedCount 升序、dishId 升序） */
+  worstThree: Array<{ itemId: number; itemName: string; badCount: number }>;
+  /** 全量商品行（按 badCount 降序、ratedCount 升序、itemId 升序） */
   items: ItemRatingRow[];
 }

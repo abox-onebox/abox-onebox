@@ -375,7 +375,7 @@ export class OrderService {
       take: pageSize,
     });
 
-    const mainDish = await this.mainDishNameMap(rows);
+    const mainDish = await this.mainItemNameMap(rows);
 
     const list: OrderListItem[] = rows.map((o) => ({
       orderNo: o.orderNo,
@@ -385,7 +385,7 @@ export class OrderService {
       quantity: o.quantity,
       unitPriceFen: toFen(o.unitPrice),
       totalAmountFen: toFen(o.totalAmount),
-      mainDishName: mainDish.get(o.setMealId) ?? null,
+      mainItemName: mainDish.get(o.setMealId) ?? null,
       createdAt: toBjIso(o.createdAt)!,
     }));
 
@@ -405,10 +405,10 @@ export class OrderService {
         : Promise.resolve(null),
     ]);
 
-    const dishNames = new Map(
+    const itemNames = new Map(
       (
         await this.itemRepo.find({
-          where: { id: In(items.map((i) => i.dishId).concat([0])) },
+          where: { id: In(items.map((i) => i.itemId).concat([0])) },
         })
       ).map((d) => [d.id, d.name]),
     );
@@ -448,14 +448,14 @@ export class OrderService {
       balanceUsedFen: toFen(order.balanceUsed),
       payAmountFen: toFen(order.payAmount),
       remark: order.remark ?? null,
-      dishes: items.map((i) => ({
+      items: items.map((i) => ({
         /**
-         * ⭐ `dishId`（P1-U2 新增）：评价提交按 id 定位商品 ——
+         * ⭐ `itemId`（P1-U2 新增）：评价提交按 id 定位商品 ——
          * `ab_item.name` 无唯一约束（A3 批次不变量），按名字定位会把评价
          * 记到别家同名菜头上。
          */
-        dishId: Number(i.dishId),
-        name: dishNames.get(i.dishId) ?? `商品 ${i.dishId}`,
+        itemId: Number(i.itemId),
+        name: itemNames.get(i.itemId) ?? `商品 ${i.itemId}`,
         slot: i.slot,
         supplierName: supNames.get(i.supplierId) ?? null,
       })),
@@ -1587,20 +1587,20 @@ export class OrderService {
   }
 
   /** 批量取「主荤菜名」（slot=1），避免列表页 N+1 */
-  private async mainDishNameMap(orders: Order[]): Promise<Map<number, string | null>> {
+  private async mainItemNameMap(orders: Order[]): Promise<Map<number, string | null>> {
     const map = new Map<number, string | null>();
     const setMealIds = [...new Set(orders.map((o) => o.setMealId))];
     if (setMealIds.length === 0) return map;
 
-    const items = await this.setMealItemRepo.find({
+    const dishes = await this.setMealItemRepo.find({
       where: { setMealId: In(setMealIds), slot: 1 },
     });
-    if (items.length === 0) return map;
+    if (dishes.length === 0) return map;
 
-    const dishes = await this.itemRepo.find({ where: { id: In(items.map((i) => i.dishId)) } });
-    const dishNames = new Map(dishes.map((d) => [d.id, d.name]));
-    for (const it of items) {
-      map.set(it.setMealId, dishNames.get(it.dishId) ?? null);
+    const items = await this.itemRepo.find({ where: { id: In(dishes.map((i) => i.itemId)) } });
+    const itemNames = new Map(items.map((d) => [d.id, d.name]));
+    for (const it of dishes) {
+      map.set(it.setMealId, itemNames.get(it.itemId) ?? null);
     }
     return map;
   }

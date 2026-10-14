@@ -70,7 +70,7 @@ export interface HomeDailyResult {
   reason: string | null;
   /** 套餐名 */
   setName: string | null;
-  dishes: MealItemView[];
+  items: MealItemView[];
   /** 主食说明（统一供米） */
   rice: string | null;
   /** 单价（分）· 锁定 2580 */
@@ -100,7 +100,7 @@ export interface HomeDailyResult {
 export interface HomeHistoryItem {
   mealDate: string;
   setName: string | null;
-  dishNames: string[];
+  itemNames: string[];
   priceFen: number;
   ordersCount: number;
 }

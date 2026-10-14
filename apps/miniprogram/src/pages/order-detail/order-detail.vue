@@ -86,14 +86,14 @@
             >{{ formatMealDate(detail.mealDate) }} · × {{ detail.quantity }}</text
           >
         </view>
-        <view v-for="dish in detail.dishes" :key="`${dish.slot}-${dish.name}`" class="dish">
+        <view v-for="dish in detail.items" :key="`${dish.slot}-${dish.name}`" class="dish">
           <text class="dish__slot">{{ SLOT_LABEL[dish.slot] || '商品' }}</text>
           <text class="dish__name">{{ dish.name }}</text>
           <text class="dish__from">{{
             dish.supplierName ? `来自：${dish.supplierName}` : ''
           }}</text>
         </view>
-        <view v-if="!detail.dishes.length" class="dish">
+        <view v-if="!detail.items.length" class="dish">
           <text class="dish__slot">组合</text>
           <text class="dish__name">搭配待公布</text>
           <text class="dish__from" />
@@ -174,7 +174,7 @@
 
         <!-- 已评：只读回显（内容由服务端下发，端上不自存第二份） -->
         <template v-if="detail.rating.rated">
-          <view v-for="it in ratedItems" :key="it.dishId" class="rated">
+          <view v-for="it in ratedItems" :key="it.itemId" class="rated">
             <text class="rated__name">{{ it.name }}</text>
             <text class="rated__tag" :class="`rated__tag--${it.rating}`">{{
               ratingLabel(it.rating)
@@ -185,7 +185,7 @@
 
         <!-- 未评：逐菜三键 + 可选原因 -->
         <template v-else>
-          <view v-for="dish in detail.dishes" :key="dish.dishId" class="rate">
+          <view v-for="dish in detail.items" :key="dish.itemId" class="rate">
             <view class="rate__row">
               <text class="rate__name">{{ dish.name }}</text>
               <view class="rate__opts">
@@ -193,9 +193,9 @@
                   v-for="lv in 3"
                   :key="lv"
                   class="rate__opt"
-                  :class="{ 'is-on': ratingPick[dish.dishId] === lv }"
+                  :class="{ 'is-on': ratingPick[dish.itemId] === lv }"
                   hover-class="rate__opt--hover"
-                  @tap="pick(dish.dishId, lv)"
+                  @tap="pick(dish.itemId, lv)"
                 >
                   {{ ratingLabel(lv) }}
                 </button>
@@ -203,8 +203,8 @@
             </view>
             <!-- 只在选了「不好」时展开原因输入（十秒评价优先，投诉才需要细节） -->
             <input
-              v-if="ratingPick[dish.dishId] === 3"
-              v-model="ratingReasons[dish.dishId]"
+              v-if="ratingPick[dish.itemId] === 3"
+              v-model="ratingReasons[dish.itemId]"
               class="rate__reason"
               type="text"
               maxlength="128"
@@ -382,20 +382,20 @@ function ratingLabel(lv: number): string {
   return RATING_LEVEL_LABELS[lv] ?? '—';
 }
 
-/** dishId → 档位（1/2/3）；未选不在对象里 */
+/** itemId → 档位（1/2/3）；未选不在对象里 */
 const ratingPick = ref<Record<number, number>>({});
-/** dishId → 「不好」的可选原因 */
+/** itemId → 「不好」的可选原因 */
 const ratingReasons = ref<Record<number, string>>({});
 const ratingSubmitting = ref(false);
 
-/** 已评回显行：把服务端的 rating.items 与 dishes 的名字拼起来（名字仍以详情为准） */
+/** 已评回显行：把服务端的 rating.items 与 items 的名字拼起来（名字仍以详情为准） */
 const ratedItems = computed(() => {
   const d = detail.value;
   if (!d?.rating.rated) return [];
-  const nameOf = new Map(d.dishes.map((x) => [x.dishId, x.name]));
+  const nameOf = new Map(d.items.map((x) => [x.itemId, x.name]));
   return d.rating.items.map((it) => ({
-    dishId: it.dishId,
-    name: nameOf.get(it.dishId) ?? `商品#${it.dishId}`,
+    itemId: it.itemId,
+    name: nameOf.get(it.itemId) ?? `商品#${it.itemId}`,
     rating: it.rating,
     reason: it.reason,
   }));
@@ -404,10 +404,10 @@ const ratedItems = computed(() => {
 const pickedCount = computed(() => Object.keys(ratingPick.value).length);
 const canSubmit = computed(() => pickedCount.value > 0 && !ratingSubmitting.value);
 
-function pick(dishId: number, lv: number): void {
+function pick(itemId: number, lv: number): void {
   // 再点一次同一档 = 取消选择（允许「误选后反悔」而不必提交跳过）
-  if (ratingPick.value[dishId] === lv) delete ratingPick.value[dishId];
-  else ratingPick.value[dishId] = lv;
+  if (ratingPick.value[itemId] === lv) delete ratingPick.value[itemId];
+  else ratingPick.value[itemId] = lv;
 }
 
 async function submitRating(): Promise<void> {
@@ -417,11 +417,11 @@ async function submitRating(): Promise<void> {
   // 故在闭包外先把订单号取好。
   const targetOrderNo = detail.value.orderNo;
   try {
-    const items = Object.entries(ratingPick.value).map(([dishId, rating]) => ({
-      dishId: Number(dishId),
+    const items = Object.entries(ratingPick.value).map(([itemId, rating]) => ({
+      itemId: Number(itemId),
       rating,
-      ...(rating === 3 && ratingReasons.value[Number(dishId)]?.trim()
-        ? { reason: ratingReasons.value[Number(dishId)].trim() }
+      ...(rating === 3 && ratingReasons.value[Number(itemId)]?.trim()
+        ? { reason: ratingReasons.value[Number(itemId)].trim() }
         : {}),
     }));
     // 会话裁决者：写操作走 `run()` ⇒ token 过期时透明重登后重试一次。

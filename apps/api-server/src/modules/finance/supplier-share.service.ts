@@ -98,21 +98,21 @@ export class SupplierShareService {
         ...(supplierId ? { payeeId: supplierId } : {}),
       },
     });
-    const existedKey = new Map(existed.map((s) => [`${s.payeeId}:${s.dishId}`, s.shareNo]));
+    const existedKey = new Map(existed.map((s) => [`${s.payeeId}:${s.itemId}`, s.shareNo]));
 
     const rows: Array<Partial<SupplierShare>> = [];
     const created: Array<Record<string, unknown>> = [];
     const skipped: Array<Record<string, unknown>> = [];
 
     for (const c of candidates) {
-      const key = `${c.supplierId}:${c.dishId}`;
+      const key = `${c.supplierId}:${c.itemId}`;
       const hit = existedKey.get(key);
       if (hit) {
         skipped.push({
           supplierId: c.supplierId,
           supplierName: c.supplierName,
-          dishId: c.dishId,
-          dishName: c.dishName,
+          itemId: c.itemId,
+          itemName: c.itemName,
           reason: 'already_generated',
           shareNo: hit,
         });
@@ -128,7 +128,7 @@ export class SupplierShareService {
         mealDate: date,
         payeeType: PAYEE_SUPPLIER,
         payeeId: c.supplierId,
-        dishId: c.dishId,
+        itemId: c.itemId,
         quantity: c.quantity,
         unitPrice: c.unitPrice,
         amount: money(c.amountYuan),
@@ -140,8 +140,8 @@ export class SupplierShareService {
         shareNo,
         supplierId: c.supplierId,
         supplierName: c.supplierName,
-        dishId: c.dishId,
-        dishName: c.dishName,
+        itemId: c.itemId,
+        itemName: c.itemName,
         planQuantity: c.planQuantity,
         quantity: c.quantity,
         unitPriceFen: toFen(Number(c.unitPrice)),
@@ -280,8 +280,8 @@ export class SupplierShareService {
         ...(q.supplierId ? { payeeId: q.supplierId } : {}),
       },
     });
-    const keys = new Set(existed.map((s) => `${s.payeeId}:${s.dishId}`));
-    const list = exceptions.filter((e) => !keys.has(`${e.supplierId}:${e.dishId}`));
+    const keys = new Set(existed.map((s) => `${s.payeeId}:${s.itemId}`));
+    const list = exceptions.filter((e) => !keys.has(`${e.supplierId}:${e.itemId}`));
 
     const byReason: Record<string, number> = {};
     for (const e of list) byReason[e.reason] = (byReason[e.reason] ?? 0) + 1;
@@ -292,7 +292,7 @@ export class SupplierShareService {
       summary: {
         count: list.length,
         supplierCount: new Set(list.map((e) => e.supplierId)).size,
-        dishCount: new Set(list.map((e) => e.dishId)).size,
+        itemCount: new Set(list.map((e) => e.itemId)).size,
         byReason,
       },
       notes: {
@@ -467,13 +467,13 @@ export class SupplierShareService {
     if (!dailies.length) return { candidates: [], exceptions: [] };
 
     const supplierIds = [...new Set(dailies.map((d) => d.supplierId))];
-    const dishIds = [...new Set(dailies.map((d) => d.dishId))];
-    const [suppliers, dishes] = await Promise.all([
+    const itemIds = [...new Set(dailies.map((d) => d.itemId))];
+    const [suppliers, items] = await Promise.all([
       this.supplierRepo.find({ where: { id: In(supplierIds) } }),
-      this.itemRepo.find({ where: { id: In(dishIds) } }),
+      this.itemRepo.find({ where: { id: In(itemIds) } }),
     ]);
     const supplierOf = new Map(suppliers.map((s) => [s.id, s]));
-    const dishOf = new Map(dishes.map((d) => [d.id, d]));
+    const dishOf = new Map(items.map((d) => [d.id, d]));
 
     const candidates: ShareCandidate[] = [];
     const exceptions: ShareExceptionItem[] = [];
@@ -481,15 +481,15 @@ export class SupplierShareService {
     for (const d of dailies) {
       const supplier = supplierOf.get(d.supplierId);
       const supplierName = supplier?.name ?? `供应商 ${d.supplierId}`;
-      const dishName = dishOf.get(d.dishId)?.name ?? `商品 ${d.dishId}`;
+      const itemName = dishOf.get(d.itemId)?.name ?? `商品 ${d.itemId}`;
       const planQuantity = Number(d.planQuantity);
 
       const reject = (reason: ShareExceptionReason) => {
         exceptions.push({
           supplierId: d.supplierId,
           supplierName,
-          dishId: d.dishId,
-          dishName,
+          itemId: d.itemId,
+          itemName,
           planQuantity,
           dailyStatus: d.status,
           reason,
@@ -518,12 +518,12 @@ export class SupplierShareService {
         continue;
       }
 
-      const unitPrice = this.unitPriceOf(d, dishOf.get(d.dishId));
+      const unitPrice = this.unitPriceOf(d, dishOf.get(d.itemId));
       candidates.push({
         supplierId: d.supplierId,
         supplierName,
-        dishId: d.dishId,
-        dishName,
+        itemId: d.itemId,
+        itemName,
         planQuantity,
         quantity: Number(qty),
         unitPrice,
@@ -555,13 +555,13 @@ export class SupplierShareService {
   /** 行装饰：补齐供应商名 / 菜名 + 端上要的文案与按钮口径（避免前端 N+1） */
   private async decorate(rows: SupplierShare[]): Promise<Array<Record<string, unknown>>> {
     const supplierIds = [...new Set(rows.map((r) => r.payeeId))];
-    const dishIds = [...new Set(rows.map((r) => r.dishId).filter((v): v is number => !!v))];
-    const [suppliers, dishes] = await Promise.all([
+    const itemIds = [...new Set(rows.map((r) => r.itemId).filter((v): v is number => !!v))];
+    const [suppliers, items] = await Promise.all([
       this.supplierRepo.find({ where: { id: In(supplierIds) } }),
-      this.itemRepo.find({ where: { id: In(dishIds) } }),
+      this.itemRepo.find({ where: { id: In(itemIds) } }),
     ]);
     const supplierOf = new Map(suppliers.map((s) => [s.id, s]));
-    const dishOf = new Map(dishes.map((d) => [d.id, d]));
+    const dishOf = new Map(items.map((d) => [d.id, d]));
 
     return rows.map((r) => {
       const statusLabel = SHARE_STATUS_LABEL[r.status] ?? r.status;
@@ -574,8 +574,8 @@ export class SupplierShareService {
         payeeType: r.payeeType,
         supplierId: r.payeeId,
         supplierName: supplierOf.get(r.payeeId)?.name ?? `供应商 ${r.payeeId}`,
-        dishId: r.dishId ?? null,
-        dishName: r.dishId ? (dishOf.get(r.dishId)?.name ?? `商品 ${r.dishId}`) : null,
+        itemId: r.itemId ?? null,
+        itemName: r.itemId ? (dishOf.get(r.itemId)?.name ?? `商品 ${r.itemId}`) : null,
         /** 实收量（采购计费基数） */
         quantity: Number(r.quantity),
         unitPriceFen: toFen(Number(r.unitPrice)),
@@ -643,8 +643,8 @@ const EXCEPTION_TEXT: Record<ShareExceptionReason, string> = {
 interface ShareCandidate {
   supplierId: number;
   supplierName: string;
-  dishId: number;
-  dishName: string;
+  itemId: number;
+  itemName: string;
   planQuantity: number;
   /** 实收量（= 计费基数） */
   quantity: number;
@@ -656,8 +656,8 @@ interface ShareCandidate {
 interface ShareExceptionItem {
   supplierId: number;
   supplierName: string;
-  dishId: number;
-  dishName: string;
+  itemId: number;
+  itemName: string;
   planQuantity: number;
   dailyStatus: string;
   reason: ShareExceptionReason;

@@ -36,7 +36,7 @@
             </view>
           </view>
         </view>
-        <view v-for="(d, i) in daily.dishes" :key="i" class="menu-row">
+        <view v-for="(d, i) in daily.items" :key="i" class="menu-row">
           <text class="menu-row__name">{{ d.name }}</text>
           <text class="menu-row__from">来自：{{ d.supplierName }}</text>
         </view>

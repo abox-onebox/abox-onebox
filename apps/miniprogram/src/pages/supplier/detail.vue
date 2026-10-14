@@ -30,10 +30,10 @@
       </view>
 
       <!-- 在册商品（规模陈述，不是菜单） -->
-      <view v-if="data.dishes.length" class="card">
+      <view v-if="data.items.length" class="card">
         <text class="card__title">在册商品</text>
-        <view class="dishes">
-          <text v-for="(d, i) in data.dishes" :key="`${d}-${i}`" class="dishes__tag">
+        <view class="items">
+          <text v-for="(d, i) in data.items" :key="`${d}-${i}`" class="dishes__tag">
             {{ d }}
           </text>
         </view>
@@ -229,7 +229,7 @@ onLoad((query) => {
   }
 }
 
-.dishes {
+.items {
   display: flex;
   flex-wrap: wrap;
   gap: $space-1;

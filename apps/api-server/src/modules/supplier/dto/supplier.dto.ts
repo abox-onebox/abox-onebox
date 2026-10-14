@@ -66,9 +66,9 @@ export class SupplierSettlementQueryDto {
  */
 export class CookConfirmItemDto {
   @Type(() => Number)
-  @IsInt({ message: 'dishId 必须是整数' })
+  @IsInt({ message: 'itemId 必须是整数' })
   @Min(1)
-  dishId!: number;
+  itemId!: number;
 
   @Type(() => Number)
   @IsInt({ message: 'distributionCenterId 必须是整数' })

@@ -46,7 +46,7 @@ export const TEMPLATE_MAX_ITEMS = 8;
  * ⚠️ 为什么必须**机械强制**而不是只写文案：此前接口没有任何下界 ——
  *    一个只有 1–2 项的套餐也能建成、能上架，而用户端横幅照旧写「一饭四菜」。
  *    这正是项目里反复出现的形态：**同一条口径有两份表述，不被执行的那份必然会错**。
- *    7 个种子模板全部恰好是 `[1,2,3,4]`，e2e 也是照 `dishCount===4` 断言的 ——
+ *    7 个种子模板全部恰好是 `[1,2,3,4]`，e2e 也是照 `itemCount===4` 断言的 ——
  *    规则一直都在，只是没落在代码上。
  */
 export const SET_MEAL_REQUIRED_SLOTS: readonly number[] = SET_MEAL_COMPOSITION.requiredSlots;
@@ -188,7 +188,7 @@ export class SetMealItemInputDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  dishId!: number;
+  itemId!: number;
 
   @ApiProperty({ description: '档位：1 主荤 / 2 半荤 / 3 素菜 / 4 汤 / 5 主食', example: 1 })
   @Type(() => Number)

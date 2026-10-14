@@ -25,12 +25,12 @@
 
         <!-- 出品方卡（一物一卡 · 原型 5 张 = 4 家供应商 + 1 个集散中心） -->
         <ab-supplier-card
-          v-for="(d, i) in data.dishes"
-          :key="`${d.supplier.id}-${d.dishName}-${i}`"
+          v-for="(d, i) in data.items"
+          :key="`${d.supplier.id}-${d.itemName}-${i}`"
           :avatar-icon="dishIcon(d.category)"
           :name="d.supplier.name"
           :category="categoryLabel(d.category)"
-          :detail="`今日出品：${d.dishName}`"
+          :detail="`今日出品：${d.itemName}`"
           :verified="verifiedText(d.supplier.qualifications)"
           clickable
           :highlight="focusId === d.supplier.id"
@@ -131,13 +131,13 @@ const focusId = ref<number | null>(null);
 /**
  * 尚未消费的定位请求（`onLoad` 写入 → 首次取数成功后消费并清空）
  *
- * ⚠️ 为什么不直接让 `onLoad` 去定位：那一刻 U5 还没回来，`dishes` 是空的。
+ * ⚠️ 为什么不直接让 `onLoad` 去定位：那一刻 U5 还没回来，`items` 是空的。
  *    故 `onLoad` 只**记下意图**，由 `load()` 兑现。
  */
 const pendingSupplierId = ref<number | null>(null);
 
 const isEmpty = computed(
-  () => (data.value?.dishes.length ?? 0) === 0 && !data.value?.distributionCenter,
+  () => (data.value?.items.length ?? 0) === 0 && !data.value?.distributionCenter,
 );
 
 const emptyText = computed(() =>
@@ -202,7 +202,7 @@ function consumePendingSupplier(): void {
   if (target === null) return;
   pendingSupplierId.value = null;
 
-  const hit = data.value?.dishes.find((d) => d.supplier.id === target);
+  const hit = data.value?.items.find((d) => d.supplier.id === target);
   if (hit) {
     focusId.value = target;
     return;

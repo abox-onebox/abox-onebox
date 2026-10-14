@@ -46,7 +46,7 @@ export interface AdminOrderRow {
   leaderName: string | null;
   setMealId: number;
   setMealName: string | null;
-  mainDishName: string | null;
+  mainItemName: string | null;
   remark: string | null;
   createdAt: string;
   paidAt: string | null;
@@ -93,7 +93,7 @@ export interface AdminOrdersPage extends PageResult<AdminOrderRow> {
 export interface AdminOrderDish {
   slot: number;
   slotLabel: string;
-  dishId: number;
+  itemId: number;
   name: string;
   supplierId: number;
   supplierName: string | null;
@@ -154,7 +154,7 @@ export interface AdminOperationLogRow {
 
 export interface AdminOrderDetail {
   order: AdminOrderRow;
-  dishes: AdminOrderDish[];
+  items: AdminOrderDish[];
   timeline: AdminOrderTimelineNode[];
   refund: AdminOrderRefundDetail | null;
   payment: {

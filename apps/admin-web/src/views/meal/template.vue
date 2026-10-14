@@ -31,9 +31,9 @@
           <div class="detail">
             <p class="detail__title">商品明细（本日精选）</p>
             <div class="detail__items">
-              <div v-for="item in row.items" :key="`${item.slot}-${item.dishId}`" class="item">
+              <div v-for="item in row.items" :key="`${item.slot}-${item.itemId}`" class="item">
                 <el-tag size="small" effect="plain" class="item__slot">{{ item.slotLabel }}</el-tag>
-                <span class="item__name">{{ item.name ?? `商品 ${item.dishId}` }}</span>
+                <span class="item__name">{{ item.name ?? `商品 ${item.itemId}` }}</span>
                 <span class="item__sup">供应商 #{{ item.supplierId ?? '—' }}</span>
               </div>
               <span v-if="!row.items.length" class="muted">该组合没有商品明细</span>
@@ -55,7 +55,7 @@
         <template #default="{ row }">{{ fenToCny(row.costPriceFen) }}</template>
       </el-table-column>
       <el-table-column label="商品数" width="90">
-        <template #default="{ row }">{{ row.dishCount }}</template>
+        <template #default="{ row }">{{ row.itemCount }}</template>
       </el-table-column>
       <el-table-column label="在用分配" width="100">
         <template #default="{ row }">
@@ -245,8 +245,8 @@ const editPicked = reactive<Record<number, number | undefined>>({});
 /** 已排期 ⇒ 构成与售价冻结（与服务端 `MEAL_TEMPLATE_IN_USE` 同一判据） */
 const frozen = computed(() => (editing.value?.usedCount ?? 0) > 0);
 
-function isDishUsedInEdit(dishId: number, exceptSlot: number): boolean {
-  return editSlots.some((s) => s.value !== exceptSlot && editPicked[s.value] === dishId);
+function isDishUsedInEdit(itemId: number, exceptSlot: number): boolean {
+  return editSlots.some((s) => s.value !== exceptSlot && editPicked[s.value] === itemId);
 }
 
 async function openEdit(row: SetMealTemplateRow): Promise<void> {
@@ -257,7 +257,7 @@ async function openEdit(row: SetMealTemplateRow): Promise<void> {
   editForm.status = row.status;
   for (const s of editSlots) editPicked[s.value] = undefined;
   for (const item of row.items) {
-    if (editSlots.some((s) => s.value === item.slot)) editPicked[item.slot] = item.dishId;
+    if (editSlots.some((s) => s.value === item.slot)) editPicked[item.slot] = item.itemId;
   }
   dialogOpen.value = true;
 
@@ -295,7 +295,7 @@ async function saveEdit(): Promise<void> {
       return;
     }
     payload.price = editForm.price;
-    payload.items = editSlots.map((s) => ({ slot: s.value, dishId: editPicked[s.value]! }));
+    payload.items = editSlots.map((s) => ({ slot: s.value, itemId: editPicked[s.value]! }));
   }
 
   saving.value = true;

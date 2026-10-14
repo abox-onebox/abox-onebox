@@ -187,7 +187,7 @@
         <div class="readonly-grid">
           <div class="ro-item">
             <span class="ro-label">商品数</span>
-            <span class="ro-value">{{ detail.supplier.dishCount }}</span>
+            <span class="ro-value">{{ detail.supplier.itemCount }}</span>
           </div>
           <div class="ro-item">
             <span class="ro-label">本月应付</span>
@@ -362,9 +362,9 @@ async function submit(): Promise<void> {
         status: form.status,
       });
       // 副作用必须显式告知：否则运营会以为商品「自己消失了」
-      if (res.unpublishedDishCount > 0) {
+      if (res.unpublishedItemCount > 0) {
         ElMessage.warning(
-          `已保存。因证照有效期已过期，联动下架了 ${res.unpublishedDishCount} 道在架商品`,
+          `已保存。因证照有效期已过期，联动下架了 ${res.unpublishedItemCount} 道在架商品`,
         );
       } else {
         ElMessage.success('已保存');

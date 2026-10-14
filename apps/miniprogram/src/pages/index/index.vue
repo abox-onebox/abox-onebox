@@ -72,7 +72,7 @@
         <text class="card__title"
           ><text class="abi abi-16">{{ I.rice }}</text> 本日精选</text
         >
-        <view v-for="(d, i) in daily.dishes" :key="i" class="dish-row">
+        <view v-for="(d, i) in daily.items" :key="i" class="dish-row">
           <view class="dish-row__ico">
             <text class="abi abi-deco-34">{{ I[dishIcon(d.category)] }}</text>
           </view>

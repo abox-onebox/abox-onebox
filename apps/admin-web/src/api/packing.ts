@@ -16,8 +16,8 @@ import { http } from './request';
 export interface PackingDish {
   supplierId: number;
   supplierName: string;
-  dishId: number;
-  dishName: string;
+  itemId: number;
+  itemName: string;
   unitPriceFen: number;
   planQuantity: number;
   actualQuantity: number | null;
@@ -33,8 +33,8 @@ export interface PackingCenter {
   contactPhone: string | null;
   /** 该场所当日所有商品均已确认送达 —— 未到齐不要开包 */
   ready: boolean;
-  blockers: Array<{ supplierName: string; dishName: string; planQuantity: number; status: string }>;
-  dishes: PackingDish[];
+  blockers: Array<{ supplierName: string; itemName: string; planQuantity: number; status: string }>;
+  items: PackingDish[];
   routes: Array<{
     routeNo: string | null;
     buildingGroupId: number;
@@ -46,8 +46,8 @@ export interface PackingCenter {
     batchQuantity: number;
     routeCount: number;
     stopCount: number;
-    dishCount: number;
-    confirmedDishCount: number;
+    itemCount: number;
+    confirmedItemCount: number;
   };
 }
 

@@ -444,8 +444,8 @@ export class DeliveryRecord {
  *   历史事实（「当时觉得难吃」与「后来退了钱」是两件事，都该留）。
  */
 @Entity('ab_item_rating')
-@Index('uk_item_rating_order_dish', ['orderId', 'dishId'], { unique: true })
-@Index('idx_item_rating_dish_date', ['dishId', 'mealDate'])
+@Index('uk_item_rating_order_dish', ['orderId', 'itemId'], { unique: true })
+@Index('idx_item_rating_dish_date', ['itemId', 'mealDate'])
 @Index('idx_item_rating_user', ['userId'])
 export class ItemRating {
   @PkColumn()
@@ -465,11 +465,11 @@ export class ItemRating {
   mealDate!: string;
 
   @Column({ name: 'item_id', type: 'bigint', transformer: bigintTransformer })
-  dishId!: number;
+  itemId!: number;
 
   /** 商品名快照（落库时的 ab_item.name） */
   @Column({ name: 'item_name', type: 'varchar', length: 64 })
-  dishName!: string;
+  itemName!: string;
 
   @Column({ name: 'supplier_id', type: 'bigint', transformer: bigintTransformer })
   supplierId!: number;

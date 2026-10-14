@@ -22,8 +22,8 @@ export class ItemRatingItemDto {
     example: 3,
   })
   @Type(() => Number)
-  @IsInt({ message: 'dishId 需为整数' })
-  dishId!: number;
+  @IsInt({ message: 'itemId 需为整数' })
+  itemId!: number;
 
   @ApiProperty({ description: '1 好吃 / 2 一般 / 3 不好', enum: RATING_LEVELS, example: 3 })
   @Type(() => Number)

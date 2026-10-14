@@ -44,7 +44,7 @@
           </view>
 
           <view class="order__bd">
-            <text class="order__dish">{{ item.mainDishName || '本日精选' }}</text>
+            <text class="order__dish">{{ item.mainItemName || '本日精选' }}</text>
             <text class="order__qty">共 {{ item.quantity }} 份</text>
           </view>
 

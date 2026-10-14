@@ -113,8 +113,8 @@ export interface StatsBuildingRankView {
 
 /** D49 商品热度行 */
 export interface StatsDishHeatRow {
-  dishId: number;
-  dishName: string;
+  itemId: number;
+  itemName: string;
   supplierId: number;
   supplierName: string;
   /** 该商品被发出的份数（= 含它的订单份数之和） */
@@ -133,7 +133,7 @@ export interface StatsDishHeatView {
   /** 区间内**全部**商品份数（分母 —— 按 topN 之和算占比会得出「份额合计 100%」的假象） */
   totalQuantity: number;
   /** 区间内出现过的商品数 */
-  dishCount: number;
+  itemCount: number;
 }
 
 /** D50 留存分析 */
@@ -521,15 +521,15 @@ export class StatsService {
       ? await this.dataSource
           .getRepository(SetMealItem)
           .createQueryBuilder('i')
-          .select(['i.setMealId', 'i.dishId', 'i.supplierId'])
+          .select(['i.setMealId', 'i.itemId', 'i.supplierId'])
           .where('i.setMealId IN (:...ids)', { ids: setMealIds })
           .getMany()
       : [];
-    const dishesOf = new Map<number, Array<{ dishId: number; supplierId: number }>>();
+    const dishesOf = new Map<number, Array<{ itemId: number; supplierId: number }>>();
     for (const it of items) {
       const k = Number(it.setMealId);
       const arr = dishesOf.get(k) ?? [];
-      arr.push({ dishId: Number(it.dishId), supplierId: Number(it.supplierId) });
+      arr.push({ itemId: Number(it.itemId), supplierId: Number(it.supplierId) });
       dishesOf.set(k, arr);
     }
 
@@ -539,27 +539,27 @@ export class StatsService {
       const qty = Number(o.quantity ?? 0);
       const seen = new Set<number>();
       for (const d of dishesOf.get(Number(o.setMealId)) ?? []) {
-        const cur = acc.get(d.dishId) ?? { quantity: 0, orderCount: 0, supplierId: d.supplierId };
+        const cur = acc.get(d.itemId) ?? { quantity: 0, orderCount: 0, supplierId: d.supplierId };
         cur.quantity += qty;
-        if (!seen.has(d.dishId)) {
+        if (!seen.has(d.itemId)) {
           cur.orderCount += 1;
-          seen.add(d.dishId);
+          seen.add(d.itemId);
         }
-        acc.set(d.dishId, cur);
+        acc.set(d.itemId, cur);
       }
     }
 
     const totalQuantity = [...acc.values()].reduce((s, v) => s + v.quantity, 0);
-    const dishIds = [...acc.keys()];
-    const dishRows = dishIds.length
+    const itemIds = [...acc.keys()];
+    const dishRows = itemIds.length
       ? await this.dataSource
           .getRepository(Item)
           .createQueryBuilder('d')
           .select(['d.id', 'd.name', 'd.supplierId'])
-          .where('d.id IN (:...ids)', { ids: dishIds })
+          .where('d.id IN (:...ids)', { ids: itemIds })
           .getMany()
       : [];
-    const dishName = new Map(dishRows.map((d) => [Number(d.id), d.name]));
+    const itemName = new Map(dishRows.map((d) => [Number(d.id), d.name]));
     const supplierIds = [...new Set(dishRows.map((d) => Number(d.supplierId)))];
     const supplierRows = supplierIds.length
       ? await this.dataSource
@@ -572,9 +572,9 @@ export class StatsService {
     const supplierName = new Map(supplierRows.map((s) => [Number(s.id), s.name]));
 
     const list: StatsDishHeatRow[] = [...acc.entries()]
-      .map(([dishId, v]) => ({
-        dishId,
-        dishName: dishName.get(dishId) ?? `商品#${dishId}`,
+      .map(([itemId, v]) => ({
+        itemId,
+        itemName: itemName.get(itemId) ?? `商品#${itemId}`,
         supplierId: v.supplierId,
         supplierName: supplierName.get(v.supplierId) ?? `供应商#${v.supplierId}`,
         quantity: v.quantity,
@@ -582,14 +582,14 @@ export class StatsService {
         // ⚠️ 分母是**全部**商品份数，不是 topN 之和
         share: ratio(v.quantity, totalQuantity) ?? 0,
       }))
-      .sort((a, b) => b.quantity - a.quantity || a.dishId - b.dishId);
+      .sort((a, b) => b.quantity - a.quantity || a.itemId - b.itemId);
 
     return {
       range,
       topN,
       items: list.slice(0, topN),
       totalQuantity,
-      dishCount: list.length,
+      itemCount: list.length,
     };
   }
 

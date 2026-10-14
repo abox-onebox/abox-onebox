@@ -33,7 +33,7 @@ export interface MatrixCell {
   setMealPriceFen: number | null;
   status: AssignmentStatus | null;
   statusHint: string | null;
-  dishCount: number;
+  itemCount: number;
   distributionCenterId: number | null;
   distributionCenterName: string | null;
   assignedBuildings: number[];
@@ -109,7 +109,7 @@ export interface CopyAssignmentsResult {
 
 /** D6/D7 套餐模板里的商品项 */
 export interface SetMealItemRow {
-  dishId: number;
+  itemId: number;
   slot: number;
   slotLabel: string;
   name: string | null;
@@ -124,7 +124,7 @@ export interface SetMealTemplateRow {
   oneLiner: string | null;
   status: number;
   statusText: string;
-  dishCount: number;
+  itemCount: number;
   items: SetMealItemRow[];
   /** 被多少个「未取消的分配」引用 —— 模板库里最有用的一列 */
   usedCount: number;
@@ -144,7 +144,7 @@ export interface CreateTemplatePayload {
   description?: string;
   coverUrl?: string;
   /** 与 sourceSetMealId 二选一 */
-  items?: Array<{ dishId: number; slot: number }>;
+  items?: Array<{ itemId: number; slot: number }>;
   sourceSetMealId?: number;
 }
 
@@ -164,7 +164,7 @@ export interface UpdateTemplatePayload {
   /** 1 启用 / 0 停用 */
   status?: number;
   /** **整组替换**（不是增量）；须满足「一饭四菜」 */
-  items?: Array<{ dishId: number; slot: number }>;
+  items?: Array<{ itemId: number; slot: number }>;
 }
 
 /** 商品选择器（D7 编排页候选商品） */

@@ -100,13 +100,13 @@ export class TraceabilityService {
      * U1 是**交易页**（`canOrder=false` 时用户有明确下一步：等开团 / 明天再来），
      * 报错能把「为什么不能下单」说清；U5 是**信任页**，用户此刻只想确认
      * 「这盒谁做的」，无团可溯的日子他无从 action，一个红色 toast 只会让人以为坏了。
-     * 端上据 `dishes: []` 走空态即可。
+     * 端上据 `items: []` 走空态即可。
      */
     if (!assignment) {
       return {
         mealDate: targetDate,
         setName: null,
-        dishes: [],
+        items: [],
         distributionCenter: null,
         traceNote: `${targetDate} 该办公楼未开团，暂无出品方信息。`,
       };
@@ -123,11 +123,11 @@ export class TraceabilityService {
         : Promise.resolve(null),
     ]);
 
-    let dishes: TraceabilityItemView[] = [];
+    let itemViews: TraceabilityItemView[] = [];
 
     if (items.length) {
       const [dishRows, supplierRows] = await Promise.all([
-        this.itemRepo.find({ where: { id: In(items.map((i) => i.dishId)) } }),
+        this.itemRepo.find({ where: { id: In(items.map((i) => i.itemId)) } }),
         this.supplierRepo.find({ where: { id: In([...new Set(items.map((i) => i.supplierId))]) } }),
       ]);
 
@@ -153,10 +153,10 @@ export class TraceabilityService {
         return view;
       };
 
-      dishes = items.map((i) => {
-        const dish = dishMap.get(Number(i.dishId));
+      itemViews = items.map((i) => {
+        const dish = dishMap.get(Number(i.itemId));
         return {
-          dishName: dish?.name ?? `商品 #${i.dishId}`,
+          itemName: dish?.name ?? `商品 #${i.itemId}`,
           category: dish?.category ?? null,
           imageUrl: dish?.imageUrl ?? null,
           supplier: viewOf(Number(i.supplierId)),
@@ -167,9 +167,9 @@ export class TraceabilityService {
     return {
       mealDate: targetDate,
       setName: setMeal?.name ?? null,
-      dishes,
+      items: itemViews,
       distributionCenter: center ? { name: center.name, address: center.address } : null,
-      traceNote: this.buildTraceNote(dishes, center),
+      traceNote: this.buildTraceNote(itemViews, center),
     };
   }
 
@@ -257,7 +257,7 @@ export class TraceabilityService {
       category: s.category ?? null,
       serving,
       entries,
-      dishes: dishRows.map((d) => d.name),
+      items: dishRows.map((d) => d.name),
       note: this.buildDetailNote(serving, qualifications.length, s.auditStatus),
     };
   }
@@ -345,11 +345,8 @@ export class TraceabilityService {
    * 只上传了一个证）声明就会继续说着旧话 —— 那正是本项目反复踩的缺陷形状。
    * 这里把核验项**从本次出参里的实际资质并集**取出来，声明与数据不可能漂移。
    */
-  private buildTraceNote(
-    dishes: TraceabilityItemView[],
-    center: DistributionCenter | null,
-  ): string {
-    const supplierCount = new Set(dishes.map((d) => d.supplier.name)).size;
+  private buildTraceNote(items: TraceabilityItemView[], center: DistributionCenter | null): string {
+    const supplierCount = new Set(items.map((d) => d.supplier.name)).size;
     const parts: string[] = [];
 
     if (supplierCount > 0) {
@@ -362,7 +359,7 @@ export class TraceabilityService {
 
     const labels = [
       ...new Set(
-        dishes
+        items
           .flatMap((d) => d.supplier.qualifications)
           .map((q) => TRACEABILITY_QUALIFICATION_LABEL[q]),
       ),

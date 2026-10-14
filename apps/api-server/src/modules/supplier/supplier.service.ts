@@ -71,7 +71,7 @@ const DAILY_DONE = 'done';
 /** 派生出的「应送份数」：`sup:dish` → 日总量；`sup:dish:dc` → 分中心量 */
 interface DerivedPlan {
   supplierId: number;
-  dishId: number;
+  itemId: number;
   total: number;
   centers: Map<number, number>;
 }
@@ -180,13 +180,13 @@ export class SupplierService {
       this.detailRepo.find({ where: { supplierId: supplier.id, produceDate: date } }),
     ]);
 
-    const dishMap = await this.dishMapOf(dailies.map((d) => d.dishId));
+    const dishMap = await this.dishMapOf(dailies.map((d) => d.itemId));
     const centerMap = await this.centerMapOf(details.map((d) => d.distributionCenterId));
     const detailsOf = this.groupByDish(details);
 
-    const dishes = dailies.map((d) => {
-      const dish = dishMap.get(d.dishId);
-      const rows = detailsOf.get(d.dishId) ?? [];
+    const items = dailies.map((d) => {
+      const dish = dishMap.get(d.itemId);
+      const rows = detailsOf.get(d.itemId) ?? [];
       const centers = rows
         .filter((r) => Number(r.planQuantity) > 0 || r.status === DETAIL_CONFIRMED)
         .map((r) => ({
@@ -207,8 +207,8 @@ export class SupplierService {
         centers.reduce((sum, c) => sum + c.planQuantity, 0) || Number(d.planQuantity);
 
       return {
-        dishId: d.dishId,
-        dishName: dish?.name ?? `商品 ${d.dishId}`,
+        itemId: d.itemId,
+        itemName: dish?.name ?? `商品 ${d.itemId}`,
         category: dish?.category ?? null,
         imageUrl: dish?.imageUrl ?? null,
         unitPriceFen: toFen(Number(d.unitPrice)),
@@ -226,8 +226,8 @@ export class SupplierService {
     const deadlineAt = this.deadlineOf(date);
     // ⭐ 同 `assertNotOverdue`：相对现在的判定一律走 `now()`，不用 `Date.now()`
     const overdue = now().getTime() > deadlineAt.getTime();
-    const planTotal = dishes.reduce((s, d) => s + d.planQuantity, 0);
-    const confirmedTotal = dishes.reduce((s, d) => s + d.confirmedQuantity, 0);
+    const planTotal = items.reduce((s, d) => s + d.planQuantity, 0);
+    const confirmedTotal = items.reduce((s, d) => s + d.confirmedQuantity, 0);
     const canServe = this.canServe(supplier);
 
     return {
@@ -254,16 +254,16 @@ export class SupplierService {
         /** 未过点且未全部确认 = 还能确认 */
         canConfirm: !overdue && canServe,
       },
-      dishes,
+      items,
       summary: {
-        dishCount: dishes.length,
+        itemCount: items.length,
         centerCount: new Set(details.map((d) => d.distributionCenterId)).size,
         planQuantity: planTotal,
         confirmedQuantity: confirmedTotal,
         pendingQuantity: Math.max(0, planTotal - confirmedTotal),
-        allConfirmed: dishes.length > 0 && dishes.every((d) => d.status === DAILY_DONE),
+        allConfirmed: items.length > 0 && items.every((d) => d.status === DAILY_DONE),
         /** 一份都没派到（截单后未生成 / 当日停团）—— 端上给空态文案，别显示 0 份的表格 */
-        empty: dishes.length === 0,
+        empty: items.length === 0,
       },
       notes: {
         confirmRule: `出餐确认须在出餐日当天 ${confirmDeadlineText()} 前完成；提前确认随时可以，过点后系统不再受理。`,
@@ -302,12 +302,12 @@ export class SupplierService {
     const dailies = await this.dailyRepo.find({
       where: { supplierId: supplier.id, produceDate: dto.date },
     });
-    const dailyOf = new Map(dailies.map((d) => [d.dishId, d]));
+    const dailyOf = new Map(dailies.map((d) => [d.itemId, d]));
     const details = await this.detailRepo.find({
       where: { supplierId: supplier.id, produceDate: dto.date },
     });
 
-    const dishMap = await this.dishMapOf(dto.items.map((i) => i.dishId));
+    const dishMap = await this.dishMapOf(dto.items.map((i) => i.itemId));
     const centerMap = await this.centerMapOf(dto.items.map((i) => i.distributionCenterId));
 
     const confirmed: Array<Record<string, unknown>> = [];
@@ -324,22 +324,22 @@ export class SupplierService {
 
     await this.dataSource.transaction(async (m: EntityManager) => {
       for (const item of dto.items) {
-        const daily = dailyOf.get(item.dishId);
+        const daily = dailyOf.get(item.itemId);
         if (!daily) {
           throw new BizException(
             ErrorCode.PRODUCE_PLAN_NOT_FOUND,
-            `当日没有「${dishMap.get(item.dishId)?.name ?? `商品 ${item.dishId}`}」的生产计划，` +
+            `当日没有「${dishMap.get(item.itemId)?.name ?? `商品 ${item.itemId}`}」的生产计划，` +
               '无法确认（请核对出餐日与商品，或联系运营）',
           );
         }
 
         const detail = details.find(
-          (d) => d.dishId === item.dishId && d.distributionCenterId === item.distributionCenterId,
+          (d) => d.itemId === item.itemId && d.distributionCenterId === item.distributionCenterId,
         );
         if (!detail) {
           throw new BizException(
             ErrorCode.COOK_CONFIRM_CENTER_MISMATCH,
-            `「${dishMap.get(item.dishId)?.name ?? `商品 ${item.dishId}`}」当日不送往` +
+            `「${dishMap.get(item.itemId)?.name ?? `商品 ${item.itemId}`}」当日不送往` +
               `「${centerMap.get(item.distributionCenterId)?.name ?? `集散中心 ${item.distributionCenterId}`}」，` +
               '无法确认（配送范围由该集散中心服务的楼群决定）',
           );
@@ -347,8 +347,8 @@ export class SupplierService {
 
         if (detail.status === DETAIL_CONFIRMED) {
           skipped.push({
-            dishId: item.dishId,
-            dishName: dishMap.get(item.dishId)?.name ?? null,
+            itemId: item.itemId,
+            itemName: dishMap.get(item.itemId)?.name ?? null,
             distributionCenterId: item.distributionCenterId,
             reason: 'already_confirmed',
             confirmedAt: toBjIso(detail.confirmedAt),
@@ -365,10 +365,10 @@ export class SupplierService {
         if (item.remark !== undefined) detail.remark = item.remark;
         await m.save(detail);
 
-        touched.add(item.dishId);
+        touched.add(item.itemId);
         confirmed.push({
-          dishId: item.dishId,
-          dishName: dishMap.get(item.dishId)?.name ?? null,
+          itemId: item.itemId,
+          itemName: dishMap.get(item.itemId)?.name ?? null,
           distributionCenterId: item.distributionCenterId,
           centerName: centerMap.get(item.distributionCenterId)?.name ?? null,
           planQuantity: Number(detail.planQuantity),
@@ -378,11 +378,11 @@ export class SupplierService {
       }
 
       // 父行状态由明细派生（pending / cooking / done），不新增枚举值
-      for (const dishId of touched) {
-        const daily = dailyOf.get(dishId);
+      for (const itemId of touched) {
+        const daily = dailyOf.get(itemId);
         if (!daily) continue;
         const rows = await m.find(SupplierItemCenterDaily, {
-          where: { supplierId: supplier.id, dishId, produceDate: dto.date },
+          where: { supplierId: supplier.id, itemId, produceDate: dto.date },
         });
         const confirmedQty = rows
           .filter((r) => r.status === DETAIL_CONFIRMED)
@@ -407,11 +407,11 @@ export class SupplierService {
     const after = await this.dailyRepo.find({
       where: { supplierId: supplier.id, produceDate: dto.date },
     });
-    const dishIds = after.map((d) => d.dishId);
+    const itemIds = after.map((d) => d.itemId);
     const afterDetails = await this.detailRepo.find({
       where: { supplierId: supplier.id, produceDate: dto.date },
     });
-    const afterDishMap = await this.dishMapOf(dishIds);
+    const afterDishMap = await this.dishMapOf(itemIds);
 
     return {
       date: dto.date,
@@ -425,12 +425,12 @@ export class SupplierService {
        * 永远停在 `cut_off`，团长「确认取餐」永远返回零值（且不回错）、**佣金永不产生**。
        */
       orderAdvance,
-      dishes: after.map((d) => {
-        const rows = afterDetails.filter((r) => r.dishId === d.dishId);
+      items: after.map((d) => {
+        const rows = afterDetails.filter((r) => r.itemId === d.itemId);
         const confirmedCenters = rows.filter((r) => r.status === DETAIL_CONFIRMED).length;
         return {
-          dishId: d.dishId,
-          dishName: afterDishMap.get(d.dishId)?.name ?? null,
+          itemId: d.itemId,
+          itemName: afterDishMap.get(d.itemId)?.name ?? null,
           status: d.status,
           planQuantity:
             rows.reduce((s, r) => s + Number(r.planQuantity), 0) || Number(d.planQuantity),
@@ -640,8 +640,8 @@ export class SupplierService {
     });
 
     const dailies = await this.dailyRepo.find({ where: { produceDate: date } });
-    const dailyOf = new Map(dailies.map((d) => [`${d.supplierId}:${d.dishId}`, d]));
-    const dishMap = await this.dishMapOf(dailies.map((d) => d.dishId));
+    const dailyOf = new Map(dailies.map((d) => [`${d.supplierId}:${d.itemId}`, d]));
+    const dishMap = await this.dishMapOf(dailies.map((d) => d.itemId));
     const supplierNames = await this.supplierNameMap();
 
     const { groups, assignments } = await this.loadDeliveryContext(date);
@@ -652,14 +652,14 @@ export class SupplierService {
         (d) => d.distributionCenterId === center.id && Number(d.planQuantity) > 0,
       );
 
-      const dishes = rows.map((r) => {
-        const dish = dishMap.get(r.dishId);
-        const key = `${r.supplierId}:${r.dishId}`;
+      const items = rows.map((r) => {
+        const dish = dishMap.get(r.itemId);
+        const key = `${r.supplierId}:${r.itemId}`;
         return {
           supplierId: r.supplierId,
           supplierName: supplierNames.get(r.supplierId) ?? `供应商 ${r.supplierId}`,
-          dishId: r.dishId,
-          dishName: dish?.name ?? `商品 ${r.dishId}`,
+          itemId: r.itemId,
+          itemName: dish?.name ?? `商品 ${r.itemId}`,
           unitPriceFen: toFen(Number(dailyOf.get(key)?.unitPrice ?? 0)),
           planQuantity: Number(r.planQuantity),
           actualQuantity: r.actualQuantity ?? null,
@@ -668,11 +668,11 @@ export class SupplierService {
         };
       });
 
-      const blockers = dishes
+      const blockers = items
         .filter((d) => d.status !== DETAIL_CONFIRMED)
         .map((d) => ({
           supplierName: d.supplierName,
-          dishName: d.dishName,
+          itemName: d.itemName,
           planQuantity: d.planQuantity,
           status: d.status,
         }));
@@ -703,16 +703,16 @@ export class SupplierService {
         centerAddress: center.address,
         contactName: center.contactName ?? null,
         contactPhone: center.contactPhone ?? null,
-        ready: dishes.length > 0 && blockers.length === 0,
+        ready: items.length > 0 && blockers.length === 0,
         blockers,
-        dishes,
+        items,
         routes,
         summary: {
           batchQuantity,
           routeCount: routes.length,
           stopCount: routes.reduce((s, r) => s + r.stops.length, 0),
-          dishCount: dishes.length,
-          confirmedDishCount: dishes.filter((d) => d.status === DETAIL_CONFIRMED).length,
+          itemCount: items.length,
+          confirmedItemCount: items.filter((d) => d.status === DETAIL_CONFIRMED).length,
         },
       };
     });
@@ -783,9 +783,9 @@ export class SupplierService {
   async freezeProducePlan(date: string): Promise<ProducePlanFreezeResult> {
     const agg = await this.aggregatePlan(date);
     const { plans, existingDaily, existingDetails, dishMap } = agg;
-    const dailyOf = new Map(existingDaily.map((d) => [`${d.supplierId}:${d.dishId}`, d]));
+    const dailyOf = new Map(existingDaily.map((d) => [`${d.supplierId}:${d.itemId}`, d]));
     const detailOf = new Map(
-      existingDetails.map((d) => [`${d.supplierId}:${d.dishId}:${d.distributionCenterId}`, d]),
+      existingDetails.map((d) => [`${d.supplierId}:${d.itemId}:${d.distributionCenterId}`, d]),
     );
 
     const insDaily: Array<Partial<SupplierItemDaily>> = [];
@@ -800,15 +800,15 @@ export class SupplierService {
       if (plan.total <= 0) continue;
       totalQuantity += plan.total;
 
-      const key = `${plan.supplierId}:${plan.dishId}`;
+      const key = `${plan.supplierId}:${plan.itemId}`;
       const existed = dailyOf.get(key);
       if (!existed) {
         insDaily.push({
           supplierId: plan.supplierId,
-          dishId: plan.dishId,
+          itemId: plan.itemId,
           produceDate: date,
           planQuantity: plan.total,
-          unitPrice: dishMap.get(plan.dishId)?.costPrice ?? '0.00',
+          unitPrice: dishMap.get(plan.itemId)?.costPrice ?? '0.00',
           status: DAILY_PENDING,
         });
       } else if (existed.status === DAILY_PENDING && Number(existed.planQuantity) !== plan.total) {
@@ -839,7 +839,7 @@ export class SupplierService {
         if (!existedDetail) {
           insDetails.push({
             supplierId: plan.supplierId,
-            dishId: plan.dishId,
+            itemId: plan.itemId,
             produceDate: date,
             distributionCenterId: dcId,
             planQuantity: qty,
@@ -916,12 +916,12 @@ export class SupplierService {
         const dcId = a.distributionCenterId as number;
         for (const it of itemsOf.get(a.setMealId) ?? []) {
           if (onlySupplierId && it.supplierId !== onlySupplierId) continue;
-          const key = `${it.supplierId}:${it.dishId}`;
+          const key = `${it.supplierId}:${it.itemId}`;
           const plan =
             plans.get(key) ??
             ({
               supplierId: it.supplierId,
-              dishId: it.dishId,
+              itemId: it.itemId,
               total: 0,
               centers: new Map(),
             } as DerivedPlan);
@@ -936,7 +936,7 @@ export class SupplierService {
       this.dailyRepo.find({ where: { produceDate: date } }),
       this.detailRepo.find({ where: { produceDate: date } }),
     ]);
-    const dishMap = await this.dishMapOf([...plans.values()].map((p) => p.dishId));
+    const dishMap = await this.dishMapOf([...plans.values()].map((p) => p.itemId));
 
     return { plans, existingDaily, existingDetails, dishMap };
   }
@@ -948,9 +948,9 @@ export class SupplierService {
     );
     if (!plans.size) return;
 
-    const dailyKey = new Set(existingDaily.map((d) => `${d.supplierId}:${d.dishId}`));
+    const dailyKey = new Set(existingDaily.map((d) => `${d.supplierId}:${d.itemId}`));
     const detailKey = new Set(
-      existingDetails.map((d) => `${d.supplierId}:${d.dishId}:${d.distributionCenterId}`),
+      existingDetails.map((d) => `${d.supplierId}:${d.itemId}:${d.distributionCenterId}`),
     );
 
     const newDaily: Array<Partial<SupplierItemDaily>> = [];
@@ -961,14 +961,14 @@ export class SupplierService {
       //    （种子即有 —— bg3 用 setMeal2 但一份没卖），照单生成会让供应商在 P21
       //    看到一串「0 份」的菜，而它们根本没有生产任务。
       if (plan.total <= 0) continue;
-      const key = `${plan.supplierId}:${plan.dishId}`;
+      const key = `${plan.supplierId}:${plan.itemId}`;
       if (!dailyKey.has(key)) {
         newDaily.push({
           supplierId: plan.supplierId,
-          dishId: plan.dishId,
+          itemId: plan.itemId,
           produceDate: date,
           planQuantity: plan.total,
-          unitPrice: dishMap.get(plan.dishId)?.costPrice ?? '0.00',
+          unitPrice: dishMap.get(plan.itemId)?.costPrice ?? '0.00',
           status: DAILY_PENDING,
         });
       }
@@ -977,7 +977,7 @@ export class SupplierService {
         if (detailKey.has(`${key}:${dcId}`)) continue;
         newDetails.push({
           supplierId: plan.supplierId,
-          dishId: plan.dishId,
+          itemId: plan.itemId,
           produceDate: date,
           distributionCenterId: dcId,
           planQuantity: qty,
@@ -1108,9 +1108,9 @@ export class SupplierService {
   private groupByDish(rows: SupplierItemCenterDaily[]): Map<number, SupplierItemCenterDaily[]> {
     const map = new Map<number, SupplierItemCenterDaily[]>();
     for (const r of rows) {
-      const list = map.get(r.dishId) ?? [];
+      const list = map.get(r.itemId) ?? [];
       list.push(r);
-      map.set(r.dishId, list);
+      map.set(r.itemId, list);
     }
     return map;
   }

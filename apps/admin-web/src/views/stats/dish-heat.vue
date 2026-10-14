@@ -25,7 +25,7 @@
           </div>
           <div v-if="data" class="summary">
             区间 {{ data.range.startDate }} ~ {{ data.range.endDate }} ｜ 共
-            <strong>{{ data.dishCount }}</strong> 件商品 /
+            <strong>{{ data.itemCount }}</strong> 件商品 /
             <strong>{{ data.totalQuantity }}</strong> 份
           </div>
         </el-card>
@@ -36,7 +36,7 @@
           >
           <el-table :data="data?.items ?? []" size="small">
             <el-table-column type="index" label="#" width="56" />
-            <el-table-column prop="dishName" label="商品" min-width="140" />
+            <el-table-column prop="itemName" label="商品" min-width="140" />
             <el-table-column prop="supplierName" label="供应商" min-width="120" />
             <el-table-column prop="quantity" label="件数" width="90" align="right" />
             <el-table-column prop="orderCount" label="订单数" width="90" align="right" />
@@ -79,7 +79,7 @@
           <div v-if="rating" class="summary">
             区间 {{ rating.range.startDate }} ~ {{ rating.range.endDate }} ｜ 共
             <strong>{{ rating.totalRatings }}</strong> 条评价 /
-            <strong>{{ rating.dishCount }}</strong> 件商品 ｜ 红线阈值：本月被投诉
+            <strong>{{ rating.itemCount }}</strong> 件商品 ｜ 红线阈值：本月被投诉
             <strong>{{ rating.redLineThreshold }}</strong> 次标红
           </div>
         </el-card>
@@ -88,9 +88,9 @@
           <template #header><span>本周最差三件商品（P1 验收口径）</span></template>
           <template v-if="rating.worstThree.length">
             <div class="worst">
-              <div v-for="(w, i) in rating.worstThree" :key="w.dishId" class="worst__item">
+              <div v-for="(w, i) in rating.worstThree" :key="w.itemId" class="worst__item">
                 <span class="worst__rank">{{ i + 1 }}</span>
-                <span class="worst__name">{{ w.dishName }}</span>
+                <span class="worst__name">{{ w.itemName }}</span>
                 <span class="worst__count">{{ w.badCount }} 次投诉</span>
               </div>
             </div>
@@ -106,7 +106,7 @@
           <template #header><span>商品红黑榜（按投诉次数降序）</span></template>
           <el-table :data="rating?.items ?? []" size="small" :row-class-name="rowClass">
             <el-table-column type="index" label="#" width="56" />
-            <el-table-column prop="dishName" label="商品" min-width="130" />
+            <el-table-column prop="itemName" label="商品" min-width="130" />
             <el-table-column prop="supplierName" label="供应商" min-width="110" />
             <el-table-column prop="ratedCount" label="被评" width="70" align="right" />
             <el-table-column prop="goodCount" label="好吃" width="70" align="right" />

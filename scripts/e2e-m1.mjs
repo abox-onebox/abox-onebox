@@ -275,8 +275,7 @@ async function run() {
     `${q.consumers}/${q.consumersTotal} driver=${q.driver} durable=${q.durable}`,
   );
   assert(
-    typeof ready.body?.data?.version === 'string' &&
-      Number.isInteger(ready.body?.data?.uptimeSec),
+    typeof ready.body?.data?.version === 'string' && Number.isInteger(ready.body?.data?.uptimeSec),
     'M5-0 就绪探针回显版本与运行时长（灰度 / 回滚判据）',
     `version=${ready.body?.data?.version} uptimeSec=${ready.body?.data?.uptimeSec}`,
   );
@@ -302,7 +301,11 @@ async function run() {
     'M5-0 自证①：判据**仍抓得住**真连接串（排除时间戳**没有**削弱强度）',
     '合成出参 data.dsn=mysql://root@127.0.0.1:3306/abox',
   );
-  const noisyTsBody = { data: { ok: true }, requestId: 'req_1791637900000_0', timestamp: 1791637900000 };
+  const noisyTsBody = {
+    data: { ok: true },
+    requestId: 'req_1791637900000_0',
+    timestamp: 1791637900000,
+  };
   assert(
     !LEAK_MARKER_RE.test(JSON.stringify(stripNoiseFields(noisyTsBody))),
     'M5-0 自证②：时间戳里撞出的 `6379` **不再**误报（历史 113/114 的偶发红即此类）',
@@ -319,7 +322,11 @@ async function run() {
   // ---------- 1. 登录（A1） ----------
   const login = await call('POST', '/auth/login', { body: { code: 'dev:1001' } });
   const token = login.body?.data?.token;
-  assert(login.body?.code === 0 && !!token, 'A1 微信登录签发 JWT', `userId=${login.body?.data?.user?.id}`);
+  assert(
+    login.body?.code === 0 && !!token,
+    'A1 微信登录签发 JWT',
+    `userId=${login.body?.data?.user?.id}`,
+  );
   // ---------- 1b. C3 / L9：只凭 code 登录，不取手机号 / 不取地址 ----------
   // ⚠️ 注意区分：种子里的 5 个用户**本身都是团长账号**，其 `ab_user.phone` 来自
   //    「申请团长时留的联系方式」，属合规数据；L9 禁止的是**登录环节索取**。
@@ -370,9 +377,9 @@ async function run() {
     'M1-⑤ 倒计时锚在 T-1 24:00（+08:00）',
     `countdownSec=${d?.countdownSec} cutoffAt=${d?.cutoffAt}`,
   );
-  assert((d?.dishes?.length ?? 0) >= 4, '套餐含一饭四菜', `dishes=${d?.dishes?.length}`);
+  assert((d?.items?.length ?? 0) >= 4, '套餐含一饭四菜', `items=${d?.items?.length}`);
   assert(
-    d?.dishes?.every((x) => !('unitPrice' in x) && !('cost' in x)),
+    d?.items?.every((x) => !('unitPrice' in x) && !('cost' in x)),
     'C8 用户端菜品视图不含供价',
   );
 
@@ -391,15 +398,14 @@ async function run() {
   assert(
     u5.body?.code === 0 && !!t,
     'U5 溯源可**免登录**只读（信任页不该要人先登录）',
-    `code=${u5.body?.code} dishes=${t?.dishes?.length ?? 0}`,
+    `code=${u5.body?.code} items=${t?.items?.length ?? 0}`,
   );
   assert(
-    (t?.dishes?.length ?? 0) >= 4,
+    (t?.items?.length ?? 0) >= 4,
     'U5 出品方逐菜列出（一饭四菜 · 原型 P38 的 4 张出品方卡）',
-    `dishes=${t?.dishes?.length}`,
+    `items=${t?.items?.length}`,
   );
-
-  const supOf = (name) => (t?.dishes ?? []).find((x) => x.supplier?.name === name);
+  const supOf = (name) => (t?.items ?? []).find((x) => x.supplier?.name === name);
 
   const sanwei = supOf('三味屋');
   assert(
@@ -444,7 +450,9 @@ async function run() {
   assert(
     hitOut.length === 0,
     'U5 traceNote 不含站外引导词（原「点进下方店铺，直接点他们的外卖」已删）',
-    hitOut.length ? `命中：${hitOut.join(',')}` : `note=${String(t?.traceNote ?? '').slice(0, 40)}…`,
+    hitOut.length
+      ? `命中：${hitOut.join(',')}`
+      : `note=${String(t?.traceNote ?? '').slice(0, 40)}…`,
   );
 
   const u5Raw = JSON.stringify(t ?? {});
@@ -468,22 +476,22 @@ async function run() {
   // 而溯源页是用户拿着店名去平台点单的依据，跳错家是这一页最坏的一类错误。
   //
   // 故不只断言「字段存在」，而是逐菜对账：同菜名 ⇒ 同 id、同展示名。
-  const u1SupIds = [...new Set((d?.dishes ?? []).map((x) => x.supplierId))].sort((a, b) => a - b);
-  const u5SupIds = [...new Set((t?.dishes ?? []).map((x) => x.supplier?.id))].sort((a, b) => a - b);
+  const u1SupIds = [...new Set((d?.items ?? []).map((x) => x.supplierId))].sort((a, b) => a - b);
+  const u5SupIds = [...new Set((t?.items ?? []).map((x) => x.supplier?.id))].sort((a, b) => a - b);
   assert(
     u1SupIds.length > 0 &&
       u1SupIds.every((x) => Number.isInteger(x) && x > 0) &&
       JSON.stringify(u1SupIds) === JSON.stringify(u5SupIds),
-    'M5-17 U1 `dishes[].supplierId` 与 U5 `supplier.id` 同源（端上按 id 定位才可能跳对家）',
+    'M5-17 U1 `items[].supplierId` 与 U5 `supplier.id` 同源（端上按 id 定位才可能跳对家）',
     `U1=${u1SupIds.join(',')} U5=${u5SupIds.join(',')}`,
   );
   assert(
-    (d?.dishes ?? []).every((x) => {
-      const m = (t?.dishes ?? []).find((y) => y.dishName === x.name);
+    (d?.items ?? []).every((x) => {
+      const m = (t?.items ?? []).find((y) => y.itemName === x.name);
       return !!m && m.supplier?.id === x.supplierId && m.supplier?.name === x.supplierName;
     }),
     'M5-17 逐菜对账：同名菜品在 U1 / U5 指向同一个出品方 id（不只看字段存在）',
-    `dishes=${(d?.dishes ?? []).length}`,
+    `items=${(d?.items ?? []).length}`,
   );
 
   const u5NoBuilding = await call('GET', `/traceability/today?mealDate=${mealDate}`);
@@ -496,7 +504,7 @@ async function run() {
     typeof u5NoBuilding.body?.message === 'string' &&
       u5NoBuilding.body.message !== '' &&
       u5NoBuilding.body.message !== '业务异常',
-    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    '错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）',
     `message=${JSON.stringify(u5NoBuilding.body?.message)}`,
   );
 
@@ -535,7 +543,7 @@ async function run() {
     typeof replay.body?.message === 'string' &&
       replay.body.message !== '' &&
       replay.body.message !== '业务异常',
-    "错误码 10006 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    '错误码 10006 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）',
     `message=${JSON.stringify(replay.body?.message)}`,
   );
   assert(replay.status === 200, '§1.4 幂等回放走 HTTP 200', `status=${replay.status}`);
@@ -551,7 +559,7 @@ async function run() {
     typeof noKey.body?.message === 'string' &&
       noKey.body.message !== '' &&
       noKey.body.message !== '业务异常',
-    "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    '错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）',
     `message=${JSON.stringify(noKey.body?.message)}`,
   );
 
@@ -592,7 +600,7 @@ async function run() {
     typeof overQty.body?.message === 'string' &&
       overQty.body.message !== '' &&
       overQty.body.message !== '业务异常',
-    "错误码 30002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    '错误码 30002 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）',
     `message=${JSON.stringify(overQty.body?.message)}`,
   );
 
@@ -711,7 +719,7 @@ async function run() {
       typeof late.body?.message === 'string' &&
         late.body.message !== '' &&
         late.body.message !== '业务异常',
-      "错误码 40004 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+      '错误码 40004 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）',
       `message=${JSON.stringify(late.body?.message)}`,
     );
     assert(
@@ -761,9 +769,9 @@ async function run() {
       `source=${d1001?.leader?.source} id=${d1001?.leader?.id} name=${d1001?.leader?.name}`,
     );
     assert(
-      (d1001?.dishes ?? []).every((x) => Number.isInteger(x.supplierId) && x.supplierId > 0),
-      'M5-17 U1 `dishes[].supplierId` 恒为正整数（端上按 id 定位，不按无唯一约束的名字）',
-      `ids=${(d1001?.dishes ?? []).map((x) => x.supplierId).join(',')}`,
+      (d1001?.items ?? []).every((x) => Number.isInteger(x.supplierId) && x.supplierId > 0),
+      'M5-17 U1 `items[].supplierId` 恒为正整数（端上按 id 定位，不按无唯一约束的名字）',
+      `ids=${(d1001?.items ?? []).map((x) => x.supplierId).join(',')}`,
     );
 
     // ---- 缺陷⑫ 回归：把 1002 绑定的团长（#1）改成停职，逼出分歧点 ----
@@ -943,9 +951,15 @@ async function run() {
       const cleared = done.body?.data?.clearedFields ?? [];
       assert(
         cleared.length === 7 &&
-          ['nickname', 'avatarUrl', 'phone', 'phoneHash', 'buildingId', 'teamLeaderId', 'subscribeFlag'].every(
-            (k) => cleared.includes(k),
-          ),
+          [
+            'nickname',
+            'avatarUrl',
+            'phone',
+            'phoneHash',
+            'buildingId',
+            'teamLeaderId',
+            'subscribeFlag',
+          ].every((k) => cleared.includes(k)),
         'U19 `clearedFields` 恰为 7 项且覆盖全部可识别字段（端上照服务端下发的清单展示，不写第二份）',
         `cleared=${cleared.join(',')}`,
       );
@@ -1012,7 +1026,7 @@ async function run() {
         typeof repeat.body?.message === 'string' &&
           repeat.body.message !== '' &&
           repeat.body.message !== '业务异常',
-        "错误码 20014 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        '错误码 20014 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）',
         `message=${JSON.stringify(repeat.body?.message)}`,
       );
 
@@ -1040,7 +1054,11 @@ async function run() {
     body: { mealDate, quantity: 1 },
   });
   const ratingOrderNo = ratedCreate.body?.data?.orderNo;
-  assert(!!ratingOrderNo, 'U20 前置：再造一单（取消单不占重复下单名额）', `orderNo=${ratingOrderNo}`);
+  assert(
+    !!ratingOrderNo,
+    'U20 前置：再造一单（取消单不占重复下单名额）',
+    `orderNo=${ratingOrderNo}`,
+  );
 
   await call('POST', `/orders/${ratingOrderNo}/pay`, { token, idem: 'e2e-pay-key-rating' });
   let ratingPaid = null;
@@ -1060,7 +1078,7 @@ async function run() {
         .run(ratingOrderNo);
       assert(fix.changes === 1, 'U20 夹具：状态直改 delivered（无配送回调环境的等价前置）');
 
-      // 评价前详情：canRate=true、dishes 带 dishId（U20 的菜键来源）
+      // 评价前详情：canRate=true、items 带 itemId（U20 的菜键来源）
       const before = (await call('GET', `/orders/${ratingOrderNo}`, { token })).body?.data;
       const rv = before?.rating;
       assert(
@@ -1068,17 +1086,17 @@ async function run() {
         'U10 详情带评价状态块：delivered 未评单 canRate=true',
         `canRate=${rv?.canRate} rated=${rv?.rated}`,
       );
-      const dishes = before?.dishes ?? [];
+      const items = before?.items ?? [];
       assert(
-        dishes.length === 4 && dishes.every((d) => typeof d.dishId === 'number'),
-        'U10 详情 dishes 下发 dishId（端上评价卡的菜键 · 一饭四菜=4 位）',
-        `count=${dishes.length}`,
+        items.length === 4 && items.every((d) => typeof d.itemId === 'number'),
+        'U10 详情 items 下发 itemId（端上评价卡的菜键 · 一饭四菜=4 位）',
+        `count=${items.length}`,
       );
 
       // 状态闸门：cancelled 单（首单）→ 30020，且回带 status/allowed 供端上引导
       const gate = await call('POST', `/orders/${orderNo}/rating`, {
         token,
-        body: { items: [{ dishId: dishes[0].dishId, rating: 1 }] },
+        body: { items: [{ itemId: items[0].itemId, rating: 1 }] },
       });
       assert(
         gate.body?.code === 30020 && gate.body?.data?.status === 'cancelled',
@@ -1099,14 +1117,18 @@ async function run() {
       // 菜不在本单 → 10001（请求与订单事实不符，不是业务态）
       const foreign = await call('POST', `/orders/${ratingOrderNo}/rating`, {
         token,
-        body: { items: [{ dishId: 999999, rating: 1 }] },
+        body: { items: [{ itemId: 999999, rating: 1 }] },
       });
-      assert(foreign.body?.code === 10001, 'U20 菜不在本单套餐 → 10001', `code=${foreign.body?.code}`);
+      assert(
+        foreign.body?.code === 10001,
+        'U20 菜不在本单套餐 → 10001',
+        `code=${foreign.body?.code}`,
+      );
       assert(
         typeof foreign.body?.message === 'string' &&
           foreign.body.message !== '' &&
           foreign.body.message !== '业务异常',
-        "错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+        '错误码 10001 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）',
         `message=${JSON.stringify(foreign.body?.message)}`,
       );
 
@@ -1115,10 +1137,10 @@ async function run() {
         token,
         body: {
           items: [
-            { dishId: dishes[0].dishId, rating: 1 },
-            { dishId: dishes[1].dishId, rating: 1 },
-            { dishId: dishes[2].dishId, rating: 2 },
-            { dishId: dishes[3].dishId, rating: 3, reason: '  送到时已经凉了  ' },
+            { itemId: items[0].itemId, rating: 1 },
+            { itemId: items[1].itemId, rating: 1 },
+            { itemId: items[2].itemId, rating: 2 },
+            { itemId: items[3].itemId, rating: 3, reason: '  送到时已经凉了  ' },
           ],
         },
       });
@@ -1132,7 +1154,7 @@ async function run() {
       // 一次定稿：重复提交 → 30021（非幂等成功 —— 与 20013/20014 同哲学）
       const again = await call('POST', `/orders/${ratingOrderNo}/rating`, {
         token,
-        body: { items: [{ dishId: dishes[0].dishId, rating: 1 }] },
+        body: { items: [{ itemId: items[0].itemId, rating: 1 }] },
       });
       assert(
         again.body?.code === 30021 && !!again.body?.data?.ratedAt,
@@ -1216,7 +1238,10 @@ async function run() {
 
   const failed = results.filter((r) => !r.pass);
   log('\n──────── 汇总 ────────');
-  log(`通过 ${results.length - failed.length}/${results.length}` + (failed.length ? ` · 失败：${failed.map((f) => f.name).join(' | ')}` : ' · 全绿 ✅'));
+  log(
+    `通过 ${results.length - failed.length}/${results.length}` +
+      (failed.length ? ` · 失败：${failed.map((f) => f.name).join(' | ')}` : ' · 全绿 ✅'),
+  );
   return failed.length ? 1 : 0;
 }
 

@@ -30,8 +30,8 @@ export interface SupplierShareRow {
   payeeType: string;
   supplierId: number;
   supplierName: string;
-  dishId: number | null;
-  dishName: string | null;
+  itemId: number | null;
+  itemName: string | null;
   /** 实收量（= 计费基数） */
   quantity: number;
   unitPriceFen: number;
@@ -90,8 +90,8 @@ export interface ShareCreatedItem {
   shareNo: string;
   supplierId: number;
   supplierName: string;
-  dishId: number;
-  dishName: string;
+  itemId: number;
+  itemName: string;
   planQuantity: number;
   quantity: number;
   unitPriceFen: number;
@@ -101,8 +101,8 @@ export interface ShareCreatedItem {
 export interface ShareSkippedItem {
   supplierId: number;
   supplierName: string;
-  dishId: number;
-  dishName: string;
+  itemId: number;
+  itemName: string;
   reason: string;
   shareNo: string;
 }
@@ -110,8 +110,8 @@ export interface ShareSkippedItem {
 export interface ShareExceptionItem {
   supplierId: number;
   supplierName: string;
-  dishId: number;
-  dishName: string;
+  itemId: number;
+  itemName: string;
   planQuantity: number;
   /** 该菜当日生产计划状态：pending / cooking / done */
   dailyStatus: string;
@@ -142,7 +142,7 @@ export interface ShareExceptionsResult {
   summary: {
     count: number;
     supplierCount: number;
-    dishCount: number;
+    itemCount: number;
     byReason: Record<string, number>;
   };
   notes: Record<string, string>;

@@ -109,7 +109,7 @@ onMounted(load);
       <el-table v-if="rows.length" :data="rows" size="small" stripe>
         <el-table-column prop="shareNo" label="应付单号" min-width="150" />
         <el-table-column prop="mealDate" label="出餐日" width="110" />
-        <el-table-column prop="dishName" label="商品" min-width="120" />
+        <el-table-column prop="itemName" label="商品" min-width="120" />
         <el-table-column label="实收量" width="90" align="right">
           <template #default="{ row }">{{ row.quantity }}</template>
         </el-table-column>

@@ -93,7 +93,7 @@
                 </span>
               </div>
               <div class="cell__sub">
-                {{ row.cells[date].dishCount }} 件
+                {{ row.cells[date].itemCount }} 件
                 <template v-if="row.cells[date].distributionCenterName">
                   · {{ row.cells[date].distributionCenterName }}
                 </template>
@@ -144,7 +144,7 @@
             <el-option
               v-for="t in templates"
               :key="t.id"
-              :label="`${t.name}（${t.dishCount} 件 · ¥${fenToYuan(t.priceFen)}）`"
+              :label="`${t.name}（${t.itemCount} 件 · ¥${fenToYuan(t.priceFen)}）`"
               :value="t.id"
             />
           </el-select>

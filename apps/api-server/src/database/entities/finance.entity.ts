@@ -197,7 +197,7 @@ export class SupplierShare {
     nullable: true,
     comment: '商品（采购应付按商品逐项计）',
   })
-  dishId?: number | null;
+  itemId?: number | null;
 
   @Column({ type: 'int', comment: '份数' })
   quantity!: number;

@@ -170,7 +170,7 @@
       <el-table-column label="组合" min-width="140">
         <template #default="{ row }">
           <div class="stack">
-            <span>{{ displayOr(row.mainDishName, displayOr(row.setMealName)) }}</span>
+            <span>{{ displayOr(row.mainItemName, displayOr(row.setMealName)) }}</span>
             <span class="stack__sub">{{ row.setMealName }}</span>
           </div>
         </template>

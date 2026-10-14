@@ -79,7 +79,7 @@ interface MatrixCell {
   setMealPriceFen: number | null;
   status: string | null;
   statusHint: string | null;
-  dishCount: number;
+  itemCount: number;
   distributionCenterId: number | null;
   distributionCenterName: string | null;
   assignedBuildings: number[];
@@ -98,9 +98,9 @@ interface TemplateRow {
   oneLiner: string | null;
   status: number;
   statusText: string;
-  dishCount: number;
+  itemCount: number;
   items: Array<{
-    dishId: number;
+    itemId: number;
     slot: number;
     slotLabel: string;
     name: string;
@@ -256,7 +256,7 @@ export class MealAdminService {
           setMealPriceFen: sm ? Math.round(Number(sm.price) * 100) : null,
           status: a?.status ?? null,
           statusHint: a ? (STATUS_HINT[a.status] ?? a.status) : null,
-          dishCount: a ? (dishCountMap.get(a.setMealId) ?? 0) : 0,
+          itemCount: a ? (dishCountMap.get(a.setMealId) ?? 0) : 0,
           distributionCenterId: a?.distributionCenterId ?? null,
           distributionCenterName: a?.distributionCenterId
             ? (dcMap.get(a.distributionCenterId)?.name ?? null)
@@ -629,12 +629,12 @@ export class MealAdminService {
 
     const [rows, total] = await qb.getManyAndCount();
     const ids = rows.map((r) => r.id);
-    const items = ids.length
+    const dishes = ids.length
       ? await this.setMealItemRepo.find({ where: { setMealId: In(ids) }, order: { slot: 'ASC' } })
       : [];
-    const dishIds = [...new Set(items.map((i) => i.dishId))];
-    const dishes = dishIds.length ? await this.itemRepo.find({ where: { id: In(dishIds) } }) : [];
-    const dishMap = new Map(dishes.map((d) => [d.id, d]));
+    const itemIds = [...new Set(dishes.map((i) => i.itemId))];
+    const items = itemIds.length ? await this.itemRepo.find({ where: { id: In(itemIds) } }) : [];
+    const dishMap = new Map(items.map((d) => [d.id, d]));
 
     // 该模板被多少个「未取消的分配」用过 —— 模板库里最有用的一列
     const used = ids.length
@@ -650,7 +650,7 @@ export class MealAdminService {
     const usedMap = new Map(used.map((u) => [Number(u.setMealId), Number(u.n)]));
 
     const list: TemplateRow[] = rows.map((r) => {
-      const mine = items.filter((i) => i.setMealId === r.id);
+      const mine = dishes.filter((i) => i.setMealId === r.id);
       return {
         id: r.id,
         name: r.name ?? null,
@@ -659,12 +659,12 @@ export class MealAdminService {
         oneLiner: r.oneLiner ?? null,
         status: r.status,
         statusText: r.status === 1 ? '启用' : '停用',
-        dishCount: mine.length,
+        itemCount: mine.length,
         items: mine.map((i) => ({
-          dishId: i.dishId,
+          itemId: i.itemId,
           slot: i.slot,
           slotLabel: SLOT_LABEL[i.slot] ?? String(i.slot),
-          name: dishMap.get(i.dishId)?.name ?? `商品 ${i.dishId}`,
+          name: dishMap.get(i.itemId)?.name ?? `商品 ${i.itemId}`,
           supplierId: i.supplierId,
         })),
         usedCount: usedMap.get(r.id) ?? 0,
@@ -747,7 +747,7 @@ export class MealAdminService {
     if (dto.status !== undefined) patch.status = dto.status;
 
     // ---- 构成类字段：整组替换（不是增量），并重算成本 ----
-    let plan: Array<{ dishId: number; slot: number }> | null = null;
+    let plan: Array<{ itemId: number; slot: number }> | null = null;
     let dishMap: Map<number, Item> | null = null;
     if (dto.items !== undefined) {
       const resolved = await this.resolvePlanAndDishes(dto.items, undefined);
@@ -777,19 +777,19 @@ export class MealAdminService {
     if (!saved) throw new BizException(ErrorCode.MEAL_NOT_FOUND);
 
     // 未改构成时，明细要按**库里现存**的那一组回显（不能拿请求里的部分数据凑）
-    let viewPlan: Array<{ dishId: number; slot: number }> = plan ?? [];
+    let viewPlan: Array<{ itemId: number; slot: number }> = plan ?? [];
     if (!plan) {
       const rows = await this.setMealItemRepo.find({
         where: { setMealId: id },
         order: { slot: 'ASC' },
       });
-      viewPlan = rows.map((r) => ({ dishId: r.dishId, slot: r.slot }));
+      viewPlan = rows.map((r) => ({ itemId: r.itemId, slot: r.slot }));
     }
     let viewDishMap: Map<number, Item> = dishMap ?? new Map<number, Item>();
     if (!dishMap) {
-      const ids = [...new Set(viewPlan.map((p) => p.dishId))];
-      const dishes = ids.length ? await this.itemRepo.find({ where: { id: In(ids) } }) : [];
-      viewDishMap = new Map(dishes.map((d) => [d.id, d]));
+      const ids = [...new Set(viewPlan.map((p) => p.itemId))];
+      const items = ids.length ? await this.itemRepo.find({ where: { id: In(ids) } }) : [];
+      viewDishMap = new Map(items.map((d) => [d.id, d]));
     }
 
     this.logger.log(
@@ -838,11 +838,11 @@ export class MealAdminService {
   private async resolvePlanAndDishes(
     items: SetMealItemInputDto[] | undefined,
     sourceSetMealId: number | undefined,
-  ): Promise<{ plan: Array<{ dishId: number; slot: number }>; dishMap: Map<number, Item> }> {
-    let plan: Array<{ dishId: number; slot: number }>;
+  ): Promise<{ plan: Array<{ itemId: number; slot: number }>; dishMap: Map<number, Item> }> {
+    let plan: Array<{ itemId: number; slot: number }>;
 
     if (items?.length) {
-      plan = items.map((i) => ({ dishId: i.dishId, slot: i.slot }));
+      plan = items.map((i) => ({ itemId: i.itemId, slot: i.slot }));
     } else if (sourceSetMealId) {
       const src = await this.setMealRepo.findOne({ where: { id: sourceSetMealId } });
       if (!src) throw new BizException(ErrorCode.MEAL_NOT_FOUND);
@@ -850,14 +850,14 @@ export class MealAdminService {
       if (srcItems.length === 0) {
         throw new BizException(ErrorCode.MEAL_NOT_FOUND, '被复制的套餐没有商品明细');
       }
-      plan = srcItems.map((i) => ({ dishId: i.dishId, slot: i.slot }));
+      plan = srcItems.map((i) => ({ itemId: i.itemId, slot: i.slot }));
     } else {
       throw new BizException(ErrorCode.PARAM_INVALID, 'items 与 sourceSetMealId 至少给一个');
     }
 
     // ① 同一道菜不允许重复出现
-    const dishIds = plan.map((p) => p.dishId);
-    if (new Set(dishIds).size !== dishIds.length) {
+    const itemIds = plan.map((p) => p.itemId);
+    if (new Set(itemIds).size !== itemIds.length) {
       throw new BizException(ErrorCode.PARAM_INVALID, '同一道菜不能重复出现');
     }
 
@@ -880,7 +880,7 @@ export class MealAdminService {
    * ⚠️ 本方法必须排在「重复菜」与「商品存在性」**之后**调用
    *    （顺序契约写在 `resolvePlanAndDishes` 的注释里）。
    */
-  private assertComposition(plan: Array<{ dishId: number; slot: number }>): void {
+  private assertComposition(plan: Array<{ itemId: number; slot: number }>): void {
     const slots = plan.map((p) => p.slot);
     const missing = SET_MEAL_REQUIRED_SLOTS.filter((s) => !slots.includes(s));
     const extra = slots.filter((s) => !SET_MEAL_REQUIRED_SLOTS.includes(s));
@@ -905,16 +905,16 @@ export class MealAdminService {
 
   /** 商品存在性 + 上架状态校验，返回 id → 商品 映射（新建 / 编辑共用） */
   private async assertDishesUsable(
-    plan: Array<{ dishId: number; slot: number }>,
+    plan: Array<{ itemId: number; slot: number }>,
   ): Promise<Map<number, Item>> {
-    const dishIds = plan.map((p) => p.dishId);
-    const dishes = await this.itemRepo.find({ where: { id: In(dishIds) } });
-    const dishMap = new Map(dishes.map((d) => [d.id, d]));
-    const missing = dishIds.filter((id) => !dishMap.has(id));
+    const itemIds = plan.map((p) => p.itemId);
+    const items = await this.itemRepo.find({ where: { id: In(itemIds) } });
+    const dishMap = new Map(items.map((d) => [d.id, d]));
+    const missing = itemIds.filter((id) => !dishMap.has(id));
     if (missing.length) {
       throw new BizException(ErrorCode.MEAL_NOT_FOUND, `商品不存在：${missing.join(', ')}`);
     }
-    const offShelf = dishIds.filter((id) => dishMap.get(id)?.status !== 1);
+    const offShelf = itemIds.filter((id) => dishMap.get(id)?.status !== 1);
     if (offShelf.length) {
       throw new BizException(ErrorCode.MEAL_NOT_FOUND, `商品已下架：${offShelf.join(', ')}`);
     }
@@ -923,11 +923,11 @@ export class MealAdminService {
 
   /** 成本 = 各商品供价求和（C9：逐菜协商价，不用供应商整体分成比例） */
   private sumCost(
-    plan: Array<{ dishId: number; slot: number }>,
+    plan: Array<{ itemId: number; slot: number }>,
     dishMap: Map<number, Item>,
   ): string {
     return plan
-      .reduce((sum, p) => sum + Number(dishMap.get(p.dishId)?.costPrice ?? 0), 0)
+      .reduce((sum, p) => sum + Number(dishMap.get(p.itemId)?.costPrice ?? 0), 0)
       .toFixed(2);
   }
 
@@ -935,16 +935,16 @@ export class MealAdminService {
   private buildItems(
     m: EntityManager,
     setMealId: number,
-    plan: Array<{ dishId: number; slot: number }>,
+    plan: Array<{ itemId: number; slot: number }>,
     dishMap: Map<number, Item>,
   ): SetMealItem[] {
     return plan.map((p) =>
       m.create(SetMealItem, {
         setMealId,
-        dishId: p.dishId,
-        supplierId: dishMap.get(p.dishId)!.supplierId,
+        itemId: p.itemId,
+        supplierId: dishMap.get(p.itemId)!.supplierId,
         // 分账单价 = 该商品供价（C9：逐菜协商价）
-        shareAmount: dishMap.get(p.dishId)!.costPrice,
+        shareAmount: dishMap.get(p.itemId)!.costPrice,
         slot: p.slot,
       }),
     );
@@ -972,8 +972,8 @@ export class MealAdminService {
       .addOrderBy('d.id', 'ASC');
     if (keyword) qb.andWhere('d.name LIKE :kw', { kw: `%${keyword}%` });
 
-    const dishes = await qb.getMany();
-    const supplierIds = [...new Set(dishes.map((d) => d.supplierId))];
+    const items = await qb.getMany();
+    const supplierIds = [...new Set(items.map((d) => d.supplierId))];
     const suppliers = supplierIds.length
       ? await this.supplierRepo.find({ where: { id: In(supplierIds) } })
       : [];
@@ -994,7 +994,7 @@ export class MealAdminService {
       }),
       /** 「一饭四菜」构成判据（端上提示文案与提交前自检共用同一句） */
       composition: SET_MEAL_COMPOSITION,
-      list: dishes.map((d) => ({
+      list: items.map((d) => ({
         id: d.id,
         name: d.name,
         category: d.category ?? null,
@@ -1005,7 +1005,7 @@ export class MealAdminService {
         costPriceFen: Math.round(Number(d.costPrice) * 100),
         status: d.status,
       })),
-      total: dishes.length,
+      total: items.length,
     };
   }
 
@@ -1077,7 +1077,7 @@ export class MealAdminService {
 
   private templateView(
     sm: SetMeal,
-    plan: Array<{ dishId: number; slot: number }>,
+    plan: Array<{ itemId: number; slot: number }>,
     dishMap: Map<number, Item>,
   ) {
     return {
@@ -1087,13 +1087,13 @@ export class MealAdminService {
       costPriceFen: Math.round(Number(sm.costPrice) * 100),
       oneLiner: sm.oneLiner ?? null,
       status: sm.status,
-      dishCount: plan.length,
+      itemCount: plan.length,
       items: plan.map((p) => ({
-        dishId: p.dishId,
+        itemId: p.itemId,
         slot: p.slot,
         slotLabel: SLOT_LABEL[p.slot] ?? String(p.slot),
-        name: dishMap.get(p.dishId)?.name ?? null,
-        supplierId: dishMap.get(p.dishId)?.supplierId ?? null,
+        name: dishMap.get(p.itemId)?.name ?? null,
+        supplierId: dishMap.get(p.itemId)?.supplierId ?? null,
       })),
     };
   }

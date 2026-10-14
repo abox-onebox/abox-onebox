@@ -41,8 +41,8 @@ import {
 
 /** 聚合的输入行（服务层取行后转成纯数据，聚合零 IO —— 可测） */
 export interface RatingAggRow {
-  dishId: number;
-  dishName: string;
+  itemId: number;
+  itemName: string;
   supplierId: number;
   supplierName: string;
   mealDate: string;
@@ -70,8 +70,8 @@ export function aggregateItemRatings(
   const monthPrefix = endDate.slice(0, 7); // YYYY-MM（锚点月）
 
   type Acc = {
-    dishId: number;
-    dishName: string;
+    itemId: number;
+    itemName: string;
     supplierId: number;
     supplierName: string;
     ratedCount: number;
@@ -89,11 +89,11 @@ export function aggregateItemRatings(
     // 区间过滤（含端点）：红黑榜按「吃到的日子」切，不按「评价提交的日子」
     if (r.mealDate < startDate || r.mealDate > endDate) continue;
 
-    let cur = acc.get(r.dishId);
+    let cur = acc.get(r.itemId);
     if (!cur) {
       cur = {
-        dishId: r.dishId,
-        dishName: r.dishName,
+        itemId: r.itemId,
+        itemName: r.itemName,
         supplierId: r.supplierId,
         supplierName: r.supplierName,
         ratedCount: 0,
@@ -103,7 +103,7 @@ export function aggregateItemRatings(
         monthBadCount: 0,
         reasons: [],
       };
-      acc.set(r.dishId, cur);
+      acc.set(r.itemId, cur);
     }
 
     cur.ratedCount += 1;
@@ -120,8 +120,8 @@ export function aggregateItemRatings(
 
   const items: ItemRatingRow[] = [...acc.values()]
     .map((v) => ({
-      dishId: v.dishId,
-      dishName: v.dishName,
+      itemId: v.itemId,
+      itemName: v.itemName,
       supplierId: v.supplierId,
       supplierName: v.supplierName,
       ratedCount: v.ratedCount,
@@ -138,16 +138,16 @@ export function aggregateItemRatings(
         .slice(0, RATING_RECENT_REASONS_MAX)
         .map((x) => x.reason),
     }))
-    // 黑榜序：投诉次数降序 → 同投诉次数下样本越少越扎眼（差评率越高）→ dishId 稳定序
-    .sort((a, b) => b.badCount - a.badCount || a.ratedCount - b.ratedCount || a.dishId - b.dishId);
+    // 黑榜序：投诉次数降序 → 同投诉次数下样本越少越扎眼（差评率越高）→ itemId 稳定序
+    .sort((a, b) => b.badCount - a.badCount || a.ratedCount - b.ratedCount || a.itemId - b.itemId);
 
   // P1 验收判据的直接答案：「能说出本周最差的三道菜」
   const worstThree = items
     .filter((i) => i.badCount >= 1)
     .slice(0, RATING_WORST_COUNT)
-    .map((i) => ({ dishId: i.dishId, dishName: i.dishName, badCount: i.badCount }));
+    .map((i) => ({ itemId: i.itemId, itemName: i.itemName, badCount: i.badCount }));
 
-  return { totalRatings, dishCount: items.length, worstThree, items };
+  return { totalRatings, itemCount: items.length, worstThree, items };
 }
 
 /* ------------------------------------------------------------------ *
@@ -208,23 +208,23 @@ export class RatingService {
       where: { setMealId: Number(order.setMealId) },
       order: { slot: 'ASC' },
     });
-    const itemByDish = new Map(items.map((i) => [Number(i.dishId), i]));
+    const itemByDish = new Map(items.map((i) => [Number(i.itemId), i]));
     const seen = new Set<number>();
     for (const it of dto.items) {
-      const mealItem = itemByDish.get(it.dishId);
+      const mealItem = itemByDish.get(it.itemId);
       if (!mealItem) {
         // 10001：请求内容与订单事实不符（客户端拼错/换单后重放），不是业务态
-        throw new BizException(ErrorCode.PARAM_INVALID, `商品 ${it.dishId} 不在本单套餐内`);
+        throw new BizException(ErrorCode.PARAM_INVALID, `商品 ${it.itemId} 不在本单套餐内`);
       }
-      if (seen.has(it.dishId)) {
-        throw new BizException(ErrorCode.PARAM_INVALID, `商品 ${it.dishId} 重复提交`);
+      if (seen.has(it.itemId)) {
+        throw new BizException(ErrorCode.PARAM_INVALID, `商品 ${it.itemId} 重复提交`);
       }
-      seen.add(it.dishId);
+      seen.add(it.itemId);
     }
 
     // 名字快照（落库后改名/下架/软删都不影响历史行）
     const dishRows = await this.itemRepo.find({ where: { id: In([...seen]) } });
-    const dishName = new Map(dishRows.map((d) => [Number(d.id), d.name]));
+    const itemName = new Map(dishRows.map((d) => [Number(d.id), d.name]));
     const supplierRows = await this.supplierRepo.find({
       where: { id: In([...new Set(items.map((i) => Number(i.supplierId)))]) },
     });
@@ -232,16 +232,16 @@ export class RatingService {
 
     const nowDate = new Date();
     const rows = dto.items.map((it) => {
-      const mealItem = itemByDish.get(it.dishId)!;
+      const mealItem = itemByDish.get(it.itemId)!;
       const sid = Number(mealItem.supplierId);
       return this.ratingRepo.create({
         orderId: Number(order.id),
         orderNo: order.orderNo,
         userId,
         mealDate: order.mealDate,
-        dishId: it.dishId,
+        itemId: it.itemId,
         // 快照兜底：商品行已被硬删（软删不影响 name 读取）时仍要有可展示的名字
-        dishName: dishName.get(it.dishId) ?? `商品#${it.dishId}`,
+        itemName: itemName.get(it.itemId) ?? `商品#${it.itemId}`,
         supplierId: sid,
         supplierName: supplierName.get(sid) ?? `供应商#${sid}`,
         slot: mealItem.slot,
@@ -280,7 +280,7 @@ export class RatingService {
       rated,
       ratedAt: rated ? toBjIso(rows[0].createdAt) : null,
       items: rows.map((r) => ({
-        dishId: Number(r.dishId),
+        itemId: Number(r.itemId),
         rating: r.rating,
         reason: r.reason ?? null,
       })),
@@ -295,8 +295,8 @@ export class RatingService {
     // 只取需要的列；聚合在纯函数里完成（跨 mysql/sqlite 逐分一致 · 同 D49 选型理由）
     const rows: RatingAggRow[] = (await this.ratingRepo.find({ order: { id: 'ASC' } })).map(
       (r) => ({
-        dishId: Number(r.dishId),
-        dishName: r.dishName,
+        itemId: Number(r.itemId),
+        itemName: r.itemName,
         supplierId: Number(r.supplierId),
         supplierName: r.supplierName,
         mealDate: r.mealDate,

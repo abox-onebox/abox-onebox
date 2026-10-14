@@ -50,7 +50,7 @@ export interface SupplierRow {
   status: number;
   statusLabel: string;
 
-  dishCount: number;
+  itemCount: number;
   /** 本月采购应付（含纠错冲销负行）*/
   monthShareFen: number;
   /** 已配置外卖链接的平台 key 列表 */
@@ -64,7 +64,7 @@ export interface SuppliersSummary {
   totalCount: number;
   activeCount: number;
   suspendedCount: number;
-  // ⚠️ M4-0 删除 4 项：`dishCount` / `distributeCount` / `bothCount`（依赖已停用的
+  // ⚠️ M4-0 删除 4 项：`itemCount` / `distributeCount` / `bothCount`（依赖已停用的
   //    `type`）与 `dcTotalCount`（依赖已停用的「场所归属供应商」）。
   //    恒为 0 或恒等于 totalCount 的 KPI 不是指标，是噪音。
   auditPendingCount: number;
@@ -116,14 +116,14 @@ export interface SupplierDetail {
     bankAccountMasked: string | null;
     invoiceTitle: string | null;
   };
-  dishes: ItemRow[];
+  items: ItemRow[];
   // ⚠️ M4-0 删除 `distributionCenters`：加工场所属 ABox 自有，不挂在供应商名下。
   recentShares: Array<{
     id: number;
     shareNo: string;
     shareDate: string;
     mealDate: string;
-    dishId: number | null;
+    itemId: number | null;
     quantity: number;
     unitPriceFen: number;
     amountFen: number;
@@ -175,7 +175,7 @@ export interface UpdateSupplierResult {
   licenseExpireAt: string | null;
   licenseState: string;
   /** 因证照落成过期而**联动下架**的商品数（>0 时前端必须明确提示）*/
-  unpublishedDishCount: number;
+  unpublishedItemCount: number;
   canServe: boolean;
 }
 

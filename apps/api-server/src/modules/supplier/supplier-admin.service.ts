@@ -173,7 +173,7 @@ export class SupplierAdminService {
   /** D23 附属 · 详情（档案 + 商品 + 近 30 条采购应付 + 操作日志） */
   async detail(id: number) {
     const s = await this.assertSupplier(id);
-    const [dishes, shares, logs] = await Promise.all([
+    const [items, shares, logs] = await Promise.all([
       this.itemRepo.find({ where: { supplierId: id }, order: { id: 'ASC' } }),
       this.shareRepo.find({
         where: { payeeType: PAYEE_SUPPLIER, payeeId: id },
@@ -200,7 +200,7 @@ export class SupplierAdminService {
         /** 银行账号原文**任何后台接口都不回**，付款登记时由财务线下核对 */
         invoiceTitle: s.invoiceTitle ?? null,
       },
-      dishes: dishes.map((d) => this.decorateDish(d)),
+      items: items.map((d) => this.decorateDish(d)),
       // ⚠️ M4-0：不再回 `distributionCenters` —— 加工场所（集散中心）属 ABox 自有，
       //    不挂在任何供应商名下。回一个恒为空的数组会让运营以为「这家还没挂场地」。
       recentShares: shares.map((r) => ({
@@ -208,7 +208,7 @@ export class SupplierAdminService {
         shareNo: r.shareNo,
         shareDate: r.shareDate,
         mealDate: r.mealDate,
-        dishId: r.dishId ?? null,
+        itemId: r.itemId ?? null,
         quantity: r.quantity,
         unitPriceFen: toFen(Number(r.unitPrice)),
         amountFen: toFen(Number(r.amount)),
@@ -263,7 +263,7 @@ export class SupplierAdminService {
    * D25 编辑供应商
    *
    * ⚠️ 一个隐式副作用，在出参里显式回报（不做「偷偷改了却不说」）：
-   *   · `licenseExpireAt` 被改成过去 → **同步下架其关联商品**，回报 `unpublishedDishCount`
+   *   · `licenseExpireAt` 被改成过去 → **同步下架其关联商品**，回报 `unpublishedItemCount`
    *
    * ⚠️ M4-0 起不再处理 `type`（DTO 已移除，传上来即 10001）。
    */
@@ -281,13 +281,13 @@ export class SupplierAdminService {
     if (dto.payeeType !== undefined) s.payeeType = dto.payeeType;
     if (dto.status !== undefined) s.status = dto.status;
 
-    let unpublishedDishCount = 0;
+    let unpublishedItemCount = 0;
     if (dto.licenseExpireAt !== undefined) {
       s.licenseExpireAt = dto.licenseExpireAt;
       // 证照落成过期 → 关联商品同步下架（原型 P33 的合规联动 · 123 号令）
       if (this.licenseStateOf(dto.licenseExpireAt) === LicenseState.EXPIRED) {
         const r = await this.itemRepo.update({ supplierId: id, status: 1 }, { status: 0 });
-        unpublishedDishCount = r.affected ?? 0;
+        unpublishedItemCount = r.affected ?? 0;
       }
     }
 
@@ -299,7 +299,7 @@ export class SupplierAdminService {
       licenseExpireAt: s.licenseExpireAt ?? null,
       licenseState: this.licenseStateOf(s.licenseExpireAt),
       /** 联动下架了几道菜 —— 不回报的话，运营会以为商品是自己消失的 */
-      unpublishedDishCount,
+      unpublishedItemCount,
       canServe: this.canServe(s),
     };
   }
@@ -514,7 +514,7 @@ export class SupplierAdminService {
       /** P33 KPI「已过期」（会让关联商品被联动下架）*/
       expiredCount: count((s) => state(s) === LicenseState.EXPIRED),
       canServeCount: count((s) => this.canServe(s)),
-      // ⚠️ M4-0：`dishCount` / `distributeCount` / `bothCount` / `dcTotalCount` 四项已删除。
+      // ⚠️ M4-0：`itemCount` / `distributeCount` / `bothCount` / `dcTotalCount` 四项已删除。
       //    前三项依赖已停用的 `type`；`dcTotalCount`（名下场所合计）依赖已停用的场所归属。
       //    恒为 0 或恒等于 totalCount 的 KPI 比没有 KPI 更糟：它看着像个指标，其实不是。
     };
@@ -549,7 +549,7 @@ export class SupplierAdminService {
       licenseDaysLeft: this.daysLeft(s.licenseExpireAt),
       status: s.status,
       statusLabel: SUPPLIER_STATUS_LABEL[s.status] ?? String(s.status),
-      dishCount: dishMap.get(id) ?? 0,
+      itemCount: dishMap.get(id) ?? 0,
       /** 本月采购应付（含纠错冲销负行）· 与 M35 结算单同口径 */
       monthShareFen: shareMap.get(id) ?? 0,
       takeoutPlatforms: Object.keys(s.takeoutLinks ?? {}).filter((k) => !k.startsWith('__')),

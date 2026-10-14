@@ -15,7 +15,7 @@ export interface OrderListItem {
   unitPriceFen: number;
   totalAmountFen: number;
   /** 主菜名（列表展示用，取套餐 slot=1 商品） */
-  mainDishName: string | null;
+  mainItemName: string | null;
   createdAt: string;
 }
 
@@ -60,7 +60,7 @@ export interface OrderRatingView {
   /** 首次提交时刻（ISO 8601 +08:00）；未评为 null */
   ratedAt: string | null;
   /** 已评内容（按提交顺序；未评为空数组 —— 「没评」与「评了零个菜」不同态） */
-  items: Array<{ dishId: number; rating: number; reason: string | null }>;
+  items: Array<{ itemId: number; rating: number; reason: string | null }>;
 }
 
 /** 订单详情（U10） */
@@ -76,10 +76,10 @@ export interface OrderDetailResult {
   payAmountFen: number;
   remark: string | null;
   /**
-   * ⚠️ `dishId`（P1-U2 新增）：评价提交按 `dishId` 定位商品 ——
+   * ⚠️ `itemId`（P1-U2 新增）：评价提交按 `itemId` 定位商品 ——
    * `ab_dish.name` 无唯一约束（A3），按名字定位会把评价记到别家同名菜头上。
    */
-  dishes: Array<{ dishId: number; name: string; slot: number; supplierName: string | null }>;
+  items: Array<{ itemId: number; name: string; slot: number; supplierName: string | null }>;
   /** 口味评价状态（P1-U2 新增；端上据此决定出不出评价卡） */
   rating: OrderRatingView;
   timeline: OrderTimelineNode[];

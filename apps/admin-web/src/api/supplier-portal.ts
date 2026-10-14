@@ -34,8 +34,8 @@ export interface PortalCenter {
 }
 
 export interface PortalDish {
-  dishId: number;
-  dishName: string;
+  itemId: number;
+  itemName: string;
   category: string | null;
   imageUrl: string | null;
   unitPriceFen: number;
@@ -70,9 +70,9 @@ export interface WorkbenchData {
     overdue: boolean;
     canConfirm: boolean;
   };
-  dishes: PortalDish[];
+  items: PortalDish[];
   summary: {
-    dishCount: number;
+    itemCount: number;
     centerCount: number;
     planQuantity: number;
     confirmedQuantity: number;
@@ -92,7 +92,7 @@ export const fetchWorkbench = (date?: string) =>
 // ============================================================================
 
 export interface CookConfirmItem {
-  dishId: number;
+  itemId: number;
   distributionCenterId: number;
   /** 不传 = 足额送达；传了以申报值为准（短送留痕） */
   actualQuantity?: number;
@@ -102,8 +102,8 @@ export interface CookConfirmItem {
 export interface CookConfirmResult {
   date: string;
   confirmed: Array<{
-    dishId: number;
-    dishName: string | null;
+    itemId: number;
+    itemName: string | null;
     distributionCenterId: number;
     centerName: string | null;
     planQuantity: number;
@@ -112,15 +112,15 @@ export interface CookConfirmResult {
   }>;
   /** 已确认过的项（幂等：重复提交不会报错，只回这里） */
   skipped: Array<{
-    dishId: number;
-    dishName: string | null;
+    itemId: number;
+    itemName: string | null;
     distributionCenterId: number;
     reason: string;
     confirmedAt: string | null;
   }>;
-  dishes: Array<{
-    dishId: number;
-    dishName: string | null;
+  items: Array<{
+    itemId: number;
+    itemName: string | null;
     status: string;
     planQuantity: number;
     confirmedQuantity: number;
@@ -164,8 +164,8 @@ export interface SettlementRow {
   shareDate: string;
   /** 出餐日 */
   mealDate: string;
-  dishId: number | null;
-  dishName: string | null;
+  itemId: number | null;
+  itemName: string | null;
   /** 实收量（= 计费基数：你申报的实送份数，未申报视为足额） */
   quantity: number;
   /** 我的协商单价 */

@@ -235,7 +235,7 @@ export class Item {
 /** ab_supplier_item_daily 供应商每日生产哪道菜（ER v2.1 §3.5） */
 @Entity('ab_supplier_item_daily')
 @Index('idx_supplier_item_date', ['produceDate', 'status'])
-@Index('uk_supplier_item_date', ['supplierId', 'dishId', 'produceDate'], { unique: true })
+@Index('uk_supplier_item_date', ['supplierId', 'itemId', 'produceDate'], { unique: true })
 export class SupplierItemDaily {
   @PkColumn()
   id!: number;
@@ -244,7 +244,7 @@ export class SupplierItemDaily {
   supplierId!: number;
 
   @Column({ name: 'item_id', type: 'bigint', transformer: bigintTransformer })
-  dishId!: number;
+  itemId!: number;
 
   @Column({ name: 'produce_date', type: 'date' })
   produceDate!: string;
@@ -298,7 +298,7 @@ export class SupplierItemDaily {
  */
 @Entity('ab_supplier_item_center_daily')
 @Index('idx_sidc_date_center', ['produceDate', 'distributionCenterId'])
-@Index('uk_sidc', ['supplierId', 'dishId', 'produceDate', 'distributionCenterId'], { unique: true })
+@Index('uk_sidc', ['supplierId', 'itemId', 'produceDate', 'distributionCenterId'], { unique: true })
 export class SupplierItemCenterDaily {
   @PkColumn()
   id!: number;
@@ -308,7 +308,7 @@ export class SupplierItemCenterDaily {
   supplierId!: number;
 
   @Column({ name: 'item_id', type: 'bigint', transformer: bigintTransformer })
-  dishId!: number;
+  itemId!: number;
 
   @Column({ name: 'produce_date', type: 'date', comment: '出餐日（= 套餐日 T，非确认操作日）' })
   produceDate!: string;

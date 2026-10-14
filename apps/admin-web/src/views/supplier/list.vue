@@ -152,7 +152,7 @@
 
       <el-table-column label="商品数" width="90" align="center">
         <template #default="{ row }">
-          <span>{{ asRow(row).dishCount }}</span>
+          <span>{{ asRow(row).itemCount }}</span>
         </template>
       </el-table-column>
 
@@ -329,7 +329,7 @@ const summary = reactive<SuppliersSummary>({
   totalCount: 0,
   activeCount: 0,
   suspendedCount: 0,
-  // ⚠️ M4-0：`dishCount` / `distributeCount` / `bothCount` / `dcTotalCount` 已随
+  // ⚠️ M4-0：`itemCount` / `distributeCount` / `bothCount` / `dcTotalCount` 已随
   //    类型停用与场所归属摘除一并删除（服务端不再下发）。
   auditPendingCount: 0,
   auditApprovedCount: 0,

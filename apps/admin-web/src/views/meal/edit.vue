@@ -170,7 +170,7 @@
             <el-option
               v-for="t in templates"
               :key="t.id"
-              :label="`${t.name}（${t.dishCount} 件）`"
+              :label="`${t.name}（${t.itemCount} 件）`"
               :value="t.id"
             />
           </el-select>
@@ -203,7 +203,7 @@
  *    `ItemOptions.composition` / `slots[].required|isStaple`，不再本地硬编码。
  *
  * ## 两个刻意不放在前端的字段
- * `supplierId` 与 `costPrice` **不由前端提交** —— 服务端按 `dishId` 反查供应商、
+ * `supplierId` 与 `costPrice` **不由前端提交** —— 服务端按 `itemId` 反查供应商、
  * 按商品供价求和。前端只显示预览，不参与计算口径。理由见 DTO 注释。
  *
  * ⚠️「参考毛利」不是真毛利：C9 等式里还有场地费/打包人工/配送费/团长佣金四项。
@@ -232,7 +232,7 @@ const router = useRouter();
 
 const loadingDishes = ref(false);
 const submitting = ref(false);
-const dishes = ref<ItemOption[]>([]);
+const items = ref<ItemOption[]>([]);
 const templates = ref<SetMealTemplateRow[]>([]);
 
 /** 「一饭四菜」构成判据 —— 优先用服务端下发的那一份（口径唯一） */
@@ -246,7 +246,7 @@ const form = reactive({
   sourceSetMealId: undefined as number | undefined,
 });
 
-/** slot → dishId（档位选项由服务端下发，端上不维护第二份映射） */
+/** slot → itemId（档位选项由服务端下发，端上不维护第二份映射） */
 const picked = reactive<Record<number, number | undefined>>({});
 
 /**
@@ -266,18 +266,18 @@ const slots = ref<SlotOption[]>(
 const requiredSlots = computed(() => slots.value.filter((s) => !s.isStaple));
 const stapleSlot = computed(() => slots.value.find((s) => s.isStaple) ?? null);
 
-const dishMap = computed(() => new Map(dishes.value.map((d) => [d.id, d])));
+const dishMap = computed(() => new Map(items.value.map((d) => [d.id, d])));
 /** 已上架商品（服务端只回 status=1）—— 直接绑定，无需再过滤 */
-const dishOptions = computed(() => dishes.value);
+const dishOptions = computed(() => items.value);
 
 const pickedEntries = computed(() =>
   slots.value
-    .map((s) => ({ slot: s.value, dishId: picked[s.value] }))
-    .filter((e): e is { slot: number; dishId: number } => typeof e.dishId === 'number'),
+    .map((s) => ({ slot: s.value, itemId: picked[s.value] }))
+    .filter((e): e is { slot: number; itemId: number } => typeof e.itemId === 'number'),
 );
 const pickedCount = computed(() => pickedEntries.value.length);
 const costTotalFen = computed(() =>
-  pickedEntries.value.reduce((sum, e) => sum + (dishMap.value.get(e.dishId)?.costPriceFen ?? 0), 0),
+  pickedEntries.value.reduce((sum, e) => sum + (dishMap.value.get(e.itemId)?.costPriceFen ?? 0), 0),
 );
 const grossFen = computed(() => {
   const priceFen = Math.round((form.price ?? UNIT_PRICE) * 100);
@@ -285,8 +285,8 @@ const grossFen = computed(() => {
 });
 
 /** 同一件商品不允许占两个档位 —— D7 服务端会拒，前端先禁掉，别让运营白填 */
-function isDishUsed(dishId: number, exceptSlot: number): boolean {
-  return requiredSlots.value.some((s) => s.value !== exceptSlot && picked[s.value] === dishId);
+function isDishUsed(itemId: number, exceptSlot: number): boolean {
+  return requiredSlots.value.some((s) => s.value !== exceptSlot && picked[s.value] === itemId);
 }
 
 function clearItems(): void {
@@ -311,7 +311,7 @@ function onSourceChange(id: number | undefined): void {
   const selectable = new Set(requiredSlots.value.map((s) => s.value));
   for (const item of tpl.items) {
     // 只回填**可选的档位**：随附档不建 item，即便历史数据里有也不回填
-    if (selectable.has(item.slot)) picked[item.slot] = item.dishId;
+    if (selectable.has(item.slot)) picked[item.slot] = item.itemId;
   }
   if (!form.name && tpl.name) form.name = `${tpl.name}（副本）`;
 }
@@ -323,7 +323,7 @@ async function load(): Promise<void> {
       fetchItemOptions({}),
       fetchMealTemplates({ page: 1, pageSize: 100 }),
     ]);
-    dishes.value = opt.list;
+    items.value = opt.list;
     // ⭐ 档位表与「本日精选」判据都取服务端下发的同一份（口径唯一，前端不硬编码）
     if (opt.slots?.length) slots.value = opt.slots;
     if (opt.composition?.rule) compositionRule.value = opt.composition.rule;
@@ -356,7 +356,7 @@ async function submit(): Promise<void> {
       price: form.price,
       oneLiner: form.oneLiner || undefined,
       coverUrl: form.coverUrl || undefined,
-      items: pickedEntries.value.map((e) => ({ dishId: e.dishId, slot: e.slot })),
+      items: pickedEntries.value.map((e) => ({ itemId: e.itemId, slot: e.slot })),
     });
     ElMessage.success(`组合 #${res.id}「${res.name}」已保存`);
     await router.push('/meal/template');

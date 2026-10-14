@@ -1222,7 +1222,7 @@ async function main(): Promise<void> {
   // 生产计划（父行 = 日总量）+ 分加工场所明细
   const sdDaily: Array<Record<string, unknown>> = [];
   const sdCenter: Array<Record<string, unknown>> = [];
-  const plannedDate = new Map<string, number>(); // `${date}|${supId}|${dishId}` → plan
+  const plannedDate = new Map<string, number>(); // `${date}|${supId}|${itemId}` → plan
   for (const [key, soldCount] of soldOf.entries()) {
     const [date, gidRaw] = key.split('|');
     const gid = Number(gidRaw);
@@ -1264,14 +1264,14 @@ async function main(): Promise<void> {
   await ins('ab_supplier_item_center_daily', [...merged.values()]);
 
   for (const [k, plan] of plannedDate.entries()) {
-    const [date, supId, dishId] = k.split('|');
+    const [date, supId, itemId] = k.split('|');
     sdDaily.push({
       supplier_id: Number(supId),
-      item_id: Number(dishId),
+      item_id: Number(itemId),
       produce_date: date,
       plan_quantity: plan,
       actual_quantity: plan,
-      unit_price: (dishCostOf.get(Number(dishId)) ?? 0).toFixed(2),
+      unit_price: (dishCostOf.get(Number(itemId)) ?? 0).toFixed(2),
       status: 'done',
       completed_at: atUtc(date, '09:10'),
       version: 1,

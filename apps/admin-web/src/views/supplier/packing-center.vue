@@ -105,7 +105,7 @@ onMounted(load);
           title="以下商品尚未确认送达，请先催供应商"
           :description="
             c.blockers
-              .map((b) => `${b.supplierName}·${b.dishName}（${b.planQuantity} 份）`)
+              .map((b) => `${b.supplierName}·${b.itemName}（${b.planQuantity} 份）`)
               .join('、')
           "
         />
@@ -131,7 +131,7 @@ onMounted(load);
           </el-col>
           <el-col :span="6">
             <el-card shadow="never" class="kpi">
-              <div class="kpi-v">{{ c.summary.confirmedDishCount }}/{{ c.summary.dishCount }}</div>
+              <div class="kpi-v">{{ c.summary.confirmedItemCount }}/{{ c.summary.itemCount }}</div>
               <div class="kpi-l">到位商品</div>
             </el-card>
           </el-col>
@@ -159,9 +159,9 @@ onMounted(load);
         </el-table>
 
         <h4 style="margin: 16px 0 8px">商品到位情况</h4>
-        <el-table :data="c.dishes" size="small" border>
+        <el-table :data="c.items" size="small" border>
           <el-table-column prop="supplierName" label="供应商" min-width="120" />
-          <el-table-column prop="dishName" label="商品" min-width="120" />
+          <el-table-column prop="itemName" label="商品" min-width="120" />
           <el-table-column label="采购单价" width="110" align="right">
             <template #default="{ row }">{{ money(row.unitPriceFen) }}</template>
           </el-table-column>

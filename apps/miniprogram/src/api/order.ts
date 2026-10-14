@@ -80,7 +80,7 @@ export function cancelOrder(
  */
 export function submitOrderRating(
   orderNo: string,
-  items: Array<{ dishId: number; rating: number; reason?: string }>,
+  items: Array<{ itemId: number; rating: number; reason?: string }>,
 ): Promise<RatingSubmitResult> {
   return http.post<RatingSubmitResult>(`/orders/${encodeURIComponent(orderNo)}/rating`, {
     items,

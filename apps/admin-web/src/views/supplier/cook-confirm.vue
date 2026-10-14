@@ -27,17 +27,17 @@ const submitting = ref(false);
 const data = ref<WorkbenchData | null>(null);
 const date = ref(String(route.query.date ?? ''));
 
-/** 勾选状态：`dishId:centerId` → true */
+/** 勾选状态：`itemId:centerId` → true */
 const checked = ref<Record<string, boolean>>({});
-/** 实送份数：`dishId:centerId` → number（不填 = 足额） */
+/** 实送份数：`itemId:centerId` → number（不填 = 足额） */
 const actual = ref<Record<string, number | undefined>>({});
 /** 备注 */
 const remark = ref<Record<string, string>>({});
 
 interface ConfirmRow {
   key: string;
-  dishId: number;
-  dishName: string;
+  itemId: number;
+  itemName: string;
   distributionCenterId: number;
   centerName: string;
   planQuantity: number;
@@ -47,12 +47,12 @@ interface ConfirmRow {
 
 const rows = computed<ConfirmRow[]>(() => {
   const out: ConfirmRow[] = [];
-  for (const d of data.value?.dishes ?? []) {
+  for (const d of data.value?.items ?? []) {
     for (const c of d.centers) {
       out.push({
-        key: `${d.dishId}:${c.distributionCenterId}`,
-        dishId: d.dishId,
-        dishName: d.dishName,
+        key: `${d.itemId}:${c.distributionCenterId}`,
+        itemId: d.itemId,
+        itemName: d.itemName,
         distributionCenterId: c.distributionCenterId,
         centerName: c.centerName,
         planQuantity: c.planQuantity,
@@ -111,7 +111,7 @@ async function submit() {
   const items: CookConfirmItem[] = chosen.value.map((r) => {
     const q = actual.value[r.key];
     const item: CookConfirmItem = {
-      dishId: r.dishId,
+      itemId: r.itemId,
       distributionCenterId: r.distributionCenterId,
     };
     if (q !== undefined && q !== null && String(q) !== '') item.actualQuantity = Number(q);
@@ -207,7 +207,7 @@ onMounted(load);
             />
           </template>
         </el-table-column>
-        <el-table-column prop="dishName" label="商品" min-width="120" />
+        <el-table-column prop="itemName" label="商品" min-width="120" />
         <el-table-column prop="centerName" label="集散中心" min-width="180" />
         <el-table-column prop="planQuantity" label="应送件数" width="100" align="right" />
         <el-table-column label="实送件数" width="130">
