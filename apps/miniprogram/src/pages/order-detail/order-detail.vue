@@ -87,7 +87,7 @@
           >
         </view>
         <view v-for="dish in detail.items" :key="`${dish.slot}-${dish.name}`" class="dish">
-          <text class="dish__slot">{{ SLOT_LABEL[dish.slot] || '商品' }}</text>
+          <text class="dish__slot">{{ SLOT_LABEL[dish.slot] || '菜品' }}</text>
           <text class="dish__name">{{ dish.name }}</text>
           <text class="dish__from">{{
             dish.supplierName ? `来自：${dish.supplierName}` : ''
@@ -102,7 +102,7 @@
         <!-- 金额：单价 → 份数 → 合计 →（余额抵扣）→ 实付 -->
         <view class="sum">
           <view class="sum__row">
-            <text class="sum__label">单价 × 件数</text>
+            <text class="sum__label">单价 × 份数</text>
             <text class="sum__value">
               {{ fenToYuanText(detail.unitPriceFen) }} × {{ detail.quantity }}
             </text>
@@ -218,9 +218,9 @@
               :disabled="!canSubmit"
               @tap="submitRating"
             >
-              提交评价{{ pickedCount ? `（已选 ${pickedCount} 件商品）` : '' }}
+              提交评价{{ pickedCount ? `（已选 ${pickedCount} 道）` : '' }}
             </button>
-            <text class="rate__hint">没选的商品视为跳过；提交后不可修改</text>
+            <text class="rate__hint">没选的视为跳过；提交后不可修改</text>
           </view>
         </template>
       </view>
@@ -395,7 +395,7 @@ const ratedItems = computed(() => {
   const nameOf = new Map(d.items.map((x) => [x.itemId, x.name]));
   return d.rating.items.map((it) => ({
     itemId: it.itemId,
-    name: nameOf.get(it.itemId) ?? `商品#${it.itemId}`,
+    name: nameOf.get(it.itemId) ?? `菜品#${it.itemId}`,
     rating: it.rating,
     reason: it.reason,
   }));

@@ -21,7 +21,7 @@
       <!-- 套餐清单卡 -->
       <view class="card">
         <view class="card__hd">
-          <text class="card__title">明日组合（{{ quantity }} 件）</text>
+          <text class="card__title">明日组合（{{ quantity }} 份）</text>
           <view class="stepper">
             <view class="stepper__btn" :class="{ 'is-disabled': quantity <= 1 }" @tap="decQuantity">
               <text>−</text>

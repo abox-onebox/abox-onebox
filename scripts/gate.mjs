@@ -313,6 +313,12 @@ const GATES = {
    */
   'mp:no-font': { cwd: '.', cmd: 'node scripts/check-mp-no-font.mjs' },
   /**
+   * S9 收口：小程序用户可见文案「去餐化术语一致性」—— 纯静态、毫秒级。
+   * 扫 `apps/miniprogram/src` 的 `pages/**` + `components/**` 用户端 .vue（豁免 leader/supplier/agreement），
+   * 拦截「商品」泄漏与「件/份」单位混用，把人工逐页过可读性固化成自动守护。详见脚本头注。
+   */
+  'mp:ux-terms': { cwd: '.', cmd: 'node scripts/check-mp-ux-terms.mjs' },
+  /**
    * ⛔ 小程序端不得出现「踩踏式清态」（P1-16 防复发）。
    *
    * 缺陷本体：`pages/order-list/order-list.vue` 的四档计数是**裸调** `fetchOrders`
@@ -574,6 +580,8 @@ const ALIASES = {
    *    CI 里跑它只会得到一次「装作绿」。故 `all` 只含 CI 可见的 `design:spec`。
    */
   design: ['design:spec', 'design:docs'],
+  /** 一键全量：静态门禁（all）+ 端到端真链路（verify）—— 人工只需跑这一条 */
+  full: ['all', 'verify'],
   all: [
     'shared',
     'lint',
@@ -618,6 +626,8 @@ const ALIASES = {
     'build:mp',
     // ⛔ mp 产物字体二进制（γ 死资源防复发）—— 必须排在 build:mp 之后：它扫的是构建产物
     'mp:no-font',
+    // S9 收口：用户端文案去餐化术语一致性 —— 纯静态、毫秒级；扫描类门禁自带 0 样本守卫
+    'mp:ux-terms',
   ],
 };
 
@@ -705,6 +715,8 @@ const REPORT_RE = {
   'e2e:msg': [/^✔ 自证 \d+\/\d+.*$/m, /^✔ e2e message 断言全覆盖.*$/m],
   // mp:no-font：自证汇总 + 覆盖面（扫到的产物文件数；产物缺失时脚本自行 exit 2，不会静默）
   'mp:no-font': [/^\[自证\] 汇总 \d+\/\d+.*$/m, /^③ 覆盖面：\s*\d+ 个产物文件.*$/m],
+  // mp:ux-terms：自证汇总 + 覆盖面（用户端 .vue 文件数；0 样本时脚本自行 exit 2，不会静默）
+  'mp:ux-terms': [/^\[自证\] 汇总 \d+\/\d+.*$/m, /^③ 覆盖面：\s*\d+ 个用户端 \.vue 文件.*$/m],
   // order:edges：自证汇总 + 实际/声明边数（分母为 0 = 判据空转，脚本自报 broken）
   'order:edges': [/^\[自证\] \d+\/\d+ 通过$/m, /^③ 实际写入边：\d+ 条$/m, /^④ 声明边集：\d+ 条$/m],
   // lock:version：自证汇总 + 覆盖面（扫到的源文件数与命中数；命中 0 ⇒ 白名单未命中即红，不会静默）
@@ -881,7 +893,7 @@ if (process.argv.includes('--json')) {
 if (argv.length === 0 || argv[0] === 'list') {
   console.log('可用门禁：');
   for (const [k, v] of Object.entries(GATES)) console.log(`  ${k.padEnd(16)} [${v.group ?? '-'}] ${v.cwd} › ${v.cmd}`);
-  console.log('\n别名：shared / typecheck / build / verify / all / design');
+  console.log('\n别名：shared / typecheck / build / verify / all / design / full');
   process.exit(0);
 }
 

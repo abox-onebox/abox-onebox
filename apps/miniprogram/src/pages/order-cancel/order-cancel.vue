@@ -51,7 +51,7 @@
               <text class="card__value">{{ formatMealDate(detail.mealDate) }}</text>
             </view>
             <view class="card__row">
-              <text class="card__label">件数</text>
+              <text class="card__label">份数</text>
               <text class="card__value">× {{ detail.quantity }}</text>
             </view>
             <view class="card__row">
