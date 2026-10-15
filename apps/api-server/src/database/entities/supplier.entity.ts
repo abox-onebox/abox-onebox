@@ -99,7 +99,22 @@ export class Supplier {
   @Column({ name: 'takeout_links', type: 'json', nullable: true })
   takeoutLinks?: Record<string, { url: string | null; shopId?: string | null }> | null;
 
-  @Column({ type: 'varchar', length: 32, nullable: true, comment: '主营：川菜/粤菜/汤/面点' })
+  /**
+   * ⚠️ **已停用（去餐化 · 2026-10-15）**：原「主营品类」= 菜系标识（本帮菜/汤品/川菜…）
+   *
+   * 去餐化后 ABox 只出一种套餐，供应商**不按菜系对外标识** —— 挂「本帮菜」「汤品」
+   * 等于把「卖菜」的叙事带回来，与「卖餐」冲突。
+   *
+   * 处置：D23 筛选与展示**已移除**、`categoryOptions` 选择器**已停止下发**、
+   * D24/D25 新建编辑**已停收**、资质墙与详情页角标**已删除**、种子**已清空**。
+   * 本列保留仅为兼容历史行，**任何逻辑不得再读**（同 `type` / `share_rate` 的处理）。
+   */
+  @Column({
+    type: 'varchar',
+    length: 32,
+    nullable: true,
+    comment: '⚠️ 已停用（去餐化前历史字段）：主营菜系标识，新逻辑不得读取',
+  })
   category?: string | null;
 
   @Column({
