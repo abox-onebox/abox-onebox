@@ -89,12 +89,6 @@ export class AdminSuppliersQueryDto {
   @IsIn(LICENSE_STATES as unknown as string[], { message: '证照状态不合法' })
   licenseState?: string;
 
-  @ApiPropertyOptional({ description: '主营品类（川菜/粤菜/汤/面点）' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(32)
-  category?: string;
-
   @ApiPropertyOptional({ description: '关键词：名称 / 联系人 / 手机号（片段）' })
   @IsOptional()
   @IsString()
@@ -146,12 +140,6 @@ class SupplierWriteFields {
   @ApiProperty({ description: '联系电话（11 位手机号）' })
   @Matches(PHONE_RE, { message: '联系电话格式不正确' })
   contactPhone!: string;
-
-  @ApiPropertyOptional({ description: '主营品类' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(32)
-  category?: string;
 
   @ApiPropertyOptional({ description: '营业执照文件 URL 或编号（后置收集，允许为空）' })
   @IsOptional()
@@ -213,12 +201,6 @@ export class UpdateSupplierDto {
   @IsOptional()
   @Matches(PHONE_RE, { message: '联系电话格式不正确' })
   contactPhone?: string;
-
-  @ApiPropertyOptional({ description: '主营品类' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(32)
-  category?: string;
 
   @ApiPropertyOptional({ description: '营业执照' })
   @IsOptional()

@@ -133,7 +133,6 @@
           <div class="stack">
             <span class="strong">{{ asRow(row).name }}</span>
             <span class="sub">
-              {{ asRow(row).category || '未标注品类' }} ·
               {{ asRow(row).capacityPerDay ? `${asRow(row).capacityPerDay} 份/日` : '产能未登记' }}
             </span>
           </div>
@@ -339,7 +338,7 @@ const summary = reactive<SuppliersSummary>({
   canServeCount: 0,
 });
 
-/** 枚举选择器由服务端下发（含真实品类去重），端上不维护第二份中文映射 */
+/** 枚举选择器由服务端下发，端上不维护第二份中文映射 */
 const page = reactive<{
   auditStatusOptions: Option[];
   statusOptions: Option[];

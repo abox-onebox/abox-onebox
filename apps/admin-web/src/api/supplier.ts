@@ -31,7 +31,6 @@ export interface SupplierRow {
   contactName: string;
   /** 列表只给脱敏号；详情才给真实号码 */
   contactPhoneMasked: string | null;
-  category: string | null;
 
   auditStatus: string;
   auditStatusLabel: string;
@@ -95,7 +94,6 @@ export interface SuppliersPage extends PageResult<SupplierRow> {
   summary: SuppliersSummary;
   auditStatusOptions: Option[];
   statusOptions: Option[];
-  categoryOptions: Option[];
   payeeTypeOptions: Option[];
   actions: { canManage: boolean };
   notes?: Record<string, string>;

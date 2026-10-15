@@ -5,7 +5,6 @@
     <template v-else-if="data">
       <view class="hd">
         <text class="hd__name">{{ data.name }}</text>
-        <text v-if="data.category" class="hd__cat">{{ data.category }}</text>
       </view>
 
       <!-- 说明（服务端生成；无资质时它会说明「是哪一种事实」而不是留白） -->
@@ -137,15 +136,6 @@ onLoad((query) => {
     font-size: $fs-h2;
     font-weight: bold;
     color: $c-text;
-  }
-
-  &__cat {
-    margin-left: $space-2;
-    padding: 2rpx $space-1;
-    font-size: $fs-caption;
-    color: #ffffff;
-    background: $c-gold;
-    border-radius: $radius-sm;
   }
 }
 

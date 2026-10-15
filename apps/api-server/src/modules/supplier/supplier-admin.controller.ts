@@ -61,7 +61,7 @@ export class SupplierAdminController {
   @ApiOperation({
     summary: 'D23 供应商名录',
     description:
-      '按类型 / 合作状态 / 资质审核状态 / 证照有效期 / 品类 / 关键词筛选。' +
+      '按合作状态 / 资质审核状态 / 证照有效期 / 关键词筛选。' +
       'summary 为同一过滤条件的全量统计（翻页不跳 KPI）；' +
       '`licenseState`（normal/expiring/expired/unknown）是派生值，不落库；' +
       '`canServe` = 合作中 ∧ 资质已通过 ∧ 证照未过期（S2 出餐前置校验的同一判据）。' +
@@ -75,9 +75,9 @@ export class SupplierAdminController {
   @ApiOperation({
     summary: 'D23 附属 · 筛选器下拉（审核状态 / 合作状态 / 付款方式）',
     description:
-      '关键字补充：品类下拉由列表接口的 `categoryOptions` 动态下发（真实数据去重），' +
-      '此处只回枚举类选择器。独立成接口而非复用 `/admin/meal/dishes`：' +
-      '后者供套餐编排选菜，语义是「有没有这道菜」，与「有哪些品类」不是一回事。' +
+      '关键字补充：筛选用的枚举选择器（审核状态 / 合作状态 / 付款方式）由 `/suppliers/filter-options` 提供；' +
+      '独立成接口而非复用 `/admin/meal/dishes`：' +
+      '后者供套餐编排选菜，语义是「有没有这道菜」。' +
       '⚠️ M4-0 起**不再下发 `typeOptions`** —— 供应商类型已停用（自营下只有一种角色）。',
   })
   filterOptions() {

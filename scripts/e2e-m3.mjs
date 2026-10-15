@@ -4567,9 +4567,9 @@ async function main() {
     `typeOptions=${JSON.stringify(sList.body?.data?.typeOptions)} audit=${sList.body?.data?.auditStatusOptions?.length}`,
   );
   assert(
-    (sList.body?.data?.categoryOptions ?? []).some((o) => o.value === '本帮菜'),
-    'D23 categoryOptions 来自**真实数据去重**（不是写死的枚举）：种子里「本帮菜」必须在列',
-    `cats=${JSON.stringify((sList.body?.data?.categoryOptions ?? []).map((o) => o.value).slice(0, 6))}`,
+    sList.body?.data?.categoryOptions === undefined,
+    'D23 不再下发 `categoryOptions`（去餐化：供应商主营品类标签已从系统移除，且非白名单字段）',
+    `categoryOptions=${JSON.stringify(sList.body?.data?.categoryOptions)}`,
   );
   assert(
     sList.body?.data?.actions?.canManage === true,
@@ -4686,7 +4686,6 @@ async function main() {
       name: supA,
       contactName: 'e2e 联系人A',
       contactPhone: mkPhone(1),
-      category: '测试品类',
       address: '朝阳区测试路 1 号',
       capacityPerDay: 300,
       payeeType: 'corporate',
@@ -4714,7 +4713,6 @@ async function main() {
       name: supB,
       contactName: 'e2e 联系人B',
       contactPhone: mkPhone(2),
-      category: '测试品类',
       payeeType: 'personal',
     },
   });

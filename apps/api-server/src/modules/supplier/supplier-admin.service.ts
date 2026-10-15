@@ -43,7 +43,6 @@ type SupplierListResult = PageResult<Record<string, unknown>> & {
   summary: Record<string, unknown>;
   auditStatusOptions: Array<Record<string, unknown>>;
   statusOptions: Array<Record<string, unknown>>;
-  categoryOptions: Array<Record<string, unknown>>;
   payeeTypeOptions: Array<Record<string, unknown>>;
   actions: SupplierActions;
   notes?: Record<string, string>;
@@ -147,9 +146,6 @@ export class SupplierAdminService {
         value: v,
         label: SUPPLIER_STATUS_LABEL[v],
       })),
-      categoryOptions: [...new Set(all.map((s) => s.category).filter((c): c is string => !!c))]
-        .sort()
-        .map((c) => ({ value: c, label: c })),
       payeeTypeOptions: (Object.keys(PAYEE_TYPE_LABEL) as PayeeType[]).map((v) => ({
         value: v,
         label: PAYEE_TYPE_LABEL[v],
@@ -238,7 +234,6 @@ export class SupplierAdminService {
         // ⚠️ 不再写 `type`（列保留为历史字段，走列默认值）—— 自营下供应商无类型之分
         contactName: dto.contactName,
         contactPhone: dto.contactPhone,
-        category: dto.category ?? null,
         businessLicense: dto.businessLicense ?? null,
         foodLicense: dto.foodLicense ?? null,
         licenseExpireAt: dto.licenseExpireAt ?? null,
@@ -273,7 +268,6 @@ export class SupplierAdminService {
     if (dto.name !== undefined) s.name = dto.name;
     if (dto.contactName !== undefined) s.contactName = dto.contactName;
     if (dto.contactPhone !== undefined) s.contactPhone = dto.contactPhone;
-    if (dto.category !== undefined) s.category = dto.category;
     if (dto.businessLicense !== undefined) s.businessLicense = dto.businessLicense;
     if (dto.foodLicense !== undefined) s.foodLicense = dto.foodLicense;
     if (dto.address !== undefined) s.address = dto.address;
@@ -456,7 +450,6 @@ export class SupplierAdminService {
     // ⚠️ M4-0 起**没有 `type` 筛选** —— 供应商类型已停用（见文件头纪律 3）。
     if (q.status !== undefined) qb.andWhere('s.status = :status', { status: q.status });
     if (q.auditStatus) qb.andWhere('s.audit_status = :as', { as: q.auditStatus });
-    if (q.category) qb.andWhere('s.category = :cat', { cat: q.category });
 
     if (q.licenseState) {
       const today = todayBj();
@@ -535,7 +528,6 @@ export class SupplierAdminService {
       contactName: s.contactName,
       /** 列表一律脱敏（详情才给真号）*/
       contactPhoneMasked: maskPhone(s.contactPhone),
-      category: s.category ?? null,
       auditStatus: s.auditStatus,
       auditStatusLabel:
         SUPPLIER_AUDIT_STATUS_LABEL[s.auditStatus as SupplierAuditStatus] ?? s.auditStatus,

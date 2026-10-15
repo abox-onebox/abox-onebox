@@ -26,7 +26,7 @@
  * **同一套判据**，只是不在同一处实现：S1 是**拦截**（不合格不许出餐），
  * 这里则是**展示**（不合格就不出现在资质墙里）。
  *
- * ⚠️「暂未供应」组**只给名字与品类、不给资质**：把一张过期证照或未核验证照
+ * ⚠️「暂未供应」组**只给名字、不给资质**：把一张过期证照或未核验证照
  * 摆上资质墙，比不摆更糟 —— 用户会当成它仍然有效。
  */
 import type { TraceabilityQualification } from './traceability.dto';
@@ -55,8 +55,6 @@ export interface SupplierQualificationItem {
   /** `ab_supplier.id` —— 列表跳详情按 id，不按 name（`name` 无唯一约束） */
   id: number;
   name: string;
-  /** 主营品类（本帮菜 / 时蔬 / 京味 / 汤品…）；未登记为 null */
-  category: string | null;
   /**
    * 已核验在册的资质项
    *
@@ -77,7 +75,7 @@ export interface SupplierQualificationItem {
 export interface SupplierQualificationListResult {
   /** 正在供应（资质有效）—— 资质墙的主体 */
   serving: SupplierQualificationItem[];
-  /** 暂未供应（停用 / 资质未过审 / 证照过期）—— 只列名与品类 */
+  /** 暂未供应（停用 / 资质未过审 / 证照过期）—— 只列名 */
   inactive: SupplierQualificationItem[];
   /** 列表顶部说明（服务端按真实数据生成，端上不拼文案） */
   note: string;
@@ -87,7 +85,6 @@ export interface SupplierQualificationListResult {
 export interface SupplierQualificationDetail {
   id: number;
   name: string;
-  category: string | null;
   serving: boolean;
   /** 证照逐条；未通过核验或不在供时为空数组（原因写在 `note` 里，不静默留白） */
   entries: SupplierQualificationEntry[];

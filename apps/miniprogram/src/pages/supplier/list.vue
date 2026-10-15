@@ -27,7 +27,6 @@
           <view class="row__main">
             <view class="row__hd">
               <text class="row__name">{{ s.name }}</text>
-              <text v-if="s.category" class="row__cat">{{ s.category }}</text>
             </view>
             <text v-if="verifiedText(s.qualifications)" class="row__verified">
               {{ verifiedText(s.qualifications) }}
@@ -40,7 +39,7 @@
         </view>
       </view>
 
-      <!-- 暂未供应：只列名字与品类，不带资质（过期证照不该摆上资质墙） -->
+      <!-- 暂未供应：只列名字，不带资质（过期证照不该摆上资质墙） -->
       <view v-if="data.inactive.length" class="group">
         <text class="group__title">暂未供应</text>
         <view
@@ -53,7 +52,6 @@
           <view class="row__main">
             <view class="row__hd">
               <text class="row__name">{{ s.name }}</text>
-              <text v-if="s.category" class="row__cat">{{ s.category }}</text>
             </view>
             <text class="row__expire">当前未在供应名单中</text>
           </view>
@@ -249,15 +247,6 @@ onShow(() => {
     font-size: $fs-body;
     font-weight: bold;
     color: $c-text;
-  }
-
-  &__cat {
-    margin-left: $space-2;
-    padding: 2rpx $space-1;
-    font-size: $fs-caption;
-    color: #ffffff;
-    background: $c-gold;
-    border-radius: $radius-sm;
   }
 
   &__verified {

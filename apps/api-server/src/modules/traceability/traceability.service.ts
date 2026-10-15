@@ -204,7 +204,6 @@ export class TraceabilityService {
       const item: SupplierQualificationItem = {
         id: Number(s.id),
         name: s.name,
-        category: s.category ?? null,
         // 暂未供应组一律不带资质与有效期：把过期 / 未核验证照摆上资质墙比不摆更糟
         qualifications: ok ? this.qualificationsOf(s) : [],
         licenseExpireAt: ok ? (s.licenseExpireAt ?? null) : null,
@@ -254,7 +253,6 @@ export class TraceabilityService {
     return {
       id: Number(s.id),
       name: s.name,
-      category: s.category ?? null,
       serving,
       entries,
       items: dishRows.map((d) => d.name),

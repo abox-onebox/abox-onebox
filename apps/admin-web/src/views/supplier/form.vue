@@ -50,15 +50,6 @@
           <el-input v-model="form.contactPhone" maxlength="11" style="width: 220px" />
         </el-form-item>
 
-        <el-form-item label="主营品类">
-          <el-input
-            v-model="form.category"
-            maxlength="32"
-            style="width: 220px"
-            placeholder="如：本帮菜"
-          />
-        </el-form-item>
-
         <el-form-item label="地址">
           <el-input v-model="form.address" maxlength="256" placeholder="供应商经营地址（可选）" />
         </el-form-item>
@@ -275,7 +266,6 @@ const form = reactive({
   name: '',
   contactName: '',
   contactPhone: '',
-  category: '',
   address: '',
   capacityPerDay: 0 as number | undefined,
   businessLicense: '',
@@ -321,7 +311,6 @@ async function loadDetail(): Promise<void> {
     form.name = s.name;
     form.contactName = s.contactName;
     form.contactPhone = res.contactPhone ?? '';
-    form.category = s.category ?? '';
     form.licenseExpireAt = s.licenseExpireAt ?? undefined;
     form.payeeType = res.bank.payeeType;
     form.bankName = res.bank.bankName ?? '';
@@ -352,7 +341,6 @@ async function submit(): Promise<void> {
         name: form.name,
         contactName: form.contactName,
         contactPhone: form.contactPhone,
-        category: form.category || undefined,
         address: form.address || undefined,
         capacityPerDay: form.capacityPerDay,
         businessLicense: form.businessLicense || undefined,
@@ -374,7 +362,6 @@ async function submit(): Promise<void> {
         name: form.name,
         contactName: form.contactName,
         contactPhone: form.contactPhone,
-        category: form.category || undefined,
         address: form.address || undefined,
         capacityPerDay: form.capacityPerDay,
         businessLicense: form.businessLicense || undefined,
