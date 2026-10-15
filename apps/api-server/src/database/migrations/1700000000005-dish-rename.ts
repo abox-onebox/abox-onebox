@@ -41,7 +41,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * 对称回退：反向 RENAME / CHANGE / RENAME INDEX（列改名保留原类型）。
  */
 
-async function tableExists(qr: QueryRunner, table: string): Promise<boolean> {
+export async function tableExists(qr: QueryRunner, table: string): Promise<boolean> {
   const rows = await qr.query(
     'SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1',
     [table],
@@ -49,7 +49,11 @@ async function tableExists(qr: QueryRunner, table: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-async function columnExists(qr: QueryRunner, table: string, column: string): Promise<boolean> {
+export async function columnExists(
+  qr: QueryRunner,
+  table: string,
+  column: string,
+): Promise<boolean> {
   const rows = await qr.query(
     'SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1',
     [table, column],
@@ -57,7 +61,7 @@ async function columnExists(qr: QueryRunner, table: string, column: string): Pro
   return rows.length > 0;
 }
 
-async function indexExists(qr: QueryRunner, table: string, index: string): Promise<boolean> {
+export async function indexExists(qr: QueryRunner, table: string, index: string): Promise<boolean> {
   const rows = await qr.query(
     'SELECT 1 FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ? LIMIT 1',
     [table, index],
@@ -66,14 +70,14 @@ async function indexExists(qr: QueryRunner, table: string, index: string): Promi
 }
 
 /** 字面量 SQL —— schema-parity 解析器直接读取（不要改成模板字符串拼变量） */
-const TABLE_RENAMES: ReadonlyArray<string> = [
+export const TABLE_RENAMES: ReadonlyArray<string> = [
   'RENAME TABLE `ab_dish` TO `ab_item`',
   'RENAME TABLE `ab_dish_rating` TO `ab_item_rating`',
   'RENAME TABLE `ab_supplier_dish_daily` TO `ab_supplier_item_daily`',
   'RENAME TABLE `ab_supplier_dish_center_daily` TO `ab_supplier_item_center_daily`',
 ];
 
-const COLUMN_RENAMES: ReadonlyArray<string> = [
+export const COLUMN_RENAMES: ReadonlyArray<string> = [
   'ALTER TABLE `ab_set_meal_item` CHANGE `dish_id` `item_id` BIGINT UNSIGNED NOT NULL',
   'ALTER TABLE `ab_item_rating` CHANGE `dish_id` `item_id` BIGINT UNSIGNED NOT NULL',
   'ALTER TABLE `ab_item_rating` CHANGE `dish_name` `item_name` VARCHAR(64) NOT NULL',
@@ -82,7 +86,7 @@ const COLUMN_RENAMES: ReadonlyArray<string> = [
   'ALTER TABLE `ab_supplier_share` CHANGE `dish_id` `item_id` BIGINT UNSIGNED DEFAULT NULL',
 ];
 
-const INDEX_RENAMES: ReadonlyArray<string> = [
+export const INDEX_RENAMES: ReadonlyArray<string> = [
   'ALTER TABLE `ab_item` RENAME INDEX `idx_dish_category` TO `idx_item_category`',
   'ALTER TABLE `ab_item` RENAME INDEX `idx_dish_supplier` TO `idx_item_supplier`',
   'ALTER TABLE `ab_supplier_item_daily` RENAME INDEX `idx_supplier_dish_date` TO `idx_supplier_item_date`',
@@ -95,19 +99,19 @@ const INDEX_RENAMES: ReadonlyArray<string> = [
   'ALTER TABLE `ab_supplier_item_center_daily` RENAME INDEX `idx_sddc_supplier` TO `idx_sidc_supplier`',
 ];
 
-function renameTablePair(sql: string): [string, string] {
+export function renameTablePair(sql: string): [string, string] {
   const m = /RENAME TABLE\s+`([^`]+)`\s+TO\s+`([^`]+)`/.exec(sql);
   if (!m) throw new Error(`无法解析 RENAME TABLE 语句：${sql}`);
   return [m[1], m[2]];
 }
 
-function columnRenameTriple(sql: string): [string, string, string] {
+export function columnRenameTriple(sql: string): [string, string, string] {
   const m = /ALTER TABLE\s+`([^`]+)`\s+CHANGE\s+`([^`]+)`\s+`([^`]+)`/.exec(sql);
   if (!m) throw new Error(`无法解析 CHANGE 语句：${sql}`);
   return [m[1], m[2], m[3]];
 }
 
-function indexRenameTriple(sql: string): [string, string, string] {
+export function indexRenameTriple(sql: string): [string, string, string] {
   const m = /ALTER TABLE\s+`([^`]+)`\s+RENAME INDEX\s+`([^`]+)`\s+TO\s+`([^`]+)`/.exec(sql);
   if (!m) throw new Error(`无法解析 RENAME INDEX 语句：${sql}`);
   return [m[1], m[2], m[3]];
@@ -132,7 +136,10 @@ export class DishRename1700000000005 implements MigrationInterface {
     }
 
     for (const sql of COLUMN_RENAMES) {
-      const [, table, oldC] = columnRenameTriple(sql);
+      // ⚠️ 解构是 `[表, 旧列, 新列]`。曾错写成 `const [, table, oldC]` —— 丢掉表名、
+      //    把「旧列名」当表名、「新列名」当旧列名 ⇒ 判据恒 false ⇒ 6 条列改名**全被静默跳过**
+      //    （迁移仍记为已执行，之后再跑也永远跳过）。补救见 1700000000006。
+      const [table, oldC] = columnRenameTriple(sql);
       if (await columnExists(queryRunner, table, oldC)) {
         await queryRunner.query(sql);
         columns += 1;
@@ -140,7 +147,8 @@ export class DishRename1700000000005 implements MigrationInterface {
     }
 
     for (const sql of INDEX_RENAMES) {
-      const [, table, oldI] = indexRenameTriple(sql);
+      // ⚠️ 同 COLUMN_RENAMES 的坑：解构是 `[表, 旧索引, 新索引]`，不可丢弃第一项
+      const [table, oldI] = indexRenameTriple(sql);
       if (await indexExists(queryRunner, table, oldI)) {
         await queryRunner.query(sql);
         indexes += 1;
