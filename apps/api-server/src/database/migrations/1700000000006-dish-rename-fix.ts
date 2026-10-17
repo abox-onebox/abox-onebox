@@ -9,7 +9,7 @@ import {
   renameTablePair,
   columnRenameTriple,
   indexRenameTriple,
-} from './1700000000005-dish-rename';
+} from '../migration-utils';
 
 /**
  * 补救迁移：`1700000000005` 的**列改名与索引改名被静默跳过**，本支负责补齐
