@@ -41,7 +41,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * 对称回退：反向 RENAME / CHANGE / RENAME INDEX（列改名保留原类型）。
  */
 
-export async function tableExists(qr: QueryRunner, table: string): Promise<boolean> {
+async function tableExists(qr: QueryRunner, table: string): Promise<boolean> {
   const rows = await qr.query(
     'SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1',
     [table],
@@ -49,11 +49,7 @@ export async function tableExists(qr: QueryRunner, table: string): Promise<boole
   return rows.length > 0;
 }
 
-export async function columnExists(
-  qr: QueryRunner,
-  table: string,
-  column: string,
-): Promise<boolean> {
+async function columnExists(qr: QueryRunner, table: string, column: string): Promise<boolean> {
   const rows = await qr.query(
     'SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1',
     [table, column],
@@ -61,7 +57,7 @@ export async function columnExists(
   return rows.length > 0;
 }
 
-export async function indexExists(qr: QueryRunner, table: string, index: string): Promise<boolean> {
+async function indexExists(qr: QueryRunner, table: string, index: string): Promise<boolean> {
   const rows = await qr.query(
     'SELECT 1 FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ? LIMIT 1',
     [table, index],
@@ -99,19 +95,19 @@ export const INDEX_RENAMES: ReadonlyArray<string> = [
   'ALTER TABLE `ab_supplier_item_center_daily` RENAME INDEX `idx_sddc_supplier` TO `idx_sidc_supplier`',
 ];
 
-export function renameTablePair(sql: string): [string, string] {
+function renameTablePair(sql: string): [string, string] {
   const m = /RENAME TABLE\s+`([^`]+)`\s+TO\s+`([^`]+)`/.exec(sql);
   if (!m) throw new Error(`无法解析 RENAME TABLE 语句：${sql}`);
   return [m[1], m[2]];
 }
 
-export function columnRenameTriple(sql: string): [string, string, string] {
+function columnRenameTriple(sql: string): [string, string, string] {
   const m = /ALTER TABLE\s+`([^`]+)`\s+CHANGE\s+`([^`]+)`\s+`([^`]+)`/.exec(sql);
   if (!m) throw new Error(`无法解析 CHANGE 语句：${sql}`);
   return [m[1], m[2], m[3]];
 }
 
-export function indexRenameTriple(sql: string): [string, string, string] {
+function indexRenameTriple(sql: string): [string, string, string] {
   const m = /ALTER TABLE\s+`([^`]+)`\s+RENAME INDEX\s+`([^`]+)`\s+TO\s+`([^`]+)`/.exec(sql);
   if (!m) throw new Error(`无法解析 RENAME INDEX 语句：${sql}`);
   return [m[1], m[2], m[3]];
