@@ -8,7 +8,10 @@ import { QueryRunner } from 'typeorm';
  * 普通/箭头函数被 `new` 会报 `someClass is not a constructor`，阻断 migration:run。
  * 本模块只被各迁移文件 import，加载器扫不到它，故导出的函数不会污染迁移集合。
  *
- * 三个 `*_RENAMES` 常量数组虽也导出，但数组是对象、加载器只收函数，故安全。
+ * ⚠️ 三个 `*_RENAMES` 常量数组**不在这里**——它们在 `1700000000005-dish-rename.ts`
+ * （迁移文件内，模块级、位于 `up()` 之前）。原因：`schema-parity` 解析器只扫 `migrations/*.ts`，
+ * 若把数组放本模块（`migrations/` 之外）解析器扫不到 ⇒ 改名对源A 不可见 ⇒ 误报缺表/缺列。
+ * 故数组留在迁移文件内、辅助函数留本模块，二者职责分离。
  */
 
 async function tableExists(qr: QueryRunner, table: string): Promise<boolean> {
@@ -34,36 +37,6 @@ async function indexExists(qr: QueryRunner, table: string, index: string): Promi
   );
   return rows.length > 0;
 }
-
-/** 字面量 SQL —— schema-parity 解析器直接读取（不要改成模板字符串拼变量） */
-export const TABLE_RENAMES: ReadonlyArray<string> = [
-  'RENAME TABLE `ab_dish` TO `ab_item`',
-  'RENAME TABLE `ab_dish_rating` TO `ab_item_rating`',
-  'RENAME TABLE `ab_supplier_dish_daily` TO `ab_supplier_item_daily`',
-  'RENAME TABLE `ab_supplier_dish_center_daily` TO `ab_supplier_item_center_daily`',
-];
-
-export const COLUMN_RENAMES: ReadonlyArray<string> = [
-  'ALTER TABLE `ab_set_meal_item` CHANGE `dish_id` `item_id` BIGINT UNSIGNED NOT NULL',
-  'ALTER TABLE `ab_item_rating` CHANGE `dish_id` `item_id` BIGINT UNSIGNED NOT NULL',
-  'ALTER TABLE `ab_item_rating` CHANGE `dish_name` `item_name` VARCHAR(64) NOT NULL',
-  'ALTER TABLE `ab_supplier_item_daily` CHANGE `dish_id` `item_id` BIGINT UNSIGNED NOT NULL',
-  'ALTER TABLE `ab_supplier_item_center_daily` CHANGE `dish_id` `item_id` BIGINT UNSIGNED NOT NULL',
-  'ALTER TABLE `ab_supplier_share` CHANGE `dish_id` `item_id` BIGINT UNSIGNED DEFAULT NULL',
-];
-
-export const INDEX_RENAMES: ReadonlyArray<string> = [
-  'ALTER TABLE `ab_item` RENAME INDEX `idx_dish_category` TO `idx_item_category`',
-  'ALTER TABLE `ab_item` RENAME INDEX `idx_dish_supplier` TO `idx_item_supplier`',
-  'ALTER TABLE `ab_supplier_item_daily` RENAME INDEX `idx_supplier_dish_date` TO `idx_supplier_item_date`',
-  'ALTER TABLE `ab_supplier_item_daily` RENAME INDEX `uk_supplier_dish_date` TO `uk_supplier_item_date`',
-  'ALTER TABLE `ab_supplier_item_center_daily` RENAME INDEX `uk_sddc` TO `uk_sidc`',
-  'ALTER TABLE `ab_item_rating` RENAME INDEX `uk_dish_rating_order_dish` TO `uk_item_rating_order_dish`',
-  'ALTER TABLE `ab_item_rating` RENAME INDEX `idx_dish_rating_dish_date` TO `idx_item_rating_dish_date`',
-  'ALTER TABLE `ab_item_rating` RENAME INDEX `idx_dish_rating_user` TO `idx_item_rating_user`',
-  'ALTER TABLE `ab_supplier_item_center_daily` RENAME INDEX `idx_sddc_date_center` TO `idx_sidc_date_center`',
-  'ALTER TABLE `ab_supplier_item_center_daily` RENAME INDEX `idx_sddc_supplier` TO `idx_sidc_supplier`',
-];
 
 function renameTablePair(sql: string): [string, string] {
   const m = /RENAME TABLE\s+`([^`]+)`\s+TO\s+`([^`]+)`/.exec(sql);

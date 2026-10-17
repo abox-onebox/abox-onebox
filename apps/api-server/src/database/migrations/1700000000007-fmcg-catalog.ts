@@ -20,7 +20,7 @@ export class FmcgCatalog1700000000007 implements MigrationInterface {
     );
     if (!Array.isArray(col) || col.length === 0) {
       await queryRunner.query(
-        `ALTER TABLE ab_set_meal ADD COLUMN kind varchar(16) NOT NULL DEFAULT 'meal'
+        `ALTER TABLE \`ab_set_meal\` ADD COLUMN \`kind\` VARCHAR(16) NOT NULL DEFAULT 'meal'
          COMMENT 'meal 饭类套餐 / fmcg 快消品套餐（去餐化·2026-10-15）'`,
       );
     }

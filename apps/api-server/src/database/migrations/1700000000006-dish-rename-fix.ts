@@ -1,8 +1,5 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 import {
-  TABLE_RENAMES,
-  COLUMN_RENAMES,
-  INDEX_RENAMES,
   tableExists,
   columnExists,
   indexExists,
@@ -10,6 +7,8 @@ import {
   columnRenameTriple,
   indexRenameTriple,
 } from '../migration-utils';
+// 改名 SQL 字面量直接复用 1700000000005 导出的同一份（不要复制第二份，避免 schema-parity 解析出重复改名）
+import { TABLE_RENAMES, COLUMN_RENAMES, INDEX_RENAMES } from './1700000000005-dish-rename';
 
 /**
  * 补救迁移：`1700000000005` 的**列改名与索引改名被静默跳过**，本支负责补齐

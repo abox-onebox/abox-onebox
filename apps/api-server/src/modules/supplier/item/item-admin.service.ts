@@ -150,7 +150,9 @@ export class ItemAdminService {
       id: Number(d.id),
       name: d.name,
       category: d.category,
-      categoryLabel: DISH_CATEGORY_LABEL[d.category as DishCategory] ?? d.category,
+      // ⚠️ 去餐化：快消品商品 `category` 故意留空（端上回落包裹图标，见 utils/format.ts 的 dishIcon）；
+      // 但后台菜品库契约要求每行都带中文档位标签 ⇒ 空值时回落中性「通用」，不返回 null。
+      categoryLabel: DISH_CATEGORY_LABEL[d.category as DishCategory] ?? d.category ?? '通用',
       costPriceFen: toFen(Number(d.costPrice)),
       status: d.status,
     };
@@ -204,7 +206,9 @@ export class ItemAdminService {
       supplierName: nameMap.get(supplierId) ?? null,
       name: d.name,
       category: d.category ?? null,
-      categoryLabel: DISH_CATEGORY_LABEL[d.category as DishCategory] ?? d.category,
+      // ⚠️ 去餐化：快消品商品 `category` 故意留空（端上回落包裹图标，见 utils/format.ts 的 dishIcon）；
+      // 但后台菜品库契约要求每行都带中文档位标签 ⇒ 空值时回落中性「通用」，不返回 null。
+      categoryLabel: DISH_CATEGORY_LABEL[d.category as DishCategory] ?? d.category ?? '通用',
       costPriceFen: toFen(Number(d.costPrice)),
       /** 元串：仅用于前端输入框回填（避免「分转元」在两端各写一遍） */
       costPriceYuan: toYuan(toFen(Number(d.costPrice))).toFixed(2),

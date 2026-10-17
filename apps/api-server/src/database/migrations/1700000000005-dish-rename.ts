@@ -1,8 +1,5 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 import {
-  TABLE_RENAMES,
-  COLUMN_RENAMES,
-  INDEX_RENAMES,
   tableExists,
   columnExists,
   indexExists,
@@ -10,6 +7,47 @@ import {
   columnRenameTriple,
   indexRenameTriple,
 } from '../migration-utils';
+
+/**
+ * 改名 SQL 字面量（模块级常量，写在本迁移文件内，而非 `../migration-utils`）
+ *
+ * ⚠️ 必须写在本文件：`schema-parity` 解析器只扫 `migrations/*.ts`，`migration-utils.ts`
+ * 在 `migrations/` 之外、扫不到 ⇒ 改名对源A 不可见 ⇒ 误报「缺表 / 缺列」。先前抽到
+ * `migration-utils.ts` 正是 parity 红的根因。本文件内（模块级、位于 `up()` 之前）会被
+ * `upScope` 完整纳入，解析器即可读到，源A 才能推演到改名后的结构。
+ *
+ * 数组放本文件、辅助函数留 `migration-utils.ts`（避免被迁移加载器当成迁移类 `new`）——
+ * 既恢复 parity 可见性，又保留「函数移出 migrations 目录」的架构修正。
+ * `1700000000006` 直接复用本文件导出的同一份，避免 schema-parity 解析出重复改名。
+ */
+export const TABLE_RENAMES: ReadonlyArray<string> = [
+  'RENAME TABLE `ab_dish` TO `ab_item`',
+  'RENAME TABLE `ab_dish_rating` TO `ab_item_rating`',
+  'RENAME TABLE `ab_supplier_dish_daily` TO `ab_supplier_item_daily`',
+  'RENAME TABLE `ab_supplier_dish_center_daily` TO `ab_supplier_item_center_daily`',
+];
+
+export const COLUMN_RENAMES: ReadonlyArray<string> = [
+  'ALTER TABLE `ab_set_meal_item` CHANGE `dish_id` `item_id` BIGINT UNSIGNED NOT NULL',
+  'ALTER TABLE `ab_item_rating` CHANGE `dish_id` `item_id` BIGINT UNSIGNED NOT NULL',
+  'ALTER TABLE `ab_item_rating` CHANGE `dish_name` `item_name` VARCHAR(64) NOT NULL',
+  'ALTER TABLE `ab_supplier_item_daily` CHANGE `dish_id` `item_id` BIGINT UNSIGNED NOT NULL',
+  'ALTER TABLE `ab_supplier_item_center_daily` CHANGE `dish_id` `item_id` BIGINT UNSIGNED NOT NULL',
+  'ALTER TABLE `ab_supplier_share` CHANGE `dish_id` `item_id` BIGINT UNSIGNED DEFAULT NULL',
+];
+
+export const INDEX_RENAMES: ReadonlyArray<string> = [
+  'ALTER TABLE `ab_item` RENAME INDEX `idx_dish_category` TO `idx_item_category`',
+  'ALTER TABLE `ab_item` RENAME INDEX `idx_dish_supplier` TO `idx_item_supplier`',
+  'ALTER TABLE `ab_supplier_item_daily` RENAME INDEX `idx_supplier_dish_date` TO `idx_supplier_item_date`',
+  'ALTER TABLE `ab_supplier_item_daily` RENAME INDEX `uk_supplier_dish_date` TO `uk_supplier_item_date`',
+  'ALTER TABLE `ab_supplier_item_center_daily` RENAME INDEX `uk_sddc` TO `uk_sidc`',
+  'ALTER TABLE `ab_item_rating` RENAME INDEX `uk_dish_rating_order_dish` TO `uk_item_rating_order_dish`',
+  'ALTER TABLE `ab_item_rating` RENAME INDEX `idx_dish_rating_dish_date` TO `idx_item_rating_dish_date`',
+  'ALTER TABLE `ab_item_rating` RENAME INDEX `idx_dish_rating_user` TO `idx_item_rating_user`',
+  'ALTER TABLE `ab_supplier_item_center_daily` RENAME INDEX `idx_sddc_date_center` TO `idx_sidc_date_center`',
+  'ALTER TABLE `ab_supplier_item_center_daily` RENAME INDEX `idx_sddc_supplier` TO `idx_sidc_supplier`',
+];
 
 /**
  * P3 + P1 合并重构（第一批 · 破坏性 DDL）—— 把「菜品 / 菜」概念统一改名为「商品 / 品」
