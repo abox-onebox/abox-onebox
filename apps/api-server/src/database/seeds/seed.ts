@@ -378,6 +378,23 @@ async function main(): Promise<void> {
       status: 1,
       payeeType: 'corporate',
     },
+    // ⭐ 去餐化 · 快消品供应商（2026-10-15）：泡面 / 零食 / 饮品组合的出品方
+    {
+      id: 11,
+      name: '优选便利仓',
+      contactName: '—',
+      contactPhone: '13900000011',
+      status: 1,
+      payeeType: 'corporate',
+    },
+    {
+      id: 12,
+      name: '零食研究所',
+      contactName: '—',
+      contactPhone: '13900000012',
+      status: 1,
+      payeeType: 'corporate',
+    },
   ]);
 
   // ---------- 4. 集散中心（4 · C4 表驱动 · = ABox 自有加工/出餐场所） ----------
@@ -548,6 +565,79 @@ async function main(): Promise<void> {
       category: 'main',
       costPrice: '6.00',
       rating: '4.50',
+      status: 1,
+    },
+    // ⭐ 去餐化 · 快消品商品（2026-10-15）：category 留空 → 端上回落通用包裹图标
+    {
+      id: 101,
+      supplierId: 11,
+      name: '红烧牛肉面',
+      category: null,
+      costPrice: '4.50',
+      rating: '4.80',
+      status: 1,
+    },
+    {
+      id: 102,
+      supplierId: 11,
+      name: '鲜虾鱼板面',
+      category: null,
+      costPrice: '4.50',
+      rating: '4.70',
+      status: 1,
+    },
+    {
+      id: 103,
+      supplierId: 11,
+      name: '冰镇酸梅汤',
+      category: null,
+      costPrice: '2.00',
+      rating: '4.60',
+      status: 1,
+    },
+    {
+      id: 104,
+      supplierId: 11,
+      name: '手冲挂耳咖啡',
+      category: null,
+      costPrice: '3.00',
+      rating: '4.90',
+      status: 1,
+    },
+    {
+      id: 105,
+      supplierId: 12,
+      name: '海盐薯片',
+      category: null,
+      costPrice: '3.00',
+      rating: '4.70',
+      status: 1,
+    },
+    {
+      id: 106,
+      supplierId: 12,
+      name: '每日坚果',
+      category: null,
+      costPrice: '4.00',
+      rating: '4.80',
+      status: 1,
+    },
+    {
+      id: 107,
+      supplierId: 12,
+      name: '乳酸菌小软糖',
+      category: null,
+      costPrice: '2.50',
+      rating: '4.50',
+      status: 1,
+    },
+    {
+      id: 108,
+      supplierId: 12,
+      name: '手工曲奇',
+      category: null,
+      costPrice: '3.50',
+      rating: '4.60',
       status: 1,
     },
   ]);
@@ -931,8 +1021,28 @@ async function main(): Promise<void> {
       oneLiner: '台式咖喱鸡 · 一饭四菜',
       status: 1,
     },
+    // ⭐ 去餐化 · 快消品套餐（2026-10-15）：kind='fmcg' → 跳过一饭四菜校验、端上隐藏米饭行、切换包裹图标
+    {
+      id: 8,
+      name: '泡面宵夜包',
+      price: '25.80',
+      costPrice: '14.00',
+      oneLiner: '夜宵也能很讲究',
+      kind: 'fmcg',
+      status: 1,
+    },
+    {
+      id: 9,
+      name: '零食能量包',
+      price: '25.80',
+      costPrice: '13.00',
+      oneLiner: '办公室的能量补给站',
+      kind: 'fmcg',
+      status: 1,
+    },
   ]);
   // slot：1 主荤 / 2 半荤 / 3 素菜 / 4 汤 / 5 主食
+  // ⭐ 快消品套餐改用「1 主件 / 2 辅品 / 3 素品 / 4 附品」档位（去餐化，slot 注释见 entity）
   // 主食由集散中心统一供米（¥2/份），不计入供应商商品成本，故不建 item
   await smiRepo.save([
     { setMealId: 1, itemId: 1, supplierId: 1, slot: 1, shareAmount: '7.50' },
@@ -962,6 +1072,15 @@ async function main(): Promise<void> {
     { setMealId: 7, itemId: 6, supplierId: 3, slot: 2, shareAmount: '1.50' },
     { setMealId: 7, itemId: 4, supplierId: 2, slot: 3, shareAmount: '3.00' },
     { setMealId: 7, itemId: 8, supplierId: 4, slot: 4, shareAmount: '2.00' },
+    // ⭐ 快消品套餐明细（id 8 泡面宵夜包 / id 9 零食能量包）：slot 1-4 通用档位，shareAmount=供应商成本
+    { setMealId: 8, itemId: 101, supplierId: 11, slot: 1, shareAmount: '4.50' },
+    { setMealId: 8, itemId: 102, supplierId: 11, slot: 2, shareAmount: '4.50' },
+    { setMealId: 8, itemId: 104, supplierId: 11, slot: 3, shareAmount: '3.00' },
+    { setMealId: 8, itemId: 103, supplierId: 11, slot: 4, shareAmount: '2.00' },
+    { setMealId: 9, itemId: 105, supplierId: 12, slot: 1, shareAmount: '3.00' },
+    { setMealId: 9, itemId: 106, supplierId: 12, slot: 2, shareAmount: '4.00' },
+    { setMealId: 9, itemId: 107, supplierId: 12, slot: 3, shareAmount: '2.50' },
+    { setMealId: 9, itemId: 108, supplierId: 12, slot: 4, shareAmount: '3.50' },
   ]);
 
   // ---------- 11. 分配与每日菜单（**日期相对**：随运行日自动前移，禁止写死） ----------

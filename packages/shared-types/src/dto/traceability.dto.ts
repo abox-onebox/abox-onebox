@@ -114,6 +114,8 @@ export interface TraceabilityCenterView {
 export interface TraceabilityTodayResult {
   mealDate: string;
   setName: string | null;
+  /** 套餐类型：meal 饭类 / fmcg 快消品（端上据此切换集散中心图标，去餐化·2026-10-15） */
+  kind?: string | null;
   /** 本餐出品方逐菜列出（一行一菜一供应商） */
   items: TraceabilityItemView[];
   /** 集散中心；当日无分配时为 null */

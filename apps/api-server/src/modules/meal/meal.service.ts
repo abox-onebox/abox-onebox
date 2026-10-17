@@ -123,6 +123,9 @@ export class MealService {
           ? `今日 ${toBjIso(publishAtOf(targetDate))!.slice(11, 16)} 开团，敬请期待`
           : `距截单不足 ${cutoffWindow} 分钟，请明日再订`;
 
+    // 快消品套餐（fmcg）不供米饭：米饭行置 null，端上 `v-if="daily.rice"` 自动隐藏
+    const rice = setMeal?.kind === 'fmcg' ? null : '东北长粒香米饭（集散中心统一供米）';
+
     return {
       mealDate: targetDate,
       publishAt: toBjIso(publishAtOf(targetDate))!,
@@ -134,7 +137,8 @@ export class MealService {
       reason,
       setName: setMeal?.name ?? null,
       items,
-      rice: '东北长粒香米饭（集散中心统一供米）',
+      rice,
+      kind: setMeal?.kind ?? 'meal',
       priceFen,
       // MVP 不设总份数上限（供应商按备料量生产），故返回 null 表示不限量；
       // 后续若启用产能上限，改读 ab_supplier.capacity_per_day 汇总。

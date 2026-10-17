@@ -167,6 +167,7 @@ export class TraceabilityService {
     return {
       mealDate: targetDate,
       setName: setMeal?.name ?? null,
+      kind: setMeal?.kind ?? 'meal',
       items: itemViews,
       distributionCenter: center ? { name: center.name, address: center.address } : null,
       traceNote: this.buildTraceNote(itemViews, center),

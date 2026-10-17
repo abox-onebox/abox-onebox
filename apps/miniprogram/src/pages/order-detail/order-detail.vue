@@ -21,7 +21,7 @@
           <text class="status__label">订单状态</text>
           <text class="status__text">{{ detail.statusText }}</text>
         </view>
-        <text class="abi abi-deco-34 status__icon">{{ I[abnormal ? 'x-circle' : 'rice'] }}</text>
+        <text class="abi abi-deco-34 status__icon">{{ I[abnormal ? 'x-circle' : 'package'] }}</text>
       </view>
       <text class="status__hint">{{ statusHint }}</text>
 
@@ -80,7 +80,7 @@
       <view class="card">
         <view class="card__hd">
           <text class="card__title"
-            ><text class="abi abi-16">{{ I.rice }}</text> 组合明细</text
+            ><text class="abi abi-16">{{ I.package }}</text> 组合明细</text
           >
           <text class="card__sub"
             >{{ formatMealDate(detail.mealDate) }} · × {{ detail.quantity }}</text

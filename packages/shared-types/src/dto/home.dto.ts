@@ -73,6 +73,8 @@ export interface HomeDailyResult {
   items: MealItemView[];
   /** 主食说明（统一供米） */
   rice: string | null;
+  /** 套餐类型：meal 饭类 / fmcg 快消品（去餐化·2026-10-15）；端上据此切换图标与米饭行 */
+  kind?: string | null;
   /** 单价（分）· 锁定 2580 */
   priceFen: number;
   /** 剩余可订份数（null = 不限量） */

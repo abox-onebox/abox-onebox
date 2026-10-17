@@ -56,6 +56,22 @@ export class SetMeal {
   @Column({ type: 'tinyint', default: 1, comment: '1启用 0停用（模板库开关 · P1-4）' })
   status!: number;
 
+  /**
+   * 套餐类型（去餐化 · 2026-10-15）
+   * - `meal`：饭类套餐（既有的一饭四菜 + 统一供米）
+   * - `fmcg`：快消品套餐（泡面 / 零食 / 饮品组合，不供米饭、不强制一饭四菜）
+   *
+   * ⚠️ 真源只有一个：本列。端上「本日精选」图标、米饭行显隐、后台「一饭四菜」校验
+   *    是否生效，全部读它，不另存第二份标记。
+   */
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: 'meal',
+    comment: 'meal 饭类套餐 / fmcg 快消品套餐（去餐化·2026-10-15）',
+  })
+  kind!: string;
+
   @Column({ name: 'created_by', type: 'bigint', transformer: bigintTransformer, nullable: true })
   createdBy?: number | null;
 

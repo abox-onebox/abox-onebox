@@ -51,13 +51,19 @@ const DISH_ICON: Record<string, AboxIconName> = {
 };
 
 /**
- * 品类 → 图标语义名；未知 / 空值回落通用餐盒图（不抛错，页面不因脏数据开天窗）
+ * 品类 → 图标语义名；未知 / 空值回落通用包裹图（不抛错，页面不因脏数据开天窗）
+ *
+ * ⚠️ 回落图标由 `'rice'`（饭碗）改为 `'package'`（包裹）：去餐化后套餐不再只是饭，
+ *    快消品（泡面 / 零食 / 饮品）的商品 `category` 命中不了 `DISH_ICON`，
+ *    若回落到饭碗会让「一盒薯片」显示成一碗米饭，明显违和。
+ *    饭类套餐的商品 `category` 必为 main/half/veg/soup/staple，永不命中本回落分支，
+ *    故改为 package 对饭类零影响。
  *
  * ⚠️ S3 起返回**语义名**而不是 emoji 字符：端上图标一律走 `ABoxIcons` 字形，
  *    页面用 `{{ I[dishIcon(...)] }}` 取字形。
  */
 export function dishIcon(category: string | null | undefined): AboxIconName {
-  return (category && DISH_ICON[category]) || 'rice';
+  return (category && DISH_ICON[category]) || 'package';
 }
 
 /**

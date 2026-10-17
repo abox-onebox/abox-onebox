@@ -98,6 +98,8 @@ interface TemplateRow {
   oneLiner: string | null;
   status: number;
   statusText: string;
+  /** 套餐类型：meal 饭类 / fmcg 快消品（去餐化·2026-10-15） */
+  kind: string;
   itemCount: number;
   items: Array<{
     itemId: number;
@@ -623,6 +625,7 @@ export class MealAdminService {
     const qb = this.setMealRepo.createQueryBuilder('s');
     if (q.keyword) qb.andWhere('s.name LIKE :kw', { kw: `%${q.keyword}%` });
     if (q.status !== undefined) qb.andWhere('s.status = :st', { st: q.status });
+    if (q.kind !== undefined) qb.andWhere('s.kind = :k', { k: q.kind });
     qb.orderBy('s.id', 'DESC')
       .skip((page - 1) * pageSize)
       .take(pageSize);
@@ -659,6 +662,7 @@ export class MealAdminService {
         oneLiner: r.oneLiner ?? null,
         status: r.status,
         statusText: r.status === 1 ? '启用' : '停用',
+        kind: r.kind ?? 'meal',
         itemCount: mine.length,
         items: mine.map((i) => ({
           itemId: i.itemId,
@@ -683,7 +687,8 @@ export class MealAdminService {
    * `supplierId` 由商品反查、`costPrice` 由商品供价求和 —— 见 DTO 注释里的理由。
    */
   async createTemplate(dto: CreateSetMealTemplateDto, operatorId?: number) {
-    const { plan, dishMap } = await this.resolvePlanAndDishes(dto.items, dto.sourceSetMealId);
+    const kind = dto.kind ?? 'meal';
+    const { plan, dishMap } = await this.resolvePlanAndDishes(dto.items, dto.sourceSetMealId, kind);
     const price = dto.price ?? (await this.bizConfig.unitPriceYuan());
     const costPrice = this.sumCost(plan, dishMap);
 
@@ -697,6 +702,7 @@ export class MealAdminService {
           description: dto.description ?? null,
           coverUrl: dto.coverUrl ?? null,
           status: 1,
+          kind,
           createdBy: operatorId ?? null,
         }),
       );
@@ -745,12 +751,16 @@ export class MealAdminService {
     if (dto.description !== undefined) patch.description = dto.description;
     if (dto.coverUrl !== undefined) patch.coverUrl = dto.coverUrl;
     if (dto.status !== undefined) patch.status = dto.status;
+    // kind 是展示 / 行为标记（非构成 / 非售价），不受「已排期冻结」限制，随时可改
+    if (dto.kind !== undefined) patch.kind = dto.kind;
 
     // ---- 构成类字段：整组替换（不是增量），并重算成本 ----
     let plan: Array<{ itemId: number; slot: number }> | null = null;
     let dishMap: Map<number, Item> | null = null;
     if (dto.items !== undefined) {
-      const resolved = await this.resolvePlanAndDishes(dto.items, undefined);
+      // 改构成时：若显式传 kind 用传值；否则沿用本模板既有 kind
+      const opKind = dto.kind !== undefined ? dto.kind : (sm.kind ?? 'meal');
+      const resolved = await this.resolvePlanAndDishes(dto.items, undefined, opKind);
       plan = resolved.plan;
       dishMap = resolved.dishMap;
       patch.costPrice = this.sumCost(plan, dishMap);
@@ -831,13 +841,14 @@ export class MealAdminService {
    * ⚠️ **校验顺序是契约的一部分**（e2e 逐条断言它）：
    *     ① 同一道菜重复       → `10001`（「两道素菜」得是两道**不同**的素菜）
    *     ② 商品不存在 / 已下架 → `30008`
-   *     ③ 一饭四菜构成       → `10001`
+   *     ③ 饭类套餐的一饭四菜 → `10001`（快消品套餐跳过此步）
    *    ① → ② → ③ 不能调换：请求里若有「不存在的菜」，
    *    运营要看到的是"商品不存在"，而不是被一句"缺了半荤"盖过去。
    */
   private async resolvePlanAndDishes(
     items: SetMealItemInputDto[] | undefined,
     sourceSetMealId: number | undefined,
+    kind: string = 'meal',
   ): Promise<{ plan: Array<{ itemId: number; slot: number }>; dishMap: Map<number, Item> }> {
     let plan: Array<{ itemId: number; slot: number }>;
 
@@ -864,8 +875,8 @@ export class MealAdminService {
     // ② 商品必须存在且上架
     const dishMap = await this.assertDishesUsable(plan);
 
-    // ③ 一饭四菜
-    this.assertComposition(plan);
+    // ③ 饭类套餐强制一饭四菜；快消品套餐不强制（任意档位、任意件数，由 ArrayNotEmpty 保底 ≥1）
+    this.assertComposition(plan, kind);
 
     return { plan, dishMap };
   }
@@ -873,14 +884,24 @@ export class MealAdminService {
   /**
    * 「一饭四菜」机械判据（M5-15 · 此前**只写在文案与种子数据里**）
    *
-   * 需求：恰好覆盖 `SET_MEAL_REQUIRED_SLOTS`（主荤 / 半荤 / 素菜 / 汤）**各一道**，
-   * 且**不得**出现 `slot=5`（主食米饭由集散中心统一供米，不建商品项 ——
-   * 建了会把 ¥2 重复计进成本）。
+   * 仅对**饭类套餐**（`kind='meal'`）生效：恰好覆盖 `SET_MEAL_REQUIRED_SLOTS`
+   * （主件 / 辅品 / 素品 / 附品）**各一道**，且**不得**出现 `slot=5`
+   * （主食米饭由集散中心统一供米，不建商品项 —— 建了会把 ¥2 重复计进成本）。
+   *
+   * 快消品套餐（`kind='fmcg'`，去餐化 · 2026-10-15）**跳过此判据**：泡面 / 零食 /
+   * 饮品组合不需要「一饭四菜」结构，只要 ≥1 件（由入参 `@ArrayNotEmpty` 保底）即可，
+   * 档位仅用于排序展示，不强制覆盖。
    *
    * ⚠️ 本方法必须排在「重复菜」与「商品存在性」**之后**调用
    *    （顺序契约写在 `resolvePlanAndDishes` 的注释里）。
    */
-  private assertComposition(plan: Array<{ itemId: number; slot: number }>): void {
+  private assertComposition(
+    plan: Array<{ itemId: number; slot: number }>,
+    kind: string = 'meal',
+  ): void {
+    // 快消品套餐：不强制一饭四菜结构
+    if (kind === 'fmcg') return;
+
     const slots = plan.map((p) => p.slot);
     const missing = SET_MEAL_REQUIRED_SLOTS.filter((s) => !slots.includes(s));
     const extra = slots.filter((s) => !SET_MEAL_REQUIRED_SLOTS.includes(s));
@@ -1087,6 +1108,7 @@ export class MealAdminService {
       costPriceFen: Math.round(Number(sm.costPrice) * 100),
       oneLiner: sm.oneLiner ?? null,
       status: sm.status,
+      kind: sm.kind ?? 'meal',
       itemCount: plan.length,
       items: plan.map((p) => ({
         itemId: p.itemId,

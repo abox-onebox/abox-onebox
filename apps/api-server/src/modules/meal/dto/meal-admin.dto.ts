@@ -166,6 +166,11 @@ export class SetMealTemplateQueryDto {
   @IsIn([0, 1])
   status?: number;
 
+  @ApiPropertyOptional({ description: '按套餐类型筛选：meal 饭类 / fmcg 快消品' })
+  @IsOptional()
+  @IsIn(['meal', 'fmcg'], { message: "kind 需为 'meal' 或 'fmcg'" })
+  kind?: 'meal' | 'fmcg';
+
   @ApiPropertyOptional({ description: '页码，默认 1' })
   @IsOptional()
   @Type(() => Number)
@@ -238,6 +243,19 @@ export class CreateSetMealTemplateDto {
   @IsString()
   @MaxLength(512)
   coverUrl?: string;
+
+  /**
+   * 套餐类型（去餐化 · 2026-10-15）
+   * - `meal`：饭类套餐（默认，强制一饭四菜 + 统一供米）
+   * - `fmcg`：快消品套餐（泡面 / 零食 / 饮品组合，不供米饭、不强制一饭四菜）
+   */
+  @ApiPropertyOptional({
+    description: '套餐类型：meal 饭类 / fmcg 快消品（默认 meal）',
+    example: 'meal',
+  })
+  @IsOptional()
+  @IsIn(['meal', 'fmcg'], { message: "kind 需为 'meal' 或 'fmcg'" })
+  kind?: 'meal' | 'fmcg';
 
   @ApiPropertyOptional({
     description: `商品项（1–${TEMPLATE_MAX_ITEMS} 项）；用 sourceSetMealId 另存时可不传`,
@@ -319,6 +337,14 @@ export class UpdateSetMealTemplateDto {
   @IsInt()
   @IsIn([0, 1])
   status?: number;
+
+  /**
+   * 套餐类型（去餐化 · 2026-10-15）· 展示 / 行为标记，不受「已排期冻结」限制，随时可改
+   */
+  @ApiPropertyOptional({ description: '套餐类型：meal 饭类 / fmcg 快消品', example: 'meal' })
+  @IsOptional()
+  @IsIn(['meal', 'fmcg'], { message: "kind 需为 'meal' 或 'fmcg'" })
+  kind?: 'meal' | 'fmcg';
 
   @ApiPropertyOptional({
     description:

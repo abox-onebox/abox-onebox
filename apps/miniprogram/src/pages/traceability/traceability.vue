@@ -40,7 +40,7 @@
         <!-- 集散中心（随附与打包 · 无资质页，故不可点） -->
         <ab-supplier-card
           v-if="data.distributionCenter"
-          avatar-icon="rice"
+          :avatar-icon="data.kind === 'fmcg' ? 'package' : 'rice'"
           :name="data.distributionCenter.name"
           category="随附"
           detail="今日供应：随附与打包"
