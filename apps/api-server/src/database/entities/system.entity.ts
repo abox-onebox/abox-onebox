@@ -80,6 +80,32 @@ export class OperationLog {
   @Column({ type: 'json', nullable: true, comment: '变更前后值快照（P2-1，审计回放）' })
   snapshot?: unknown;
 
+  // 知识助手「替操作」审计三字段（B3 · 2026-10-18）：仅当请求带 X-KB-* 头时由拦截器填充，普通后台操作恒为 null
+  @Column({
+    name: 'kb_operator',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+    comment: '知识助手自报操作人（X-KB-Operator）',
+  })
+  kbOperator?: string | null;
+
+  @Column({
+    name: 'kb_nl_intent',
+    type: 'text',
+    nullable: true,
+    comment: '知识助手自然语言指令（X-KB-NL）',
+  })
+  kbNlIntent?: string | null;
+
+  @Column({
+    name: 'kb_op_block',
+    type: 'text',
+    nullable: true,
+    comment: '知识助手生成的操作块JSON（X-KB-OpBlock）',
+  })
+  kbOpBlock?: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
   createdAt!: Date;
 }

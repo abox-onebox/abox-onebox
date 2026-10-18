@@ -21,6 +21,10 @@ export interface OperationLogItem {
   requestIp: string | null;
   requestData: unknown;
   responseData: unknown;
+  /** 知识助手「替操作」审计三字段（无则为 null） */
+  kbOperator: string | null;
+  kbNlIntent: string | null;
+  kbOpBlock: string | null;
   /** 是否失败（审计关注「谁试图做了什么但被拒」） */
   failed: boolean;
   createdAt: string | null;
@@ -115,6 +119,9 @@ export class OperationLogService {
       requestIp: log.requestIp ?? null,
       requestData: log.requestData ?? null,
       responseData: log.responseData ?? null,
+      kbOperator: log.kbOperator ?? null,
+      kbNlIntent: log.kbNlIntent ?? null,
+      kbOpBlock: log.kbOpBlock ?? null,
       failed: !!resp?.error,
       createdAt: toBjIso(log.createdAt),
     };

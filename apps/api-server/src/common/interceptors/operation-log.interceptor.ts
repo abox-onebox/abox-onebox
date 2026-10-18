@@ -160,6 +160,34 @@ export class OperationLogInterceptor implements NestInterceptor {
     return out;
   }
 
+  /** 取请求头（兼容 string | string[]；Node 已把头名转小写） */
+  private firstHeader(
+    h: Record<string, string | string[] | undefined> | undefined,
+    k: string,
+  ): string | null {
+    const v = h?.[k];
+    if (Array.isArray(v)) return v[0] ?? null;
+    return v ?? null;
+  }
+
+  /**
+   * 解码知识助手头值：base64(UTF-8) → 原文。
+   * 知识助手侧对中文等非 Latin1 内容统一 base64 编码（fetch 头不允许中文）。
+   * 若解码后回编 base64 与原始不一致（说明原值本就是纯 ASCII，如 ASCII 操作人账号），回落原始值。
+   */
+  private decodeKbHeader(raw: string | null): string | null {
+    if (!raw) return null;
+    try {
+      const decoded = Buffer.from(raw, 'base64').toString('utf8');
+      if (decoded && Buffer.from(decoded, 'utf8').toString('base64') === raw.replace(/\s+/g, '')) {
+        return decoded;
+      }
+      return raw;
+    } catch {
+      return raw;
+    }
+  }
+
   private async write(
     subject: JwtPayload | undefined,
     meta: OperationLogMeta,
@@ -173,6 +201,12 @@ export class OperationLogInterceptor implements NestInterceptor {
       const xff = req.headers?.['x-forwarded-for'];
       const ip = (Array.isArray(xff) ? xff[0] : xff)?.split(',')[0]?.trim() || req.ip || null;
 
+      // 知识助手「替操作」审计三字段（B3 · 2026-10-18）：仅当请求带 X-KB-* 头时填充，普通后台操作无这些头 → null
+      // 头值由知识助手 base64(UTF-8) 编码（fetch 头不允许中文等非 Latin1 字符），此处解码；纯 ASCII 值解码回编不一致 → 回落原始值
+      const kbOperator = this.decodeKbHeader(this.firstHeader(req.headers, 'x-kb-operator'));
+      const kbNlIntent = this.decodeKbHeader(this.firstHeader(req.headers, 'x-kb-nl'));
+      const kbOpBlock = this.decodeKbHeader(this.firstHeader(req.headers, 'x-kb-opblock'));
+
       await this.logRepo.save(
         this.logRepo.create({
           adminUserId: subject?.sub ?? null,
@@ -180,6 +214,9 @@ export class OperationLogInterceptor implements NestInterceptor {
           action: meta.action,
           targetId,
           requestIp: ip ? ip.slice(0, 64) : null,
+          kbOperator: kbOperator ?? null,
+          kbNlIntent: kbNlIntent ?? null,
+          kbOpBlock: kbOpBlock ?? null,
           requestData,
           responseData: this.sanitize(
             error

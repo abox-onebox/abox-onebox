@@ -142,6 +142,12 @@ function corsOriginOf(cfg: ConfigService): string[] | boolean {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+  // 知识助手「替操作」跨域调用 /admin 写接口（阶段 2 前置）
+  // 详见 _ABox一盒_替操作_阶段2前置_CORS与身份层设计.md §一
+  // 该来源为 WorkBuddy 固定发布域名；并入白名单后跨域放行即生效。
+  // 可逆：删除此 3 行即回退（仍可由服务器 CORS_ORIGINS 环境变量等价配置）。
+  const KB_OPS_ORIGIN = 'https://abox-kb.app.workbuddy.host';
+  if (!list.includes(KB_OPS_ORIGIN)) list.push(KB_OPS_ORIGIN);
   if (list.length) return list;
   return cfg.get<string>('app.env') === 'production' ? false : true;
 }
