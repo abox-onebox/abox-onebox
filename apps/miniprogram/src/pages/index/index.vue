@@ -22,8 +22,10 @@
         }}</text>
         <text class="hero-card__date">{{ mealDateCn }}</text>
         <view class="hero-card__pill">
-          <text class="hero-card__pill-text">四方好味汇一盒</text>
-          <text class="hero-card__pill-text">每家只出一件拿手好物</text>
+          <text class="hero-card__pill-text">{{ heroSlogan }}</text>
+          <text v-if="deliverLine" class="hero-card__pill-text hero-card__pill-text--func">
+            <text class="abi abi-16">{{ I.clock }}</text> {{ deliverLine }}
+          </text>
         </view>
       </view>
 
@@ -289,6 +291,29 @@ const mealDateCn = computed(() => {
   return raw ? formatMealDate(raw) : '';
 });
 
+/**
+ * 首页口号（替换原写死的「四方好味汇一盒 / 每家只出一件拿手好物」）
+ *
+ * ⚠️ 端上不写死时刻 —— 同框功能行的送达时刻一律取自 `daily.deliverAt`（与 `cutoffTimeText` 同理）。
+ * fmcg（快消品套餐）不含「四家好味」的饭菜语义，故改用「精选好物」保留「汇于一盒」品牌钩子。
+ */
+const heroSlogan = computed(() =>
+  daily.value?.kind === 'fmcg' ? '精选好物，汇于一盒' : '四家好味，汇于一盒',
+);
+
+/**
+ * 功能行（与口号同框、零后端）：用 U1 已下发但未在首页展示的 `deliverAt`
+ *
+ * · 有团长 → 「明早 {t} 送达楼下，团长会送货上门」（贴合「团长统一取餐分发」模型）
+ * · 无团长 → 回落「明早 {t} 送达楼下取餐点」，避免在无团长楼里谎称「团长送货」
+ * ⚠️ 取不到 `deliverAt` ⇒ 整行不显示（不回落写死值，与 countdown 纪律一致）
+ */
+const deliverLine = computed(() => {
+  const t = daily.value?.deliverAt;
+  if (!t || t === '--') return '';
+  return daily.value?.leader ? `明早 ${t} 送达楼下，团长会送货上门` : `明早 ${t} 送达楼下取餐点`;
+});
+
 const leaderLevelLabel = computed(() => {
   const level = leaderStore.info?.level;
   return level ? (LEADER_LEVEL_META[level as LeaderLevel]?.label ?? '团长') : '';
@@ -502,6 +527,13 @@ onShow(() => {
     font-size: $fs-caption;
     line-height: 1.6;
     letter-spacing: 1rpx;
+
+    // 功能行：与口号分隔，一眼读作「信息」而非口号
+    &--func {
+      margin-top: $space-1;
+      padding-top: $space-1;
+      border-top: 1px solid rgba(255, 255, 255, 0.35);
+    }
   }
 }
 
