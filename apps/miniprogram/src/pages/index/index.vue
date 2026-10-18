@@ -294,12 +294,10 @@ const mealDateCn = computed(() => {
 /**
  * 首页口号（替换原写死的「四方好味汇一盒 / 每家只出一件拿手好物」）
  *
+ * 饭菜 / 快消品套餐共用同一句口号「四家好味，汇于一盒」（用户裁定：两类套餐不区分）。
  * ⚠️ 端上不写死时刻 —— 同框功能行的送达时刻一律取自 `daily.deliverAt`（与 `cutoffTimeText` 同理）。
- * fmcg（快消品套餐）不含「四家好味」的饭菜语义，故改用「精选好物」保留「汇于一盒」品牌钩子。
  */
-const heroSlogan = computed(() =>
-  daily.value?.kind === 'fmcg' ? '精选好物，汇于一盒' : '四家好味，汇于一盒',
-);
+const heroSlogan = computed(() => '四家好味，汇于一盒');
 
 /**
  * 功能行（与口号同框、零后端）：用 U1 已下发但未在首页展示的 `deliverAt`
