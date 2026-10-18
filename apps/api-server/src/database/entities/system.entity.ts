@@ -234,3 +234,101 @@ export class MessageTemplate {
   @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
   updatedAt!: Date;
 }
+
+/**
+ * ab_operation_request 替操作「高危审批」申请单（阶段 3 · 2026-10-18）
+ *
+ * ## 与 ab_operation_log 的关系
+ * 本表是「申请单」线（待审 → 已执行/已驳回），oplog 是「每一次写操作的审计行」。
+ * 审批通过后**执行**那一步仍会写一条 ab_operation_log（B3 三字段由服务端从本单回填，
+ * 见 OperationRequestExecutor），二者靠 snapshot.request_id 关联（不额外加列）。
+ *
+ * ## 状态机（两步执行：approve 仅置 approved，execute 才调原目标接口）
+ *   pending → approved → executed
+ *   pending → rejected（终态）；executed / rejected 不可再改。
+ *
+ * ## 安全边界
+ * 全部 /admin 作用域，复用 AdminGuard + @Roles；执行复用原目标接口（不另写业务）。
+ */
+@Entity('ab_operation_request')
+@Index('idx_opreq_status', ['status'])
+@Index('idx_opreq_submitter', ['submitterAdminId'])
+export class OperationRequest {
+  @PkColumn()
+  id!: number;
+
+  @Column({ name: 'op_code', type: 'varchar', length: 48, comment: 'OPS_CATALOG 的 op 代码' })
+  opCode!: string;
+
+  @Column({ name: 'op_label', type: 'varchar', length: 96, comment: '操作中文名（冗余存）' })
+  opLabel!: string;
+
+  /** 危险档：本期仅 admin 进审批流 */
+  @Column({ type: 'varchar', length: 16, default: 'admin', comment: 'operator/admin' })
+  risk!: string;
+
+  @Column({ type: 'json', comment: '校验后的真实参数（执行时即作为目标接口 body）' })
+  params!: unknown;
+
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: 'pending',
+    comment: 'pending/approved/rejected/executed',
+  })
+  status!: string;
+
+  /** 自报操作人（来自知识助手 X-KB-Operator）；后台手动建单时为空 */
+  @Column({ name: 'submitter_kb', type: 'varchar', length: 64, nullable: true })
+  submitterKb?: string | null;
+
+  /** 后台手动建单 / 代为提交人的 admin_user_id */
+  @Column({
+    name: 'submitter_admin_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+  })
+  submitterAdminId?: number | null;
+
+  @Column({
+    name: 'submitter_nl',
+    type: 'text',
+    nullable: true,
+    comment: '自然语言原文（X-KB-NL）',
+  })
+  submitterNl?: string | null;
+
+  @Column({
+    name: 'submitter_op_block',
+    type: 'json',
+    nullable: true,
+    comment: '操作块 JSON（X-KB-OpBlock 原文）',
+  })
+  submitterOpBlock?: unknown;
+
+  @Column({ name: 'approver_id', type: 'bigint', transformer: bigintTransformer, nullable: true })
+  approverId?: number | null;
+
+  @Column({ name: 'approved_at', type: 'datetime', precision: 3, nullable: true })
+  approvedAt?: Date | null;
+
+  @Column({ name: 'reject_reason', type: 'varchar', length: 255, nullable: true })
+  rejectReason?: string | null;
+
+  /** 执行回执（成功后回填目标接口返回值；含 request_id 关联网页） */
+  @Column({ type: 'json', nullable: true })
+  snapshot?: unknown;
+
+  @Column({ name: 'executed_at', type: 'datetime', precision: 3, nullable: true })
+  executedAt?: Date | null;
+
+  @VersionColumn()
+  version!: number;
+
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
+  updatedAt!: Date;
+}

@@ -96,6 +96,10 @@ export const ADMIN_MENU_KEYS = [
   '/system/admin-user',
   '/system/role',
   '/system/operation-log',
+  // 阶段 3 · 高危审批申请单（D 系新增）。落在 /system/ 命名空间下 ⇒ operator 经派生规则
+  //   自动被挡在菜单外（只能提交、不能审批，符合最小权限）；真正的闸门是控制器的
+  //   approve/execute/reject 的 `@Roles('super_admin','admin')`。菜单矩阵与 API 白名单同向。
+  '/system/operation-request',
   '/system/message-template',
   // M5-12：跑批时刻表（D64 查看 / D65 手动补跑）。
   //   ⚠️ 菜单 key 与**服务端角色白名单**同源：`AdminController` 是

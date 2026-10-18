@@ -273,6 +273,21 @@ export const routes: RouteRecordRaw[] = [
         name: 'SystemOperationLog',
         component: () => import('@/views/system/operation-log.vue'),
       },
+      // 阶段 3 · 高危审批申请单（M37 新增）—— 列表 + 详情两步流。
+      //   ⚠️ 与 operation-log 同属 `/system/`：operator 经 admin-role.ts 派生规则
+      //      菜单不可见（只能由知识助手代提交），审批/执行按钮在 detail 页按
+      //      `canApprove`（super_admin/admin）显隐。真正的越权闸门是后端
+      //      approve/execute/reject 的 `@Roles('super_admin','admin')`。
+      {
+        path: 'system/operation-request',
+        name: 'SystemOperationRequest',
+        component: () => import('@/views/system/operation-request/list.vue'),
+      },
+      {
+        path: 'system/operation-request/:id',
+        name: 'SystemOperationRequestDetail',
+        component: () => import('@/views/system/operation-request/detail.vue'),
+      },
       {
         path: 'system/message-template',
         name: 'SystemMessageTemplate',

@@ -73,6 +73,12 @@ export interface OperationLogRow {
   responseData: unknown;
   failed: boolean;
   createdAt: string | null;
+  /** B3 · 知识助手自报操作人（X-KB-Operator） */
+  kbOperator?: string | null;
+  /** B3 · 自然语言指令（X-KB-NL） */
+  kbNlIntent?: string | null;
+  /** B3 · 操作块 JSON（X-KB-OpBlock） */
+  kbOpBlock?: string | null;
 }
 
 export interface OperationLogQuery {
@@ -390,4 +396,78 @@ export function orchestrateMessage(payload: {
   limit?: number;
 }): Promise<OrchestrateResult> {
   return http.post<OrchestrateResult>('/admin/messages/orchestrate', payload);
+}
+
+// ---------------------------------------------------------------------------
+// 阶段 3 · 高危审批申请单（M37 新增）
+// ---------------------------------------------------------------------------
+
+export type OperationRequestStatus = 'pending' | 'approved' | 'rejected' | 'executed';
+
+export interface OperationRequestRow {
+  id: number;
+  opCode: string;
+  opLabel: string;
+  risk: string;
+  params: Record<string, unknown>;
+  status: OperationRequestStatus;
+  /** 知识助手自报操作人（X-KB-Operator） */
+  submitterKb: string | null;
+  /** 后台手动建单 / 代为提交人 admin_user_id */
+  submitterAdminId: number | null;
+  /** 自然语言原文（X-KB-NL） */
+  submitterNl: string | null;
+  /** 操作块 JSON（X-KB-OpBlock 原文） */
+  submitterOpBlock: unknown;
+  approverId: number | null;
+  approvedAt: string | null;
+  rejectReason: string | null;
+  /** 执行回执（含 request_id 关联） */
+  snapshot: unknown;
+  executedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OperationRequestQuery {
+  status?: OperationRequestStatus;
+  opCode?: string;
+}
+
+/** 申请单列表（operator 仅看自己提交） */
+export function fetchOperationRequests(
+  params?: OperationRequestQuery,
+): Promise<OperationRequestRow[]> {
+  return http.get<OperationRequestRow[]>('/admin/operation-requests', params);
+}
+
+/** 提交高危操作申请（operator 可提交，admin 可代建） */
+export function createOperationRequest(payload: {
+  opCode: string;
+  params: Record<string, unknown>;
+  submitterKb?: string;
+  submitterNl?: string;
+  submitterOpBlock?: unknown;
+}): Promise<OperationRequestRow> {
+  return http.post<OperationRequestRow>('/admin/operation-requests', payload);
+}
+
+/** 申请单详情 */
+export function fetchOperationRequestDetail(id: number): Promise<OperationRequestRow> {
+  return http.get<OperationRequestRow>(`/admin/operation-requests/${id}`);
+}
+
+/** 审批通过（两步：仅置 approved，不执行） */
+export function approveOperationRequest(id: number): Promise<OperationRequestRow> {
+  return http.post<OperationRequestRow>(`/admin/operation-requests/${id}/approve`);
+}
+
+/** 驳回申请 */
+export function rejectOperationRequest(id: number, reason: string): Promise<OperationRequestRow> {
+  return http.post<OperationRequestRow>(`/admin/operation-requests/${id}/reject`, { reason });
+}
+
+/** 执行已审批的申请（调原目标接口，复用 @OperationLog 审计） */
+export function executeOperationRequest(id: number): Promise<OperationRequestRow> {
+  return http.post<OperationRequestRow>(`/admin/operation-requests/${id}/execute`);
 }

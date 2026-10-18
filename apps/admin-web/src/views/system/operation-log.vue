@@ -39,6 +39,10 @@
       <el-form-item>
         <el-button type="primary" :loading="loading" @click="reload(1)">查询</el-button>
         <el-button @click="resetQuery">重置</el-button>
+        <el-button type="success" :loading="exporting" @click="exportCsv">
+          <AbIcon name="download" size="16" />
+          导出 CSV
+        </el-button>
       </el-form-item>
     </el-form>
 
@@ -81,6 +85,26 @@
       <el-table-column label="IP" min-width="130">
         <template #default="{ row }">{{ displayOr(row.requestIp) }}</template>
       </el-table-column>
+      <!-- B3 · 知识助手自报操作人（X-KB-Operator） -->
+      <el-table-column label="KB 操作人" min-width="140">
+        <template #default="{ row }">
+          <span v-if="row.kbOperator" class="kb">{{ row.kbOperator }}</span>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
+      <!-- B3 · 自然语言指令（X-KB-NL） -->
+      <el-table-column label="自然语言意图" min-width="220" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.kbNlIntent || '—' }}</template>
+      </el-table-column>
+      <!-- B3 · 操作块 JSON（X-KB-OpBlock 原文） -->
+      <el-table-column label="操作块" min-width="200" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span v-if="row.kbOpBlock !== null && row.kbOpBlock !== undefined" class="mono">
+            {{ blockPreview(row.kbOpBlock) }}
+          </span>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <template #empty>
         <el-empty description="暂无操作日志" />
       </template>
@@ -118,6 +142,7 @@ import { ApiError } from '@/api/request';
 import { displayOr, formatDateTime } from '@/utils/format';
 
 const loading = ref(false);
+const exporting = ref(false);
 const rows = ref<OperationLogRow[]>([]);
 const total = ref(0);
 const operators = ref<Array<{ id: number; name: string; role: string; roleLabel: string }>>([]);
@@ -172,6 +197,94 @@ function pretty(value: unknown): string {
   }
 }
 
+/** B3 操作块单行预览（截断，避免撑爆单元格） */
+function blockPreview(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  let s: string;
+  try {
+    s = JSON.stringify(value);
+  } catch {
+    s = String(value);
+  }
+  return s.length > 80 ? `${s.slice(0, 80)}…` : s;
+}
+
+/**
+ * 导出 CSV（含 B3 三列）
+ *
+ * ⚠️ 导出**当前筛选条件下的全部命中行**（不受当前分页 pageSize 限制）：
+ *    以 `total` 为 pageSize 再拉一次，避免「列表看 20 条、导出只导 20 条」的错配。
+ */
+async function exportCsv(): Promise<void> {
+  if (total.value === 0) {
+    ElMessage.warning('当前筛选无数据，无需导出');
+    return;
+  }
+  exporting.value = true;
+  try {
+    const res = await fetchOperationLogs({
+      operatorId: query.operatorId,
+      module: query.module || undefined,
+      date: query.date || undefined,
+      page: 1,
+      pageSize: total.value,
+    });
+    const all = res.list;
+    const header = [
+      'ID',
+      '时间',
+      '操作人',
+      '角色',
+      '模块',
+      '操作',
+      '对象ID',
+      '结果',
+      'IP',
+      'KB操作人',
+      '自然语言意图',
+      '操作块',
+    ];
+    const escape = (v: unknown): string => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const lines = all.map((r) =>
+      [
+        r.id,
+        r.createdAt ?? '',
+        r.operatorName ?? '',
+        r.operatorRoleLabel ?? '',
+        r.module ?? '',
+        r.action ?? '',
+        r.targetId ?? '',
+        r.failed ? '失败' : '成功',
+        r.requestIp ?? '',
+        r.kbOperator ?? '',
+        r.kbNlIntent ?? '',
+        r.kbOpBlock !== null && r.kbOpBlock !== undefined ? JSON.stringify(r.kbOpBlock) : '',
+      ]
+        .map(escape)
+        .join(','),
+    );
+    const csv = '﻿' + [header.map(escape).join(','), ...lines].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `operation-log-${stamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    ElMessage.success(`已导出 ${all.length} 条`);
+  } catch (e) {
+    ElMessage.error(e instanceof ApiError ? e.message : '导出失败');
+  } finally {
+    exporting.value = false;
+  }
+}
+
 onMounted(() => {
   void reload();
 });
@@ -195,6 +308,16 @@ onMounted(() => {
 
 .muted {
   color: $c-text-weak;
+}
+
+.kb {
+  font-weight: 600;
+  color: $c-text;
+}
+
+.mono {
+  font-family: Consolas, Monaco, monospace;
+  font-size: $fs-caption;
 }
 
 .detail {

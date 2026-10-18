@@ -378,6 +378,17 @@ export const ADMIN_NAV = [
         module: 'D59/D60 · D67/D68',
         icon: 'send',
       },
+      // 阶段 3 · 高危审批申请单（M37 新增）—— 列表 + 详情两步流。
+      //   ⚠️ 与 admin-role.ts:102 的 `/system/operation-request` menu key 同源；
+      //      operator 经 `/system/` 派生规则菜单不可见（只能由知识助手代提交）。
+      //      `icon: 'alert'` 属 82 名 Tabler 子集（check-nav-consistency 第⑥条校验通过）。
+      {
+        path: '/system/operation-request',
+        title: '高危审批',
+        page: '—',
+        module: 'M37',
+        icon: 'alert',
+      },
       // M5-12：跑批时刻表（D64/D65）—— 8 个定时任务的时刻 / 目标日期 / 实装状态 + 手动补跑
       {
         path: '/system/schedule',
