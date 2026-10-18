@@ -17,9 +17,6 @@
     <template v-else-if="daily">
       <!-- 套餐概念大卡（米金渐变） -->
       <view class="hero-card">
-        <text class="abi abi-deco-40 hero-card__icon">{{
-          daily?.kind === 'fmcg' ? I.package : I.rice
-        }}</text>
         <text class="hero-card__date">{{ mealDateCn }}</text>
         <view class="hero-card__pill">
           <text class="hero-card__pill-text">{{ heroSlogan }}</text>
