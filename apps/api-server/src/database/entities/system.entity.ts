@@ -349,7 +349,7 @@ export class OperationRequest {
  * 与前端 localStorage 自解禁无关，是服务端权威闸。
  */
 @Entity('ab_op_blocklist')
-@Index('uk_op_block_op', { unique: true })
+@Index('uk_op_block_op', ['opCode'], { unique: true })
 export class OpBlocklist {
   @PkColumn()
   id!: number;
