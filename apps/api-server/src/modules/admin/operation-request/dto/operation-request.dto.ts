@@ -16,6 +16,7 @@ export const APPROVABLE_ADMIN_OPS = [
   'leader_audit',
   'send_message',
   'manual_adjust',
+  'force_refund',
 ] as const;
 
 export type ApprovableAdminOp = (typeof APPROVABLE_ADMIN_OPS)[number];

@@ -128,6 +128,7 @@ const OP_OPTIONS = [
   { value: 'leader_audit', label: '团长资质补录（停职/恢复/补签）' },
   { value: 'send_message', label: '群发运营通知' },
   { value: 'manual_adjust', label: '手动改单（改份数/改取餐楼）' },
+  { value: 'force_refund', label: '强制退款（原路退+反向结算）' },
 ];
 
 const loading = ref(false);

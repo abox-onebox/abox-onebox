@@ -34,6 +34,7 @@ const OP_ENDPOINTS: Record<string, { method: 'POST' | 'PUT'; path: string }> = {
   leader_audit: { method: 'POST', path: '/admin/leaders/:id/audit' },
   send_message: { method: 'POST', path: '/admin/messages/orchestrate' },
   manual_adjust: { method: 'POST', path: '/admin/orders/manual-adjust' },
+  force_refund: { method: 'POST', path: '/admin/orders/:orderNo/force-refund' },
 };
 
 const OP_LABELS: Record<string, string> = {
@@ -45,6 +46,7 @@ const OP_LABELS: Record<string, string> = {
   leader_audit: '团长资质补录（停职/恢复/补签）',
   send_message: '群发运营通知',
   manual_adjust: '手动改单（改份数/改取餐楼）',
+  force_refund: '强制退款（原路退 + 反向结算）',
 };
 
 @Injectable()
@@ -159,12 +161,17 @@ export class OperationRequestService {
     const port = this.config.get<number>('app.port') ?? 3000;
     const prefix = this.config.get<string>('app.apiPrefix') ?? '/api/v1';
     const params = (r.params ?? {}) as Record<string, unknown>;
+    // 路径参数（:id / :orderNo 等）从 params 回填 URL，并从 body 剔除（避免重复传）
+    const pathKeys: string[] = [];
     const url = `http://localhost:${port}${prefix}${ep.path}`.replace(
-      ':id',
-      encodeURIComponent(String(params.id ?? '')),
+      /:([a-zA-Z_][a-zA-Z0-9_]*)/g,
+      (_m, key: string) => {
+        pathKeys.push(key);
+        return encodeURIComponent(String((params as Record<string, unknown>)[key] ?? ''));
+      },
     );
     const body: Record<string, unknown> = { ...params };
-    delete body.id; // 路径参数不进 body
+    for (const k of pathKeys) delete body[k]; // 路径参数不进 body
 
     // B3 三字段从申请单回填，base64(UTF-8) 编码（fetch 头不允许非 Latin1）
     const b64 = (s?: string | null): string => (s ? Buffer.from(s, 'utf8').toString('base64') : '');
