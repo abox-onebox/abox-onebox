@@ -4,7 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Balance, BalanceLog, Commission } from '../database/entities/finance.entity';
 import { TeamLeader } from '../database/entities/leader.entity';
-import { OperationLog } from '../database/entities/system.entity';
+import { OperationLog, OpBlocklist } from '../database/entities/system.entity';
 import { User } from '../database/entities/user.entity';
 import { Withdraw } from '../database/entities/withdraw.entity';
 import { KvService } from './cache/kv.service';
@@ -14,6 +14,8 @@ import { AdminGuard } from './guards/admin.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { LeaderGuard } from './guards/leader.guard';
 import { OperationLogInterceptor } from './interceptors/operation-log.interceptor';
+import { OpBlocklistInterceptor } from './interceptors/op-blocklist.interceptor';
+import { OpBlocklistService } from './services/op-blocklist.service';
 import { ResponseInterceptor } from './interceptors/response.interceptor';
 import { BizConfigService } from './services/biz-config.service';
 import { LeaderLookupService } from './services/leader-lookup.service';
@@ -63,6 +65,8 @@ import { UserPayeeService } from './services/user-payee.service';
       Withdraw,
       /** F-10：写钱路径要判「收款人身份状态」，故本模块也需持有 `ab_user` 仓储 */
       User,
+      /** P1-c：KB 助手禁止清单仓储（全局拦截器 + 审批流闸共用） */
+      OpBlocklist,
     ]),
   ],
   providers: [
@@ -72,10 +76,12 @@ import { UserPayeeService } from './services/user-payee.service';
     LeaderMoneyService,
     LeaderLookupService,
     UserPayeeService,
+    OpBlocklistService,
     LeaderGuard,
     AdminGuard,
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
     { provide: APP_INTERCEPTOR, useClass: OperationLogInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: OpBlocklistInterceptor },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],
@@ -86,6 +92,7 @@ import { UserPayeeService } from './services/user-payee.service';
     LeaderMoneyService,
     LeaderLookupService,
     UserPayeeService,
+    OpBlocklistService,
     LeaderGuard,
     AdminGuard,
   ],

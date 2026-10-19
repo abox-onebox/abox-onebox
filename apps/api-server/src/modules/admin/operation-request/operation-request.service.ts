@@ -4,12 +4,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { BizException } from '../../../common/exceptions/biz.exception';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { ErrorCode } from '../../../common/constants/error-code';
 
 import { AdminUser, OperationRequest } from '../../../database/entities/system.entity';
+import { OpBlocklistService } from '../../../common/services/op-blocklist.service';
 import type { JwtPayload } from '../../../common/decorators/auth.decorator';
 import { CreateOperationRequestDto, OperationRequestQueryDto } from './dto/operation-request.dto';
 
@@ -58,10 +61,14 @@ export class OperationRequestService {
     private readonly adminRepo: Repository<AdminUser>,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly block: OpBlocklistService,
   ) {}
 
   async create(dto: CreateOperationRequestDto, actor: JwtPayload): Promise<OperationRequest> {
     if (!OP_ENDPOINTS[dto.opCode]) throw new BadRequestException('op_code 不在可审批范围');
+    if (await this.block.isBlocked(dto.opCode)) {
+      throw new BizException(ErrorCode.OP_BLOCKED, 'op blocked in submit');
+    }
     const entity = this.repo.create({
       opCode: dto.opCode,
       opLabel: OP_LABELS[dto.opCode] ?? dto.opCode,
@@ -168,6 +175,9 @@ export class OperationRequestService {
     }
     const ep = OP_ENDPOINTS[r.opCode];
     if (!ep) throw new BadRequestException('未知 op 端点');
+    if (await this.block.isBlocked(r.opCode)) {
+      throw new BizException(ErrorCode.OP_BLOCKED, 'op blocked in execute');
+    }
 
     const admin = await this.adminRepo.findOne({ where: { id: actor.sub } });
     if (!admin) throw new NotFoundException('审批人账号不存在');

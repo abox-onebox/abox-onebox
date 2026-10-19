@@ -286,6 +286,7 @@ export enum ErrorCode {
    *    两者不是一回事，不该二选一。
    */
   ORDER_FROZEN_SYNC_CAS_VIOLATION = 30023,
+  OP_BLOCKED = 30024,
 
   /** ---- 4xxxx 支付 / 退款 / 出款 ---- */
   PAY_CREATE_FAILED = 40001,
@@ -499,6 +500,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.ORDER_CONCURRENT_MODIFIED]: '订单已被其它操作改动，请刷新后重试',
   [ErrorCode.ORDER_FROZEN_SYNC_CAS_VIOLATION]:
     '订单抵扣额同步未通过一致性校验，本次金额未变动，请联系技术处理',
+  [ErrorCode.OP_BLOCKED]: '该操作已被管理员列入禁止清单，当前环境不可执行',
   [ErrorCode.PAY_CREATE_FAILED]: '支付单创建失败，请稍后重试',
   [ErrorCode.BALANCE_NOT_ENOUGH]: '余额不足',
   [ErrorCode.WITHDRAW_BELOW_MIN]: '提现金额低于最低限额',

@@ -341,3 +341,43 @@ export class OperationRequest {
   @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
   updatedAt!: Date;
 }
+
+/**
+ * ab_op_blocklist 知识助手禁止清单（P1-c · 2026-10-19）
+ *
+ * 管理员在后台把某些 op 列入禁止，助手（KB）无论直执行还是提交审批都被服务端拦截。
+ * 与前端 localStorage 自解禁无关，是服务端权威闸。
+ */
+@Entity('ab_op_blocklist')
+@Index('uk_op_block_op', { unique: true })
+export class OpBlocklist {
+  @PkColumn()
+  id!: number;
+
+  @Column({ name: 'op_code', type: 'varchar', length: 48, comment: 'OPS_CATALOG 的 op 代码' })
+  opCode!: string;
+
+  @Column({
+    name: 'note',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+    comment: '禁止原因（管理员填写）',
+  })
+  note?: string | null;
+
+  @Column({
+    name: 'created_by',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+    comment: '列入人 admin_user_id',
+  })
+  createdBy?: number | null;
+
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
+  updatedAt!: Date;
+}

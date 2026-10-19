@@ -9,6 +9,7 @@ import {
   MessageTemplate,
 } from '../../database/entities/system.entity';
 import { AdminController } from './admin.controller';
+import { OpBlocklistController } from './op-blocklist/op-blocklist.controller';
 import { AdminUserService } from './admin-user/admin-user.service';
 import { ConfigService } from './config/config.service';
 import { MessageTemplateService } from './template/message-template.service';
@@ -53,7 +54,7 @@ import { OperationLogService } from './operation-log/operation-log.service';
   imports: [
     TypeOrmModule.forFeature([AdminUser, OperationLog, Supplier, SysConfig, MessageTemplate]),
   ],
-  controllers: [AdminController],
+  controllers: [AdminController, OpBlocklistController],
   providers: [
     AdminUserService,
     AdminRoleService,
