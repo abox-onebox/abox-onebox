@@ -32,6 +32,8 @@ const OP_ENDPOINTS: Record<string, { method: 'POST' | 'PUT'; path: string }> = {
   change_leader: { method: 'PUT', path: '/admin/leaders/:id' },
   appoint_leader: { method: 'POST', path: '/admin/leaders' },
   leader_audit: { method: 'POST', path: '/admin/leaders/:id/audit' },
+  send_message: { method: 'POST', path: '/admin/messages/orchestrate' },
+  manual_adjust: { method: 'POST', path: '/admin/orders/manual-adjust' },
 };
 
 const OP_LABELS: Record<string, string> = {
@@ -41,6 +43,8 @@ const OP_LABELS: Record<string, string> = {
   change_leader: '变更团长（等级/楼/层）',
   appoint_leader: '任命/转交团长',
   leader_audit: '团长资质补录（停职/恢复/补签）',
+  send_message: '群发运营通知',
+  manual_adjust: '手动改单（改份数/改取餐楼）',
 };
 
 @Injectable()
