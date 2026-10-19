@@ -9,6 +9,7 @@ import {
   CreateOperationRequestDto,
   OperationRequestQueryDto,
   RejectOperationRequestDto,
+  RecallOperationRequestDto,
 } from './dto/operation-request.dto';
 import { OperationRequestService } from './operation-request.service';
 
@@ -62,6 +63,17 @@ export class OperationRequestController {
     @CurrentAdmin() actor: JwtPayload,
   ) {
     return this.svc.reject(id, dto.reason, actor);
+  }
+
+  @Post(':id/recall')
+  @OperationLog({ module: 'system', action: '撤回高危操作申请' })
+  @ApiOperation({ summary: '撤回未审批的申请（仅 pending；operator 仅能撤自己提交的）' })
+  recall(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RecallOperationRequestDto,
+    @CurrentAdmin() actor: JwtPayload,
+  ) {
+    return this.svc.recall(id, dto.reason, actor);
   }
 
   @Post(':id/execute')

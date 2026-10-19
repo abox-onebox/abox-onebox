@@ -323,6 +323,15 @@ export class OperationRequest {
   @Column({ name: 'executed_at', type: 'datetime', precision: 3, nullable: true })
   executedAt?: Date | null;
 
+  @Column({ name: 'recalled_at', type: 'datetime', precision: 3, nullable: true })
+  recalledAt?: Date | null;
+
+  @Column({ name: 'recalled_by', type: 'bigint', transformer: bigintTransformer, nullable: true })
+  recalledBy?: number | null;
+
+  @Column({ name: 'recall_reason', type: 'varchar', length: 255, nullable: true })
+  recallReason?: string | null;
+
   @VersionColumn()
   version!: number;
 

@@ -131,6 +131,32 @@ export class OperationRequestService {
   }
 
   /**
+   * 撤回未审批的申请：仅 pending 可撤回。
+   * operator 只能撤自己提交的（最小权限，避免越权撤他人单）。
+   */
+  async recall(
+    id: number,
+    reason: string | undefined,
+    actor: JwtPayload,
+  ): Promise<OperationRequest> {
+    return this.repo.manager.transaction(async (m) => {
+      const r = await m.findOne(OperationRequest, { where: { id } });
+      if (!r) throw new NotFoundException('申请单不存在');
+      if (actor?.role === 'operator' && r.submitterAdminId !== actor.sub) {
+        throw new ForbiddenException('仅能撤回自己提交的单');
+      }
+      if (r.status !== 'pending') {
+        throw new BadRequestException(`仅 pending 可撤回（当前 ${r.status}）`);
+      }
+      r.status = 'recalled';
+      r.recalledAt = new Date();
+      r.recalledBy = actor.sub;
+      r.recallReason = reason ?? null;
+      return m.save(r);
+    });
+  }
+
+  /**
    * 执行已审批的申请：复用原目标接口（容器内 HTTP 自调用）。
    * 失败时不改状态（保留 approved 供重试），但把错误回执写入 snapshot。
    */

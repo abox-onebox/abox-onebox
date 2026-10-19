@@ -61,11 +61,20 @@ export class RejectOperationRequestDto {
   reason!: string;
 }
 
+/** 撤回申请（仅 pending 可撤；operator 仅能撤自己提交的） */
+export class RecallOperationRequestDto {
+  @ApiPropertyOptional({ description: '撤回理由（选填）' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  reason?: string;
+}
+
 /** 列表查询 */
 export class OperationRequestQueryDto {
-  @ApiPropertyOptional({ description: '状态过滤：pending/approved/rejected/executed' })
+  @ApiPropertyOptional({ description: '状态过滤：pending/approved/rejected/executed/recalled' })
   @IsOptional()
-  @IsIn(['pending', 'approved', 'rejected', 'executed'])
+  @IsIn(['pending', 'approved', 'rejected', 'executed', 'recalled'])
   status?: string;
 
   @ApiPropertyOptional({ description: 'op 代码过滤' })
