@@ -46,6 +46,7 @@ import {
   Message,
   MessageTemplate,
   OperationRequest,
+  OpBlocklist,
 } from './system.entity';
 
 /** 全量实体数组（TypeORM 注册用） */
@@ -79,4 +80,5 @@ export const ALL_ENTITIES = [
   Message,
   MessageTemplate,
   OperationRequest,
+  OpBlocklist,
 ];
