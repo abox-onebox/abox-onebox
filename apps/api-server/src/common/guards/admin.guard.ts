@@ -48,6 +48,11 @@ export class AdminGuard implements CanActivate {
 
     req.admin = payload;
 
+    // 强制改密：mustChangePassword 未清 → 业务接口一律卡死（改密接口在 /auth，不经本守卫）
+    if (payload.mustChangePassword) {
+      throw new BizException(ErrorCode.MUST_CHANGE_PASSWORD, '账号要求修改口令后才能继续操作');
+    }
+
     const roles = this.reflector.getAllAndOverride<string[]>(ADMIN_ROLES_KEY, [
       context.getHandler(),
       context.getClass(),

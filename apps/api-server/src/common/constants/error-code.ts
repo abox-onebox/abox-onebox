@@ -35,6 +35,8 @@ export enum ErrorCode {
   NOT_FOUND = 10004,
   TOO_MANY_REQUESTS = 10005,
   DUPLICATE_SUBMIT = 10006,
+  /** 扩展（P2）：账号要求首次登录改密，必须改密后才能继续操作 */
+  MUST_CHANGE_PASSWORD = 10007,
 
   /** ---- 2xxxx 用户与团长 ---- */
   WX_CODE_INVALID = 20001,
@@ -449,6 +451,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.NOT_FOUND]: '资源不存在',
   [ErrorCode.TOO_MANY_REQUESTS]: '请求过于频繁，请稍后再试',
   [ErrorCode.DUPLICATE_SUBMIT]: '请勿重复提交',
+  [ErrorCode.MUST_CHANGE_PASSWORD]: '账号要求修改口令后才能继续操作',
   [ErrorCode.WX_CODE_INVALID]: '微信登录凭证已失效，请重试',
   [ErrorCode.USER_NOT_FOUND]: '用户不存在',
   [ErrorCode.LEADER_DISQUALIFIED]: '团长身份已失效',

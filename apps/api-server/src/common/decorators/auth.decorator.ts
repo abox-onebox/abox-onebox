@@ -35,6 +35,8 @@ export interface JwtPayload {
   username?: string;
   /** 供应商账号绑定的 ab_supplier.id（仅 typ=admin 且 role=supplier） */
   supplierId?: number | null;
+  /** 强制改密标记（仅 typ=admin，P2）：1=必须改密后才能操作 */
+  mustChangePassword?: number;
   /** 签发时间（JWT 标准声明，秒）。用于与吊销标记比对（见 admin-role.ts） */
   iat?: number;
   /** 过期时间（JWT 标准声明，秒） */

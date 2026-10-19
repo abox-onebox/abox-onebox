@@ -25,6 +25,10 @@ export class AdminUser {
   })
   role!: string;
 
+  /** P2 强制首登改密标记（1=必须改密后才能操作；改密接口清除为 0） */
+  @Column({ name: 'must_change_password', type: 'tinyint', default: 0, nullable: false })
+  mustChangePassword?: number;
+
   /** 供应商账号绑定 ab_supplier.id（role=supplier 时使用） */
   @Column({ name: 'supplier_id', type: 'bigint', transformer: bigintTransformer, nullable: true })
   supplierId?: number | null;

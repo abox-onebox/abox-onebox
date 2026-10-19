@@ -19,7 +19,7 @@ import {
   LeaderMoneyService,
 } from '../../common/services/leader-money.service';
 import { durationToSeconds } from '../../common/utils/time';
-import { isDevPlainHash, verifyPassword } from '../../common/utils/password';
+import { hashPassword, isDevPlainHash, verifyPassword } from '../../common/utils/password';
 import { Building } from '../../database/entities/building.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { AdminUser } from '../../database/entities/system.entity';
@@ -295,6 +295,7 @@ export class AuthService {
       role: admin.role,
       username: admin.username,
       supplierId: admin.supplierId ?? null,
+      mustChangePassword: admin.mustChangePassword ?? 0,
     };
 
     const token = await this.jwt.signAsync(base satisfies JwtPayload, {
@@ -365,7 +366,7 @@ export class AuthService {
     const tokens = await this.issueAdminTokens(admin);
     this.logger.log(`后台登录成功 id=${admin.id} role=${admin.role}`);
 
-    return { ...tokens, account: this.buildAccount(admin) };
+    return { ...tokens, account: this.buildAccount(admin), mustChangePassword: admin.mustChangePassword ?? 0 };
   }
 
   /**
@@ -419,6 +420,40 @@ export class AuthService {
    */
   adminLogout(): null {
     return null;
+  }
+
+  /**
+   * A6 修改口令（首次登录强制改密 / 定期改密）
+   *
+   * 置于 /auth 下、不受 AdminGuard 约束 —— 因此即便 mustChangePassword=1
+   * 被系统卡死，用户也**能**调本接口改密（改完清零，重新登录即解锁）。
+   * 要求原口令：令牌仅证明身份，不等于免密改密（防令牌泄露被直接改密）。
+   */
+  async changeAdminPassword(sub: number, oldPassword: string, newPassword: string) {
+    const admin = await this.adminRepo.findOne({ where: { id: sub } });
+    if (!admin) throw new BizException(ErrorCode.UNAUTHORIZED, '账号不存在');
+    if (!verifyPassword(oldPassword, admin.passwordHash)) {
+      throw new BizException(ErrorCode.PARAM_INVALID, '原口令错误');
+    }
+    const issues = this.passwordStrengthIssues(newPassword);
+    if (issues.length) {
+      throw new BizException(ErrorCode.PARAM_INVALID, '新口令强度不足：' + issues.join('；'));
+    }
+    admin.passwordHash = hashPassword(newPassword);
+    admin.mustChangePassword = 0;
+    await this.adminRepo.save(admin);
+    this.logger.log(`后台账号改密成功 id=${admin.id}`);
+    return { ok: true as const };
+  }
+
+  /** 口令强度（与 set-admin-password.mjs 口径一致：≥10 位 · 含字母 · 含数字 · 非高危常见串） */
+  private passwordStrengthIssues(pwd: string): string[] {
+    const bad: string[] = [];
+    if (typeof pwd !== 'string' || pwd.length < 10) bad.push('长度不足 10 位');
+    if (!/[A-Za-z]/.test(pwd)) bad.push('不含字母');
+    if (!/[0-9]/.test(pwd)) bad.push('不含数字');
+    if (/^(admin|password|123456|abox|qwerty)/i.test(pwd)) bad.push('使用了高危常见前缀');
+    return bad;
   }
 }
 
