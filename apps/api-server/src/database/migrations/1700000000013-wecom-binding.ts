@@ -15,11 +15,37 @@ export class WecomBinding1700000000013 implements MigrationInterface {
       new Table({
         name: 'ab_wecom_binding',
         columns: [
-          new TableColumn({ name: 'userid', type: 'varchar', length: '64', isPrimary: true, isNullable: false }),
-          new TableColumn({ name: 'operator_name', type: 'varchar', length: '64', isNullable: false }),
-          new TableColumn({ name: 'operator_token', type: 'varchar', length: '512', isNullable: true }),
-          new TableColumn({ name: 'approver_token', type: 'varchar', length: '512', isNullable: true }),
-          new TableColumn({ name: 'created_at', type: 'datetime', default: 'CURRENT_TIMESTAMP', isNullable: true }),
+          new TableColumn({
+            name: 'userid',
+            type: 'varchar',
+            length: '64',
+            isPrimary: true,
+            isNullable: false,
+          }),
+          new TableColumn({
+            name: 'operator_name',
+            type: 'varchar',
+            length: '64',
+            isNullable: false,
+          }),
+          new TableColumn({
+            name: 'operator_token',
+            type: 'varchar',
+            length: '512',
+            isNullable: true,
+          }),
+          new TableColumn({
+            name: 'approver_token',
+            type: 'varchar',
+            length: '512',
+            isNullable: true,
+          }),
+          new TableColumn({
+            name: 'created_at',
+            type: 'datetime',
+            default: 'CURRENT_TIMESTAMP',
+            isNullable: true,
+          }),
           new TableColumn({
             name: 'updated_at',
             type: 'datetime',

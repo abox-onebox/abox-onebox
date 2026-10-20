@@ -37,13 +37,20 @@ export class WecomCryptoService {
       throw new Error('WECOM_ENCODING_AES_KEY 不是合法 Base64：' + (e as Error).message);
     }
     if (aesKey.length !== 32) {
-      throw new Error(`WECOM_ENCODING_AES_KEY 解码后应为 32 字节，实际 ${aesKey.length}（EncodingAESKey 应为 43 字符）`);
+      throw new Error(
+        `WECOM_ENCODING_AES_KEY 解码后应为 32 字节，实际 ${aesKey.length}（EncodingAESKey 应为 43 字符）`,
+      );
     }
     return { token, aesKey, iv: aesKey.subarray(0, 16), corpId };
   }
 
   /** 验签：msg_signature 是否等于 SHA1(sorted(token,timestamp,nonce,encrypt)) */
-  verifyMsgSignature(msgSignature: string, timestamp: string, nonce: string, encrypt: string): boolean {
+  verifyMsgSignature(
+    msgSignature: string,
+    timestamp: string,
+    nonce: string,
+    encrypt: string,
+  ): boolean {
     const { token } = this.conf();
     const calc = this.signature(token, timestamp, nonce, encrypt);
     return calc === msgSignature;
@@ -64,7 +71,8 @@ export class WecomCryptoService {
     decipher.setAutoPadding(false);
     const decrypted = Buffer.concat([decipher.update(buf), decipher.final()]);
     const pad = decrypted[decrypted.length - 1];
-    const content = pad > 0 && pad <= 32 ? decrypted.subarray(0, decrypted.length - pad) : decrypted;
+    const content =
+      pad > 0 && pad <= 32 ? decrypted.subarray(0, decrypted.length - pad) : decrypted;
     const msgLen = content.readUInt32BE(16);
     const message = content.subarray(20, 20 + msgLen).toString('utf8');
     const receiveId = content.subarray(20 + msgLen).toString('utf8');

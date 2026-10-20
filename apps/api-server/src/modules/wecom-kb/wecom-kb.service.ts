@@ -86,7 +86,10 @@ export class WecomKbService implements OnModuleInit {
       return;
     }
     if (intent.kind === 'unknown') {
-      await this.tokenSvc.sendText(fromUser, '指令无法识别：「' + intent.raw + '」\n发送「帮助」查看可用指令。');
+      await this.tokenSvc.sendText(
+        fromUser,
+        '指令无法识别：「' + intent.raw + '」\n发送「帮助」查看可用指令。',
+      );
       return;
     }
 
@@ -94,7 +97,9 @@ export class WecomKbService implements OnModuleInit {
     if (!binding) {
       await this.tokenSvc.sendText(
         fromUser,
-        '你的企业微信账号尚未绑定 KB 令牌。请联系管理员在后台「企业微信绑定」页预绑定 userid=' + fromUser + '。',
+        '你的企业微信账号尚未绑定 KB 令牌。请联系管理员在后台「企业微信绑定」页预绑定 userid=' +
+          fromUser +
+          '。',
       );
       return;
     }

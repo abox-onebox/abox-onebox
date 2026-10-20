@@ -38,7 +38,9 @@ export class OpProxyService {
   private readonly logger = new Logger(OpProxyService.name);
 
   private base(): string {
-    return process.env.WECOM_INTERNAL_API_BASE || 'http://127.0.0.1:' + (process.env.PORT || '3000');
+    return (
+      process.env.WECOM_INTERNAL_API_BASE || 'http://127.0.0.1:' + (process.env.PORT || '3000')
+    );
   }
   private b64(s: string): string {
     return Buffer.from(s, 'utf8').toString('base64');
@@ -62,15 +64,18 @@ export class OpProxyService {
     try {
       const resp = await fetch(url, init);
       const text = await resp.text();
-      let body: any = null;
+      let body: unknown = null;
       try {
         body = JSON.parse(text);
       } catch {
         body = null;
       }
-      const code = body && typeof body.code === 'number' ? body.code : resp.ok ? 0 : resp.status;
-      const message = body && body.message ? body.message : String(text).slice(0, 300);
-      const data = body && body.data !== undefined ? body.data : null;
+      // body 经 JSON.parse 出来是 unknown；收敛成「可能缺字段的对象」再按字段判定，
+      // 与原先 any 写法的运行时语义逐分支等价（null/标量/字符串/对象四种入参都走过）。
+      const parsed = (body ?? {}) as { code?: unknown; message?: unknown; data?: unknown };
+      const code = typeof parsed.code === 'number' ? parsed.code : resp.ok ? 0 : resp.status;
+      const message = parsed.message ? String(parsed.message) : String(text).slice(0, 300);
+      const data = parsed.data !== undefined ? parsed.data : null;
       return { code, message, data };
     } catch (e) {
       this.logger.error('op 代理请求失败：' + (e as Error).message);
@@ -78,7 +83,12 @@ export class OpProxyService {
     }
   }
 
-  private opHeaders(b: Binding, opCode: string, params: Record<string, string>, nlText: string): Record<string, string> {
+  private opHeaders(
+    b: Binding,
+    opCode: string,
+    params: Record<string, string>,
+    nlText: string,
+  ): Record<string, string> {
     return {
       'Content-Type': 'application/json',
       Authorization: 'Bearer ' + (b.operatorToken || ''),
@@ -88,13 +98,20 @@ export class OpProxyService {
       'Idempotency-Key': this.idem(),
     };
   }
-  private approveHeaders(b: Binding, requestId: string, action: 'approve' | 'reject', nlText: string): Record<string, string> {
+  private approveHeaders(
+    b: Binding,
+    requestId: string,
+    action: 'approve' | 'reject',
+    nlText: string,
+  ): Record<string, string> {
     return {
       'Content-Type': 'application/json',
       Authorization: 'Bearer ' + (b.approverToken || ''),
       'X-KB-Operator': this.b64(b.operatorName),
       'X-KB-NL': this.b64((nlText || '').slice(0, 500)),
-      'X-KB-OpBlock': this.b64(JSON.stringify({ op: 'approval', params: { id: requestId, action } })),
+      'X-KB-OpBlock': this.b64(
+        JSON.stringify({ op: 'approval', params: { id: requestId, action } }),
+      ),
       'Idempotency-Key': this.idem(),
     };
   }
@@ -107,36 +124,61 @@ export class OpProxyService {
   }
 
   private needOperator(b: Binding): ProxyResult | null {
-    if (!b.operatorToken) return { code: 401, message: '该 userid 未绑定 operator 令牌，请联系管理员在后台预绑定。', data: null };
+    if (!b.operatorToken)
+      return {
+        code: 401,
+        message: '该 userid 未绑定 operator 令牌，请联系管理员在后台预绑定。',
+        data: null,
+      };
     return null;
   }
   private needApprover(b: Binding): ProxyResult | null {
-    if (!b.approverToken) return { code: 401, message: '该 userid 未绑定 approver 令牌，请联系管理员在后台预绑定。', data: null };
+    if (!b.approverToken)
+      return {
+        code: 401,
+        message: '该 userid 未绑定 approver 令牌，请联系管理员在后台预绑定。',
+        data: null,
+      };
     return null;
   }
 
   /** 直执行（operator 令牌；low 危后台免确认，high/mid 仍过后台校验） */
-  async exec(opCode: string, params: Record<string, string>, b: Binding, nlText: string): Promise<ProxyResult> {
+  async exec(
+    opCode: string,
+    params: Record<string, string>,
+    b: Binding,
+    nlText: string,
+  ): Promise<ProxyResult> {
     const fail = this.needOperator(b);
     if (fail) return fail;
     const meta: OpMeta | undefined = lookupOp(opCode);
     if (!meta) return { code: 404, message: `未知操作码 ${opCode}`, data: null };
     const missing = meta.required.filter((k) => params[k] == null || params[k] === '');
-    if (missing.length) return { code: 422, message: `缺少必填参数：${missing.join('、')}`, data: null };
+    if (missing.length)
+      return { code: 422, message: `缺少必填参数：${missing.join('、')}`, data: null };
     const url = this.base() + '/api/v1' + this.fill(meta.endpoint, params);
-    const init: RequestInit = { method: meta.method, headers: this.opHeaders(b, opCode, params, nlText) };
+    const init: RequestInit = {
+      method: meta.method,
+      headers: this.opHeaders(b, opCode, params, nlText),
+    };
     if (meta.method !== 'GET') init.body = JSON.stringify(this.coerce(params));
     return this.call(url, init);
   }
 
   /** 提交审批申请（operator 令牌，两步流第一步） */
-  async submit(opCode: string, params: Record<string, string>, b: Binding, nlText: string): Promise<ProxyResult> {
+  async submit(
+    opCode: string,
+    params: Record<string, string>,
+    b: Binding,
+    nlText: string,
+  ): Promise<ProxyResult> {
     const fail = this.needOperator(b);
     if (fail) return fail;
     const meta: OpMeta | undefined = lookupOp(opCode);
     if (!meta) return { code: 404, message: `未知操作码 ${opCode}`, data: null };
     const missing = meta.required.filter((k) => params[k] == null || params[k] === '');
-    if (missing.length) return { code: 422, message: `缺少必填参数：${missing.join('、')}`, data: null };
+    if (missing.length)
+      return { code: 422, message: `缺少必填参数：${missing.join('、')}`, data: null };
     const url = this.base() + '/api/v1/admin/operation-requests';
     const body = {
       opCode,
@@ -145,15 +187,25 @@ export class OpProxyService {
       submitterNl: (nlText || '').slice(0, 500),
       submitterOpBlock: { op: opCode, params },
     };
-    const init: RequestInit = { method: 'POST', headers: this.opHeaders(b, opCode, params, nlText), body: JSON.stringify(body) };
+    const init: RequestInit = {
+      method: 'POST',
+      headers: this.opHeaders(b, opCode, params, nlText),
+      body: JSON.stringify(body),
+    };
     return this.call(url, init);
   }
 
   /** 撤回未审批申请（operator 令牌） */
-  async recall(requestId: string, reason: string | undefined, b: Binding, nlText: string): Promise<ProxyResult> {
+  async recall(
+    requestId: string,
+    reason: string | undefined,
+    b: Binding,
+    nlText: string,
+  ): Promise<ProxyResult> {
     const fail = this.needOperator(b);
     if (fail) return fail;
-    const url = this.base() + '/api/v1/admin/operation-requests/' + encodeURIComponent(requestId) + '/recall';
+    const url =
+      this.base() + '/api/v1/admin/operation-requests/' + encodeURIComponent(requestId) + '/recall';
     const params = { id: requestId, reason: reason || '' };
     const init: RequestInit = {
       method: 'POST',
@@ -181,16 +233,34 @@ export class OpProxyService {
   async approve(requestId: string, b: Binding, nlText: string): Promise<ProxyResult> {
     const fail = this.needApprover(b);
     if (fail) return fail;
-    const url = this.base() + '/api/v1/admin/operation-requests/' + encodeURIComponent(requestId) + '/approve';
-    return this.call(url, { method: 'POST', headers: this.approveHeaders(b, requestId, 'approve', nlText), body: '{}' });
+    const url =
+      this.base() +
+      '/api/v1/admin/operation-requests/' +
+      encodeURIComponent(requestId) +
+      '/approve';
+    return this.call(url, {
+      method: 'POST',
+      headers: this.approveHeaders(b, requestId, 'approve', nlText),
+      body: '{}',
+    });
   }
 
   /** 审批拒绝（approver 令牌） */
-  async reject(requestId: string, reason: string | undefined, b: Binding, nlText: string): Promise<ProxyResult> {
+  async reject(
+    requestId: string,
+    reason: string | undefined,
+    b: Binding,
+    nlText: string,
+  ): Promise<ProxyResult> {
     const fail = this.needApprover(b);
     if (fail) return fail;
-    const url = this.base() + '/api/v1/admin/operation-requests/' + encodeURIComponent(requestId) + '/reject';
+    const url =
+      this.base() + '/api/v1/admin/operation-requests/' + encodeURIComponent(requestId) + '/reject';
     const body = reason ? JSON.stringify({ reason }) : '{}';
-    return this.call(url, { method: 'POST', headers: this.approveHeaders(b, requestId, 'reject', nlText), body });
+    return this.call(url, {
+      method: 'POST',
+      headers: this.approveHeaders(b, requestId, 'reject', nlText),
+      body,
+    });
   }
 }

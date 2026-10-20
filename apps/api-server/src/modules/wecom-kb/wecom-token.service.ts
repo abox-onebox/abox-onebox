@@ -16,7 +16,8 @@ export class WecomTokenService {
 
   private need(name: string): string {
     const v = process.env[name];
-    if (!v?.trim()) throw new Error(`企业微信凭据缺失：${name}（建应用后在企业微信后台获取，写入 .env）`);
+    if (!v?.trim())
+      throw new Error(`企业微信凭据缺失：${name}（建应用后在企业微信后台获取，写入 .env）`);
     return v;
   }
 
@@ -28,9 +29,16 @@ export class WecomTokenService {
       `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${encodeURIComponent(corpid)}` +
       `&corpsecret=${encodeURIComponent(corpsecret)}`;
     const resp = await fetch(url);
-    const json = (await resp.json()) as { errcode?: number; errmsg?: string; access_token?: string; expires_in?: number };
+    const json = (await resp.json()) as {
+      errcode?: number;
+      errmsg?: string;
+      access_token?: string;
+      expires_in?: number;
+    };
     if (json.errcode) {
-      throw new Error(`企业微信获取 access_token 失败 errcode=${json.errcode} errmsg=${json.errmsg}`);
+      throw new Error(
+        `企业微信获取 access_token 失败 errcode=${json.errcode} errmsg=${json.errmsg}`,
+      );
     }
     const token = json.access_token as string;
     const expire = (json.expires_in as number) || 7200;
@@ -53,7 +61,9 @@ export class WecomTokenService {
       });
       const json = (await resp.json()) as { errcode?: number; errmsg?: string };
       if (json.errcode) {
-        this.logger.error(`企业微信发消息失败 touser=${userId} errcode=${json.errcode} errmsg=${json.errmsg}`);
+        this.logger.error(
+          `企业微信发消息失败 touser=${userId} errcode=${json.errcode} errmsg=${json.errmsg}`,
+        );
       } else {
         this.logger.log(`企业微信消息已下发 touser=${userId}`);
       }

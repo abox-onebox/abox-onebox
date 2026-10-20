@@ -19,7 +19,13 @@ import { WecomBinding } from './wecom-binding.entity';
 @Module({
   imports: [TypeOrmModule.forFeature([WecomBinding])],
   controllers: [WecomKbController, WecomBindingAdminController],
-  providers: [WecomKbService, WecomCryptoService, WecomTokenService, OpProxyService, WecomBindingService],
+  providers: [
+    WecomKbService,
+    WecomCryptoService,
+    WecomTokenService,
+    OpProxyService,
+    WecomBindingService,
+  ],
   exports: [WecomBindingService],
 })
 export class WecomKbModule {}
