@@ -34,6 +34,18 @@ import { DataSource } from 'typeorm';
  *   / `Unknown column` / 静默截断
  * - **仅打印**：迁移比实体**多**的列（历史字段刻意保留列是项目既有约定，如 `ab_supplier.type`）
  *
+ * ## ⭐ 2026-10-20 新增的两个盲区补法（都带自证，见 selfTest ⑤⑥）
+ * ① **编程式建表整篇不可见**：`new Table({...})` + `new TableColumn({...})`
+ *    （wecom-binding 迁移）不含任何裸 SQL 关键词 ⇒ 源A 推演出「这张表不存在」、
+ *    完备性自检 0/0 相等、「未支持语句」守卫同样沉默 —— 三类防护**同时失效**。
+ *    现已把编程式形态解析进源A（列按出现位置归属最近的 Table；尺寸取
+ *    length/precision/scale 独立字段），并给自检补同口径计数；
+ *    其余编程式改表语句（change/drop/rename/addColumn）一律抛错。
+ * ② **迁移侧不驱动 ⇒ 迁移独有的表永不被检查**（#76 的**反向**盲区：
+ *    PageTrack 实体漏注册实测踩过 —— 本地 sqlite 照常建、生产照常建，两道闸全沉默）。
+ *    `diffSchemas` 现增加「迁移有、实体未注册」检查；确有理由不走实体侧管理的，
+ *    登记进 `MIGRATION_ONLY_EXEMPT`（每条必须写清删除条件），自检查「豁免腐烂」。
+ *
  * ## 已知边界（如实标注，未覆盖处一律**报错**而不是静默放过）
  * - **尺寸（长度 / 精度 / 标度）已纳入**（M5-13 补位，见下节）
  * - 不比默认值 / 注释 / 排序规则：sqlite 与 MySQL 的表述不同源，强行比会得到一屏噪声盖住真问题
@@ -238,6 +250,49 @@ const RENAME_INDEX_RE =
 const INDEX_LINE_RE = /^(PRIMARY|UNIQUE|KEY|INDEX|CONSTRAINT|FOREIGN)\b/;
 
 /**
+ * 编程式建表（TypeORM `new Table({...})` + `queryRunner.createTable(..., true)`）——
+ * 2026-10-20 补的**第二个盲区**，比 #76 原盲区更隐蔽：
+ *
+ * `1700000000013-wecom-binding.ts`（企业微信 KB 路线B）整篇没有一句裸 SQL，
+ * 表与列全部写在 `new Table({ name, columns: [new TableColumn({...})] })` 里。
+ * 于是：① `CREATE TABLE` 关键词一次都不出现 ⇒ 源A 推演出**这张表根本不存在**；
+ * ② 完备性自检数的是 `CREATE TABLE` 出现次数 ⇒ 0/0 **相等**，自检也放过；
+ * ③ 「未支持语句」守卫同样看不见（它只匹配 SQL 关键词）。
+ * ⇒ 生产上这张表**由迁移建**、代码里**由实体/裸 SQL 用**，而「迁移 ↔ 实体」
+ *   这道闸对它**整体静默**——与 #76 同族，且连「未支持」的报错都没触发。
+ *
+ * 修法：把编程式形态也解析进源A（结构化对象比裸 SQL 更好解析），
+ * 并给完备性自检补上同口径的计数。其余编程式改表语句（change/drop/rename）
+ * 一律抛错要求扩展 —— 与裸 SQL 侧同一条纪律。
+ */
+const PROG_TABLE_RE = /new Table\(\{\s*name:\s*['"]([A-Za-z0-9_]+)['"]/g;
+const PROG_COLUMN_RE = /new TableColumn\(\{([\s\S]*?)\}\)/g;
+/** 编程式「改结构」语句 —— up 作用域里出现即抛错（不静默跳过） */
+const PROG_UNSUPPORTED: { pat: RegExp; label: string }[] = [
+  { pat: /\.changeColumn\s*\(/i, label: 'changeColumn（编程式改列）' },
+  { pat: /\.dropColumn\s*\(/i, label: 'dropColumn（编程式删列）' },
+  { pat: /\.renameColumn\s*\(/i, label: 'renameColumn（编程式改名）' },
+  { pat: /\.addColumn\s*\(\s*new\s+TableColumn/i, label: 'addColumn(TableColumn)（编程式加列）' },
+];
+
+/**
+ * 「迁移建了表、实体却没注册进 ALL_ENTITIES」的**显式豁免登记册**。
+ *
+ * 这是 #76 一族的**反向**盲区：`diffSchemas` 原先只遍历实体表，迁移独有的表
+ * 连「被看一眼」都不会发生（PageTrack 当初就是漏注册，本地 sqlite 由实体建表
+ * 一切正常、生产由迁移建表也正常，但两道闸都对它沉默）。现在改为**迁移侧也驱动**，
+ * 未注册即报红；确有理由的（如刻意不用实体、纯 SQL 表）在此登记，**每条必须写清
+ * 删除条件**，且自检会查「豁免腐烂」（表已注册/已不在迁移里 ⇒ 要求删条目）。
+ */
+const MIGRATION_ONLY_EXEMPT = new Set<string>([
+  // ab_wecom_binding（迁移 1700000000013-wecom-binding · 企业微信 KB 路线B WIP）：
+  //   实体已存在于 `modules/wecom-kb/wecom-binding.entity.ts`（@PrimaryColumn userid
+  //   varchar(64)），但**尚未注册进 ALL_ENTITIES**（并行会话 WIP，该文件未入库）。
+  //   ⇒ 删除条件：实体注册进 `entities/index.ts` 后，本行必须删（自检「豁免腐烂」会催）。
+  'ab_wecom_binding',
+]);
+
+/**
  * `ALTER TABLE \`T\`` 的 T 在 `ADD COLUMN` / `MODIFY COLUMN` **之前** —— 取「语句内最近的那一条」定表。
  * 找不到即报错：宁可拒绝运行，也不要把列挂到错误的表上（挂错表 = 对账结论整体失真）。
  */
@@ -276,6 +331,8 @@ export function migrationSchema(): { schema: Schema; stats: { tables: number; co
     let renameTableSeen = 0;
     let changeSeen = 0;
     let renameIndexSeen = 0;
+    let progTableSeen = 0;
+    let progColSeen = 0;
 
     for (const { pat, label } of UNSUPPORTED_IN_MIGRATION) {
       if (pat.test(scope)) {
@@ -363,6 +420,47 @@ export function migrationSchema(): { schema: Schema; stats: { tables: number; co
       renameIndexSeen += 1;
     });
 
+    // ---- 编程式建表（new Table + new TableColumn）----
+    for (const { pat, label } of PROG_UNSUPPORTED) {
+      if (pat.test(scope)) {
+        throw new Error(
+          `${f} 的 up 作用域里出现尚未支持的编程式语句「${label}」—— 请先扩展 ` +
+            `schema-parity.ts 的解析，不要让它静默跳过（跳过 = 假绿）`,
+        );
+      }
+    }
+    const progTableMarks = [...scope.matchAll(PROG_TABLE_RE)];
+    progTableSeen += progTableMarks.length;
+    for (const cm of scope.matchAll(PROG_COLUMN_RE)) {
+      progColSeen += 1;
+      // 列归属「它前面最近的那个 new Table」——按出现位置推，不假设一个文件一张表
+      const owner = progTableMarks.filter((tm) => (tm.index ?? -1) < (cm.index ?? -1)).pop();
+      if (!owner) {
+        throw new Error(`${f} 里有一条 new TableColumn 找不到所属的 new Table —— 解析器需扩展`);
+      }
+      const table = owner[1];
+      const body = cm[1];
+      const nameM = /name:\s*['"]([^'"]+)['"]/.exec(body);
+      const typeM = /type:\s*['"]([^'"]+)['"]/.exec(body);
+      if (!nameM || !typeM) {
+        throw new Error(
+          `${f} 的 TableColumn 解析不出 name/type（${body.trim().slice(0, 60)}…）—— 解析器需扩展`,
+        );
+      }
+      // 尺寸在编程式形态里是**独立字段**（length/precision/scale），不在 type 里
+      const lenM = /length:\s*['"]?(\d+)['"]?/.exec(body);
+      const precM = /precision:\s*['"]?(\d+)['"]?/.exec(body);
+      const scaleM = /scale:\s*['"]?(\d+)['"]?/.exec(body);
+      const cols = schema.get(table) ?? new Map<string, ColumnShape>();
+      cols.set(nameM[1], {
+        type: normType(typeM[1]),
+        ...(lenM ? { len: Number(lenM[1]) } : {}),
+        ...(precM ? { prec: Number(precM[1]) } : {}),
+        ...(scaleM ? { scale: Number(scaleM[1]) } : {}),
+      });
+      schema.set(table, cols);
+    }
+
     // ---- 解析器完备性自检：源码里出现的次数必须与解析到的条数相等 ----
     // ⚠️ 计数正则与 CREATE_TABLE_RE 同口径（IF NOT EXISTS 可选，2026-10-20）
     const createCount = (scope.match(/CREATE TABLE (?:IF NOT EXISTS )?/gi) ?? []).length;
@@ -371,13 +469,17 @@ export function migrationSchema(): { schema: Schema; stats: { tables: number; co
     const renameTableCount = (scope.match(new RegExp(RENAME_TABLE_RE.source, 'gi')) ?? []).length;
     const changeCount = (scope.match(new RegExp(CHANGE_RE.source, 'gi')) ?? []).length;
     const renameIndexCount = (scope.match(new RegExp(RENAME_INDEX_RE.source, 'gi')) ?? []).length;
+    const progTableCount = (scope.match(/new Table\(\{/g) ?? []).length;
+    const progColCount = (scope.match(/new TableColumn\(\{/g) ?? []).length;
     if (
       createCount !== createSeen ||
       addCount !== addSeen ||
       modifyCount !== modifySeen ||
       renameTableCount !== renameTableSeen ||
       changeCount !== changeSeen ||
-      renameIndexCount !== renameIndexSeen
+      renameIndexCount !== renameIndexSeen ||
+      progTableCount !== progTableSeen ||
+      progColCount !== progColSeen
     ) {
       throw new Error(
         `${f} 解析条数不符：CREATE TABLE 源码 ${createCount} / 解析 ${createSeen}，` +
@@ -385,7 +487,9 @@ export function migrationSchema(): { schema: Schema; stats: { tables: number; co
           `MODIFY COLUMN 源码 ${modifyCount} / 解析 ${modifySeen}，` +
           `RENAME TABLE 源码 ${renameTableCount} / 解析 ${renameTableSeen}，` +
           `CHANGE 源码 ${changeCount} / 解析 ${changeSeen}，` +
-          `RENAME INDEX 源码 ${renameIndexCount} / 解析 ${renameIndexSeen} —— 有语句被漏读，先修解析器`,
+          `RENAME INDEX 源码 ${renameIndexCount} / 解析 ${renameIndexSeen}，` +
+          `new Table 源码 ${progTableCount} / 解析 ${progTableSeen}，` +
+          `new TableColumn 源码 ${progColCount} / 解析 ${progColSeen} —— 有语句被漏读，先修解析器`,
       );
     }
   }
@@ -494,6 +598,14 @@ type Diff = {
   }[];
   /** 迁移有、实体无 —— 历史字段等，**仅打印不判红** */
   extraInMigration: { table: string; column: string }[];
+  /**
+   * 迁移建了表、实体却没注册进 ALL_ENTITIES（**必须为零**，豁免见 MIGRATION_ONLY_EXEMPT）
+   *
+   * #76 一族的**反向**盲区：原实现只遍历实体表 ⇒ 迁移独有的表连被看一眼都不会。
+   * 实测踩过两次：① PageTrack 实体漏注册（本地 sqlite 照常建、生产照常建，
+   * 两道闸全沉默）；② wecom-binding 迁移整篇编程式建表，源A 连表都推演不出来。
+   */
+  unregisteredTables: string[];
 };
 
 /** 三个尺寸维度各取一次；只有「两侧都有值」的维度才有判红资格 */
@@ -511,6 +623,7 @@ export function diffSchemas(mig: Schema, ent: Schema): Diff {
     sizeMismatch: [],
     sizeOneSide: [],
     extraInMigration: [],
+    unregisteredTables: [],
   };
   for (const [table, ecols] of ent) {
     const mcols = mig.get(table);
@@ -553,6 +666,12 @@ export function diffSchemas(mig: Schema, ent: Schema): Diff {
     for (const col of mcols.keys())
       if (!ecols.has(col)) d.extraInMigration.push({ table, column: col });
   }
+  // ---- 迁移侧也驱动：迁移建了表、实体没注册的，必须报出来（豁免见 MIGRATION_ONLY_EXEMPT）----
+  for (const table of mig.keys()) {
+    if (ent.has(table)) continue;
+    if (MIGRATION_ONLY_EXEMPT.has(table)) continue;
+    d.unregisteredTables.push(table);
+  }
   return d;
 }
 
@@ -561,7 +680,8 @@ function blockingCount(d: Diff): number {
     d.missingTables.length +
     d.missingInMigration.length +
     d.typeMismatch.length +
-    d.sizeMismatch.length
+    d.sizeMismatch.length +
+    d.unregisteredTables.length
   );
 }
 
@@ -696,6 +816,40 @@ function selfTest(mig: Schema, ent: Schema): string[] {
     }
   }
 
+  /*
+   * ⑤ 豁免腐烂自检 —— 登记册里每一条都必须**当前仍然成立**。
+   *    表已注册进实体 / 已不在迁移推演里 ⇒ 条目过期，要求删（否则登记册会
+   *    慢慢攒一堆「据说有理由」的死条目，比没有登记册更难查）。
+   */
+  for (const t of MIGRATION_ONLY_EXEMPT) {
+    if (ent.has(t)) {
+      problems.push(
+        `豁免腐烂：${t} 已注册进 ALL_ENTITIES，请删除 schema-parity.ts 的 MIGRATION_ONLY_EXEMPT 对应条目`,
+      );
+    }
+    if (!mig.has(t)) {
+      problems.push(
+        `豁免腐烂：${t} 已不在迁移推演里，请删除 schema-parity.ts 的 MIGRATION_ONLY_EXEMPT 对应条目`,
+      );
+    }
+  }
+
+  /*
+   * ⑥ 「迁移建表但实体未注册」必须报得出来 —— 往源A 里加一张实体没有的表。
+   *    这一条守的是 #76 反向盲区（只遍历实体表 ⇒ 迁移独有的表永远不被看见）。
+   */
+  {
+    const cloned5: Schema = new Map([...mig].map(([t, cols]) => [t, new Map(cols)]));
+    cloned5.set('ab_probe_ghost_table', new Map([['id', { type: 'INT' }]]));
+    const d5 = diffSchemas(cloned5, ent);
+    if (!d5.unregisteredTables.includes('ab_probe_ghost_table')) {
+      problems.push(
+        '自检失败：往迁移侧加一张实体没有的表后，对账器没有报出「未注册表」—— ' +
+          '该判据是恒空的（#76 反向盲区复发）',
+      );
+    }
+  }
+
   return problems;
 }
 
@@ -721,6 +875,18 @@ async function main(): Promise<void> {
   if (d.missingTables.length) {
     console.log(`✘ 迁移缺整表（${d.missingTables.length}）：生产首迁后这些表不存在`);
     for (const t of d.missingTables) console.log(`   - ${t}`);
+    console.log();
+  }
+  if (d.unregisteredTables.length) {
+    console.log(
+      `✘ 迁移建了表但实体未注册（${d.unregisteredTables.length}）：` +
+        '本地 sqlite 不建它、生产 MySQL 建它 —— 迁移↔实体两道闸都对它沉默（#76 反向盲区）',
+    );
+    for (const t of d.unregisteredTables) console.log(`   - ${t}`);
+    console.log(
+      '   处理：把实体注册进 entities/index.ts（ALL_ENTITIES）；确有理由不由实体管理的，' +
+        '登记进 MIGRATION_ONLY_EXEMPT 并写清删除条件',
+    );
     console.log();
   }
   if (d.missingInMigration.length) {
@@ -777,7 +943,8 @@ async function main(): Promise<void> {
   console.log(
     `✔ 结构一致：${ent.stats.tables} 表 / ${ent.stats.columns} 列，迁移与实体逐列对齐` +
       `（含尺寸：${sizeCompared} 个维度两侧都有声明且全部相等；` +
-      `单侧声明 ${d.sizeOneSide.length} 项仅提示）`,
+      `单侧声明 ${d.sizeOneSide.length} 项仅提示；` +
+      `迁移侧未注册表 0 · 豁免登记 ${MIGRATION_ONLY_EXEMPT.size} 条）`,
   );
 }
 
