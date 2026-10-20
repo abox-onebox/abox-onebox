@@ -381,7 +381,10 @@ export const ADMIN_NAV = [
       // 阶段 3 · 高危审批申请单（M37 新增）—— 列表 + 详情两步流。
       //   ⚠️ 与 admin-role.ts:102 的 `/system/operation-request` menu key 同源；
       //      operator 经 `/system/` 派生规则菜单不可见（只能由知识助手代提交）。
-      //      `icon: 'alert'` 属 82 名 Tabler 子集（check-nav-consistency 第⑥条校验通过）。
+      //      图标取 `alert`，属 82 名 Tabler 子集（check-nav-consistency 第⑥条校验）。
+      //      ⚠️ 注释里**不要**复述字段赋值形态（冒号紧接引号）—— design:spec ⑧ 的
+      //         粗计数不剥注释，会把注释里的字样误计成一条菜单（2026-10-20 实测踩中：
+      //         本注释原文写成带引号的赋值形态，icon 计数虚涨 1 ⇒ 门禁红）。
       {
         path: '/system/operation-request',
         title: '高危审批',
