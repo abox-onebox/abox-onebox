@@ -157,7 +157,9 @@ function resetQuery(): void {
 }
 
 function goDetail(row: OperationRequestRow): void {
-  router.push(`/system/operation-request/${row.id}`);
+  // 查询串传参（与 `/leader/detail`、`/order/detail` 同 pattern —— 路径参数路由
+  // 无法被 nav:consistency 的 drilldown 豁免核验，且全仓详情页一律查询串）
+  router.push({ path: '/system/operation-request/detail', query: { id: String(row.id) } });
 }
 
 type TagType = 'success' | 'info' | 'warning' | 'danger' | 'primary';

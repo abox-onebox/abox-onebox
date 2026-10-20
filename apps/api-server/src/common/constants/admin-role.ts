@@ -100,6 +100,13 @@ export const ADMIN_MENU_KEYS = [
   //   自动被挡在菜单外（只能提交、不能审批，符合最小权限）；真正的闸门是控制器的
   //   approve/execute/reject 的 `@Roles('super_admin','admin')`。菜单矩阵与 API 白名单同向。
   '/system/operation-request',
+  // 阶段 3 · 高危审批**详情**（下钻页）—— 与 `/leader/detail`、`/order/detail`
+  //   同 pattern：列表页「详情」按钮以**查询串**进入（`list.vue` 的 router.push），
+  //   侧边栏不单列。本 key 只承担「授权 ⇒ 守卫放行」，入口侧由
+  //   `scripts/check-nav-consistency.mjs` 的 drilldown 豁免解释。
+  //   ⚠️ 2026-10-20 补登：原详情路由是 `:id` 路径参数且三处登记全无 —— 除
+  //      super_admin（持有全量通配）外，任何角色点「详情」都被守卫拦到 /403。
+  '/system/operation-request/detail',
   '/system/message-template',
   // M5-12：跑批时刻表（D64 查看 / D65 手动补跑）。
   //   ⚠️ 菜单 key 与**服务端角色白名单**同源：`AdminController` 是

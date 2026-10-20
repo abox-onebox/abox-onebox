@@ -166,6 +166,17 @@ const ADMIN_EXEMPT = [
     kind: 'legacy-duplicate',
     why: '脚手架遗留（同上）：**商家端** P23「我的菜品」的 key。运营端的对应页是 `/supplier/dish-library`（已补进 `ADMIN_NAV`）—— 两者刻意分家，见 `admin-role.ts:44-46`。',
   },
+  {
+    key: '/system/operation-request/detail',
+    kind: 'drilldown',
+    via: 'views/system/operation-request/list.vue',
+    why: '高危审批详情（阶段 3 · 2026-10-18）—— 由「高危审批」列表每行「详情」进入'
+      + '（`views/system/operation-request/list.vue` 的 goDetail，查询串带 id），'
+      + '是看某一条申请单的明细而非独立作业页，故不单列顶级菜单 —— 与同类 `/leader/detail`'
+      + '、`/order/detail` 处理方式一致（查询串 pattern）。授权侧已补进 ADMIN_MENU_KEYS'
+      + '（`admin-role.ts`）；2026-10-20 补本条豁免：原 `:id` 路径参数路由三处登记全无，'
+      + '除 super_admin 外点详情都会被守卫拦到 /403。',
+  },
 
   // ============================================================ kind: 'non-page'
   // 以下 4 条**不是页面**，只是路由基础设施 —— 它们不进菜单、不进授权，

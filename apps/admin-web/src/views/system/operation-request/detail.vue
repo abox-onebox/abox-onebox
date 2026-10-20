@@ -274,7 +274,9 @@ async function doExecute(): Promise<void> {
 }
 
 onMounted(async () => {
-  const id = Number(route.params.id);
+  // 查询串传参（与列表页 `list.vue` 的 router.push 对应；原为路径参数 `:id`，
+  // 2026-10-20 对齐全仓详情页的查询串 pattern）
+  const id = Number(route.query.id);
   if (!Number.isFinite(id) || id < 1) {
     loading.value = false;
     ElMessage.warning('缺少申请单 id');

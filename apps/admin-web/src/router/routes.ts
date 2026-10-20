@@ -284,7 +284,7 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/system/operation-request/list.vue'),
       },
       {
-        path: 'system/operation-request/:id',
+        path: 'system/operation-request/detail',
         name: 'SystemOperationRequestDetail',
         component: () => import('@/views/system/operation-request/detail.vue'),
       },
