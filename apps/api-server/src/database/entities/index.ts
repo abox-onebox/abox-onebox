@@ -1,9 +1,10 @@
 /**
- * 实体统一出口（28 张表）
+ * 实体统一出口（30 张表）
  *
  * 依据：《数据库 ER 设计 v2.1》+《表结构评审意见 v1.0》（P0-1 ~ P0-6、P1-4、P2-1、P2-5、P2-6）
  *   + 2026-09-15 增补：`ab_withdraw` 提现申请单（M2 · 数据层缺口补齐）
  *   + 2026-09-25 增补：`ab_item_rating` 口味评价（P1-U2 · 逐菜三键 · 只增表）
+ *   + 2026-10-20 增补：`ab_page_track` 页面停留埋点（U15 · 匿名聚合 · 只增表）
  *
  * 用户与角色域（4）：User / TeamLeader / Building / LeaderInvite
  * 楼群域（1）：BuildingGroup
@@ -12,8 +13,8 @@
  * 供应商生产域（2）：SupplierItemDaily / SupplierItemCenterDaily（M3-8 新增）
  * 订单与支付域（5）：Order / PaymentLog / Refund / DeliveryRecord / ItemRating（P1-U2 新增）
  * 财务域（6）：Commission / SupplierShare / Balance / BalanceLog / DistributionCenter / Withdraw
- * 系统域（6）：AdminUser / OperationLog / SysConfig / Message / MessageTemplate / OperationRequest（阶段3 新增）
- * 合计 29 张
+ * 系统域（7）：AdminUser / OperationLog / SysConfig / Message / MessageTemplate / OperationRequest（阶段3 新增） / PageTrack（U15 新增）
+ * 合计 30 张
  */
 export * from './user.entity';
 export * from './leader.entity';
@@ -47,6 +48,7 @@ import {
   MessageTemplate,
   OperationRequest,
   OpBlocklist,
+  PageTrack,
 } from './system.entity';
 
 /** 全量实体数组（TypeORM 注册用） */
@@ -81,4 +83,5 @@ export const ALL_ENTITIES = [
   MessageTemplate,
   OperationRequest,
   OpBlocklist,
+  PageTrack,
 ];

@@ -366,7 +366,11 @@ export class AuthService {
     const tokens = await this.issueAdminTokens(admin);
     this.logger.log(`后台登录成功 id=${admin.id} role=${admin.role}`);
 
-    return { ...tokens, account: this.buildAccount(admin), mustChangePassword: admin.mustChangePassword ?? 0 };
+    return {
+      ...tokens,
+      account: this.buildAccount(admin),
+      mustChangePassword: admin.mustChangePassword ?? 0,
+    };
   }
 
   /**

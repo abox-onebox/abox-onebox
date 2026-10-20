@@ -385,3 +385,65 @@ export class OpBlocklist {
   @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
   updatedAt!: Date;
 }
+
+/**
+ * ab_page_track 页面停留埋点（U15 · 2026-10-20 实装 · 第 30 张表）
+ *
+ * ## 口径：匿名聚合（刻意不绑身份）
+ * 只记「哪个页面、进来/离开时刻、停了多久」，**不采集 openid / 用户身份**。
+ * 端上埋点模块（`apps/miniprogram/src/utils/track.ts`）不发身份字段；后端 DTO
+ * （`modules/track/dto/track.dto.ts`）在 whitelist + forbidNonWhitelisted 的
+ * ValidationPipe 下**不声明任何身份字段** —— 即便有人构造带 openid 的报文也会被
+ * 整体拒绝（fail-closed，而不是「收下但不用」）。日后若要做「绑定用户」的个人
+ * 行为分析，须单独立项：加字段 + 隐私指引披露 + 用户同意机制，三件一起。
+ *
+ * ## 为什么 enter/leave 是 BIGINT 毫秒而不是 DATETIME
+ * 停留时长 = 端上 `Date.now()` 差值，与**服务端**时钟无关；客户端时钟偏移只
+ * 影响 enter/leave 的绝对值，不影响 `duration_ms` 的自洽性。服务端自己的时钟
+ * 只认 `created_at`（落库时刻，DATETIME(3)）。若用 DATETIME 存进出时刻，跨时区
+ * 与时钟偏移会把「时长」变成一个需要二次解释的值。
+ *
+ * ## 只增表
+ * 无 version / updated_at —— 埋点行落库即终态，写上反而暗示「会改」（同
+ * `ab_dish_rating` 的约定）。
+ */
+@Entity('ab_page_track')
+@Index('idx_page_track_page_created', ['page', 'createdAt'])
+export class PageTrack {
+  @PkColumn()
+  id!: number;
+
+  @Column({ type: 'varchar', length: 128, comment: '页面路由路径（如 pages/index/index）' })
+  page!: string;
+
+  @Column({
+    name: 'page_query',
+    type: 'varchar',
+    length: 256,
+    nullable: true,
+    comment: '页面 query 序列化（如 buildingId=3；无 query 为 NULL）',
+  })
+  pageQuery?: string | null;
+
+  @Column({
+    name: 'enter_at',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    comment: '进入时刻（端上 Date.now() 毫秒）',
+  })
+  enterAt!: number;
+
+  @Column({
+    name: 'leave_at',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    comment: '离开时刻（端上 Date.now() 毫秒）',
+  })
+  leaveAt!: number;
+
+  @Column({ name: 'duration_ms', type: 'int', comment: '停留毫秒（端上计算，封顶 24h）' })
+  durationMs!: number;
+
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
+  createdAt!: Date;
+}

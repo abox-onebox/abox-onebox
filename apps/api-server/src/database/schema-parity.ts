@@ -197,9 +197,17 @@ function upScope(raw: string, file: string): string {
   return `${raw.slice(0, upAt)}\n${body}`;
 }
 
-/** CREATE TABLE IF NOT EXISTS `t` ( ... ) ENGINE=... —— 结尾必须带 ENGINE，避免误吞后面的内容 */
+/**
+ * `CREATE TABLE [IF NOT EXISTS] `t` ( ... ) ENGINE=... —— 结尾必须带 ENGINE，避免误吞后面的内容。
+ *
+ * ⚠️ `IF NOT EXISTS` **可选**（2026-10-20 修正）：0009 / 0011 两支迁移用
+ *    「up() 前段 information_schema 守卫 + 裸 CREATE TABLE」实现幂等（守卫之下
+ *    IF NOT EXISTS 是冗余的）。旧正则只认带 IF NOT EXISTS 的写法 ⇒ 这两张表
+ *    **从未参与过对账**——本地由实体 synchronize 建、生产由迁移建，两边都
+ *    「成功」，但「迁移 ↔ 实体」这道闸对它们是**静默缺口**（同 #76 一族）。
+ */
 const CREATE_TABLE_RE =
-  /CREATE TABLE IF NOT EXISTS\s+`([A-Za-z0-9_]+)`\s*\(([\s\S]*?)\n\s*\)\s*ENGINE/gi;
+  /CREATE TABLE (?:IF NOT EXISTS )?`([A-Za-z0-9_]+)`\s*\(([\s\S]*?)\n\s*\)\s*ENGINE/gi;
 
 /** 列定义行：`col` TYPE[(n[,m])] [UNSIGNED] —— 只在非索引行上取（`g` + `matchAll`，见下方解析处） */
 const COLUMN_DEF_RE = /`([A-Za-z0-9_]+)`\s+([A-Z]+(?:\(\d+(?:,\d+)?\))?(?:\s+UNSIGNED)?)/g;
@@ -356,7 +364,8 @@ export function migrationSchema(): { schema: Schema; stats: { tables: number; co
     });
 
     // ---- 解析器完备性自检：源码里出现的次数必须与解析到的条数相等 ----
-    const createCount = (scope.match(/CREATE TABLE IF NOT EXISTS/gi) ?? []).length;
+    // ⚠️ 计数正则与 CREATE_TABLE_RE 同口径（IF NOT EXISTS 可选，2026-10-20）
+    const createCount = (scope.match(/CREATE TABLE (?:IF NOT EXISTS )?/gi) ?? []).length;
     const addCount = (scope.match(/ADD COLUMN/gi) ?? []).length;
     const modifyCount = (scope.match(/MODIFY COLUMN/gi) ?? []).length;
     const renameTableCount = (scope.match(new RegExp(RENAME_TABLE_RE.source, 'gi')) ?? []).length;

@@ -48,7 +48,8 @@ export class AuthController {
   @Post('change-password')
   @ApiOperation({
     summary: 'A6 修改口令（首次登录强制改密 / 定期改密）',
-    description: '需原口令；成功后将 must_change_password 清零，重新登录即解锁。置于 /auth 下，不受 AdminGuard 约束，故被强制改密卡死时仍可调用。',
+    description:
+      '需原口令；成功后将 must_change_password 清零，重新登录即解锁。置于 /auth 下，不受 AdminGuard 约束，故被强制改密卡死时仍可调用。',
   })
   changePassword(@Body() dto: ChangePasswordDto, @CurrentUser() me: JwtPayload) {
     return this.authService.changeAdminPassword(me.sub, dto.oldPassword, dto.newPassword);

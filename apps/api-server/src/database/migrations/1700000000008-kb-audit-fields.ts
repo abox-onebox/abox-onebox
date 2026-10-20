@@ -32,23 +32,37 @@ export class KbAuditFields1700000000008 implements MigrationInterface {
   }
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    const cols: Array<{ name: string; ddl: string }> = [
+    /*
+     * ⚠️ 2026-10-20 静态化改写（**语义完全不变**，生产零影响）：
+     *
+     * 原写法把列 DDL 放进 `cols` 数组、再以 `ADD COLUMN ${c.ddl}` 动态拼接 ——
+     * `schema:parity` 的自检要求「源码里每条 ADD COLUMN 都能被静态解析」，
+     * 动态拼接使解析条数 0 ≠ 源码条数 1 ⇒ 整道门禁抛错，而这**三列从未参与过
+     * 「迁移 ↔ 实体」对账」（本地由实体 synchronize 建、生产由直连脚本加，
+     * 两边都不经过迁移对账 —— 与 #76 同族的静默缺口）。
+     *
+     * 本迁移**未在任何环境跑过 `migration:run`**（见文件头：生产走
+     * `_tmp/kb/add-oplog-columns.mjs` 直连执行，本地 sqlite 走 synchronize）——
+     * 改写不改变任何已发生的结构变更，只是让「schema 演进记录」重新可被机械核对。
+     * 改写前后逐列一致：同名、同类型（VARCHAR(64) / TEXT / TEXT）、同可空、同注释。
+     */
+    const adds: Array<{ name: string; sql: string }> = [
       {
         name: 'kb_operator',
-        ddl: "`kb_operator` VARCHAR(64) NULL DEFAULT NULL COMMENT '知识助手自报操作人（X-KB-Operator）'",
+        sql: `ALTER TABLE \`ab_operation_log\` ADD COLUMN \`kb_operator\` VARCHAR(64) NULL DEFAULT NULL COMMENT '知识助手自报操作人（X-KB-Operator）'`,
       },
       {
         name: 'kb_nl_intent',
-        ddl: "`kb_nl_intent` TEXT NULL COMMENT '知识助手自然语言指令（X-KB-NL）'",
+        sql: `ALTER TABLE \`ab_operation_log\` ADD COLUMN \`kb_nl_intent\` TEXT NULL COMMENT '知识助手自然语言指令（X-KB-NL）'`,
       },
       {
         name: 'kb_op_block',
-        ddl: "`kb_op_block` TEXT NULL COMMENT '知识助手生成的操作块JSON（X-KB-OpBlock）'",
+        sql: `ALTER TABLE \`ab_operation_log\` ADD COLUMN \`kb_op_block\` TEXT NULL COMMENT '知识助手生成的操作块JSON（X-KB-OpBlock）'`,
       },
     ];
-    for (const c of cols) {
+    for (const c of adds) {
       if (!(await this.hasColumn(queryRunner, 'ab_operation_log', c.name))) {
-        await queryRunner.query(`ALTER TABLE \`ab_operation_log\` ADD COLUMN ${c.ddl}`);
+        await queryRunner.query(c.sql);
       }
     }
   }

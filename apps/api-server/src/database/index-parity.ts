@@ -62,8 +62,16 @@ const KEY_IN_TABLE_RE = /(UNIQUE\s+)?KEY\s+`([A-Za-z0-9_]+)`\s*\(([^)]*)\)/gi;
 /** `ALTER TABLE \`t\` ADD [UNIQUE] INDEX \`name\` (\`a\`,\`b\`)` */
 const ALTER_ADD_INDEX_RE =
   /ALTER TABLE\s+`([A-Za-z0-9_]+)`\s+ADD\s+(UNIQUE\s+)?INDEX\s+`([A-Za-z0-9_]+)`\s*\(([^)]*)\)/gi;
+/**
+ * `CREATE TABLE [IF NOT EXISTS] `t` ( ... ) ENGINE=... —— 结尾必须带 ENGINE，避免误吞后面的内容。
+ *
+ * ⚠️ `IF NOT EXISTS` **可选**（2026-10-20 修正，同 schema-parity 的口径）：
+ *    0009 / 0011 用「information_schema 守卫 + 裸 CREATE TABLE」实现幂等，
+ *    旧正则只认带 IF NOT EXISTS 的写法 ⇒ 那两张表的索引**从未参与对账**
+ *    （静默缺口，同 #76 一族）。
+ */
 const CREATE_TABLE_RE =
-  /CREATE TABLE IF NOT EXISTS\s+`([A-Za-z0-9_]+)`\s*\(([\s\S]*?)\n\s*\)\s*ENGINE/gi;
+  /CREATE TABLE (?:IF NOT EXISTS )?`([A-Za-z0-9_]+)`\s*\(([\s\S]*?)\n\s*\)\s*ENGINE/gi;
 const COL_IN_LIST_RE = /`([A-Za-z0-9_]+)`/g;
 /**
  * RENAME TABLE `old` TO `new` —— 破坏性改名迁移的表改名。
