@@ -29,9 +29,12 @@
 
 > 页面访问记录自收集之日起保留 180 天，到期后删除原始记录，仅保留不含具体路径的聚合统计结果。
 
-⚠️ **「180 天」目前是承诺而非现状**：`ab_page_track` 表只增不删，自动清理任务**尚未实现**。
-法务定稿 / 提审前必须落地定时清理（建议挂 `ScheduleRegistrar` 第 9 个任务），
-否则构成「告知了却做不到」。这是**上线阻塞项**，已在 `agreements.ts` 文件头登记为人工同步点。
+✅ **「180 天」承诺已闭环（2026-10-20 落地）**：自动清理任务已实现 ——
+`apps/api-server/src/modules/track/page-track-cleanup.task.ts`（每日 03:30 Asia/Shanghai，
+删除 `created_at` 早于 `now - 180 天` 的行；失败只记日志、不拖垮服务）。
+刻意**不进** `TASK_SCHEDULES`、**不受** `TASKS_ENABLED` 影响（保留策略是合规承诺，
+不该被业务跑批开关关掉），理由详见该文件头注。单测 `page-track-cleanup.spec.ts`
+断言 `PAGE_TRACK_RETENTION_DAYS = 180` 与正文逐字一致。
 
 ---
 
@@ -70,6 +73,7 @@
 | 上报字段 | `page`（路由，≤128 字符，仅允许 `[A-Za-z0-9_-/]`）、`pageQuery`（选填 ≤256）、`enterAt` / `leaveAt` / `durationMs`（整数毫秒，≤24h） |
 | 身份字段 | **DTO 无 openid 字段**，且 `forbidNonWhitelisted` 对夹带的 `openid` 整体 400 —— fail-closed |
 | 落库表 | `ab_page_track`（迁移 `1700000000014-page-track.ts`，索引 `idx_page_track_page_created`） |
+| 保留与清理 | **180 天自动清理已落地**：`modules/track/page-track-cleanup.task.ts` 每日 03:30（Asia/Shanghai）删超期行；不进 `TASK_SCHEDULES`、不受 `TASKS_ENABLED` 影响（详见该文件头注） |
 | 限流 | 全局限速中间件（IP 维度）对该路径生效 |
 | 审计 | 刻意不写 `ab_operation_log`（那是后台操作者审计表；埋点行本身即用户行为留痕） |
 
@@ -78,6 +82,6 @@
 ## 五、后续动作清单
 
 1. **法务定稿**：三条款措辞审定 → `AGREEMENT_DRAFT` 置 `false`、升版本号（去 `-draft` 后缀）。
-2. **实现 180 天自动清理**（上线阻塞项）：`ScheduleRegistrar` 增清理任务 + 删除 `ab_page_track` 中超期原始行，仅留聚合结果。
+2. ~~实现 180 天自动清理~~ ✅ **已完成（2026-10-20）**：`page-track-cleanup.task.ts`，单测断言保留期与正文一致。
 3. **后台表单填写**：按 §二 表格录入微信小程序后台。
 4. **将来若要做用户级分析**（绑 openid）：必须同步改 DTO / 实体 / 本文案三处，并补同意机制—— 单独立项，不得夹带。
