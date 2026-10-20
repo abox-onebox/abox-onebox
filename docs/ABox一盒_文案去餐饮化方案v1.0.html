@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ABox 一盒 · 文案去餐饮化 · 执行记录与回退备案 v1.0</title>
+<style>
+  :root{
+    --bg:#F6F0E5; --ink:#6E5435; --ink2:#796C57; --line:#D8CBB4; --card:#FBF7EF;
+    --warn:#9A6A2F; --ok:#5C7A4A; --bad:#A33;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font-family:"KaiTi","STKaiti","楷体","SimSun",serif; line-height:1.7; font-size:16px;}
+  .wrap{max-width:1120px; margin:0 auto; padding:40px 28px 80px;}
+  header{border-bottom:2px solid var(--ink); padding-bottom:18px; margin-bottom:28px;}
+  header h1{margin:0 0 6px; font-size:30px; letter-spacing:1px;}
+  header .sub{color:var(--ink2); font-size:15px;}
+  h2{font-size:22px; margin:38px 0 14px; padding-left:12px; border-left:5px solid var(--ink);}
+  h3{font-size:18px; margin:24px 0 10px; color:var(--ink);}
+  p{margin:10px 0;}
+  .lead{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 20px; margin:18px 0;}
+  table{width:100%; border-collapse:collapse; margin:14px 0 8px; background:var(--card); font-size:14px;}
+  th,td{border:1px solid var(--line); padding:8px 10px; vertical-align:top; text-align:left;}
+  th{background:#EFE6D4; color:var(--ink); font-weight:700;}
+  td .old{color:var(--bad); text-decoration:line-through; opacity:.85;}
+  td .new{color:var(--ok); font-weight:700;}
+  .tag{display:inline-block; padding:1px 8px; border-radius:20px; font-size:12.5px; border:1px solid var(--ink); color:var(--ink); white-space:nowrap;}
+  .tag.keep{background:#EDE7DA; color:var(--ink2); border-color:var(--line);}
+  code{background:#EFE6D4; padding:1px 6px; border-radius:4px; font-family:"Cascadia Code","Consolas",monospace; font-size:13px; color:#5a4327;}
+  ul{margin:10px 0; padding-left:22px;} li{margin:6px 0;}
+  .note{border-left:4px solid var(--warn); background:#FBF1E4; padding:12px 16px; border-radius:0 8px 8px 0; margin:16px 0;}
+  .ok{border-left:4px solid var(--ok); background:#EEF3E8; padding:12px 16px; border-radius:0 8px 8px 0; margin:16px 0;}
+  .foot{margin-top:40px; border-top:1px solid var(--line); padding-top:14px; color:var(--ink2); font-size:13px;}
+  .kpis{display:flex; gap:14px; flex-wrap:wrap; margin:18px 0;}
+  .kpi{flex:1; min-width:150px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px;}
+  .kpi b{display:block; font-size:26px; color:var(--ink);}
+  .kpi span{font-size:13px; color:var(--ink2);}
+  .small{font-size:13px; color:var(--ink2);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>ABox 一盒 · 文案去餐饮化 · 执行记录与回退备案</h1>
+  <div class="sub">v1.0（执行记录）· 2026-10-14 执行完成 · 仅改展示/原型层文字 · <b>0 功能逻辑改动</b> · 可一键回退</div>
+</header>
+
+<div class="kpis">
+  <div class="kpi"><b>336</b><span>替换点位（已落盘并校验）</span></div>
+  <div class="kpi"><b>48</b><span>覆盖文件（小程序端 22 + 后台 25 + 共享真源 1）</span></div>
+  <div class="kpi"><b>2</b><span>覆盖端：小程序 C 端 + 后台管理端</span></div>
+  <div class="kpi"><b>0</b><span>功能逻辑 / 字段 / 状态机改动</span></div>
+</div>
+
+<div class="lead">
+  <b>目标</b>：把小程序前端与后台管理界面中所有"饭菜 / 外卖 / 餐饮"相关的<b>表面文案</b>（按钮、标题、提示语、协议正文、菜单名、占位符、图表标签等）统一替换为<b>通用中性描述</b>，
+  让产品未来可通用于售卖饭菜套餐、快消品及其他商品，避免用户产生"只能买饭菜"的刻板印象。<br/>
+  <b>边界</b>：<u>只动用户能看到的文字</u>。代码注释、API 字段名、数据库列名、状态机、后端逻辑、种子数据、变量/函数名、路由——一律未改。
+</div>
+
+<div class="ok">
+  ✅ <b>幂等与稳态</b>：正向脚本复跑结果 <code>本次 0 处生效，已存在 336 处跳过，0 处失败（EXIT=0）</code>——全部点位已落地且可重复执行不漂移。
+</div>
+
+<h2>一、覆盖与排除范围</h2>
+<table>
+  <tr><th style="width:16%">维度</th><th>本次<b>已泛化</b>（改）</th><th>本次<b>保持原词</b>（不改）</th></tr>
+  <tr>
+    <td><b>小程序端</b></td>
+    <td><code>pages.json</code> 导航标题、<code>manifest.json</code> 应用描述、各 <code>.vue</code> 模板标题/按钮/提示/空态/toast、计算属性、<code>agreements.ts</code> 协议正文、<code>format.ts</code> 品类映射中文、<code>constants</code> 展示常量、<code>traceability</code> 溯源页、<code>pages/supplier/detail.vue</code>（在册菜品→在册商品）</td>
+    <td>代码注释、API 字段/路由、种子菜品名（数据）、状态机</td>
+  </tr>
+  <tr>
+    <td><b>后台端</b></td>
+    <td><code>constants/index.ts</code> 菜单标题、各 <code>views/*.vue</code> 页面标题/表单标签/按钮/提示/空态/占位符/图表标签、<code>meal/edit|template|matrix</code> 套餐编排整页、<code>stats/*</code> 统计页、<code>finance/*</code> 财务页、<code>order/*</code> 订单配送页、<code>supplier/cook-confirm|dish-library|dishes</code> 供应商侧页（按裁定维持现状已泛化）</td>
+    <td>
+      <span class="tag keep">保留</span> 后台「供应商厨房操作类」8 个页面按裁定<b>保持餐饮原词</b>：<br/>
+      <code>supplier/settlement</code> · <code>packing-center</code> · <code>form</code> · <code>list</code> · <code>workbench</code> · <code>distribution-center</code> · <code>edit</code> · <code>takeout-links</code><br/>
+      <span class="small">（另 <code>finance/supplier-share.vue</code> 近似保留，仅注释含餐饮词，无展示串）</span>
+    </td>
+  </tr>
+</table>
+
+<h2>二、中立词映射总表（现状 → 中性词）</h2>
+<table>
+  <tr><th style="width:30%">现状（餐饮词）</th><th style="width:30%">替换为（中性词）</th><th>适用</th></tr>
+  <tr><td>套餐 / 盒饭 / 团餐</td><td class="new">组合 / 精选 / 商品</td><td>商品组合类</td></tr>
+  <tr><td>一饭四菜</td><td class="new">本日精选（数据驱动）</td><td>套餐构成</td></tr>
+  <tr><td>菜品 / 菜名 / 菜位 / 在册菜品</td><td class="new">商品 / 商品名 / 档位 / 在册商品</td><td>商品类（菜位 → 档位，见八）</td></tr>
+  <tr><td>主食 / 主荤 / 半荤 / 素菜 / 汤品 / 随餐</td><td class="new">主件 / 辅品 / 素品 / 附品 / 随附（随餐 → 随附）</td><td>档位标签真源 <code>biz.ts</code>（见八）</td></tr>
+  <tr><td>取餐 / 取餐点 / 取餐确认 / 取货…</td><td class="new">取货 / 取货点 / 到货确认</td><td>取送</td></tr>
+  <tr><td>出餐 / 出餐日 / 出餐进度 / 备餐</td><td class="new">发货 / 发货日 / 履约进度 / 备货</td><td>取送/履约</td></tr>
+  <tr><td>份数</td><td class="new">件数 / 数量</td><td>通用</td></tr>
+  <tr><td>口味评价 / 好吃吗 / 菜单…</td><td class="new">满意度评价 / 满意吗 / 清单…</td><td>评价</td></tr>
+  <tr><td>带餐 / 拼饭 / 佣金抵餐费</td><td class="new">带物 / 拼团 / 佣金抵货款</td><td>团长话术</td></tr>
+  <tr><td>待出餐</td><td class="new">待发货</td><td>订单状态页签</td></tr>
+  <tr><td>品牌名「ABox 一盒」</td><td>不改</td><td>品牌</td></tr>
+  <tr><td>配送 / 送达 / 预订 / 截单 / 团长 / 佣金</td><td>保留（本就中性，跨品类通用）</td><td>物流/交易</td></tr>
+</table>
+
+<h2>三、执行明细（源校验 · 48 文件 / 336 处）</h2>
+<p class="small">以下数量由 <code>scripts/_neutralize_display_copy.mjs</code> 的 REPLACEMENTS 全量解析得出，与磁盘落地结果一致。</p>
+
+<h3>3.1 小程序端（22 文件 · 103 处）</h3>
+<table>
+  <tr><th style="width:62%">文件</th><th>处</th></tr>
+  <tr><td>pages/order-detail/order-detail.vue</td><td>16</td></tr>
+  <tr><td>pages/leader/pickup.vue</td><td>11</td></tr>
+  <tr><td>pages/leader/share.vue</td><td>8</td></tr>
+  <tr><td>pages/leader/workbench.vue</td><td>7</td></tr>
+  <tr><td>pages/leader-invite/leader-invite.vue</td><td>6</td></tr>
+  <tr><td>pages/traceability/traceability.vue</td><td>6</td></tr>
+  <tr><td>pages/index/index.vue</td><td>5</td></tr>
+  <tr><td>pages/order-create/order-create.vue</td><td>5</td></tr>
+  <tr><td>pages/leader/commission.vue</td><td>4</td></tr>
+  <tr><td>pages/leader/building.vue</td><td>3</td></tr>
+  <tr><td>pages/leader-apply/leader-apply.vue</td><td>3</td></tr>
+  <tr><td>pages/order-cancel/order-cancel.vue</td><td>3</td></tr>
+  <tr><td>pages/order-list/order-list.vue</td><td>3</td></tr>
+  <tr><td>pages/supplier/detail.vue</td><td>3</td></tr>
+  <tr><td>pages/mine/mine.vue</td><td>2</td></tr>
+  <tr><td>pages.json</td><td>2</td></tr>
+  <tr><td>pages/building/switch.vue</td><td>2</td></tr>
+  <tr><td>pages/leader/orders.vue</td><td>2</td></tr>
+  <tr><td>constants/agreements.ts（协议正文）</td><td>9</td></tr>
+  <tr><td>manifest.json</td><td>1</td></tr>
+  <tr><td>pages/pay-result/pay-result.vue</td><td>1</td></tr>
+  <tr><td>pages/leader/profile.vue</td><td>1</td></tr>
+</table>
+
+<h3>3.2 后台端（25 文件 · 228 处）</h3>
+<table>
+  <tr><th style="width:62%">文件</th><th>处</th></tr>
+  <tr><td>views/meal/edit.vue</td><td>34</td></tr>
+  <tr><td>views/meal/template.vue</td><td>27</td></tr>
+  <tr><td>views/stats/dish-heat.vue</td><td>20</td></tr>
+  <tr><td>views/meal/matrix.vue</td><td>19</td></tr>
+  <tr><td>views/supplier/dish-library.vue</td><td>18</td></tr>
+  <tr><td>views/order/delivery.vue</td><td>16</td></tr>
+  <tr><td>views/order/detail.vue</td><td>11</td></tr>
+  <tr><td>views/supplier/cook-confirm.vue</td><td>10</td></tr>
+  <tr><td>views/order/list.vue</td><td>9</td></tr>
+  <tr><td>views/finance/commission.vue</td><td>9</td></tr>
+  <tr><td>constants/index.ts</td><td>9</td></tr>
+  <tr><td>views/building/groups.vue</td><td>6</td></tr>
+  <tr><td>views/supplier/dishes.vue</td><td>5</td></tr>
+  <tr><td>views/system/message-template.vue</td><td>5</td></tr>
+  <tr><td>views/order/components/adjust-dialog.vue</td><td>7</td></tr>
+  <tr><td>views/leader/detail.vue</td><td>2</td></tr>
+  <tr><td>views/dashboard/index.vue</td><td>4</td></tr>
+  <tr><td>views/user/list.vue</td><td>3</td></tr>
+  <tr><td>views/stats/building-rank.vue</td><td>3</td></tr>
+  <tr><td>views/finance/overview.vue</td><td>2</td></tr>
+  <tr><td>views/stats/core-metrics.vue</td><td>2</td></tr>
+  <tr><td>views/building/list.vue</td><td>2</td></tr>
+  <tr><td>views/finance/refund.vue</td><td>2</td></tr>
+  <tr><td>views/api/order.ts（状态页签）</td><td>2</td></tr>
+  <tr><td>views/stats/retention.vue</td><td>1</td></tr>
+</table>
+
+<h3>3.3 共享真源（1 文件 · 5 处）</h3>
+<table>
+  <tr><th style="width:62%">文件</th><th>处</th></tr>
+  <tr><td>packages/shared-utils/src/biz.ts（<code>SET_MEAL_SLOT_LABEL</code> 档位标签真源：主件/配品/附品/随附）</td><td>5</td></tr>
+</table>
+
+<h2>四、回退机制（保留备案 · 将来可改回餐饮）</h2>
+<div class="lead">
+  正/反向脚本机制相同：按「文件 + 行号 + 精确旧串」定位做子串替换；旧串命中即替换，已含目标串则跳过（<b>幂等</b>），都不含则报错退出（<b>不会误改</b>）。
+</div>
+<table>
+  <tr><th style="width:30%">动作</th><th>命令</th><th>说明</th></tr>
+  <tr><td>去餐饮化（主 · 正向）</td><td><code>node scripts/_neutralize_display_copy.mjs</code></td><td>336 处，幂等，复跑 0 生效 / 336 跳过</td></tr>
+  <tr><td>P0 残余修复（正向）</td><td><code>node scripts/_fix_p0.mjs</code></td><td>3 处，幂等，复跑 0 生效 / 3 跳过</td></tr>
+  <tr><td>回退到餐饮（主 · 反向）</td><td><code>node scripts/_neutralize_display_copy.revert.mjs</code></td><td>336 条 from/to 对调，幂等可逆</td></tr>
+  <tr><td>P0 残余回退（反向）</td><td><code>node scripts/_fix_p0.revert.mjs</code></td><td>3 条 from/to 对调，幂等可逆</td></tr>
+</table>
+<ul>
+  <li>反向脚本 <code>_neutralize_display_copy.revert.mjs</code> 与正向一一对应（336 条），运行即把"中性词"换回"餐饮词"。</li>
+  <li>回退顺序：先 <code>_fix_p0.revert.mjs</code> 再 <code>_neutralize_display_copy.revert.mjs</code>；重新泛化顺序：先 <code>_neutralize_display_copy.mjs</code> 再 <code>_fix_p0.mjs</code>。两对脚本互为逆操作。</li>
+  <li>回退前请先确认工作区当前已是泛化态（旧串不在则报错退出，绝不静默误改）。</li>
+  <li>如需重新生成反向脚本（例如 REPLACEMENTS 又有调整）：<code>node scripts/_gen_revert.mjs</code>。</li>
+</ul>
+
+<h2>五、本次修复记录（执行期发现并修正）</h2>
+<ul>
+  <li><b>消除重复键幽灵条目</b>：正向脚本中 <code>order/delivery.vue</code> 曾出现两次同路径键，JS 对象字面量后者覆盖前者，导致第 1 个块（7 条）成为<b>永不生效的死代码</b>，且回退路径也会缺失这 7 条。已合并为单一块、消除隐患。复跑后有效条数由"表象 328"修正为真实 <b>336</b>。</li>
+  <li><b>补齐 8 处扫描遗漏的真实展示串</b>（均在主后台、非注释）：
+    <code>meal/matrix.vue</code> 的 <code>出餐日 × 楼群</code> 与 <code>起始/结束出餐日</code> 占位符；
+    <code>meal/template.vue</code> 的 <code>该套餐已排进</code> 与 <code>个出餐计划</code>；
+    <code>order/components/adjust-dialog.vue</code> 的 <code>改取餐楼</code>；
+    <code>order/delivery.vue</code> 的 <code>份数与订单不符</code> 提示；
+    <code>finance/commission.vue</code> 的 <code>**全部**出餐日</code>；
+    <code>stats/dish-heat.vue</code> 的 <code>商品份数排行 → 商品件数排行</code>。</li>
+  <li><b>扫描方法修正</b>：早期残留扫描因本机 GNU grep 不识别 <code>\s</code> / <code>[[:space:]]</code>，把大量 <code>/** JSDoc */</code> 与 <code>//</code> 注释误判为展示串；已改用人工逐行复核，确认上述为唯一真实残留。</li>
+</ul>
+
+<h2>六、边界与已知保留项</h2>
+<ul>
+  <li><b>一律未改</b>：代码注释、API 字段名 / DTO / DB 列名 / 状态机 / 变量名 / 函数名 / 路由 path、种子数据里的具体菜品名（数据非文案）、后端服务逻辑、e2e 断言的服务端消息、品牌名「ABox 一盒」。</li>
+  <li><b>供应商厨房操作 8 页保留餐饮原词</b>（裁定）：<code>settlement / packing-center / form / list / workbench / distribution-center / edit / takeout-links</code>。其余供应商侧页（<code>cook-confirm / dish-library / dishes</code> 及小程序 <code>supplier/detail</code>）按"维持现状"裁定已泛化、保持泛化。</li>
+  <li><b>档位标签真源</b>：<code>packages/shared-utils/src/biz.ts</code> 的 <code>SET_MEAL_SLOT_LABEL</code>（1 主件 / 2 辅品 / 3 素品 / 4 附品 / 5 随附）为唯一真源；<code>format.ts</code> 仅转发。门禁 <code>check-dup-const.mjs</code>（真源字面量外溢检测）已验证 0 外溢。</li>
+</ul>
+
+<div class="note">
+  ⚠️ <b>风险提示（延续方案稿）</b>：① "一饭四菜"在协议、首页、订单、分享、后台多处已统一为"本日精选/组合"，数据驱动避免改一半留一半；② 后台菜单改动已同步 <code>nav:consistency</code> 门禁（真源在 <code>constants/index.ts</code>）；③ 改完仅验证与文字相关的 <code>doc:tables</code> 与 e2e，勿动无关门禁；④ 经核查，e2e（<code>e2e-m1/m2/m3.mjs</code>、<code>gate.mjs</code>）对餐饮词的全部引用均为注释 / 日志步骤描述 / 服务端字段断言，<b>未对本次改动的可见 UI 文案做断言</b>，故展示层改动不影响门禁。
+</div>
+
+<h2>七、门禁与验证</h2>
+<ul>
+  <li>正向脚本复跑：<code>本次 0 处生效，已存在 336 处跳过，0 处失败（EXIT=0）</code>——幂等稳态。</li>
+  <li>反向脚本：语法校验通过（<code>node --check</code>），与正向一一对应、可逆。</li>
+  <li>档位标签门禁 <code>check-dup-const.mjs</code>：前序验证 0 外溢。</li>
+  <li>全量门禁 <code>all</code> / <code>verify</code>：前序已通过；本次仅改展示串、未触及逻辑与断言期望值，门禁不受影响。</li>
+  <li>残留扫描：经人工逐行复核，覆盖范围内（除裁定保留的供应商 8 页与注释/字段/状态机外）<b>无残留餐饮展示串</b>。</li>
+</ul>
+
+<h2>八、二次修复与回退脚本闭环（P0 阅读障碍 · 脚本对齐）</h2>
+<div class="lead">
+  去餐饮化后做<b>可读性扫描</b>，发现 3 类会真正影响用户理解的障碍：① 错词「品位」（应为「档位」）；② 主食被叫成「主件」，与 <code>biz.ts</code> 主菜档「主件」打架；③ 「半荤 / 素菜」都 →「配品」，两个档位同名、丢失区分。已裁定"全部修 + 同步回退脚本"，<b>P0 共 22 处</b>展示 / 校验提示串已落盘（错词纠正、主食统一为「随附」、半荤 / 素菜拆为「辅品 / 素品」、组合构成校验提示同步）。
+</div>
+<h3>8.1 结构性问题与解决方案</h3>
+<p>P0 与主脚本 <code>_neutralize_display_copy.mjs</code> 改的是<b>同一批字节的中间态</b>（如主脚本先把"半荤 → 配品"，P0 再"配品 → 辅品"）。这导致：主脚本重跑会因其中间态 <code>to</code> 已不在磁盘而 FAIL；且单独对调 from/to 的回退脚本无法干净还原。解决方案：把 P0 的 <b>19 条展示层修正并入主脚本</b>（主脚本每条 <code>to</code> 直接等于最终磁盘态，各自拥有唯一最终值，条数仍为 336），<b>P0 仅保留 3 条无法并入的服务端 / 校验提示修正</b>：</p>
+<table>
+  <tr><th style="width:40%">P0 残余修正</th><th>归属</th></tr>
+  <tr><td><code>edit.vue</code> 组合编辑页：档位口径「菜位 / 主荤…」→「必选档位 / 主件…」</td><td rowspan="3">仅 <code>_fix_p0.mjs</code>（3 条）</td></tr>
+  <tr><td><code>biz.ts</code> <code>SET_MEAL_COMPOSITION.rule</code> 组合构成校验提示（运营 / 前端可见）</td></tr>
+  <tr><td><code>api-server</code> <code>meal-admin.controller.ts</code> 运营端提交校验失败提示</td></tr>
+</table>
+<h3>8.2 幂等与回退验证（已实测）</h3>
+<ul>
+  <li><b>正向幂等</b>：主脚本复跑 <code>0 生效 / 336 跳过 / 0 失败</code>；P0 复跑 <code>0 生效 / 3 跳过 / 0 失败</code>——在最终磁盘上均可重复执行不漂移。</li>
+  <li><b>回退正确且可逆</b>：将 <code>apps</code> / <code>packages</code> / <code>scripts</code> 复制为副本，实跑两套回退脚本后，与真实仓库差异<b>恰好 49 个源码文件</b>（= 去餐饮化 + 二次修复覆盖文件数）；再在副本上重跑正向，差异<b>归零</b>且与真实仓库逐字节一致。证明回退脚本精确还原、且可逆，真实仓库未受影响。</li>
+  <li><b>回退顺序</b>：先 <code>_fix_p0.revert.mjs</code> 再 <code>_neutralize_display_copy.revert.mjs</code>；重新泛化顺序：先主脚本再 <code>_fix_p0.mjs</code>。</li>
+  <li>主回退脚本由 <code>_gen_revert.mjs</code> 依合并后的主脚本重新生成（336 条）；P0 回退脚本为手写 3 条 from/to 对调。</li>
+</ul>
+
+<div class="foot">
+  v1.0 执行记录 · 替代原 v0.1 方案稿 · 336 处替换已全部落盘并经幂等校验 · 正向 <code>_neutralize_display_copy.mjs</code> 与反向 <code>_neutralize_display_copy.revert.mjs</code> 互为逆操作，可随时回退 · 仅展示层文案改动，0 功能逻辑改动。
+</div>
+
+<section>
+<h2>九、整体测试验证（2026-10-14）</h2>
+<p>对 commit <code>8b568bb</code>（文案去餐饮化展示层术语中性化，55 文件 / 2892 增 / 327 删）执行深度测试三层中的前两层：静态 / 构建 / 单测 + e2e 真实 HTTP 全链路。</p>
+<h3>9.1 门禁结果</h3>
+<table>
+<tr><th>层级</th><th>命令</th><th>结果</th><th>耗时</th><th>关键指标</th></tr>
+<tr><td>静态 + 构建 + 单测</td><td><code>gate.mjs all</code></td><td>30/30 全绿</td><td>约 6 min</td><td>jest 62/62；3 构建通过；dup:const 外溢 0 处；nav:consistency 通过；gate:parity 30 道对齐；mp:no-font 165 产物文件无字体二进制</td></tr>
+<tr><td>e2e 全链路真发请求</td><td><code>gate.mjs verify</code></td><td>4/4 全绿</td><td>约 2 min</td><td>seed 重置 + e2e:m1 116/116、e2e:m2 162/162、e2e:m3 1351/1351（共 1629 条断言）</td></tr>
+</table>
+<h3>9.2 结论</h3>
+<ul>
+<li><b>零回归</b>：去餐饮化仅改展示层文案，未破坏任何静态 / 类型 / 构建 / 单测门禁，也未破坏订单全链路、后台权限、主体隔离等端到端行为。</li>
+<li><b>门禁运行机制变更（务必同步）</b>：外部 <code>pipefix</code> 垫片已于 2026-10-09 κ 批次退役（文件改名 <code>pipefix.cjs.RETIRING-κ1-20261009</code>，且明确「挂了反而启动失败」）。EBUSY 修复已内置进 <code>scripts/lib/spawn-capture.mjs</code>（用临时文件重定向代替 <code>stdio:'pipe'</code>）。现裸跑 <code>node scripts/gate.mjs all|verify</code> 即可，不应再挂 <code>NODE_OPTIONS</code> 垫片。本测即为裸跑，无 <code>exit=null</code> 假红。</li>
+</ul>
+</section>
+
+</div>
+<section>
+<h2>十、功能层去餐饮化（2026-10-14）</h2>
+<p>展示端术语已中性化（主件 / 辅品 / 素品 / 附品 / 随附 / 档位 / 商品）后，功能层仍残留餐饮术语并产生概念漂移。本批先消除 C 端可见漏网（P0 + P2，非破坏），API 契约重命名（P1）经评估暂缓、并入 P3 数据库重构。</p>
+<h3>10.1 已交付：P0 + P2（commit <code>4ef2d2c</code>）</h3>
+<table>
+<tr><th>改动</th><th>文件</th><th>说明</th></tr>
+<tr><td>P0-1 取消理由 label</td><td><code>cancel-reason.dto.ts</code></td><td>菜品不合口味→内容不合口味；送餐时间不合适→配送时间不合适；改在别处吃→改在别处就餐（仅改中文值，枚举键不变）</td></tr>
+<tr><td>P0-3 注释同步</td><td><code>home.dto.ts</code></td><td>档位注释 1 主荤/2 半荤/3 素菜/4 汤/5 主食 → 1 主件/2 辅品/3 素品/4 附品/5 随附，对齐 biz.ts 真源</td></tr>
+<tr><td>P2 品类轴 label</td><td><code>supplier-admin.ts</code></td><td><code>DISH_CATEGORY_LABEL</code> 五值对齐档位轴（主荤→主件 / 半荤→辅品 / 素菜→素品 / 汤品→附品 / 主食→随附），同步描述注释与开发注释，并澄清「两轴展示词对齐、字段/枚举仍分离」约束（溯源页经该 label 渲染，零代码改动即中性化）</td></tr>
+</table>
+<ul>
+<li><b>配套脚本</b>：<code>_func_p0p2.mjs</code>（幂等正向，17 处）/ <code>_func_p0p2.revert.mjs</code>（from/to 对调回退）。</li>
+<li><b>验证</b>：<code>gate.mjs all</code> 30/30 全绿（含 security:scan 真扫 git 历史、design:spec），零回归；C 端用户可见餐饮词已彻底消除。</li>
+</ul>
+<h3>10.2 暂缓：P1 API 契约重命名（dish* → item*）</h3>
+<p>原方案拟将 API 契约字段 <code>dishId / dishName / dishes / dishNames / mainDishName / MealDishView / TraceabilityDishView / DishRatingRow / DishRatingView / dishCount</code> 重命名为 item* 系。回源调研后发现：</p>
+<ul>
+<li><b>与 P3 边界交织</b>：<code>dish</code> 相关词在后端大量位于数据库实体层（<code>dishRepo</code> / <code>DishEntity</code> / <code>ab_dish</code> / <code>dishIds</code> / <code>dishesOfSetMeal</code>），<code>dishId</code> 子串替换会误伤实体层 <code>dishIds</code>，无法干净隔离为「纯 API 契约层」。</li>
+<li><b>用户不可见</b>：P1 改的是内部 API 字段名，C 端展示取的已是中性化的 <code>name</code> / <code>slot</code>，对团长 / 用户 / 供应商无感知。</li>
+<li><b>决策</b>：经用户裁定，P1 暂缓，待 P3 数据库重构（ab_dish / DishEntity 表名与实体类）时一并规划，一次性消除「dish」概念漂移，避免半改状态。</li>
+</ul>
+<h3>10.3 当前状态</h3>
+<ul>
+<li><b>已交付</b>：C 端用户可见餐饮词（展示层 336 处 + 功能层漏网 P0+P2）已全部中性化，门禁 30/30。</li>
+<li><b>暂缓</b>：P1 契约重命名，并入 P3 规划。</li>
+<li><b>不纳入</b>：P3 数据库表名 / 实体类大重构（ab_dish / ab_set_meal* / ab_meal_assignment / MealEntity 等），按原裁定不纳入本次。</li>
+</ul>
+</section>
+</body>
+</html>
