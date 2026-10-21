@@ -18,7 +18,7 @@
 | 回调端点放行 | 已修 | `WecomKbController` 已加 `@Public()`（否则被全局 `JwtAuthGuard` 拦死） |
 | 容器内网回放 | 就绪 | bot 调 `127.0.0.1:3000` 复用 `/api/v1` 端点 + `X-KB-*` 头，CORS 不适用 |
 
-> ⚠️ 上一轮对话里的「待授权推送」已过时——代码实际已在 `origin/main`，本清单**不含推送步骤**（仅 §2.1 的 nginx 改动需一次新提交+推送）。
+> ✅ 代码（含 §2.1 的 nginx `/wecom/` 块）均已提交并推送，`origin/main` @ `52ef1e8`。本清单**不含推送步骤、§2.1 也已完工**，直接进 §3 发布即可。
 
 ---
 
@@ -41,12 +41,12 @@
 
 ## 2. 发布前准备（你方 + 我方）
 
-### 2.1 给 nginx 加 `/wecom/` 反代块（代码改动，必须进 git）
-- 当前 `apps/admin-web/nginx.conf` **没有** `/wecom/` 块（已 Grep 核实）。
-- 在 `location /api/ { ... }` 之后追加**附件 A** 片段。
-- 提交并推送（这一步是代码改动，服务器 `git pull` 才能取到）：
+### 2.1 给 nginx 加 `/wecom/` 反代块 —— ✅ 已完成（commit `52ef1e8`，已推送 origin/main）
+- 现状：`apps/admin-web/nginx.conf` 已含 `location /wecom/ { ... }` 块（Grep 核实 `52ef1e8` 含此改动），**本步跳过、勿重复插入**（重复 location 会让容器 `nginx -t` 报错）。
+- 若从零重建，详见**附件 A** 片段；现有 `main` 已带，服务器 `git pull` 即取。
+- ~~提交并推送（这一步是代码改动，服务器 `git pull` 才能取到）：~~
   ```bash
-  cd /opt/abox-onebox  # 本机工作区
+  cd /opt/abox-onebox
   git add apps/admin-web/nginx.conf
   git commit -m "wecom-kb: nginx 加 /wecom/ 回调反代块"
   git push origin main
@@ -197,7 +197,7 @@ WECOM_ENCODING_AES_KEY=43位EncodingAESKey # 后台随机生成，Base64 解码�
 ## 勾选检查表
 
 - [ ] 选在禁发窗口外的可发时段（§1）
-- [ ] §2.1 nginx `/wecom/` 块已加、已提交、已推送
+- [x] §2.1 nginx `/wecom/` 块已加、已提交、已推送（52ef1e8）
 - [ ] §2.2 企业微信凭据已拿到
 - [ ] §2.3 各同事令牌 + userid 已备
 - [ ] §3 `git pull` + `deploy.sh`（先 --dry-run）

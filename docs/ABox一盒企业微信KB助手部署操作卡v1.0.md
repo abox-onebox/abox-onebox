@@ -57,9 +57,11 @@ WECOM_ENCODING_AES_KEY=43位EncodingAESKey # 企业微信后台生成，Base64 �
 
 ---
 
-## 四、nginx 反代（admin-web/nginx.conf 追加）
+## 四、nginx 反代（admin-web/nginx.conf）
 
-现有 `apps/admin-web/nginx.conf` 只把 `/api/` 与 `/static/` 反代到 `api:3000`。bot 回调在 `/wecom/`（**不在** `/api/` 下），必须新增一条 location。在 `location /api/ { ... }` 之后插入：
+> ✅ **本块在 `origin/main` @ `52ef1e8` 已写入** `apps/admin-web/nginx.conf`。部署时 `git pull` 即带，**勿重复插入**（重复 `location /wecom/` 会让容器 `nginx -t` 报错）。下方片段仅作真源校验参考。
+
+现有 `apps/admin-web/nginx.conf` 把 `/api/`、`/static/`、`/wecom/` 反代到 `api:3000`。bot 回调在 `/wecom/`，与 `/api/` 同款反代。已落盘内容：
 
 ```nginx
     # ---------- 企业微信 KB 机器人回调 ----------
