@@ -1,5 +1,5 @@
-import { Controller, Get, Post, Query, Req } from '@nestjs/common';
-import { Request } from 'express';
+import { Controller, Get, Post, Query, Req, Res } from '@nestjs/common';
+import { Request, Response } from 'express';
 import { Public } from '../../common/decorators/auth.decorator';
 import { WecomKbService } from './wecom-kb.service';
 
@@ -22,15 +22,19 @@ export class WecomKbController {
   constructor(private readonly svc: WecomKbService) {}
 
   @Get('callback')
-  verify(@Query() q: Record<string, string>): string {
-    return this.svc.verifyUrl(q);
+  verify(@Query() q: Record<string, string>, @Res() res: Response): void {
+    // 企业微信 URL 校验：响应体必须是解密后的 echostr 原始明文，
+    // 故用 @Res 直接写出、绕过全局统一响应信封（否则包成 {code,data}
+    // 会让企业微信的签名比对失败、后台「保存」过不了）。
+    res.status(200).send(this.svc.verifyUrl(q));
   }
 
   @Post('callback')
-  async handle(@Req() req: Request, @Query() q: Record<string, string>): Promise<string> {
+  async handle(@Req() req: Request, @Query() q: Record<string, string>, @Res() res: Response): Promise<void> {
     const rawBody = (req as unknown as { rawBody?: Buffer }).rawBody;
     const raw = rawBody ? rawBody.toString('utf8') : '';
     await this.svc.handlePost(raw, q);
-    return '';
+    // 立即回 200 空体（企业微信 5s 超时，处理异步进行），结果走主动发消息
+    res.status(200).send('');
   }
 }
