@@ -201,7 +201,11 @@ async function bootstrap() {
   }
 
   const prefix = cfg.get<string>('app.apiPrefix') ?? '/api/v1';
-  app.setGlobalPrefix(prefix);
+  // ⭐ 企业微信回调 URL 不含 /api/v1 前缀（见《企业微信KB助手部署操作卡/后台配置教程》）：
+  // 必须把 wecom 路由从全局前缀里排除，使其直接挂在 /wecom/kb/callback，
+  // 否则请求打到 /wecom/... 会因「前缀缺失」匹配不到控制器而返回 10004。
+  // （nginx /wecom/ 反代块也是按无前缀转发的，两边口径必须一致。）
+  app.setGlobalPrefix(prefix, { exclude: ['wecom/(.*)'] });
 
   app.useGlobalPipes(
     new ValidationPipe({
