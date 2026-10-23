@@ -37,7 +37,9 @@ WORKDIR /app
 # 时区：让构建期的日志时间戳也是北京时间。
 # ⚠️ 必须装 tzdata，不能只设 ENV TZ —— alpine 默认不带 tz 数据库，
 #    只设环境变量时部分路径（Intl / 系统格式化）会静默回退到 UTC。
-RUN apk add --no-cache tzdata && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+RUN sed -i 's|https://dl-cdn.alpinelinux.org/alpine|https://mirrors.aliyun.com/alpine|g' /etc/apk/repositories \
+ && apk add --no-cache tzdata \
+ && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -89,7 +91,9 @@ WORKDIR /app
 ARG APP_VERSION=dev
 ENV APP_VERSION=$APP_VERSION
 
-RUN apk add --no-cache tzdata && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+RUN sed -i 's|https://dl-cdn.alpinelinux.org/alpine|https://mirrors.aliyun.com/alpine|g' /etc/apk/repositories \
+ && apk add --no-cache tzdata \
+ && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 
 ENV NODE_ENV=production
 ENV TZ=Asia/Shanghai
