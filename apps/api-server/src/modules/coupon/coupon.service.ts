@@ -204,31 +204,34 @@ export class CouponService {
 
   /** 我的券（全部，带可用性判据） */
   async listMy(userId: number): Promise<MyCouponResult[]> {
-    const now = new Date();
+    // ⚠️ 一律走 `now()`（服务端唯一时间源）—— 与 `grant` / `reserveForOrder` 同源，
+    //    避免「建券用 now()、查券用 new Date()」在注入时钟下错位（券刚发出却判「未到生效日」）。
+    const cur = now();
     const rows = await this.dataSource.getRepository(UserCoupon).find({
       where: { userId },
       order: { createdAt: 'DESC' },
     });
     return rows.map((uc) => {
       const base = this.toResult(uc);
-      const inWindow = this.inWindow(uc, now);
+      const inWindow = this.inWindow(uc, cur);
       const available = uc.status === 'unused' && inWindow;
       let unavailableReason: string | undefined;
       if (uc.status === 'used') unavailableReason = '已使用';
-      else if (!inWindow) unavailableReason = now < uc.validFrom ? '未到生效日' : '已过期';
+      else if (!inWindow) unavailableReason = cur < uc.validFrom ? '未到生效日' : '已过期';
       return { ...base, available, unavailableReason };
     });
   }
 
   /** 订单可用券（未使用 + 在有效期 + 门槛满足；含实际抵扣额） */
   async listAvailableForOrder(userId: number, totalFen: number): Promise<AvailableCouponResult[]> {
-    const now = new Date();
+    // ⚠️ 同上：与 `grant` / `reserveForOrder` 同源用 `now()`，避免注入时钟下错位。
+    const cur = now();
     const rows = await this.dataSource.getRepository(UserCoupon).find({
       where: { userId, status: 'unused' },
       order: { validTo: 'ASC' },
     });
     return rows
-      .filter((uc) => this.inWindow(uc, now))
+      .filter((uc) => this.inWindow(uc, cur))
       .map((uc) => {
         const base = this.toResult(uc);
         const faceValueFen = toFen(Number(uc.faceValue));

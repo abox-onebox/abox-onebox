@@ -565,6 +565,14 @@ const GATES = {
   'e2e:m2': { cwd: '.', cmd: 'node scripts/e2e-m2.mjs', group: 'e2e', env: { E2E_PORT: '3102', ...RUNTIME_ENV } },
   // M3 端到端验收：后台登录/锁定/吊销 + 主体隔离 + 角色白名单 + 操作日志
   'e2e:m3': { cwd: '.', cmd: 'node scripts/e2e-m3.mjs', group: 'e2e', env: { E2E_PORT: '3103', ...RUNTIME_ENV } },
+  // 新功能端到端验收：代金券 + X 盲盒（2026-10-23 补，堵 m1/m2/m3 零覆盖盲区）
+  // ⚠️ grep 实证：m1/m2/m3 中无任何 coupon / blindBox 引用 → 新增功能「全绿」实未测。
+  'e2e:coupon-blindbox': {
+    cwd: '.',
+    cmd: 'node scripts/e2e-coupon-blindbox.mjs',
+    group: 'e2e',
+    env: { E2E_PORT: '3104', ...RUNTIME_ENV },
+  },
 };
 
 /** 组合门禁别名 */
@@ -573,7 +581,7 @@ const ALIASES = {
   typecheck: ['typecheck:api', 'typecheck:admin', 'typecheck:mp'],
   build: ['build:api', 'build:admin', 'build:mp'],
   /** 端到端验收一键跑：重置种子 → 起服务跑真实 HTTP 全链路（M1 + M2 + M3） */
-  verify: ['seed', 'e2e:m1', 'e2e:m2', 'e2e:m3'],
+  verify: ['seed', 'e2e:m1', 'e2e:m2', 'e2e:m3', 'e2e:coupon-blindbox'],
   /**
    * S9：设计线一键跑（**本地**）。
    * ⚠️ 刻意不进 `all`：`design:docs` 的语料（`_ABox一盒*` 设计文档）不在仓库内，
@@ -708,6 +716,7 @@ const REPORT_RE = {
   'e2e:m1': [/^通过\s+\d+\/\d+.*$/m],
   'e2e:m2': [/^通过\s+\d+\/\d+.*$/m],
   'e2e:m3': [/^通过\s+\d+\/\d+.*$/m],
+  'e2e:coupon-blindbox': [/^通过\s+\d+\/\d+.*$/m],
   'errcode:message': [/^✔ 错误码文案全覆盖.*$/m],
   // icons:lock：先看自证汇总（无条件前置跑），再看覆盖率**分母**（0 样本 = 判据空转）
   'icons:lock': [/^\s*\[自证\] 汇总 \d+\/\d+.*$/m, /^③ 覆盖率：\s*\d+\/\d+.*$/m],
@@ -772,6 +781,8 @@ const EXPECT_MIN = {
   'e2e:m1': 116,
   'e2e:m2': 162,
   'e2e:m3': 1351,
+  // 2026-10-23 补：代金券 + X 盲盒聚焦 e2e（实测 17 断言，阈值锁实测值）
+  'e2e:coupon-blindbox': 17,
 };
 
 /** 返回 null = 达标；否则返回给人看的原因 */

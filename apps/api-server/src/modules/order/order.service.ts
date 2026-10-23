@@ -29,7 +29,7 @@ import {
   cutoffAtOf,
   isAfterCutoff,
   isOrderable,
-  now,
+  now as nowTime,
   payExpireAt,
   toBjIso,
   tomorrowBj,
@@ -282,7 +282,9 @@ export class OrderService {
     // 实付 = 总额 − 余额抵扣 − 券抵扣（券在事务内核销后回写）
     let payAmountFen = totalAmountFen - balanceUsedFen;
 
-    const now = new Date();
+    // ⚠️ 一律走 `nowTime`（全服务端唯一时间源，注入时钟下与 grant 的 validFrom 同源）；
+    //    此前误用 `new Date()`，注入态下比 grant 的 `now()` 早一个平移量 → 券被误判「未到生效日」。
+    const now = nowTime();
     const orderNo = genOrderNo(now);
 
     // x 盲盒（轻量小辅助）：下单时从配置池随机抽一个，送达后揭晓
@@ -963,7 +965,7 @@ export class OrderService {
     date: string,
     operatorId?: number | null,
   ): Promise<AutoConfirmByDateResult> {
-    const at = now();
+    const at = nowTime();
     const logRepoOf = (m: EntityManager) => m.getRepository(OperationLog);
 
     // ---- ① 履约异常：14:00 仍未送达（如实计数，绝不改状态）------------------
