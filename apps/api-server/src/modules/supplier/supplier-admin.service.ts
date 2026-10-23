@@ -30,6 +30,7 @@ import {
   PAYEE_TYPE_LABEL,
   PayeeType,
   SetSettleAccountDto,
+  SetStorePhotosDto,
   SetTakeoutLinksDto,
   UpdateSupplierDto,
 } from './dto/supplier-admin.dto';
@@ -219,6 +220,10 @@ export class SupplierAdminService {
         createdAt: toBjIso(l.createdAt),
       })),
       takeout: this.takeoutLinksOut(s),
+      // ⚠️ 方案B 照片墙：后台是照片的**写入方**，故详情回显时把存储原值原样返回
+      //    （不过滤「是否在供」—— 运营需要看到这家供应商当前挂了哪些图，哪怕它已停供）。
+      //    只剔除 url 非法的脏数据，避免把坏图推回前端。
+      photos: this.storePhotosOut(s),
     };
   }
 
@@ -441,6 +446,29 @@ export class SupplierAdminService {
   }
 
   // ==========================================================================
+  // 扩展 · 门店实拍 / 证照照片（方案B 照片墙 · 2026-10-23）
+  // ==========================================================================
+
+  async setStorePhotos(id: number, dto: SetStorePhotosDto) {
+    const s = await this.assertSupplier(id);
+    s.storePhotos = dto.photos.map((p) => ({
+      url: p.url,
+      category: p.category ?? null,
+      caption: p.caption ?? null,
+    }));
+    s.version += 1;
+    await this.supplierRepo.save(s);
+    return {
+      id: Number(s.id),
+      photos: (s.storePhotos ?? []) as Array<{
+        url: string;
+        category?: string | null;
+        caption?: string | null;
+      }>,
+    };
+  }
+
+  // ==========================================================================
   // 私有 · 查询构造
   // ==========================================================================
 
@@ -641,6 +669,28 @@ export class SupplierAdminService {
       recommended: read.recommended,
       configuredCount: read.configuredCount,
     };
+  }
+
+  /**
+   * 门店实拍出参（方案B 照片墙）
+   *
+   * ⚠️ 与 `takeoutLinksOut` 不同：这里**不过滤「是否在供」**——
+   *   后台是照片的写入方，运营需要看到这家供应商当前存了哪些图（哪怕已停供），
+   *   才能决定补拍 / 清图。只剔除 url 非法的脏数据。
+   */
+  private storePhotosOut(s: Supplier) {
+    const raw = (s.storePhotos ?? []) as Array<{
+      url?: string | null;
+      category?: string | null;
+      caption?: string | null;
+    }>;
+    return raw
+      .filter((p) => !!p && typeof p.url === 'string' && p.url.trim().length > 0)
+      .map((p) => ({
+        url: p.url as string,
+        category: p.category ?? null,
+        caption: p.caption ?? null,
+      }));
   }
 
   // ==========================================================================

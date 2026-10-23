@@ -38,6 +38,20 @@
         </view>
       </view>
 
+      <!-- 门店实拍（决策2·方案B 保留照片墙；后端已补 store_photos 列 + 下发字段） -->
+      <view v-if="data.photos && data.photos.length" class="card">
+        <text class="card__title">门店实拍</text>
+        <view class="photos">
+          <image
+            v-for="(p, i) in data.photos"
+            :key="i"
+            class="photos__img"
+            :src="p.url"
+            mode="aspectFill"
+          />
+        </view>
+      </view>
+
       <text class="page__ft">
         证照编号可至国家企业信用信息公示系统核对；本页不提供任何跳转与复制入口。
       </text>
@@ -66,8 +80,8 @@
  *      5.20 / 5.15.4 / 5.16 亦禁止以剪切板方式诱导跳转 APP）。
  *   ② **没有复制**：证照编号是**纯文本展示**，不给复制按钮、不调 `setClipboardData`。
  *      往剪贴板写东西正是 5.15.4 盯的形态，而用户核对编号并不需要复制。
- *   ③ **不展示环境照片**：一期没有证照图片与环境照的落库列（零 DDL），
- *      有列之后由本页扩展，不在此处伪造占位图。
+ *   ③ **门店实拍**：`store_photos` 列已于 2026-10-23 落地（迁移 1700000000015），
+ *      服务端仅在供且已核验时下发 `data.photos`；本页渲染为纯图网格（无图则整块不渲染）。
  *
  * ## 为什么不在供时也要进得来
  * 列表的「暂未供应」组是可点的：用户点了却看到一个 404 式的空白页，只会以为坏了。
@@ -231,6 +245,20 @@ onLoad((query) => {
     background: $c-bg;
     border: 1px solid $c-border;
     border-radius: $radius-sm;
+  }
+}
+
+.photos {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: $space-2;
+  margin-top: $space-2;
+
+  &__img {
+    width: 100%;
+    height: 200rpx;
+    border-radius: $radius-md;
+    background: $c-bg;
   }
 }
 </style>

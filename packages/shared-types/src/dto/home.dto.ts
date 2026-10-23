@@ -9,6 +9,14 @@ export interface MealItemView {
   slot: number;
   category: string | null;
   imageUrl: string | null;
+  /**
+   * 菜品公开展示文案（端上弹窗「关于这道菜」段）
+   *
+   * ⚠️ 可选展示字段，**与 C8 不冲突**：它不是供价 / 分账 / 供应商状态，
+   *   只是面向用户的菜品介绍（主料 / 分量等）。后端未下发时为 `null`，
+   *   端上优雅降级为「由 {supplierName} 供应」的中性说明，不报错。
+   */
+  description: string | null;
   supplierName: string | null;
   /**
    * 出品方 id（`ab_supplier.id`）

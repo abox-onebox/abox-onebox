@@ -100,6 +100,17 @@ export class Supplier {
   takeoutLinks?: Record<string, { url: string | null; shopId?: string | null }> | null;
 
   /**
+   * 门店实拍 / 证照照片（2026-10-23 新增 · 方案B 照片墙）
+   *
+   * JSON 数组：{ url: string; category?: string; caption?: string }[]。
+   * 与 `takeout_links` 同属「小结构、低频写」的 JSON 列（ref 合规 §8.4）。
+   * null = 未配置（端上「有则显示、无则隐藏」）。
+   * ⚠️ 远程图显示须域名备案 + downloadFile 白名单（见落地记录）。
+   */
+  @Column({ name: 'store_photos', type: 'json', nullable: true })
+  storePhotos?: Array<{ url: string; category?: string | null; caption?: string | null }> | null;
+
+  /**
    * ⚠️ **已停用（去餐化 · 2026-10-15）**：原「主营品类」= 菜系标识（本帮菜/汤品/川菜…）
    *
    * 去餐化后 ABox 只出一种套餐，供应商**不按菜系对外标识** —— 挂「本帮菜」「汤品」

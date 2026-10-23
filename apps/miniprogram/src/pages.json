@@ -47,12 +47,8 @@
       "style": { "navigationBarTitleText": "欢迎加入" }
     },
     {
-      "path": "pages/traceability/traceability",
-      "style": { "navigationBarTitleText": "今日这盒 · 溯源" }
-    },
-    {
-      "path": "pages/supplier/list",
-      "style": { "navigationBarTitleText": "出品方资质" }
+      "path": "pages/recruit/recruit",
+      "style": { "navigationBarTitleText": "团长招募" }
     },
     {
       "path": "pages/supplier/detail",

@@ -50,6 +50,16 @@ export interface SupplierQualificationEntry {
   expireAt: string | null;
 }
 
+/** 一张门店实拍 / 证照照片（端上「门店实拍」网格与资质详情页共用） */
+export interface SupplierPhoto {
+  /** 图片地址（远程 URL；须域名已备案 + downloadFile 白名单） */
+  url: string;
+  /** 分类（营业执照 / 门头 / 大厅 / 仓库 / 其它；端上仅用于排序与管理，不强制展示文案） */
+  category?: string | null;
+  /** 说明（可选，端上默认不展示文字标签） */
+  caption?: string | null;
+}
+
 /** 资质墙列表项 */
 export interface SupplierQualificationItem {
   /** `ab_supplier.id` —— 列表跳详情按 id，不按 name（`name` 无唯一约束） */
@@ -69,6 +79,11 @@ export interface SupplierQualificationItem {
   serving: boolean;
   /** 累计供餐份数（`ab_supplier.total_served`）· 仅作规模陈述，不构成任何承诺 */
   totalServed: number;
+  /**
+   * 门店实拍 / 证照照片（仅 `serving` 组下发；与已核验证照同一门槛——
+   * 不在供则不亮证、也不亮照片，避免把过期 / 未核验素材摆上墙）
+   */
+  photos?: SupplierPhoto[];
 }
 
 /** 资质墙列表出参 */
@@ -90,6 +105,11 @@ export interface SupplierQualificationDetail {
   entries: SupplierQualificationEntry[];
   /** 该出品方在册的商品名（最多 6 个，只取上架的） */
   items: string[];
+  /**
+   * 门店实拍 / 证照照片（仅在供且已核验时下发；与 `entries` 同一门槛）。
+   * 端上「门店实拍」网格用，无图时整块不渲染。
+   */
+  photos?: SupplierPhoto[];
   /**
    * 说明文案（服务端生成）
    *

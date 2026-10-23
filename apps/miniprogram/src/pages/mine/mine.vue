@@ -306,6 +306,9 @@ async function loadProfile(): Promise<void> {
         balanceFen: res.leader.balanceFen,
         frozenFen: res.leader.frozenFen,
       });
+    } else {
+      // 非团长 / 已停职（status≠ACTIVE）→ 清掉本地残留，避免「我是团长」横幅谎留
+      leaderStore.clear();
     }
   } catch (e) {
     toastApiError(e);

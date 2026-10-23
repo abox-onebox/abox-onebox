@@ -10,6 +10,8 @@ import {
   Matches,
   Max,
   MaxLength,
+  ValidateNested,
+  ArrayMaxSize,
   Min,
   MinLength,
 } from 'class-validator';
@@ -364,6 +366,43 @@ export class SetTakeoutLinksDto {
   @IsOptional()
   @IsIn(Object.values(TakeoutPlatform), { message: '推荐平台不合法' })
   recommended?: TakeoutPlatform;
+}
+
+// ============================================================================
+// 扩展 · 门店实拍 / 证照照片（方案B 照片墙 · 2026-10-23）
+
+/** 单张照片（写入体，与端上展示结构一致） */
+export class SupplierPhotoInputDto {
+  @ApiProperty({ description: '图片地址（远程 URL）' })
+  @IsString()
+  @MaxLength(1024)
+  url!: string;
+
+  @ApiPropertyOptional({ description: '分类（营业执照 / 门头 / 大厅 / 仓库 / 其它）' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  category?: string | null;
+
+  @ApiPropertyOptional({ description: '说明（可选）' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  caption?: string | null;
+}
+
+/** 整组替换供应商门店实拍 / 证照照片（PUT /admin/suppliers/:id/photos） */
+export class SetStorePhotosDto {
+  @ApiProperty({
+    type: SupplierPhotoInputDto,
+    isArray: true,
+    description: '照片数组，整组替换；传空数组 = 清空',
+  })
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => SupplierPhotoInputDto)
+  photos!: SupplierPhotoInputDto[];
 }
 
 // ============================================================================

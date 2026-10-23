@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Not, Repository } from 'typeorm';
 
 import type {
+  SupplierPhoto,
   SupplierQualificationDetail,
   SupplierQualificationEntry,
   SupplierQualificationItem,
@@ -210,6 +211,7 @@ export class TraceabilityService {
         licenseExpireAt: ok ? (s.licenseExpireAt ?? null) : null,
         serving: ok,
         totalServed: s.totalServed ?? 0,
+        photos: ok ? this.photosOf(s) : [],
       };
       (ok ? serving : inactive).push(item);
     }
@@ -257,6 +259,7 @@ export class TraceabilityService {
       serving,
       entries,
       items: dishRows.map((d) => d.name),
+      photos: serving ? this.photosOf(s) : [],
       note: this.buildDetailNote(serving, qualifications.length, s.auditStatus),
     };
   }
@@ -334,6 +337,25 @@ export class TraceabilityService {
     if (s.foodLicense) out.push('food_business_license');
     if (s.businessLicense) out.push('business_license');
     return out;
+  }
+
+  /**
+   * 门店实拍 / 证照照片（方案B 照片墙 · 2026-10-23）
+   *
+   * 与 `qualificationsOf` 同源的门槛：仅当在供（approved ∧ 未过期）才下发，
+   * 避免把过期 / 未核验素材摆上墙。返回标准化 `{ url, category, caption }[]`，
+   * 过滤掉 url 非法的项，保证端上拿到即可直接渲染。
+   */
+  private photosOf(s: Supplier): SupplierPhoto[] {
+    const raw = s.storePhotos;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((p) => p && typeof p.url === 'string' && p.url.trim().length > 0)
+      .map((p) => ({
+        url: p.url.trim(),
+        category: typeof p.category === 'string' ? p.category : null,
+        caption: typeof p.caption === 'string' ? p.caption : null,
+      }));
   }
 
   /**

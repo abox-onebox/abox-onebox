@@ -214,6 +214,9 @@
           <el-button link type="primary" :disabled="!canManage" @click="goTakeout(asRow(row).id)">
             外卖链接
           </el-button>
+          <el-button link type="primary" :disabled="!canManage" @click="goPhotos(asRow(row).id)">
+            门店实拍
+          </el-button>
           <el-button
             link
             :type="asRow(row).status === 1 ? 'danger' : 'success'"
@@ -487,6 +490,10 @@ function goEdit(id?: number): void {
 
 function goTakeout(id: number): void {
   void router.push({ path: '/supplier/takeout-links', query: { supplierId: String(id) } });
+}
+
+function goPhotos(id: number): void {
+  void router.push({ path: '/supplier/store-photos', query: { supplierId: String(id) } });
 }
 
 function goDishes(): void {

@@ -57,7 +57,7 @@
       </view>
 
       <!-- 找不到团长时的引导（v4.6） -->
-      <view v-if="!daily.leader" class="guide">
+      <view v-if="!daily.leader && !leaderStore.isLeader" class="guide">
         <text class="guide__text">
           <text class="abi abi-16">{{ I.info }}</text> 所在办公楼没有团长？
           <text class="guide__link" @tap="goLeaderApply">申请成为团长</text>
@@ -68,30 +68,42 @@
         <text class="guide__text">{{ daily.reason ?? '当前不可下单' }}</text>
       </view>
 
-      <!-- 一饭四菜（主食并入同一卡）· 「来自：X」可点 → 溯源页并定位该出品方（M5-17） -->
+      <!-- 本日精选（两列菜品卡网格 · 点击卡片打开菜品弹窗；「查看资质」→ 出品方资质页） -->
       <view class="card">
         <text class="card__title"
           ><text class="abi abi-16">{{ daily?.kind === 'fmcg' ? I.package : I.rice }}</text>
           本日精选</text
         >
-        <view v-for="(d, i) in daily.items" :key="i" class="dish-row">
-          <view class="dish-row__ico">
-            <text class="abi abi-deco-34">{{ I[dishIcon(d.category)] }}</text>
-          </view>
-          <view class="dish-row__info">
-            <text class="dish-row__name">{{ d.supplierName }}{{ d.name }}</text>
-            <view
-              class="dish-row__from-wrap"
-              :class="{ 'is-link': !!d.supplierId }"
-              :hover-class="d.supplierId ? 'dish-row__from-wrap--hover' : 'none'"
-              @tap="openSupplier(d)"
-            >
-              <text class="dish-row__from">
-                来自：{{ d.supplierName }}{{ d.supplierId ? ' ›' : '' }}
-              </text>
+        <view class="dish-grid">
+          <view
+            v-for="(d, i) in daily.items"
+            :key="i"
+            class="dish-card"
+            hover-class="dish-card--hover"
+            @tap="openDish(d)"
+          >
+            <view class="dish-card__media" :class="{ 'dish-card__media--fallback': !d.imageUrl }">
+              <image v-if="d.imageUrl" class="dish-card__img" :src="d.imageUrl" mode="aspectFill" />
+              <text v-else class="dish-card__letter">{{ initial(d.name) }}</text>
+              <view v-if="d.category" class="dish-card__badge">{{ d.category }}</view>
+            </view>
+            <view class="dish-card__body">
+              <text class="dish-card__name">{{ d.name }}</text>
+              <text v-if="d.supplierName" class="dish-card__supplier">{{ d.supplierName }}</text>
+              <view
+                v-if="d.supplierId"
+                class="dish-card__qual"
+                hover-class="dish-card__qual--hover"
+                @tap.stop="openSupplier(d)"
+              >
+                <text class="abi abi-16 dish-card__qual-icon">{{ I.shield }}</text>
+                <text class="dish-card__qual-text">查看资质</text>
+                <text class="abi abi-16 dish-card__qual-arrow">{{ I.chev }}</text>
+              </view>
             </view>
           </view>
         </view>
+        <!-- 主食（随附 · 集散中心统一供应） -->
         <view v-if="daily.rice" class="dish-row">
           <view class="dish-row__ico">
             <text class="abi abi-deco-34">{{ I.rice }}</text>
@@ -169,6 +181,14 @@
     />
 
     <ab-bottom-bar active="index" />
+
+    <!-- 菜品弹窗（方案B 居中模态卡 · 下拉关闭 · 门店实拍 · 查看资质入口） -->
+    <ab-dish-popup
+      :visible="popupVisible"
+      :item="popupItem"
+      :photos="popupPhotos"
+      @close="closeDish"
+    />
   </view>
 </template>
 
@@ -190,8 +210,9 @@
  * ① **移除「往日这盒」**：首页只保留「今天订不订」这一件事。U2 接口与端上封装
  *    `fetchHistory` **均保留**（M1 既有验收点，且日后做「历史」入口可直接复用），
  *    只是不再占首页版位 —— 首页每多一块，主按钮就往下掉一屏。
- * ② **「来自：X」可点** → `navigateTo` 溯源页并带 `supplierId`，由溯源页**按 id 定位**
- *    到那家并直接弹出平台选择层。按 id 不按名字：`ab_supplier.name` 无唯一约束。
+ * ② **「查看资质」可点** → 每道菜卡片底部「查看资质 ›」跳 `supplier/detail?id=`
+ *    （自持证照，不引外链；溯源页已于 2026-10-23 删除）。按 id 不按名字：
+ *    `ab_supplier.name` 无唯一约束。
  * ③ **明示佣金归属**（`leader.source`）：未走邀请链接的用户会被**自动挂靠**本楼在任团长，
  *    下单佣金也归那位 —— 这件事必须写在脸上，而不是让用户以为「我没跟谁」。
  *    ⭐ 与之配套的后端修正：U1 的团长判据此前**不看在职**，与真正决定钱的
@@ -204,11 +225,13 @@ import type { HomeDailyResult, MealItemView } from '@abox/shared-types';
 import { LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
 
 import { fetchDaily } from '@/api/meal';
+import { fetchMe } from '@/api/auth';
+import { fetchSupplierQualifications } from '@/api/traceability';
 import { ApiError, CODE_BUILDING_UNBOUND } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
 import { buildUrl, navigateTo } from '@/utils/router';
-import { dishIcon, formatMealDate, formatTime } from '@/utils/format';
+import { formatMealDate, formatTime } from '@/utils/format';
 import { ORDER_MAX_QUANTITY } from '@/constants';
 import { useLeaderStore } from '@/stores/leader';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
@@ -221,6 +244,55 @@ const daily = ref<HomeDailyResult | null>(null);
 const loadError = ref<ApiError | null>(null);
 /** 份数（原型 P1 的 stepper；带入 P3 下单确认） */
 const quantity = ref(1);
+
+// ---- 菜品弹窗（方案B 居中模态卡） ----
+const popupVisible = ref(false);
+const popupItem = ref<MealItemView | null>(null);
+/**
+ * 门店实拍（决策2·方案B 保留照片墙）—— 后端已落地 `store_photos` 列（迁移 1700000000015）
+ * 与 `SupplierQualificationDetail.photos` / `SupplierQualificationItem.photos` 下发字段。
+ * 数据由 `loadSupplierPhotos()` 从资质墙列表构建 `supplierId → 照片` 映射，
+ * 在 `openDish` 时按 `d.supplierId` 注入；取不到则为空数组 ⇒ 弹窗照片墙整体隐藏、版式不崩。
+ */
+const popupPhotos = ref<{ url: string }[]>([]);
+
+/** supplierId → 门店实拍（仅 serving 组下发；首页弹窗照片墙数据来源） */
+const supplierPhotos = ref<Record<number, { url: string }[]>>({});
+
+/**
+ * 拉取资质墙列表，构建 supplierId → 门店实拍 映射（首页弹窗照片墙用）
+ *
+ * ⚠️ 照片墙是**可选增强**：取不到不阻断首页、不报错（try/catch 静默吞掉），
+ * 最坏情况只是弹窗照片墙整体隐藏，与「后端未配照片」时行为一致。
+ */
+async function loadSupplierPhotos(): Promise<void> {
+  try {
+    const list = await fetchSupplierQualifications();
+    const map: Record<number, { url: string }[]> = {};
+    for (const s of list.serving) {
+      if (s.id && s.photos?.length) map[s.id] = s.photos.map((p) => ({ url: p.url }));
+    }
+    supplierPhotos.value = map;
+  } catch {
+    // 可选增强，失败不影响首页其余功能
+  }
+}
+
+function openDish(d: MealItemView): void {
+  popupItem.value = d;
+  popupPhotos.value = (d.supplierId ? supplierPhotos.value[d.supplierId] : undefined) ?? [];
+  popupVisible.value = true;
+}
+
+function closeDish(): void {
+  popupVisible.value = false;
+}
+
+/** 菜品卡 / 头图无图时的首字兜底（不写死色块，真实拍照就位后自动走全图） */
+function initial(name: string | null | undefined): string {
+  const ch = name?.charAt(0);
+  return ch ? ch.toUpperCase() : '菜';
+}
 
 /**
  * ⭐ 空态**按错误码分级**，不再一句「本楼今日未开团」兜全部
@@ -416,17 +488,16 @@ function goWorkbench(): void {
 }
 
 /**
- * 「来自：X」→ 溯源页，并定位到这家出品方
+ * 「查看资质」→ 出品方资质页（supplier/detail?id=）
  *
- * 只带 `supplierId`，**不带整份 supplier 对象**：跳过去的是另一个页面实例，
- * 它的数据由 U5 现取（可能与本页 U1 的快照有几秒差），把上一页的陈旧对象塞过去
- * 会造出「页面显示 A、实际数据是 B」的第二种真相。传 id、让对方自己查，才是单一真相。
- *
- * `supplierId` 缺失时（异常数据）静默不跳 —— 此时 `›` 也不会渲染，用户看不出可点。
+ * ⭐ 2026-10-23 重构：原「来自：X」跳转溯源页（traceability），现供应商资质已下沉到
+ *    `supplier/detail`（自持证照，不引外链），故这里直接带 `supplierId` 跳资质页。
+ *    只带 id 不带整份对象：跳过去的是另一个页面实例，数据由它自己按 id 现取，单一真相。
+ *    `supplierId` 缺失时静默不跳。
  */
 function openSupplier(d: MealItemView): void {
   if (!d.supplierId) return;
-  navigateTo(buildUrl('/pages/traceability/traceability', { supplierId: d.supplierId }));
+  navigateTo(buildUrl('/pages/supplier/detail', { id: d.supplierId }));
 }
 
 function goLeaderApply(): void {
@@ -445,8 +516,39 @@ function tapSwitchLeader(): void {
   navigateTo('/pages/building/switch');
 }
 
+/**
+ * 用权威 `GET /auth/me` 对账团长身份（2026-10-21 修复 · 首页三标识打架根因）。
+ *
+ * ⚠️ 端上 `leaderStore.isLeader` 只在登录时由 JWT 派生、持久化本地，而
+ *    `ensureLogin(force=false)` 在 7 天 token 有效期内短路不重登 —— 于是服务端把团长
+ *    停职 / 复职后，本地仍显示旧值，导致横幅「您是团长」与服务端「无团长 / 20003」共存。
+ *    每次进首页都重新对账：在职写回真值，已停职（status≠ACTIVE）则清掉本地残留。
+ */
+async function syncLeader(): Promise<void> {
+  try {
+    const me = await run(() => fetchMe());
+    if (me.isLeader && me.leader) {
+      leaderStore.setLeader({
+        id: me.leader.id,
+        realName: me.leaderName,
+        level: me.leader.level,
+        commissionRate: me.leader.commissionRate,
+        balance: me.leader.balance,
+        balanceFen: me.leader.balanceFen,
+        frozenFen: me.leader.frozenFen,
+      });
+    } else {
+      leaderStore.clear();
+    }
+  } catch {
+    // 对账失败不阻断首页；保留本地上一值（可能陈旧，但绝不让页面崩溃）
+  }
+}
+
 onShow(() => {
   void load();
+  void syncLeader();
+  void loadSupplierPhotos();
 });
 </script>
 
@@ -700,8 +802,7 @@ onShow(() => {
     color: $c-text;
   }
 
-  // 「来自：X」现在承载跳转（M5-17）。可点时右侧留出内边距，把点击靶区做大 ——
-  // 这一行文字很矮，只包住字形的话在手机上很难点准。
+  // 主食行（随附说明，无跳转）。整块作为说明即可。
   &__from-wrap {
     margin-top: $space-1;
     text-align: right;
@@ -718,6 +819,107 @@ onShow(() => {
   &__from {
     font-size: $fs-caption;
     // 既有裸色值（端上裸色值基线之一），收归 token 由 S4「裸色值归零」统一处理，本批不动
+    color: $c-gold-fg;
+  }
+}
+
+// ---- 本日精选 · 两列菜品卡网格 ----
+.dish-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: $space-3;
+}
+
+.dish-card {
+  display: flex;
+  flex-direction: column;
+  background: $c-surface-2;
+  border: 1px solid $c-border;
+  border-radius: $radius-lg;
+  overflow: hidden;
+
+  &--hover {
+    opacity: 0.92;
+  }
+
+  &__media {
+    position: relative;
+    width: 100%;
+    height: 200rpx;
+    background: linear-gradient(135deg, $c-gold 0%, $c-gold-deep 100%);
+  }
+
+  &__media--fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__img {
+    width: 100%;
+    height: 100%;
+  }
+
+  &__letter {
+    font-size: 80rpx;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  &__badge {
+    position: absolute;
+    top: 12rpx;
+    left: 12rpx;
+    padding: 4rpx 14rpx;
+    font-size: $fs-caption;
+    color: #ffffff;
+    background: rgba(110, 84, 53, 0.72);
+    border-radius: $radius-pill;
+  }
+
+  &__body {
+    display: flex;
+    flex-direction: column;
+    padding: $space-2 $space-3 $space-3;
+  }
+
+  &__name {
+    font-size: $fs-body;
+    font-weight: bold;
+    line-height: 1.4;
+    color: $c-text;
+  }
+
+  &__supplier {
+    margin-top: 4rpx;
+    font-size: $fs-caption;
+    color: $c-text-weak;
+  }
+
+  &__qual {
+    display: flex;
+    align-items: center;
+    gap: 8rpx;
+    margin-top: $space-2;
+    padding-top: $space-2;
+    border-top: 1px dashed $c-border-strong;
+
+    &--hover {
+      opacity: 0.6;
+    }
+  }
+
+  &__qual-icon {
+    color: $c-gold-fg;
+  }
+
+  &__qual-text {
+    flex: 1;
+    font-size: $fs-caption;
+    color: $c-gold-fg;
+  }
+
+  &__qual-arrow {
     color: $c-gold-fg;
   }
 }

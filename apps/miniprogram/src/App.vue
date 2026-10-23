@@ -4,6 +4,8 @@ import { useUserStore } from '@/stores/user';
 import { useLeaderStore } from '@/stores/leader';
 import { applyDevIdentity } from '@/utils/dev-identity';
 import { clearAuthStorage } from '@/utils/storage';
+import { ensureLogin } from '@/utils/auth';
+import { fetchMe } from '@/api/auth';
 
 /**
  * 从多来源读取本地联调用的 `devCode`（**仅 demo 模式会真正被采纳**）
@@ -52,10 +54,52 @@ onLaunch((options) => {
   useUserStore().restore();
   // L10 · 团长为叠加身份，本地持久化后动态决定是否展示团长入口
   useLeaderStore().restore();
+
+  // 2026-10-21 加固：冷启动即启动团长身份对账（与 onShow 同函数），
+  // 让陈旧缓存在首屏渲染前就开始纠正，消除「先闪错误横幅/团长 tab、再消失」的瑕疵。
+  void reconcileLeaderOnForeground();
 });
 
+/**
+ * 前台恢复时用权威 `GET /auth/me` 重新对账「是否团长」身份。
+ *
+ * ⚠️ 为什么必须做（2026-10-21 修复 · 首页三标识打架根因）：
+ *   端上 `leaderStore.isLeader` 只在**登录那一刻**由 JWT 派生并持久化到本地；
+ *   而 `ensureLogin(force=false)` 在 token 7 天有效期内**短路、不重登**，
+ *   于是服务端把团长「停职 / 复职」（后台操作，或每日 03:00 见习 30 天自动失效任务）
+ *   之后，本地仍显示旧值 → 首页横幅「您是团长」与服务端「无团长 / 身份已失效(20003)」
+ *   同时出现。每次前台都拿权威 /me 对账一次，旧 token 下的陈旧缓存最长只活一个前台周期。
+ */
+async function reconcileLeaderOnForeground(): Promise<void> {
+  const user = useUserStore();
+  if (!user.isLoggedIn) return; // 未登录无需对账
+
+  try {
+    await ensureLogin(false);
+    const me = await fetchMe();
+    const leader = useLeaderStore();
+    if (me.isLeader && me.leader) {
+      leader.setLeader({
+        id: me.leader.id,
+        realName: me.leaderName,
+        level: me.leader.level,
+        commissionRate: me.leader.commissionRate,
+        balance: me.leader.balance,
+        balanceFen: me.leader.balanceFen,
+        frozenFen: me.leader.frozenFen,
+      });
+    } else {
+      // 非团长 / 已停职（status≠ACTIVE）→ 清掉本地残留，banner 不再谎称「您是团长」
+      leader.clear();
+    }
+  } catch {
+    // 对账失败不阻断前台；保留本地上一值（可能陈旧，但绝不让页面崩溃）
+  }
+}
+
 onShow(() => {
-  // 每次前台恢复时校正倒计时（截单 T-1 24:00）
+  // 每次前台恢复时：① 校正倒计时（截单 T-1 24:00）② 重新对账团长身份（见上）
+  void reconcileLeaderOnForeground();
 });
 </script>
 

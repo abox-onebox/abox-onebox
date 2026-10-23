@@ -18,6 +18,7 @@ import {
   PAYEE_TYPE_LABEL,
   PayeeType,
   SetSettleAccountDto,
+  SetStorePhotosDto,
   SetTakeoutLinksDto,
   SupplierIdParamDto,
   UpdateSupplierDto,
@@ -198,5 +199,21 @@ export class SupplierAdminController {
   })
   setTakeoutLinks(@Param() p: SupplierIdParamDto, @Body() dto: SetTakeoutLinksDto) {
     return this.supplierAdmin.setTakeoutLinks(p.id, dto);
+  }
+
+  // ------------------------------------------------------------ 扩展 · 门店实拍照片
+
+  @Put(':id/photos')
+  @Roles('super_admin', 'admin')
+  @OperationLog({ module: 'supplier', action: '配置门店实拍照片', targetParam: 'id' })
+  @ApiOperation({
+    summary: '扩展 · 供应商门店实拍 / 证照照片（方案B 照片墙）',
+    description:
+      '写入 `store_photos` JSON 数组（{url,category,caption}），整组替换；传空数组 = 清空。' +
+      '用于小程序「门店实拍」照片墙与资质详情页。⚠️ 远程图在端上真正可见的前提：' +
+      '域名完成 ICP 备案 + 小程序后台配置 `downloadFile` 合法域名白名单。',
+  })
+  setStorePhotos(@Param() p: SupplierIdParamDto, @Body() dto: SetStorePhotosDto) {
+    return this.supplierAdmin.setStorePhotos(p.id, dto);
   }
 }

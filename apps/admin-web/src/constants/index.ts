@@ -245,6 +245,16 @@ export const ADMIN_NAV = [
         module: 'M21-03',
         icon: 'package',
       },
+      // 方案B 照片墙（2026-10-23）：门店实拍 / 证照照片运营自助上传。
+      //   与外卖链接同属「供应商维度、运营自助配置」的扩展页 —— 授权了就必须有入口，
+      //   否则等价于照片墙后台不存在（小程序端照片墙永远无数据源）。
+      {
+        path: '/supplier/store-photos',
+        title: '门店实拍',
+        page: 'P33',
+        module: 'M34',
+        icon: 'photo',
+      },
     ],
   },
   {

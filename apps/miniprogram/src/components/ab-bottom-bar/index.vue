@@ -46,7 +46,7 @@ import { ABOX_ICON_CHARS as I, type AboxIconName } from '@abox/shared-utils';
 import { useLeaderStore } from '@/stores/leader';
 import { switchTab } from '@/utils/router';
 
-export type TabKey = 'index' | 'traceability' | 'leader' | 'orders' | 'mine';
+export type TabKey = 'index' | 'recruit' | 'leader' | 'orders' | 'mine';
 
 interface TabItem {
   key: TabKey;
@@ -66,26 +66,17 @@ const leaderStore = useLeaderStore();
 const items = computed<TabItem[]>(() => {
   const base: TabItem[] = [
     { key: 'index', label: '首页', path: '/pages/index/index', icon: 'home' },
-    // ⚠️ label = 「供应商」而非「溯源」：与原型 P38 的底部项一致（`prototype/index.html`
-    //    第 1919 行 `{id:'P38', ico:'🏪', n:'供应商'}`）。「溯源」是这一页的**动作**，
-    //    「供应商」才是用户想找的**东西** —— 用户不合口味时的念头是「找那家店」，
-    //    不是「做溯源」（该页原本叫「溯源」但落点是占位页，M5-14 一并修正）。
-    //    页面标题仍为「今日这盒 · 溯源」，页内则完整交代溯源信息。
-    // ⭐ 2026-10-03：这里指向**资质墙列表**而非溯源页。原溯源页用「跳外卖平台看店铺」
-    //    证明可信，已被判定不合规（5.10 / 5.20 / 5.15.4 / 5.16）⇒ 底部「供应商」的落点
-    //    改为自持证照；溯源页仍保留，由资质墙列表页顶部入口进入。
-    {
-      key: 'traceability',
-      label: '供应商',
-      path: '/pages/supplier/list',
-      icon: 'store',
-    },
+    // ⭐ 决策3（2026-10-23）：底部**始终 4 tab**。第 2 位随团长身份切换 ——
+    //   非团长 = 「招募」(gift → /pages/recruit/recruit)；团长 = 「团长」(crown → 工作台)。
+    //   原「供应商」(store) 项已移除：资质墙下沉到招募页「严选厨房」+ 首页点菜弹窗。
   ];
 
-  // L10 · 团长入口仅对团长可见（插入在「订单」之前）
+  // L10 · 第 2 位：团长态 = 团长工作台；非团长态 = 招募页（均插入在「订单」之前）
   if (leaderStore.isLeader) {
     // 皇冠与「我的」页团长卡同一枚，语义一致（见 mine.vue 的 leader-card）
     base.push({ key: 'leader', label: '团长', path: '/pages/leader/workbench', icon: 'crown' });
+  } else {
+    base.push({ key: 'recruit', label: '招募', path: '/pages/recruit/recruit', icon: 'gift' });
   }
 
   base.push({

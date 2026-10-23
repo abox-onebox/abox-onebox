@@ -1,5 +1,6 @@
 import { http } from './request';
 import type { PageResult } from './system';
+import type { SupplierPhoto } from '@abox/shared-types';
 
 /**
  * api/supplier —— 后台供应商管理（《接口规范 v1.0》§6.4 D23–D32 · 原型 P33）
@@ -136,6 +137,8 @@ export interface SupplierDetail {
     createdAt: string | null;
   }>;
   takeout: TakeoutOut;
+  /** 方案B 照片墙：门店实拍 / 证照照片（后台写回显，原样返回，不过滤是否在供） */
+  photos: SupplierPhoto[];
 }
 
 export const fetchSupplierDetail = (id: number) =>
@@ -241,6 +244,38 @@ export const setTakeoutLinks = (
     recommended?: string;
   },
 ) => http.put<TakeoutOut>(`/admin/suppliers/${id}/takeout-links`, data);
+
+// ============================================================================
+// 扩展 · 门店实拍 / 证照照片（方案B 照片墙）
+// ============================================================================
+
+export interface StorePhotosResult {
+  id: number;
+  photos: SupplierPhoto[];
+}
+
+/**
+ * 通用文件上传（后台运营物料）
+ *
+ * ⚠️ 走 `multipart/form-data`，字段名固定 `file`（与后端 `FileInterceptor('file')` 一致）。
+ *    请求拦截器对 FormData 自动跳过幂等键（指纹无法稳定），故**重发安全**。
+ *    返回 `{ url }` —— 后端已落盘到对象存储 / 本地静态目录，回的是可公开访问的 URL。
+ */
+export const uploadAdminFile = (file: File) => {
+  const form = new FormData();
+  form.append('file', file);
+  return http.post<{ url: string }>('/admin/uploads', form);
+};
+
+/**
+ * 整组替换某供应商的门店实拍照片
+ *
+ * ⚠️ **整组替换语义**（与外卖链接的「只传改动」不同）：照片墙是「所见即所得」的
+ *    有序数组，前端维护完整本地列表（增 / 删 / 改顺序 / 改说明）后整体回传，
+ *    传空数组 = 清空照片墙。服务端 `s.version + 1` 乐观锁。
+ */
+export const setStorePhotos = (id: number, photos: SupplierPhoto[]) =>
+  http.put<StorePhotosResult>(`/admin/suppliers/${id}/photos`, { photos });
 
 // ============================================================================
 // 扩展 · 商品库

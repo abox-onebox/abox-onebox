@@ -112,6 +112,13 @@ export const routes: RouteRecordRaw[] = [
         name: 'TakeoutLinks',
         component: () => import('@/views/supplier/takeout-links.vue'),
       },
+      {
+        // 方案B 照片墙：门店实拍 / 证照照片管理（上传 + 整组替换）。
+        //   与外卖链接同属「供应商维度、运营自助配置」的扩展页，故挂在供应商域。
+        path: 'supplier/store-photos',
+        name: 'StorePhotos',
+        component: () => import('@/views/supplier/store-photos.vue'),
+      },
 
       // 商家端 P21 / P22（M3-8 实装 · 出餐链路 S1–S2）—— 组件调 `/supplier/*`
       //

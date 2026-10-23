@@ -334,6 +334,7 @@ export class MealService {
         slot: i.slot,
         category: dish?.category ?? SLOT_LABEL[i.slot] ?? null,
         imageUrl: dish?.imageUrl ?? null,
+        description: dish?.description ?? null,
         supplierName: supMap.get(i.supplierId)?.name ?? null,
         // 端上「来自：X」点击后跳溯源页并**按 id 定位**（name 无唯一约束，不按名定位）
         supplierId: i.supplierId,
