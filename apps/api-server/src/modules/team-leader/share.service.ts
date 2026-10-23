@@ -93,3 +93,57 @@ export function parseInviteCode(code: string | undefined | null): number | null 
   const id = Number(m[1]);
   return Number.isFinite(id) && id > 0 ? id : null;
 }
+
+/**
+ * 用户推荐码：USR + 4 位零填充用户 id（确定性生成，如 USR0001）
+ *
+ * 与 `LDR` 团长码并列：普通注册用户（非团长）也能推荐别人当团长，
+ * 落地页 `pages/leader-apply/leader-apply?ref=USRxxxx`，申请时回传本码以绑定
+ * `ab_leader_invite.inviter_user_id`（见 `invite.service` / `team-leader.service`）。
+ */
+export function buildUserReferralCode(userId: number | string): string {
+  return `USR${String(userId).padStart(4, '0')}`;
+}
+
+/** 反解用户推荐码 → 用户 id；格式非法返回 null */
+export function parseUserReferralCode(code: string | undefined | null): number | null {
+  if (!code) return null;
+  const m = /^USR(\d{4,})$/i.exec(code.trim());
+  if (!m) return null;
+  const id = Number(m[1]);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
+/** 推荐码类型：leader=团长 LDR 码 / user=普通用户 USR 码 */
+export type ReferralCodeKind = 'leader' | 'user';
+
+/** 解析结果：区分推荐人身份 */
+export interface ParsedReferralCode {
+  kind: ReferralCodeKind;
+  id: number;
+}
+
+/**
+ * 统一解析推荐码（LDR 团长码 / USR 用户码）
+ *
+ * ⚠️ 纯数字回退仅作本地联调 / e2e 兼容，且一律按**团长 id** 处理
+ *   （与生产入口只有二维码里的 `LDR…` / 分享链接里的 `USR…` 一致）。
+ *
+ * @returns 无法识别返回 null（调用方据此静默跳过，不阻断登录）
+ */
+export function parseReferralCode(code: string | undefined | null): ParsedReferralCode | null {
+  if (!code) return null;
+  const trimmed = code.trim();
+
+  const leader = parseInviteCode(trimmed);
+  if (leader) return { kind: 'leader', id: leader };
+
+  const user = parseUserReferralCode(trimmed);
+  if (user) return { kind: 'user', id: user };
+
+  // 兼容纯数字（本地联调）：按团长 id 处理
+  const asId = Number(trimmed);
+  if (Number.isInteger(asId) && asId > 0) return { kind: 'leader', id: asId };
+
+  return null;
+}

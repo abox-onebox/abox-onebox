@@ -5,6 +5,7 @@ import { Building, BuildingGroup } from '../../database/entities/building.entity
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { Order } from '../../database/entities/order.entity';
 import { User } from '../../database/entities/user.entity';
+import { TeamLeaderModule } from '../team-leader/team-leader.module';
 import { UserAdminController } from './user-admin.controller';
 import { UserAdminService } from './user-admin.service';
 import { UserController } from './user.controller';
@@ -32,7 +33,12 @@ import { UserService } from './user.service';
   // ⚠️ U-B2 起需要 `Building`：绑楼要判「楼是否存在 / 是否营业中」。
   //    实体级依赖不成环（`BuildingModule` 也不反过来依赖本模块），
   //    与 `building.module.ts` 头注「实体级依赖不构成模块循环」同一处理。
-  imports: [TypeOrmModule.forFeature([User, TeamLeader, Order, Building, BuildingGroup])],
+  // ⚠️ 2026-10-23：U-B3 推荐中心复用 `LeaderInviteService`（按 `inviter_user_id` 维度
+  //    统计推荐列表），它由 `TeamLeaderModule` 提供且已 `exports`，单向依赖不成环。
+  imports: [
+    TypeOrmModule.forFeature([User, TeamLeader, Order, Building, BuildingGroup]),
+    TeamLeaderModule,
+  ],
   controllers: [UserController, UserAdminController],
   providers: [UserService, UserAdminService],
 })

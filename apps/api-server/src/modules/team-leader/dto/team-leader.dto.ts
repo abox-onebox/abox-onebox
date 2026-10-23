@@ -77,6 +77,17 @@ export class ApplyLeaderReqDto {
     message: `协议版本号不合法（当前仅支持 ${LEADER_AGREEMENT_VERSIONS_TEXT}）`,
   })
   agreementVersion!: string;
+
+  @ApiPropertyOptional({
+    description:
+      '推荐码（团长 LDR 码 或 普通用户 USR 码）；推荐人据此绑定，被推荐人转正后按规则返券/晋级。' +
+      '无推荐则为自荐',
+    example: 'USR0001',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32, { message: '推荐码过长' })
+  referralCode?: string;
 }
 
 /** L18 · 勾选同意《团长合作协议》（补签 / 版本升级重签） */

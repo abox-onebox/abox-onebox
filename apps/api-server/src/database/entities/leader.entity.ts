@@ -265,6 +265,7 @@ export class TeamLeader {
  */
 @Entity('ab_leader_invite')
 @Index('idx_invite_inviter', ['inviterLeaderId', 'isFormal'])
+@Index('idx_invite_inviter_user', ['inviterUserId', 'isFormal'])
 export class LeaderInvite {
   @PkColumn()
   id!: number;
@@ -277,6 +278,27 @@ export class LeaderInvite {
     comment: '邀请人团长 id；自荐申请为 NULL',
   })
   inviterLeaderId?: number | null;
+
+  /**
+   * 真实推荐人用户 id（**非团长也可推荐**，2026-10-23 补）。
+   *
+   * 与 `inviter_leader_id` **并存**：
+   *   · `inviter_leader_id` —— 邀请人是**在职团长**（确定性 LDR 码，团长推荐别人当团长）；
+   *   · `inviter_user_id`   —— 邀请人是**普通注册用户**（确定性 USR 码，非团长推荐别人当团长）。
+   *   二者互斥（一条记录只会命中其一），保留两列是为了**兼容历史数据**
+   *   —— 旧邀请关系只有 `inviter_leader_id`，新链路按推荐人身份选择性落其中一列。
+   *
+   * 返佣/晋级口径见 `invite.service#markFormal`：非团长推荐 → 返代金券；
+   *   团长推荐 → 不返券、计入晋级（除非推荐人已为首席 CHIEF，再推荐才返券）。
+   */
+  @Column({
+    name: 'inviter_user_id',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+    comment: '真实推荐人用户 id（非团长也可推荐；与 inviter_leader_id 互斥并存）',
+  })
+  inviterUserId?: number | null;
 
   @Index('uk_invite_invitee', { unique: true })
   @Column({

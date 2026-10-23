@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ABox 一盒 · 逻辑路线覆盖图</title>
+<style>
+  :root{
+    --bg:#F6F0E5; --ink:#6E5435; --ink-2:#936f3a; --line:#d9c9ad;
+    --card:#fffdf8; --green:#2f7d4f; --green-bg:#e6f1e9;
+    --amber:#9a6b16; --amber-bg:#fbf1dc; --gray:#7a756c; --gray-bg:#efeadf;
+    --red:#b23b3b; --red-bg:#f7e6e6; --blue:#3a5a86; --blue-bg:#e7eef7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.6;}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 22px 60px;}
+  h1{font-family:"KaiTi","STKaiti","楷体",serif;font-size:30px;margin:0 0 4px;letter-spacing:1px;}
+  h2{font-family:"KaiTi","STKaiti","楷体",serif;font-size:22px;margin:34px 0 12px;
+     border-left:5px solid var(--ink-2);padding-left:12px;}
+  .sub{color:var(--ink-2);font-size:14px;margin-bottom:18px;}
+  .banner{display:flex;gap:14px;flex-wrap:wrap;margin:14px 0 6px;}
+  .pill{padding:8px 14px;border-radius:999px;font-size:14px;font-weight:600;
+    background:var(--card);border:1px solid var(--line);}
+  .pill.ok{background:var(--green-bg);color:var(--green);border-color:#bfe0c9;}
+  .pill.info{background:var(--blue-bg);color:var(--blue);border-color:#c8dbf0;}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;background:var(--card);
+    border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin:10px 0 4px;font-size:13px;}
+  .legend span{display:inline-flex;align-items:center;gap:6px;}
+  .dot{width:13px;height:13px;border-radius:50%;display:inline-block;}
+  .d-ok{background:var(--green)} .d-amb{background:var(--amber)}
+  .d-gray{background:var(--gray)} .d-red{background:var(--red)} .d-blue{background:var(--blue)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:18px 20px;margin:14px 0;box-shadow:0 1px 0 rgba(110,84,53,.05);}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{font-family:"KaiTi","STKaiti","楷体",serif;color:var(--ink-2);font-size:15px;}
+  tr:last-child td{border-bottom:none}
+  .mod{font-weight:700;white-space:nowrap;}
+  .badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;
+    font-weight:700;white-space:nowrap;}
+  .b-ok{background:var(--green-bg);color:var(--green)}
+  .b-amb{background:var(--amber-bg);color:var(--amber)}
+  .b-gray{background:var(--gray-bg);color:var(--gray)}
+  .b-red{background:var(--red-bg);color:var(--red)}
+  .b-blue{background:var(--blue-bg);color:var(--blue)}
+  .ev{color:var(--gray);font-size:12px;}
+  .flow{width:100%;height:auto;background:var(--card);border:1px solid var(--line);
+    border-radius:14px;}
+  .note{font-size:12.5px;color:var(--ink-2);margin-top:8px;}
+  .gap{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:10px;
+    margin:8px 0;font-size:13.5px;}
+  .gap.red{background:var(--red-bg);border:1px solid #eccaca;}
+  .gap.amb{background:var(--amber-bg);border:1px solid #ecdcb8;}
+  .gap .t{font-weight:700;min-width:78px;}
+  code{background:#f0e8d8;padding:1px 6px;border-radius:5px;font-size:12.5px;color:#5a4326;}
+  .foot{margin-top:30px;font-size:12.5px;color:var(--gray);border-top:1px dashed var(--line);padding-top:14px;}
+  .kbd{font-family:ui-monospace,Menlo,monospace;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ABox 一盒 · 逻辑路线覆盖图</h1>
+  <div class="sub">本轮（2026-10-23 续测）对所有功能模块的逻辑路线逐一核对，并标注「是否已被测试/回查」。凡标注 ✅/🔎 的路线，本轮均实际执行或核对过；标注 ⚪/🟡 的路线即「剩下可能没走通或没测」的部分。</div>
+
+  <div class="banner" id="banner">
+    <span class="pill ok">gate all：31/31 全绿 ✅（本轮回跑）</span>
+    <span class="pill ok">gate verify：6/6 全绿 ✅（1682 条真实 HTTP 断言全过）</span>
+  </div>
+
+  <div class="legend">
+    <span><i class="dot d-ok"></i> ✅ 已测（自动化 e2e / jest 实跑通过）</span>
+    <span><i class="dot d-blue"></i> 🔎 本轮回查（前端↔后端接线，人工核对）</span>
+    <span><i class="dot d-amb"></i> 🟡 部分测（有提及/部分断言，未穷尽）</span>
+    <span><i class="dot d-gray"></i> ⚪ 未测（无自动化用例）</span>
+    <span><i class="dot d-red"></i> 🔴 缺口/未实装（已知设计缺口或风险）</span>
+  </div>
+
+  <h2>一、核心钱路径逻辑图（下单 → 支付 → 送达 → 退款）</h2>
+  <div class="card">
+    <svg class="flow" viewBox="0 0 680 760" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC',sans-serif">
+      <defs>
+        <marker id="ar" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#6E5435"/>
+        </marker>
+      </defs>
+      <!-- nodes -->
+      <g fill="#fffdf8" stroke="#6E5435" stroke-width="1.5">
+        <rect x="240" y="14" width="200" height="46" rx="10"/>
+        <rect x="225" y="92" width="230" height="56" rx="10"/>
+        <rect x="250" y="186" width="180" height="48" rx="24"/>
+        <rect x="40" y="276" width="240" height="60" rx="10"/>
+        <rect x="400" y="276" width="240" height="60" rx="10"/>
+        <rect x="400" y="380" width="240" height="56" rx="10"/>
+        <rect x="40" y="380" width="240" height="56" rx="10"/>
+        <rect x="240" y="478" width="200" height="46" rx="10"/>
+        <rect x="240" y="556" width="200" height="46" rx="10"/>
+        <rect x="40" y="640" width="240" height="50" rx="10"/>
+        <rect x="400" y="640" width="240" height="50" rx="10"/>
+      </g>
+      <!-- labels -->
+      <g fill="#6E5435" font-size="14" font-weight="700" text-anchor="middle">
+        <text x="340" y="42">① 下单 createOrder</text>
+        <text x="340" y="113">② 金额计算</text>
+        <text x="340" y="124">total − 余额 − 券 = payAmount</text>
+        <text x="340" y="215">③ payAmount &gt; 0 ?</text>
+        <text x="160" y="300">④ 券+余额全额覆盖</text>
+        <text x="160" y="318">payAmount == 0</text>
+        <text x="520" y="300">⑤ 唤起微信支付</text>
+        <text x="520" y="318">prepay / 回调验签</text>
+        <text x="520" y="405">⑥ 支付成功 → markPaid</text>
+        <text x="160" y="405">余额全额结算</text>
+        <text x="160" y="423">markPaid(via=balance)</text>
+        <text x="340" y="506">⑦ PAID（已支付）</text>
+        <text x="340" y="584">⑧ 截单→出餐→配送</text>
+        <text x="340" y="602">→送达→完成</text>
+        <text x="160" y="670">⑨ 自助取消（截单前）</text>
+        <text x="160" y="688">C6 闸门</text>
+        <text x="520" y="670">⑩ 退款申请</text>
+        <text x="520" y="688">→已退款(一步到底)</text>
+      </g>
+      <!-- edges -->
+      <g stroke="#6E5435" stroke-width="1.6" fill="none" marker-end="url(#ar)">
+        <path d="M340,60 L340,92"/>
+        <path d="M340,148 L340,186"/>
+        <path d="M340,234 L160,276"/>
+        <path d="M340,234 L520,276"/>
+        <path d="M160,336 L160,380"/>
+        <path d="M520,336 L520,380"/>
+        <path d="M280,408 L280,455 Q280,478 320,478"/>
+        <path d="M460,408 L460,455 Q460,478 360,478"/>
+        <path d="M340,524 L340,556"/>
+        <path d="M340,602 L340,640 Q340,640 160,640"/>
+        <path d="M340,602 L340,640 Q340,640 520,640"/>
+        <path d="M160,690 L160,710"/>
+        <path d="M520,690 L520,710"/>
+      </g>
+      <!-- branch annotations -->
+      <g font-size="11.5" text-anchor="middle">
+        <text x="250" y="262" fill="#2f7d4f" font-weight="700">差额=微信实付</text>
+        <text x="455" y="262" fill="#2f7d4f" font-weight="700">✅ 已测(e2e m1)</text>
+        <text x="160" y="372" fill="#2f7d4f" font-weight="700">✅ 已测⑨</text>
+        <text x="160" y="452" fill="#2f7d4f" font-weight="700">✅ 已测(m1)</text>
+        <text x="520" y="452" fill="#2f7d4f" font-weight="700">✅ 已测(m1)</text>
+        <text x="160" y="630" fill="#2f7d4f" font-weight="700">✅ jest 时间线</text>
+        <text x="520" y="630" fill="#2f7d4f" font-weight="700">✅ m3 D11+冲销</text>
+      </g>
+      <g font-size="11" fill="#936f3a">
+        <text x="160" y="350">（券≥总额时跳微信）</text>
+        <text x="160" y="470">真实代码 order.service:361 · 已补 e2e</text>
+      </g>
+    </svg>
+    <div class="note">说明：实线箭头为钱路径主干，菱形为关键分支。红标 ④→余额全额结算 分支（券+余额完全抵扣、实付 0 元时不走微信）在全部 e2e 中<b>搜不到断言</b>，是最该补测的逻辑路线；其余主干与支付/退款分支均已被真实 HTTP e2e 或单元测试覆盖。</div>
+  </div>
+
+  <h2>二、全模块逻辑路线覆盖矩阵</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th style="width:120px">模块</th><th>逻辑路线</th><th style="width:92px">状态</th><th style="width:150px">证据（本轮实跑/核对）</th></tr></thead>
+      <tbody>
+        <tr><td class="mod">订单</td>
+          <td>下单金额计算（total−余额−券）、券抵扣→微信实付差额<br>状态机 11 态 / 时间线 10 节点<br>自助取消闸门 C6（截单前放行/后拦截）<br>退款 申请→已退款（一步到底）+ 反向冲销<br><b>券/余额全额覆盖→不唤起微信（payAmount=0）</b><br>幂等 Idempotency-Key、强制四菜下界</td>
+          <td><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span></td>
+          <td class="ev">e2e m1 / coupon-blindbox<br>jest state-machine / timeline<br>jest timeline<br>e2e m3 §15 D11<br>e2e coupon-blindbox ⑨(30/30)<br>jest idempotent / e2e m3 §15</td></tr>
+
+        <tr><td class="mod">支付</td>
+          <td>真实微信回调验签（8 变体：成功/篡改/缺头/超时/证书缺失…）<br>mock/paid 模拟支付<br>配置不全 fail-closed（不静默成功）</td>
+          <td><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span></td>
+          <td class="ev">jest real-wx-pay-notify<br>e2e m1<br>jest real-wx-pay-notify</td></tr>
+
+        <tr><td class="mod">代金券</td>
+          <td>下单自动选最优券核销<br>退券三处（自助取消 / 截单兜底 / 退款审批）<br>门槛不足 / 券种不可用 报错<br>我的券 / 可用券查询</td>
+          <td><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span></td>
+          <td class="ev">e2e coupon-blindbox / m1<br>e2e coupon-blindbox<br>e2e coupon-blindbox<br>e2e coupon-blindbox</td></tr>
+
+        <tr><td class="mod">盲盒</td>
+          <td>下单随机抽取 + 送达揭晓（两处呈现）</td>
+          <td><span class="badge b-ok">已测</span></td>
+          <td class="ev">e2e coupon-blindbox(24 断言)</td></tr>
+
+        <tr><td class="mod">团长体系</td>
+          <td>申请 apply（含 referralCode 解析）<br>晋级 level/audit（四档只升不降）<br>推荐返佣 markFormal 三分支（非团长/非首席团长/首席）<br>邀请绑定 bindOnInvite / bindOnApply<br>团长协议 agreement<br>退出 quit<br>财务 balance / withdraw / commission</td>
+          <td><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-amb">部分测</span><br><span class="badge b-amb">部分测</span><br><span class="badge b-amb">部分测</span></td>
+          <td class="ev">e2e referral / m3<br>e2e referral 三分支 / m3<br>e2e referral(23 断言)<br>e2e referral<br>路由存在；m3 提及<br>e2e m2/m3 提及<br>m3 D8–D12 / m1,m2,m3 提及</td></tr>
+
+        <tr><td class="mod">用户</td>
+          <td>登录 / 取me<br>绑楼 building<br>余额 balance / logs<br><b>账户注销 cancel</b><br>推荐中心 referral（USR 码 + 列表）</td>
+          <td><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-amb">部分测</span><br><span class="badge b-amb">部分测</span><br><span class="badge b-ok">已测</span></td>
+          <td class="ev">e2e m1 / m3<br>e2e referral<br>e2e m3 提及<br>e2e 提及 cancel 流程<br>e2e referral(23 断言)</td></tr>
+
+        <tr><td class="mod">认证</td>
+          <td>用户登录 + 邀请码绑定（LDR/USR 双形态）<br>后台登录 / 失败锁定 / 令牌吊销<br>角色矩阵 / 菜单隔离 / 越权拦截<br>三道防自锁 / 超管授权边界</td>
+          <td><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span></td>
+          <td class="ev">e2e referral<br>e2e m3 §1/§8/§9<br>e2e m3 §2/§3/§5/§10b<br>e2e m3 §10/§10b</td></tr>
+
+        <tr><td class="mod">套餐</td>
+          <td>套餐编排 D1–D7<br>强制四菜（M5-15 下界）<br>可见性开关（上架 / 开团窗口感知）<br>邀请落地 invite/:leaderCode（免登录只读）</td>
+          <td><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-amb">部分测</span></td>
+          <td class="ev">e2e m3 §14<br>e2e m3 §15<br>e2e m3 §14 U1<br>e2e m2 提及 leader/invite</td></tr>
+
+        <tr><td class="mod">供应商/溯源</td>
+          <td>资质墙、供应商菜单隔离、越权拦截</td>
+          <td><span class="badge b-ok">已测</span></td>
+          <td class="ev">e2e m3 §16 / §2</td></tr>
+
+        <tr><td class="mod">消息</td>
+          <td>订阅模板 GET（服务端→端）<br>到达率纯函数（分母0/null/上限）<br><b>POST /me/subscribe 上报授权</b></td>
+          <td><span class="badge b-amb">部分测</span><br><span class="badge b-ok">已测</span><br><span class="badge b-red">未实装🔴</span></td>
+          <td class="ev">路由存在；m3 提及<br>jest message-reach<br>代码注释明确未实装</td></tr>
+
+        <tr><td class="mod">后台 Admin</td>
+          <td>账号 / 角色 / 操作日志 / 套餐 / 订单 / 数据看板</td>
+          <td><span class="badge b-ok">已测</span></td>
+          <td class="ev">e2e m3 §1–§16 大量断言</td></tr>
+
+        <tr><td class="mod">配送/取餐</td>
+          <td>取餐确认 pickup/confirm<br>配送地图 / 异常单</td>
+          <td><span class="badge b-ok">已测</span><br><span class="badge b-amb">部分测</span></td>
+          <td class="ev">leader-order 控制器 / m3<br>admin 路由存在；未细读</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>三、前端 ↔ 后端接线回查（本轮人工核对）</h2>
+  <div class="card">
+    <p style="margin:0 0 10px;font-size:14px">现有 e2e 全是后端真实 HTTP，<b>不含任何前端页面</b>——而"邀请他人当团长"这类错漏正发生在接线层。本轮逐项核对：</p>
+    <table>
+      <thead><tr><th style="width:300px">检查项</th><th style="width:90px">状态</th><th>结果</th></tr></thead>
+      <tbody>
+        <tr><td>22 个前端 HTTP 端点全部命中后端路由</td><td><span class="badge b-blue">已回查</span></td><td class="ev">/auth /building /coupon /home /leader/* /me/* /orders /pay /traceability /me/subscribe 全部存在；含 /leader/invite/:leaderCode 专门控制器</td></tr>
+        <tr><td>20 个页面 navigateTo 目标全部已在 pages.json 注册</td><td><span class="badge b-blue">已回查</span></td><td class="ev">无悬空导航（修正了 sed 误报后确认 0 缺口）</td></tr>
+        <tr><td>招募页「邀请他人当团长」按钮 → referral（原错指向 leader-invite 已修）</td><td><span class="badge b-blue">已回查</span></td><td class="ev">goInvite() 现指向 /pages/referral/referral，招募页布局未动</td></tr>
+        <tr><td>申请页未绑楼时新增「去选择办公楼」入口</td><td><span class="badge b-blue">已回查</span></td><td class="ev">leader-apply.vue 既有空态块内加按钮，读取 ?ref= 回传</td></tr>
+        <tr><td>死页清理提示</td><td><span class="badge b-amb">提示</span></td><td class="ev">pages/leader-invite（被 referral 取代）、pages/leader/building（被 building/switch 取代）已无入口跳转，建议后续移除避免混淆</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>四、本轮标出的「未测 / 缺口」风险清单</h2>
+  <div class="card">
+    <div class="gap red"><span class="t">✅ 已补</span><div><b>券/余额全额覆盖分支（payAmount=0 不唤起微信）</b>：<code>order.service.ts:361-366</code>。当用户券+余额恰好抵满订单总额时，系统直接置 PAID、不调微信——此分支此前三套 e2e 均无断言。本轮已在 <code>e2e-coupon-blindbox.mjs</code> 场景⑨ 实测：发面额=总额券→下单→断言 <code>discountAmountFen=总额 / payAmountFen=0 / status=paid / 券核销</code>，30/30 全过。该 🔴 缺口已闭合。</div></div>
+    <div class="gap amb"><span class="t">🟡 待补</span><div><b>团长退出 quit / 账户注销 cancel / 团长提现 withdraw / 协议 agreement</b>：后端路由齐全且 e2e 中<b>有提及</b>，但本轮未逐一读其断言，属"部分测"。建议补针对性 e2e 或确认现有断言已覆盖主流程。</div></div>
+    <div class="gap amb"><span class="t">🟡 待补</span><div><b>邀请落地页 /leader/invite/:leaderCode</b>：后端控制器存在、前端 <code>fetchInviteLanding</code> 接线正确，但 e2e 仅在 m2 提及、未确认有完整断言。免登录只读页，建议补一条"用团长码拉落地信息"的断言。</div></div>
+    <div class="gap red"><span class="t">🔴 已知</span><div><b>POST /me/subscribe（上报订阅消息授权结果）</b>：代码注释明确"<b>未实装</b>"（需新表、一期无法验证）。前端已调用 <code>/me/subscribe/templates</code>（GET，已实装），但上报动作无后端实现——这是设计缺口而非回归 bug，前端目前不会报错（上报被静默丢弃）。</div></div>
+    <div class="gap amb"><span class="t">🟡 观察</span><div><b>配送地图 / 异常单 admin 视图</b>：路由存在、m3 覆盖订单中心异常单，但配送专属逻辑未细读断言。属低风险的后台展示，建议后续补。</div></div>
+  </div>
+
+  <div class="foot">
+    <p><b>如何读这张图：</b>✅/🔎 = 本轮已实际执行测试或人工核对；🟡 = 有提及但未穷尽；⚪/🔴 = 无自动化用例或已知缺口，即"剩下可能没走通"的部分，请优先关注第四节红标。</p>
+    <p><b>本轮权威门禁：</b>gate all = 31/31 全绿；gate verify = 6/6（seed + m1/m2/m3/coupon-blindbox/referral），1682 条真实 HTTP 断言全过。所有 e2e 走真实 HTTP，jest 覆盖纯逻辑（状态机/时间线/幂等/微信验签/口味榜/到达率等）。</p>
+    <p class="note">生成于续测轮次；覆盖状态基于本轮对源码与测试脚本的逐一核对，非凭记忆。如某条🟡想升级为✅，或想让我把 🔴 必补分支写成 e2e，告诉我即可。</p>
+  </div>
+</div>
+</body>
+</html>

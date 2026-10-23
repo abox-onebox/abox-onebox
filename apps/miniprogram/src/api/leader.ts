@@ -243,6 +243,13 @@ export interface ApplyLeaderPayload {
   floor?: string;
   /** 已勾选同意的协议版本号；缺失 = 未勾选 → 服务端 10001 */
   agreementVersion: string;
+  /**
+   * 推荐码（可选）：经他人分享链接申请时回传。
+   *   · `LDR…` 团长码 → 绑定 `inviter_leader_id`（团长推荐，晋级计入）；
+   *   · `USR…` 用户码 → 绑定 `inviter_user_id`（非团长推荐，转正返券）。
+   *   缺失 = 自荐（无邀请人，`channel='self'`）。
+   */
+  referralCode?: string;
 }
 
 export interface ApplyLeaderResult {
@@ -356,6 +363,33 @@ export function fetchMyInvites(page = 1, pageSize = 20): Promise<LeaderInvitesRe
   return http.get<LeaderInvitesResult>(
     `/leader/invites?page=${encodeURIComponent(String(page))}&pageSize=${encodeURIComponent(String(pageSize))}`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// U-B3 · 我的推荐中心（非团长也可推荐，2026-10-23 补）
+// ---------------------------------------------------------------------------
+
+/**
+ * U-B3 · 我的推荐中心出参
+ *
+ * 任意登录用户（**不要求团长身份**）可读：
+ *   · `referralCode` —— 自己的确定性 USR 码（如 `USR0001`），用于分享；
+ *   · `referralLink` —— 推荐落地链接（`pages/leader-apply/leader-apply?ref=USRxxxx`），
+ *     朋友经此申请成为团长后，归属按 `ab_leader_invite.inviter_user_id` 记录；
+ *   · `list` —— 我推荐且已申请 / 已转正的人列表（与 L21 `LeaderInvitesResult` 同形）。
+ */
+export interface ReferralCenterResult {
+  /** 自己的确定性 USR 码，如 `USR0001` */
+  referralCode: string;
+  /** 推荐落地链接（朋友经此申请成为团长后归属 `inviter_user_id`） */
+  referralLink: string;
+  /** 推荐列表（与 L21 `LeaderInvitesResult` 同形） */
+  list: LeaderInvitesResult;
+}
+
+/** U-B3 · 我的推荐中心（任意登录用户可读，不要求团长身份） */
+export function fetchReferral(): Promise<ReferralCenterResult> {
+  return http.get<ReferralCenterResult>('/me/referral');
 }
 
 /** L22 · 晋级核算结果（服务端审计后**已落表**的指标） */

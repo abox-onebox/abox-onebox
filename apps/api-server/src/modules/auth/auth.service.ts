@@ -14,6 +14,7 @@ import { JwtPayload } from '../../common/decorators/auth.decorator';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { money, toYuan } from '../../common/utils/money';
 import { LeaderLookupService } from '../../common/services/leader-lookup.service';
+import { parseReferralCode } from '../team-leader/share.service';
 import {
   LeaderAccountSnapshot,
   LeaderMoneyService,
@@ -138,7 +139,7 @@ export class AuthService {
   }
 
   /**
-   * 登录时的**邀请码绑定**（M5-11 · 收口缺陷 #92）
+   * 登录时的**邀请码绑定**（M5-11 · 收口缺陷 #92；2026-10-23 扩展支持 USR 用户码）
    *
    * ## 为什么必须在这一步做
    * 规范 §1.5 一直写着「登录链路带邀请码 → 绑定推荐团长」，但此前：
@@ -148,34 +149,66 @@ export class AuthService {
    *     「后台任命」两条写点 —— **扫码进来的人没有任何路径被绑定**。
    * 于是 U3 落地页的「授权加入」只能如实只记本地（这就是 #92「入口有、写点无」）。
    *
-   * ## 语义（逐条对应《接口规范》§1.5 的表）
-   * 1. **码无效 / 团长停职 → 抛 `30007`，整个登录失败**。刻意**不静默忽略**：
+   * ## 语义（逐条对应《接口规范》§1.5 的表 + 2026-10-23 用户码扩展）
+   * 1. **团长码（LDR）无效 / 团长停职 → 抛 `30007`，整个登录失败**。刻意**不静默忽略**：
    *    「用户以为加入了、服务端什么也没发生」正是 #92 要消灭的形态。
    *    端上据此提示「邀请码已失效」并回落到**不带邀请码的普通登录**，
    *    故不会把人锁在门外（见 `utils/auth.ts#bindLeaderByInvite` 的兜底）。
-   * 2. **已有归属时换绑只改 `ab_user`**：楼栋**不动**（他还在原来那栋楼吃饭；
+   * 2. **用户码（USR）无效 / 推荐人不存在 → 静默忽略，不阻断登录**：推荐人是普通用户，
+   *    其缺失不应把被推荐人锁在门外（与 LDR 的「严格失败」不同 —— LDR 关乎「跟随哪栋楼」，
+   *    归属错位是钱的事；USR 只是「谁推荐你当团长」，缺失仅意味着没有推荐奖励归属）。
+   * 3. **已有归属时换绑只改 `ab_user`**：楼栋**不动**（他还在原来那栋楼吃饭；
    *    把他从 A 楼搬到 B 楼是「办公楼变更」，属 L15 需后台审核的事项，不由扫码决定）。
-   * 3. **邀请关系不改写**（`bindOnInvite` 内部保证）—— 邀请人是历史事实。
+   * 4. **邀请关系不改写**（`bindOnInvite` 内部保证）—— 邀请人是历史事实。
+   * 5. **USR 码不绑定 `teamLeaderId` / `buildingId`**：推荐人是普通用户，没有可跟随的团长；
+   *    被推荐人归属其自身办公楼即可（申请成为团长时再决定服务楼）。
    */
   private async bindInvite(user: User, inviteCode: string): Promise<void> {
-    const leader = await this.leaderLookup.requireActiveByCode(inviteCode);
-
-    const patch: { teamLeaderId?: number; buildingId?: number } = {};
-    if (Number(user.teamLeaderId ?? 0) !== Number(leader.id)) patch.teamLeaderId = leader.id;
-    // ⚠️ 楼栋**只在还没有归属时**补 —— 换团长不换楼（见本方法头注 ②）。
-    if (!user.buildingId && leader.buildingId) patch.buildingId = leader.buildingId;
-
-    if (Object.keys(patch).length > 0) {
-      await this.userRepo.update(Number(user.id), patch);
-      // 内存中的实体同步更新 → 本次登录的响应体即可回显新归属（不必再查一次库）
-      Object.assign(user, patch);
-      this.logger.log(
-        `用户#${user.id} 经邀请码 ${inviteCode} 绑定团长#${leader.id}` +
-          `（楼栋 ${patch.buildingId ?? '保持不变'}）`,
-      );
+    const parsed = parseReferralCode(inviteCode);
+    if (!parsed) {
+      // 无法识别的码：静默跳过，不阻断登录（避免把人锁在门外）
+      this.logger.warn(`登录邀请码无法识别，已忽略：${inviteCode}`);
+      return;
     }
 
-    await this.inviteService.bindOnInvite(Number(user.id), Number(leader.id), 'link', inviteCode);
+    if (parsed.kind === 'leader') {
+      // 既有行为：LDR 团长码 → 绑定 teamLeaderId / buildingId + 落 inviterLeaderId
+      const leader = await this.leaderLookup.requireActiveByCode(inviteCode); // 无效/停职 → 30007
+
+      const patch: { teamLeaderId?: number; buildingId?: number } = {};
+      if (Number(user.teamLeaderId ?? 0) !== Number(leader.id)) patch.teamLeaderId = leader.id;
+      // ⚠️ 楼栋**只在还没有归属时**补 —— 换团长不换楼（见本方法头注 ③）。
+      if (!user.buildingId && leader.buildingId) patch.buildingId = leader.buildingId;
+
+      if (Object.keys(patch).length > 0) {
+        await this.userRepo.update(Number(user.id), patch);
+        // 内存中的实体同步更新 → 本次登录的响应体即可回显新归属（不必再查一次库）
+        Object.assign(user, patch);
+        this.logger.log(
+          `用户#${user.id} 经邀请码 ${inviteCode} 绑定团长#${leader.id}` +
+            `（楼栋 ${patch.buildingId ?? '保持不变'}）`,
+        );
+      }
+
+      await this.inviteService.bindOnInvite(Number(user.id), {
+        inviterLeaderId: Number(leader.id),
+        channel: 'link',
+        inviteCode,
+      });
+      return;
+    }
+
+    // kind === 'user'：USR 普通用户码 → 仅落 inviterUserId，不绑定 teamLeaderId / buildingId
+    const refUser = await this.userRepo.findOne({ where: { id: parsed.id } });
+    if (!refUser) {
+      this.logger.warn(`登录用户推荐码指向的用户不存在，已忽略：${inviteCode}`);
+      return;
+    }
+    await this.inviteService.bindOnInvite(Number(user.id), {
+      inviterUserId: Number(refUser.id),
+      channel: 'link',
+      inviteCode,
+    });
   }
 
   /**

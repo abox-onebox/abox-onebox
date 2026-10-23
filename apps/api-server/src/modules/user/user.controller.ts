@@ -4,6 +4,9 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser, JwtPayload } from '../../common/decorators/auth.decorator';
 import { BizConfigService } from '../../common/services/biz-config.service';
 import { LeaderMoneyService } from '../../common/services/leader-money.service';
+import { InviteListQueryDto } from '../team-leader/dto/team-leader.dto';
+import { LeaderInviteService } from '../team-leader/invite.service';
+import { buildUserReferralCode } from '../team-leader/share.service';
 import { UserBalanceLogQueryDto } from './dto/user-balance.dto';
 import { UserCancelDto } from './dto/user-cancel.dto';
 import { BindBuildingDto } from './dto/user-building.dto';
@@ -57,6 +60,8 @@ export class UserController {
     private readonly leaderMoney: LeaderMoneyService,
     /** M5-20：U19 账号注销的**唯一写点**（见 `UserService.cancelAccount` 头注） */
     private readonly userService: UserService,
+    /** 2026-10-23：非团长推荐中心（USR 码 + 推荐列表），复用 LeaderInviteService 同一真源 */
+    private readonly inviteService: LeaderInviteService,
   ) {}
 
   @Get('support')
@@ -210,5 +215,33 @@ export class UserController {
   })
   cancel(@CurrentUser() user: JwtPayload, @Body() dto: UserCancelDto) {
     return this.userService.cancelAccount(user.sub, dto);
+  }
+
+  /**
+   * U-B3 · 我的推荐中心（2026-10-23 补 · 非团长也可推荐）
+   *
+   * 任意登录用户（**不要求团长身份**）都可读：
+   *   · `referralCode` —— 自己的确定性 USR 码（如 `USR0001`），用于分享；
+   *   · `referralLink` —— 推荐落地链接（`pages/leader-apply/leader-apply?ref=USRxxxx`），
+   *     朋友经此申请成为团长后，归属按 `ab_leader_invite.inviter_user_id` 记录；
+   *   · `list` —— 我推荐且已申请/已转正的人列表（同 `LeaderInviteService#listMyReferrals`）。
+   *
+   * ⚠️ 与 `/leader/invites`（团长维度，挂 `LeaderGuard`）是两件事：
+   *   本端点面向**普通用户**，记录的是 `inviter_user_id` 维度的裂变，
+   *   且不需要任何团长身份即可访问（端上据此区分「我是团长看下级」与「我是用户推荐朋友当团长」）。
+   */
+  @Get('referral')
+  @ApiOperation({
+    summary: 'U-B3 我的推荐中心（非团长也可推荐）· USR 码 + 落地链接 + 推荐列表',
+  })
+  async referral(@CurrentUser() user: JwtPayload, @Query() q: InviteListQueryDto) {
+    const referralCode = buildUserReferralCode(user.sub);
+    const list = await this.inviteService.listMyReferrals(user.sub, q);
+    return {
+      referralCode,
+      /** 端上可直接拼成可分享的落地链接（小程序内跳转 / 复制给微信好友） */
+      referralLink: `pages/leader-apply/leader-apply?ref=${referralCode}`,
+      list,
+    };
   }
 }

@@ -21,8 +21,11 @@
       </view>
       <view v-if="!hasBuilding" class="tip">
         <text class="tip__text tip__text--warn">
-          你还没有绑定办公楼。请先通过团长的邀请链接进入小程序完成绑定，再申请成为团长。
+          你还没有绑定办公楼。可通过团长的邀请链接进入，或点击下方自行选择办公楼，再申请成为团长。
         </text>
+        <button class="tip__btn" hover-class="tip__btn--hover" @tap="goBindBuilding">
+          去选择办公楼
+        </button>
       </view>
     </view>
 
@@ -131,7 +134,7 @@
  *   且规则唯一来源就是 `@abox/shared-types` 的 `LEADER_LEVEL_META`，本地渲染与服务端同源。
  */
 import { computed, ref } from 'vue';
-import { onLoad } from '@dcloudio/uni-app';
+import { onLoad, onShow } from '@dcloudio/uni-app';
 import { LEADER_AGREEMENT_VERSION, LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
 
 import { fetchMe } from '@/api/auth';
@@ -140,7 +143,7 @@ import { toastApiError, useRequest } from '@/composables/use-request';
 import { useSubscribeMessage } from '@/composables/use-subscribe-message';
 import { useLeaderStore } from '@/stores/leader';
 import { useUserStore } from '@/stores/user';
-import { switchTab } from '@/utils/router';
+import { navigateTo, switchTab, pageQuery } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const EXPIRE_RULE = '见习团长 30 天内未促成订单将自动取消资格';
@@ -163,6 +166,8 @@ const phone = ref('');
 const floor = ref('');
 const agreed = ref(false);
 const submitting = ref(false);
+/** 推荐码（来自分享链接 `?ref=USRxxxx` / `?ref=LDRxxxx`）；缺失 = 自荐 */
+const refCode = ref('');
 
 const hasBuilding = computed(() => !!userStore.info?.buildingId);
 const buildingText = computed(() => (hasBuilding.value ? '已绑定（见首页取货点）' : '未绑定'));
@@ -256,6 +261,9 @@ async function submit(): Promise<void> {
         //    它是 `agree_version` 的取值，而 `agree_version` 是举证「他签过哪一版」的唯一凭据，
         //    多写一份就可能写成另一个值 ⇒ 同一份签署留痕自相矛盾（见该常量头注）。
         agreementVersion: LEADER_AGREEMENT_VERSION,
+        // 2026-10-23：经他人分享链接申请时回传推荐码（USR 非团长推荐 / LDR 团长推荐），
+        // 缺失 = 自荐。服务端据此落 `ab_leader_invite.inviter_user_id` / `inviter_leader_id`。
+        ...(refCode.value ? { referralCode: refCode.value } : {}),
       }),
     );
 
@@ -282,11 +290,23 @@ async function submit(): Promise<void> {
   }
 }
 
-onLoad(() => {
+onLoad((options) => {
   // 预加载订阅模板清单（**不在点击回调里拉** —— 见 `use-subscribe-message` 头注）
   void subscribe.preload();
+  // 2026-10-23：接收分享链接里的推荐码（如 `?ref=USR0001`），提交时回传服务端
+  refCode.value = pageQuery(options as Record<string, unknown> | undefined, 'ref');
   void refresh();
 });
+
+onShow(() => {
+  // 从「选择办公楼」返回后刷新资料，使刚绑定的 `buildingId` 立即生效（让 USR 推荐来的朋友能继续申请）
+  void refresh();
+});
+
+/** 未绑定办公楼时，引导去自助选楼（U-B2 · PUT /me/building） */
+function goBindBuilding(): void {
+  navigateTo('/pages/building/switch');
+}
 </script>
 
 <style lang="scss" scoped>
@@ -488,6 +508,26 @@ onLoad(() => {
 
     &--warn {
       color: $c-warn-fg;
+    }
+  }
+
+  &__btn {
+    width: 100%;
+    height: 76rpx;
+    margin-top: $space-2;
+    font-size: $fs-caption;
+    line-height: 76rpx;
+    color: $c-text;
+    background: $c-surface;
+    border: 1px solid $c-text;
+    border-radius: $radius-pill;
+
+    &::after {
+      border: none;
+    }
+
+    &--hover {
+      filter: brightness(1.04);
     }
   }
 }

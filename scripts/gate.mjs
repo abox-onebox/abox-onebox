@@ -573,6 +573,13 @@ const GATES = {
     group: 'e2e',
     env: { E2E_PORT: '3104', ...RUNTIME_ENV },
   },
+  // 新功能端到端验收：非团长可推荐 + 新返佣规则（2026-10-23 补，堵 coupon-blindbox 仍零覆盖盲区）
+  'e2e:referral': {
+    cwd: '.',
+    cmd: 'node scripts/e2e-referral.mjs',
+    group: 'e2e',
+    env: { E2E_PORT: '3105', ...RUNTIME_ENV },
+  },
 };
 
 /** 组合门禁别名 */
@@ -581,7 +588,7 @@ const ALIASES = {
   typecheck: ['typecheck:api', 'typecheck:admin', 'typecheck:mp'],
   build: ['build:api', 'build:admin', 'build:mp'],
   /** 端到端验收一键跑：重置种子 → 起服务跑真实 HTTP 全链路（M1 + M2 + M3） */
-  verify: ['seed', 'e2e:m1', 'e2e:m2', 'e2e:m3', 'e2e:coupon-blindbox'],
+  verify: ['seed', 'e2e:m1', 'e2e:m2', 'e2e:m3', 'e2e:coupon-blindbox', 'e2e:referral'],
   /**
    * S9：设计线一键跑（**本地**）。
    * ⚠️ 刻意不进 `all`：`design:docs` 的语料（`_ABox一盒*` 设计文档）不在仓库内，
@@ -717,6 +724,7 @@ const REPORT_RE = {
   'e2e:m2': [/^通过\s+\d+\/\d+.*$/m],
   'e2e:m3': [/^通过\s+\d+\/\d+.*$/m],
   'e2e:coupon-blindbox': [/^通过\s+\d+\/\d+.*$/m],
+  'e2e:referral': [/^通过\s+\d+\/\d+.*$/m],
   'errcode:message': [/^✔ 错误码文案全覆盖.*$/m],
   // icons:lock：先看自证汇总（无条件前置跑），再看覆盖率**分母**（0 样本 = 判据空转）
   'icons:lock': [/^\s*\[自证\] 汇总 \d+\/\d+.*$/m, /^③ 覆盖率：\s*\d+\/\d+.*$/m],

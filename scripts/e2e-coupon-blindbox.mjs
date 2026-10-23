@@ -263,6 +263,47 @@ async function run() {
       `code=${bad.body?.code} msg=${bad.body?.message}`,
     );
 
+    // ---------- ⑨ 券全额覆盖分支：券面额 ≥ 订单总额 → payAmount=0 → 直接 PAID（不唤起微信）----------
+    // ⚠️ 对应 order.service.ts:361-366「余额全额结算」分支。该分支若回归会让订单永远停在 pending_pay，
+    //    此前三套 e2e 均无断言覆盖（grep 验证），故此处补上真实下单断言。复用 dev:1001 + adminToken。
+    const g9 = await call('POST', '/admin/coupon/grant', {
+      token: adminToken,
+      body: {
+        userId,
+        faceValueFen: totalFen, // 面额 = 订单总额 → 恰好全额抵扣
+        thresholdFen: 0,
+        validityType: 'days',
+        validDays: 30,
+        obtainedFrom: 'manual',
+        name: 'E2E全额抵扣券',
+      },
+    });
+    const code9 = g9.body?.data?.code;
+    assert(g9.body?.code === 0 && !!code9, '全额抵扣·发券(面额=总额)', `code=${code9}`);
+
+    const idem9 = `e2e-fullpay-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const full = await call('POST', '/orders', {
+      token: userToken,
+      idem: idem9,
+      body: { mealDate, quantity: 1, couponCode: code9 },
+    });
+    const ord9 = full.body?.data;
+    assert(full.body?.code === 0 && !!ord9?.orderNo, '全额抵扣·下单', `orderNo=${ord9?.orderNo}`);
+    assert(ord9?.discountAmountFen === totalFen, '全额抵扣·discountAmountFen=总额', `=${ord9?.discountAmountFen}`);
+    assert(ord9?.payAmountFen === 0, '全额抵扣·payAmountFen=0(不唤起微信)', `=${ord9?.payAmountFen}`);
+    assert(ord9?.status === 'paid', '全额抵扣·订单直接 PAID(余额全额结算)', `status=${ord9?.status}`);
+    // 券应被核销：活动单期间 status 不是 unused 且 order_no 指向本单（不假定具体状态串，避免脆弱）
+    let used9 = false;
+    try {
+      const db = openFixtureDb();
+      const row = db.prepare('SELECT status, order_no FROM ab_user_coupon WHERE code = ?').get(code9);
+      used9 = !!row && row.status !== 'unused' && row.order_no === ord9?.orderNo;
+      db.close();
+    } catch (e) {
+      log(`⚠ 查库失败：${e?.message ?? e}`);
+    }
+    assert(used9, '全额抵扣·券被核销(status≠unused & order_no=本单)', `used9=${used9}`);
+
     // ---------- ⑧ 退款退券：下单用券 → mock支付 → 团长代退 → 后台审批 → 券还原 ----------
     // ⚠️ 用独立用户 dev:1003（张磊·楼5，属团长1所辖）下单，避免与主流程 dev:1001 状态互相干扰。
     //    团长代退端点 `refund-apply` 走 LeaderGuard，须由归属团长(李明 dev:1001)发起。

@@ -94,7 +94,7 @@
           <text class="mode__badge">方式二</text>
           <text class="mode__mt">只介绍、不当</text>
           <text class="mode__md"
-            >身边谁合适？介绍 1 名朋友转正，你得单层现金红包（不抽其下线）。</text
+            >身边谁合适当团长？把专属链接发给他，他转正后你得推荐奖励（单层，不抽其下线）。</text
           >
         </view>
       </view>
@@ -232,7 +232,7 @@ function goApply(): void {
 }
 
 function goInvite(): void {
-  navigateTo('/pages/leader-invite/leader-invite');
+  navigateTo('/pages/referral/referral');
 }
 
 function goSupplier(id: number): void {

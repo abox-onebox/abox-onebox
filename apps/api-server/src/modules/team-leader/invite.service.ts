@@ -5,6 +5,7 @@ import { EntityManager, In, Repository } from 'typeorm';
 import { LeaderLevel, LeaderStatus } from '@abox/shared-types';
 
 import { normalizePage, paginate } from '../../common/utils/response';
+import { now } from '../../common/utils/time';
 import { LeaderInvite, TeamLeader } from '../../database/entities/leader.entity';
 import { User } from '../../database/entities/user.entity';
 import { CouponService } from '../coupon/coupon.service';
@@ -47,10 +48,10 @@ export class LeaderInviteService {
    *    落地页只能「本地记一笔」。本方法 + `AuthService.login` 的 `leaderCode` 分支共同补上。
    *
    * ## 语义（三条，都必须守住）
-   * 1. **已有记录 → 不改写邀请人**：`inviter_leader_id` 是**历史事实** ——
-   *    它决定「谁的介绍转正数 +1」（C2 晋级第二条件）。用户后来扫了别人的码
+   * 1. **已有记录 → 不改写邀请人**：`inviter_leader_id` / `inviter_user_id` 是**历史事实** ——
+   *    它决定「谁的介绍转正数 +1」（C2 晋级第二条件）/「谁领推荐返券」。用户后来扫了别人的码
    *    （`ab_user.team_leader_id` 改跟随）**不能**把这条历史改掉，否则等于
-   *    篡改前一个邀请人的晋级依据。故本方法对已存在的行**幂等返回**。
+   *    篡改前一个邀请人的晋级依据 / 返券归属。故本方法对已存在的行**幂等返回**。
    * 2. **自荐记录（`channel='self'`）不被覆盖**：那是「无邀请人」的既成事实，
    *    扫一个码不能把它变成「有人邀请」（同 `bindOnApply` 的反向保护）。
    * 3. **被邀请人此刻还不是团长** → `invitee_leader_id` 留空、`is_formal = 0`；
@@ -61,9 +62,12 @@ export class LeaderInviteService {
    */
   async bindOnInvite(
     userId: number,
-    inviterLeaderId: number,
-    channel: string,
-    inviteCode?: string,
+    opts: {
+      inviterLeaderId?: number | null;
+      inviterUserId?: number | null;
+      channel: string;
+      inviteCode?: string | null;
+    },
     manager?: EntityManager,
   ): Promise<LeaderInvite> {
     const repo = manager ? manager.getRepository(LeaderInvite) : this.inviteRepo;
@@ -71,12 +75,13 @@ export class LeaderInviteService {
     if (existed) return existed;
 
     return repo.save({
-      inviterLeaderId,
+      inviterLeaderId: opts.inviterLeaderId ?? null,
+      inviterUserId: opts.inviterUserId ?? null,
       inviteeUserId: userId,
       inviteeLeaderId: null,
-      inviteCode: inviteCode ?? null,
-      channel,
-      bindAt: new Date(),
+      inviteCode: opts.inviteCode ?? null,
+      channel: opts.channel,
+      bindAt: now(),
       inviteeLevel: null,
       isFormal: 0,
     });
@@ -85,30 +90,51 @@ export class LeaderInviteService {
   /**
    * 申请团长时落/补推荐关系
    *
-   * @returns 最终生效的推荐记录（`inviterLeaderId` 供调用方写入 `ab_user.team_leader_id`）
+   * 推荐人身份（2026-10-23 补 · 非团长可推荐）：
+   *   · `opts.inviterLeaderId` —— 邀请人是**在职团长**（LDR 码）；
+   *   · `opts.inviterUserId`   —— 邀请人是**普通用户**（USR 码，非团长推荐）。
+   *   两者互斥；都不传 = 自荐（无邀请人，`channel='self'`）。
+   *
+   * @returns 最终生效的推荐记录
    */
   async bindOnApply(
     userId: number,
     leaderId: number,
     level: LeaderLevel,
+    opts: {
+      inviterLeaderId?: number | null;
+      inviterUserId?: number | null;
+      channel?: string;
+    } = {},
     manager?: EntityManager,
   ): Promise<LeaderInvite> {
     const repo = manager ? manager.getRepository(LeaderInvite) : this.inviteRepo;
     const existed = await repo.findOne({ where: { inviteeUserId: userId } });
 
     if (existed) {
-      // 已由邀请链接绑定 → 只补「被邀请人转任团长后的 id / 等级快照」，邀请人不动
+      // 已由邀请链接绑定 → 只补「被邀请人转任团长后的 id / 等级快照」，邀请人不动；
+      // 但若原记录**没有**邀请人且本次带推荐码（用户登录时未带码、申请时才传 ref），
+      // 则**安全补填**（设置原本为 NULL 的邀请人，不是覆盖已存在的真实邀请人）。
       existed.inviteeLeaderId = leaderId;
       existed.inviteeLevel = level;
+      if (
+        !existed.inviterLeaderId &&
+        !existed.inviterUserId &&
+        (opts.inviterLeaderId || opts.inviterUserId)
+      ) {
+        existed.inviterLeaderId = opts.inviterLeaderId ?? null;
+        existed.inviterUserId = opts.inviterUserId ?? null;
+      }
       return repo.save(existed);
     }
 
     return repo.save({
-      inviterLeaderId: null,
+      inviterLeaderId: opts.inviterLeaderId ?? null,
+      inviterUserId: opts.inviterUserId ?? null,
       inviteeUserId: userId,
       inviteeLeaderId: leaderId,
-      channel: 'self',
-      bindAt: new Date(),
+      channel: opts.channel ?? 'self',
+      bindAt: now(),
       inviteeLevel: level,
       isFormal: 0,
     });
@@ -116,6 +142,8 @@ export class LeaderInviteService {
 
   /**
    * 统计「经本人邀请且**已转正**（正式及以上）」的团长数 —— C2 晋级第二条件
+   * （仅统计 `inviter_leader_id` 维度，即**团长**作为邀请人；非团长推荐走
+   * `countFormalByUser`，不计入任何人的晋级）。
    *
    * ⚠️ 只认 `is_formal = 1`：`inviteeLeaderId` 非空仅代表对方成为团长（可能是见习），
    *    不足以计入「介绍 N 名**转正**团长」。
@@ -125,8 +153,23 @@ export class LeaderInviteService {
   }
 
   /**
+   * 统计「经本人（普通用户）推荐且已转正」的团长数 —— 非团长推荐维度
+   * （用于「我的推荐」汇总；非团长无等级，本值只用于展示，不驱动晋级）。
+   */
+  async countFormalByUser(inviterUserId: number): Promise<number> {
+    return this.inviteRepo.count({ where: { inviterUserId, isFormal: 1 } });
+  }
+
+  /**
    * 标记被邀请人已转正（等级晋升到正式及以上时调用，M2-2.9 / 晋级任务）
    * @returns 是否发生了状态翻转（true 表示从「未转正」变为「已转正」，需回写邀请人计数）
+   *
+   * ## ⭐ 返佣规则（2026-10-23 · 产品裁定）
+   *   ① **非团长推荐**（`inviter_user_id` 命中）→ 给该用户发 5 元代金券（referral）；
+   *   ② **团长推荐**（`inviter_leader_id` 命中）→ **不返券**，只计入邀请人晋级审计
+   *      （由 `promotion.service#audit` 的 `invitedFormalCount +1` 驱动）；
+   *   ③ **例外**：若推荐团长**已为首席 CHIEF（最高级）**，再推荐才返券（发给该团长）。
+   *   ⇒ 券发放失败**不影响**转正主流程（best-effort），仅记日志，转正结果仍返回 true。
    */
   async markFormal(inviteeUserId: number, level: LeaderLevel): Promise<boolean> {
     const invite = await this.inviteRepo.findOne({ where: { inviteeUserId } });
@@ -135,35 +178,44 @@ export class LeaderInviteService {
 
     invite.isFormal = 1;
     invite.inviteeLevel = level;
-    invite.formalAt = new Date();
+    invite.formalAt = now();
     await this.inviteRepo.save(invite);
 
-    // 推荐奖励：被邀请人转正 → 给邀请人发 5 元代金券（referral）
-    // ⚠️ 券发放失败**不影响**转正主流程（best-effort，避免券系统抖动阻断晋级）；
-    //     仅记日志，转正结果仍返回 true。
-    if (invite.inviterLeaderId) {
-      try {
-        const inviter = await this.leaderRepo.findOne({
-          where: { id: invite.inviterLeaderId },
-        });
-        if (inviter) {
-          await this.couponService.grant({
-            userId: inviter.userId,
-            name: '推荐返券',
-            faceValueFen: 500,
-            thresholdFen: 0,
-            validityType: 'days',
-            validDays: 30,
-            obtainedFrom: 'referral',
-            remark: '推荐好友转正团长奖励',
-          });
-        }
-      } catch (e) {
-        this.logger.warn(
-          `推荐返券发放失败（inviterLeader=${invite.inviterLeaderId}）：${(e as Error).message}`,
-        );
+    const inviterUserId = invite.inviterUserId ?? null;
+    const inviterLeaderId = invite.inviterLeaderId ?? null;
+
+    // ---- 决定返券对象（按上述三条规则） ----
+    let couponToUserId: number | null = null;
+    if (inviterUserId) {
+      // ① 非团长推荐 → 直接返券给该用户
+      couponToUserId = inviterUserId;
+    } else if (inviterLeaderId) {
+      // ② 团长推荐 → 默认不返券；③ 仅当邀请人已是首席 CHIEF 才返券
+      const inviter = await this.leaderRepo.findOne({ where: { id: inviterLeaderId } });
+      if (inviter && inviter.level === LeaderLevel.CHIEF) {
+        couponToUserId = inviter.userId;
       }
     }
+
+    if (couponToUserId) {
+      try {
+        await this.couponService.grant({
+          userId: couponToUserId,
+          name: '推荐返券',
+          faceValueFen: 500,
+          thresholdFen: 0,
+          validityType: 'days',
+          validDays: 30,
+          obtainedFrom: 'referral',
+          remark: '推荐好友转正团长奖励',
+        });
+      } catch (e) {
+        this.logger.warn(`推荐返券发放失败（toUser=${couponToUserId}）：${(e as Error).message}`);
+      }
+    } else if (inviterLeaderId) {
+      this.logger.log(`团长推荐转正（inviterLeader=${inviterLeaderId}）不返券，仅计入晋级审计`);
+    }
+
     return true;
   }
 
@@ -221,6 +273,56 @@ export class LeaderInviteService {
           /** 被邀请人当前等级（未成为团长时为 null） */
           inviteeLevel: r.inviteeLevel ?? null,
           /** 是否已成为团长 */
+          isLeader: Boolean(r.inviteeLeaderId),
+        })),
+        total,
+        page,
+        pageSize,
+      ),
+    };
+  }
+
+  /**
+   * 非团长推荐中心 · 我的推荐列表（2026-10-23 补）
+   *
+   * 与 `listMyInvites` 同一套出参形状，仅按 `inviter_user_id` 维度统计
+   * （普通用户推荐别人当团长的裂变成果）。只回昵称，不回手机号（§1.6）。
+   * `summary` 按全量统计（不受分页影响）。
+   */
+  async listMyReferrals(inviterUserId: number, input: PageInput = {}) {
+    const { page, pageSize, skip } = normalizePage(input);
+
+    const [rows, total] = await this.inviteRepo.findAndCount({
+      where: { inviterUserId },
+      order: { id: 'DESC' },
+      skip,
+      take: pageSize,
+    });
+
+    const userIds = [...new Set(rows.map((r) => Number(r.inviteeUserId)))];
+    const users = userIds.length ? await this.userRepo.find({ where: { id: In(userIds) } }) : [];
+    const nameOf = new Map(users.map((u) => [Number(u.id), u.nickname]));
+
+    const formalCount = await this.countFormalByUser(inviterUserId);
+
+    return {
+      summary: {
+        /** 累计推荐人数（含未转正） */
+        totalCount: Number(total),
+        /** 其中已转正（正式及以上） */
+        formalCount,
+        /** 尚在见习 */
+        traineeCount: Math.max(0, Number(total) - formalCount),
+      },
+      ...paginate(
+        rows.map((r) => ({
+          id: Number(r.id),
+          nickname: nameOf.get(Number(r.inviteeUserId)) ?? '微信用户',
+          channel: r.channel,
+          bindAt: r.bindAt,
+          isFormal: Number(r.isFormal) === 1,
+          formalAt: r.formalAt ?? null,
+          inviteeLevel: r.inviteeLevel ?? null,
           isLeader: Boolean(r.inviteeLeaderId),
         })),
         total,

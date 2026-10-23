@@ -15,7 +15,7 @@ import { BizConfigService } from '../../common/services/biz-config.service';
 import { LeaderMoneyService } from '../../common/services/leader-money.service';
 import { maskAccount } from '../../common/utils/crypto';
 import { money, toYuan } from '../../common/utils/money';
-import { toBjIso } from '../../common/utils/time';
+import { now, toBjIso } from '../../common/utils/time';
 import { Building } from '../../database/entities/building.entity';
 import { Balance, Commission } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
@@ -32,6 +32,7 @@ import {
 } from './dto/team-leader.dto';
 import { LeaderInviteService } from './invite.service';
 import { LeaderLevelService } from './level.service';
+import { parseReferralCode } from './share.service';
 
 /** 办公楼在营状态（`ab_building.status`：1 合作中 / 2 停用） */
 const BUILDING_OPEN = 1;
@@ -97,8 +98,17 @@ export class TeamLeaderService {
     }
 
     const invite = await this.inviteService.findByInvitee(userId);
-    const inviterLeaderId = invite?.inviterLeaderId ?? null;
-    const now = new Date();
+    // 邀请人身份（2026-10-23 补 · 非团长可推荐）：
+    //   · 已存在的邀请关系（如登录时已通过 USR/LDR 码绑定）→ 优先保留其邀请人；
+    //   · 否则若申请时带了 referralCode → 解析为团长(LDR) 或用户(USR) 邀请人。
+    let inviterLeaderId: number | null = invite?.inviterLeaderId ?? null;
+    let inviterUserId: number | null = invite?.inviterUserId ?? null;
+    if (!inviterLeaderId && !inviterUserId && dto.referralCode) {
+      const ref = parseReferralCode(dto.referralCode);
+      if (ref?.kind === 'leader') inviterLeaderId = ref.id;
+      else if (ref?.kind === 'user') inviterUserId = ref.id;
+    }
+    const at = now();
     // ⭐ M5-13：见习费率同样走配置真源（原本是 `LEADER_LEVEL_META[TRAINEE].rate` 常量）——
     // 「建档」是费率快照的第一个写点，它读常量就意味着「运营改配置对新建档无效」。
     const traineeRate = (await this.bizConfig.commissionRate(LeaderLevel.TRAINEE)).toFixed(4);
@@ -115,7 +125,7 @@ export class TeamLeaderService {
         level: LeaderLevel.TRAINEE,
         commissionRate: traineeRate,
         status: LeaderStatus.ACTIVE,
-        agreedAt: now,
+        agreedAt: at,
         agreeVersion: dto.agreementVersion,
       };
 
@@ -123,14 +133,21 @@ export class TeamLeaderService {
         ? await leaderRepo.save({ ...existed, ...payload })
         : await leaderRepo.save({ userId, ...payload });
 
-      // 身份归属：办公楼（用户从此归属该楼）+ 邀请人（自荐为 null）
+      // 身份归属：办公楼（用户从此归属该楼）+ 邀请人（自荐 / USR 推荐为 null，
+      // 只有 LDR 团长推荐才跟随其团队——团长推荐别人当团长时，被推荐人仍归属自身办公楼）
       await manager.getRepository(User).update(userId, {
         buildingId: dto.buildingId,
         teamLeaderId: inviterLeaderId,
       });
 
       // 推荐关系与身份**同事务**落库 —— 半成功会让 C2 晋级审计永久缺一条
-      await this.inviteService.bindOnApply(userId, saved.id, LeaderLevel.TRAINEE, manager);
+      await this.inviteService.bindOnApply(
+        userId,
+        saved.id,
+        LeaderLevel.TRAINEE,
+        { inviterLeaderId, inviterUserId },
+        manager,
+      );
 
       /**
        * ⭐ M5-15 · **复职留痕**（裁定 ②：「允许复用停职档案，但必须留痕」）
@@ -195,7 +212,7 @@ export class TeamLeaderService {
 
     // ⭐ M4-3：通知投递在**事务提交之后**（`leader_apply` 场景）
     //    放进事务里就是「事务回滚了、祝贺通知却已发出」—— 与退款通知同一条纪律。
-    await this.notifyLeaderApplied(userId, now);
+    await this.notifyLeaderApplied(userId, at);
 
     return { isLeader: true, leader: await this.toProfile(leader, building.name) };
   }
