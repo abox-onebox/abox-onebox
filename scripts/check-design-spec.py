@@ -312,6 +312,26 @@ def _split_top_commas(s: str):
     return [x.strip() for x in out]
 
 
+def _first_color_token(stop):
+    """
+    取色停里的**颜色部分**（去掉尾随位置如 `0%`），并压掉函数式颜色内部的空白。
+
+    ⚠️ 为什么必须先压空白再按空白切：真实代码写成 `rgba(0, 0, 0, 0.62)`
+       （逗号后带空格，Prettier 的产物就是这样）。直接 `split(r"\\s+")[0]` 会得到
+       `rgba(0,` —— 于是「黑 → 透明」的蒙版渐变（`rgba(0,0,0,.62)` → `rgba(0,0,0,0)`）
+       两头都截成同一个串，被判成「假渐变」**假红**。
+       自证样本此前只写了 `rgba(0,0,0,.2)` 这种**无空格**形态，恰好绕开了这个分支
+       —— 即「必不报样本没用真实形态」的经典漏法，本次补上带空格的对照。
+    """
+    s = stop.strip()
+
+    def _squash(m):
+        return re.sub(r"\s+", "", m.group(0))
+
+    s = re.sub(r"\b(?:rgba?|hsla?)\([^)]*\)", _squash, s)
+    return re.split(r"\s+", s)[0].lower()
+
+
 def check_fake_gradient(corpus):
     """「假渐变」：`linear-gradient(135deg, $c-gold, $c-gold)` —— 两色停**同值** ⇒ 纯色。
 
@@ -337,7 +357,7 @@ def check_fake_gradient(corpus):
             if len(stops) < 2:
                 continue
             seen += 1
-            colors = [re.split(r"\s+", s)[0].lower() for s in stops]
+            colors = [_first_color_token(s) for s in stops]
             if len(set(colors)) == 1:
                 hits.append((p, txt.count(chr(10), 0, m.start()) + 1,
                              f"同色渐变：{colors[0]} 两头同值 ⇒ 假渐变（渲染为纯色）"))
@@ -838,6 +858,12 @@ def selftest():
          _fg("background: linear-gradient(90deg, rgba(0,0,0,.2), rgba(0,0,0,.2));"), (1, 1))
     case("不报：函数式颜色两头不同",
          _fg("background: linear-gradient(90deg, rgba(0,0,0,.2), rgba(255,255,255,.2));"), (0, 1))
+    # ⭐ 真实形态对照（Prettier 产物在逗号后带空格）：黑 → 透明的蒙版渐变是**真渐变**，
+    #    不得因为「RGB 三通道相同」被判成假渐变（修判据前此处假红）。
+    case("不报：带空格的 rgba 蒙版渐变（真实写法 · 黑→透明）",
+         _fg("background: linear-gradient(to top, rgba(0, 0, 0, 0.62), rgba(0, 0, 0, 0));"), (0, 1))
+    case("应报：带空格的同色 rgba 仍是假渐变",
+         _fg("background: linear-gradient(to top, rgba(0, 0, 0, 0.62), rgba(0, 0, 0, 0.62));"), (1, 1))
     case("不报且不计样本：注释里的渐变不算数",
          _fg("// linear-gradient(135deg, $c-gold, $c-gold)"), (0, 0))
     print()

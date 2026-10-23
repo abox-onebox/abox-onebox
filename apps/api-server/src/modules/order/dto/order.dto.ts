@@ -35,12 +35,6 @@ export class CreateOrderReqDto implements CreateOrderDto {
   @Min(1, { message: '份数至少 1 份' })
   quantity!: number;
 
-  @ApiPropertyOptional({ description: '备注（过敏忌口等）', example: '不要香菜' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(256)
-  remark?: string;
-
   @ApiPropertyOptional({ description: '余额抵扣（整数分），0 或省略表示不用余额', example: 0 })
   @IsOptional()
   @Type(() => Number)
@@ -52,6 +46,12 @@ export class CreateOrderReqDto implements CreateOrderDto {
   @IsString()
   @MaxLength(32)
   leaderCode?: string;
+
+  @ApiPropertyOptional({ description: '选用的代金券券码（ab_user_coupon.code）；省略表示不使用券' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  couponCode?: string;
 }
 
 /** U9 订单列表查询 */

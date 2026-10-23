@@ -32,6 +32,9 @@ import {
  * 缓存：进程内 60s TTL（后台改配置后最多 1 分钟生效）；
  *      需要即时生效的场景调用 `invalidate()`。
  */
+/** x 盲盒默认内容池（轻量小辅助；运行期可经 ab_config.blind_box_items 覆盖） */
+const DEFAULT_BLIND_BOX_ITEMS = ['小粗粮', '小水果', '小凉菜', '小糕点', '鸡蛋糕'];
+
 @Injectable()
 export class BizConfigService {
   private readonly logger = new Logger('BizConfig');
@@ -286,6 +289,32 @@ export class BizConfigService {
   }> {
     const items = await this.settlementCostItems();
     return { items, registration: summarizeCostRegistration(items) };
+  }
+
+  /**
+   * x 盲盒内容池（轻量小辅助，不作主功能）
+   *
+   * 运行期可经 `ab_config.blind_box_items`（JSON 字符串数组）覆写；
+   * 缺省回落 {@link DEFAULT_BLIND_BOX_ITEMS}。解析失败 / 非数组 / 空数组一律回落缺省，
+   * 保证下单抽取永远有可选项（详见 `order.service.ts` 下单抽取逻辑）。
+   */
+  async blindBoxItems(): Promise<string[]> {
+    const raw = await this.getRaw('blind_box_items');
+    if (!raw) return DEFAULT_BLIND_BOX_ITEMS;
+    try {
+      const parsed = JSON.parse(raw);
+      if (
+        Array.isArray(parsed) &&
+        parsed.length > 0 &&
+        parsed.every((x) => typeof x === 'string')
+      ) {
+        return parsed;
+      }
+    } catch {
+      /* 解析失败 → 回落缺省 */
+    }
+    this.logger.warn(`ab_config.blind_box_items 非法（需 JSON 字符串数组），回落默认池`);
+    return DEFAULT_BLIND_BOX_ITEMS;
   }
 
   /** 驱动开关快照（用于健康检查 / 运维面板） */

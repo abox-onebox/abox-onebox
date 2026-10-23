@@ -120,6 +120,14 @@
           ><text class="abi abi-16">{{ I.chev }}</text></text
         >
       </view>
+      <view class="menu__item" hover-class="menu__item--hover" @tap="goCoupons">
+        <text class="menu__label"
+          ><text class="abi abi-16">{{ I.gift }}</text> 我的优惠券</text
+        >
+        <text class="menu__arrow"
+          ><text class="abi abi-16">{{ I.chev }}</text></text
+        >
+      </view>
       <view class="menu__item" hover-class="menu__item--hover" @tap="tapSwitchLeader">
         <text class="menu__label"
           ><text class="abi abi-16">{{ I.home }}</text> 切换团长（绑定办公楼）</text
@@ -406,6 +414,10 @@ function goBalance(): void {
   navigateTo('/pages/balance-detail/balance-detail');
 }
 
+function goCoupons(): void {
+  navigateTo('/pages/coupon-list/coupon-list');
+}
+
 function goApply(): void {
   navigateTo('/pages/leader-apply/leader-apply');
 }
@@ -532,7 +544,7 @@ function goAccountCancel(): void {
 function showAbout(): void {
   uni.showModal({
     title: '关于 ABox 一盒',
-    content: `${AGREEMENT_OPERATOR}\n办公楼预定制团体组合 · 本日精选自提`,
+    content: `${AGREEMENT_OPERATOR}\n办公楼预定制团体组合 · 由团长送到工位`,
     showCancel: false,
     confirmText: '知道了',
   });

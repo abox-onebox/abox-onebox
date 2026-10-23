@@ -68,6 +68,10 @@ export const ADMIN_MENU_KEYS = [
   '/supplier/takeout-links',
   '/supplier/edit',
   '/supplier/dishes',
+  // 门店实拍照片墙（`store-photos`）—— 前端 `ADMIN_NAV` 早有入口、路由也早有，
+  //   而本清单**从来没登记过** ⇒ 命中 `check-nav-consistency.mjs` 方向②
+  //   （有入口没授权 ⇒ 对任何角色都不显示，super_admin 的 `*` 也救不了的死条目）。
+  '/supplier/store-photos',
   // ⚠️⚠️ M5-15 修复（**方向②：有入口但没授权**）：`/supplier/packing-center`（P39 加工场所
   //    打包）自 M4-0 起就在前端 `ADMIN_NAV` 里有顶级入口、路由也在（`routes.ts:106`）、
   //    后端控制器也在（`PackingAdminController` @ `admin/packing-tasks`），
@@ -88,6 +92,10 @@ export const ADMIN_MENU_KEYS = [
   '/finance/reconciliation',
   // M3-15：D44 发票管理（进项票台账 · 纯读派生视图）
   '/finance/invoices',
+  // 代金券（2026-10-23 · 独立券系统）：券种定义 + 手动发券 + 发放记录。
+  //   ⚠️ 必须与前端 `ADMIN_NAV` 同向，否则命中 `check-nav-consistency.mjs`
+  //     方向①（授权了但侧边栏没入口）。控制器 `@Roles('super_admin','admin','operator')`。
+  '/finance/coupon',
   '/stats/core-metrics',
   '/stats/building-rank',
   '/stats/dish-heat',
@@ -185,6 +193,8 @@ export const ROLE_MENUS: Record<string, readonly string[]> = {
     '/finance/reconciliation',
     // M3-15：财务要催票 —— 发票管理是 finance 角色的核心日常工作（D44）
     '/finance/invoices',
+    // 代金券：客服补偿券是财务侧动作，finance 必须有入口
+    '/finance/coupon',
     '/order/list',
     '/order/detail',
     '/stats/core-metrics',

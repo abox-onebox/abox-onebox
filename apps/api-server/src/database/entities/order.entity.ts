@@ -119,6 +119,13 @@ export class Order {
   remark?: string | null;
 
   /**
+   * x 盲盒抽到的内容（轻量小辅助功能）
+   * 下单时从配置池随机定一个，送达后揭晓；`null` 表示本单未含盲盒（如功能关闭 / 池为空）。
+   */
+  @Column({ name: 'blind_box_name', type: 'varchar', length: 64, nullable: true })
+  blindBoxName?: string | null;
+
+  /**
    * 11 态（C6 三段式要求 refund_applying / refunding 可查）
    * pending_pay/paid/cut_off/cooked/delivering/delivered/completed
    * /cancelled/refund_applying/refunding/refunded

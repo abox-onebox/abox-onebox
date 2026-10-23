@@ -30,7 +30,11 @@ export class WecomKbController {
   }
 
   @Post('callback')
-  async handle(@Req() req: Request, @Query() q: Record<string, string>, @Res() res: Response): Promise<void> {
+  async handle(
+    @Req() req: Request,
+    @Query() q: Record<string, string>,
+    @Res() res: Response,
+  ): Promise<void> {
     const rawBody = (req as unknown as { rawBody?: Buffer }).rawBody;
     const raw = rawBody ? rawBody.toString('utf8') : '';
     await this.svc.handlePost(raw, q);

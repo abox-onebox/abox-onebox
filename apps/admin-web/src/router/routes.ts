@@ -236,6 +236,13 @@ export const routes: RouteRecordRaw[] = [
         name: 'FinanceInvoices',
         component: () => import('@/views/finance/invoices.vue'),
       },
+      // 代金券（独立券系统 · 2026-10-23）：券种定义 + 手动发券（客服补偿）+ 发放记录。
+      //   与上面几条同属「钱往用户那边走」的通道，故并列在财务域下。
+      {
+        path: 'finance/coupon',
+        name: 'FinanceCoupon',
+        component: () => import('@/views/finance/coupon.vue'),
+      },
 
       // 数据统计 M36 · P35
       {

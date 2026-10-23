@@ -16,6 +16,7 @@ import { DistributionCenterModule } from './modules/distribution-center/distribu
 import { MealModule } from './modules/meal/meal.module';
 import { TraceabilityModule } from './modules/traceability/traceability.module';
 import { OrderModule } from './modules/order/order.module';
+import { CouponModule } from './modules/coupon/coupon.module';
 import { DeliveryModule } from './modules/delivery/delivery.module';
 import { TeamLeaderModule } from './modules/team-leader/team-leader.module';
 import { PaymentModule } from './modules/payment/payment.module';
@@ -57,6 +58,8 @@ import { HealthController } from './health/health.controller';
     MealModule,
     TraceabilityModule,
     OrderModule,
+    // 代金券（用户端 / 后台端控制器就近放在本模块，路径统一 admin/coupon 前缀）
+    CouponModule,
     DeliveryModule,
     TeamLeaderModule,
     PaymentModule,

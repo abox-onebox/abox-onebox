@@ -99,6 +99,19 @@
           <text class="dish__from" />
         </view>
 
+        <!-- x 盲盒（轻量小辅助）：随单附赠的轻食惊喜，下单时不定内容，送达后揭晓 -->
+        <view v-if="detail.blindBoxName" class="blind">
+          <view class="blind__head">
+            <text class="blind__tag">x 盲盒 · 随单附赠</text>
+            <text class="blind__state" :class="{ 'is-revealed': blindBoxRevealed }">{{
+              blindBoxRevealed ? '已揭晓' : '待揭晓'
+            }}</text>
+          </view>
+          <text class="blind__name">{{
+            blindBoxRevealed ? detail.blindBoxName : '送达后揭晓惊喜内容'
+          }}</text>
+        </view>
+
         <!-- 金额：单价 → 份数 → 合计 →（余额抵扣）→ 实付 -->
         <view class="sum">
           <view class="sum__row">
@@ -308,6 +321,17 @@ const abnormal = computed(() => {
 });
 
 const doneCount = computed(() => detail.value?.timeline.filter((n) => n.done).length ?? 0);
+
+/**
+ * x 盲盒是否已揭晓：送达（含完成）后才揭晓，此前一律「待揭晓」
+ *
+ * ⚠️ 与出货进度同源用**状态机常量**判送达（DELIVERED / COMPLETED），
+ *    不写字符串字面量；新增状态走类型检查。
+ */
+const blindBoxRevealed = computed(() => {
+  const s = detail.value?.status;
+  return s === OrderStatus.DELIVERED || s === OrderStatus.COMPLETED;
+});
 
 /**
  * 时间线节点三态 —— 规格 §八「时间线 · 节点 15px 圆形」+ 清单 §七「已过 / 当前 / 未到」。
@@ -749,6 +773,46 @@ onShow(() => {
     margin-left: $space-2;
     font-size: $fs-caption;
     color: $c-gold-fg;
+  }
+}
+
+// ---- x 盲盒（轻量小辅助 · 随单附赠惊喜） ----
+.blind {
+  margin-top: $space-3;
+  padding: $space-3;
+  background: $c-surface-2;
+  border: 1px dashed $c-gold;
+  border-radius: $radius-lg;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  &__tag {
+    font-size: $fs-caption;
+    font-weight: bold;
+    color: $c-gold-fg;
+  }
+
+  &__state {
+    font-size: $fs-caption;
+    color: $c-text-weak;
+
+    // ⚠️ 文字色用「前景档」`$c-ok-fg`（已按米色底做过对比度校准），
+    //    不要用状态原色 `$c-success` —— 那是填充/描边色，作文字会掉对比度。
+    &.is-revealed {
+      color: $c-ok-fg;
+    }
+  }
+
+  &__name {
+    display: block;
+    margin-top: $space-1;
+    font-size: $fs-body;
+    font-weight: bold;
+    color: $c-text;
   }
 }
 

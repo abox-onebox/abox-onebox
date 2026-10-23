@@ -46,7 +46,14 @@
         </view>
         <view class="menu-total">
           <text class="menu-total__calc">{{ quantity }} 份 × ¥{{ unitPriceText }}</text>
-          <text class="menu-total__price">¥{{ totalText }}</text>
+          <!-- 券抵扣（只读）：自动选用「本单抵扣最多」的那张，不新增输入项
+               —— 交付铁律：用户侧表单必要字段仅「份数」一项 -->
+          <view v-if="bestCoupon" class="menu-total__cut">
+            <text class="menu-total__cut-name">{{ bestCoupon.name }}</text>
+            <text class="menu-total__cut-origin">¥{{ totalText }}</text>
+            <text class="menu-total__cut-amount">−¥{{ discountText }}</text>
+          </view>
+          <text class="menu-total__price">¥{{ payText }}</text>
         </view>
       </view>
 
@@ -89,19 +96,6 @@
           </view>
         </view>
 
-        <!-- 备注 -->
-        <view class="card">
-          <text class="card__title">备注</text>
-          <textarea
-            v-model="remark"
-            class="remark"
-            placeholder="过敏忌口等（选填，不超过 256 字）"
-            placeholder-class="remark__placeholder"
-            :maxlength="256"
-            auto-height
-          />
-        </view>
-
         <!-- 支付方式 -->
         <view class="card">
           <text class="card__title"
@@ -130,7 +124,7 @@
           :disabled="!canSubmit"
           @tap="submit"
         >
-          {{ submitting ? '提交中…' : daily.canOrder ? `确认支付 ¥${totalText}` : '本场已截单' }}
+          {{ submitting ? '提交中…' : daily.canOrder ? `确认支付 ¥${payText}` : '本场已截单' }}
         </button>
       </block>
 
@@ -166,10 +160,12 @@
  *   但若服务端**已受理且业务拒绝**（如截单、超份数），该键在 KV 中仍是占位状态
  *   （服务端刻意保留 10 分钟作为锁），故此时**换发新键**，避免用户无法重试。
  */
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
 import type { CreateOrderResult, HomeDailyResult } from '@abox/shared-types';
 
+import { fetchAvailableCoupons } from '@/api/coupon';
+import type { AvailableCouponItem } from '@/api/coupon';
 import { fetchDaily } from '@/api/meal';
 import { createOrder } from '@/api/order';
 import { ApiError } from '@/api/request';
@@ -187,7 +183,6 @@ const { pay } = useWechatPay();
 
 const daily = ref<HomeDailyResult | null>(null);
 const quantity = ref(1);
-const remark = ref('');
 const submitting = ref(false);
 const errorHint = ref('请返回首页重试');
 
@@ -208,6 +203,55 @@ const countdownText = computed(() => {
 const unitPriceText = computed(() => fenToYuan(daily.value?.priceFen ?? 0));
 const totalFen = computed(() => (daily.value?.priceFen ?? 0) * quantity.value);
 const totalText = computed(() => fenToYuan(totalFen.value));
+
+/**
+ * 代金券（2026-10-23）：**自动选用本单抵扣最多的那张**，不做「选券」控件
+ *
+ * ⚠️ 为什么不让用户自己选：
+ *   ① 交付铁律 —— 用户侧表单必要字段**仅「份数」一项**，选券控件是第二个输入项，
+ *      与「极简下单」直接冲突；
+ *   ② 选券没有真实收益：自动取最大抵扣，用户手动选**不可能选出更优的结果**；
+ *   ③ 「留着以后用」在一期不成立 —— 券按有效期排序消耗并不会更划算。
+ *
+ * ⚠️ 门槛判定**一律问服务端**（`/coupon/my-available?totalFen=`）：
+ *    端上自己算门槛就是第二份判据，迟早漂移成「页面说能用、下单报门槛不足」。
+ *    故改份数 → 重新问一次服务端（金额变了，可用性可能变）。
+ *
+ * ⚠️ 券是**辅助**：接口失败只记日志、不打断下单（无券时按原价继续）。
+ */
+const coupons = ref<AvailableCouponItem[]>([]);
+
+const bestCoupon = computed<AvailableCouponItem | null>(() => {
+  const ok = coupons.value.filter((c) => c.applicable && c.discountFen > 0);
+  if (!ok.length) return null;
+  return ok.reduce((a, b) => (b.discountFen > a.discountFen ? b : a));
+});
+
+const discountFen = computed(() => bestCoupon.value?.discountFen ?? 0);
+const discountText = computed(() => fenToYuan(discountFen.value));
+/** 应付 = 总额 − 券抵扣（与服务端 `payAmountFen` 同口径） */
+const payFen = computed(() => Math.max(0, totalFen.value - discountFen.value));
+const payText = computed(() => fenToYuan(payFen.value));
+
+async function loadCoupons(): Promise<void> {
+  if (!daily.value || totalFen.value <= 0) {
+    coupons.value = [];
+    return;
+  }
+  try {
+    // ⚠️ 与其它调用点同口径：一律经 `useRequest.run()`（带登录态保障与统一错误形态），
+    //    不裸调 api —— `mp:no-bare-call` 门禁就是守这条的。
+    coupons.value = await run(() => fetchAvailableCoupons(totalFen.value));
+  } catch (e) {
+    // 券是辅助能力：拿不到就按无券继续，绝不阻断下单
+    console.warn('[order-create] 可用券读取失败，按无券继续', e);
+    coupons.value = [];
+  }
+}
+
+watch(totalFen, () => {
+  void loadCoupons();
+});
 /**
  * 能否提交（2026-10-03 变更）
  *
@@ -257,6 +301,7 @@ async function load(mealDate: string): Promise<void> {
     const d = await run(() => fetchDaily(mealDate || undefined));
     daily.value = d;
     start(d.countdownSec);
+    await loadCoupons();
   } catch (e) {
     if (e instanceof ApiError) errorHint.value = e.message;
     toastApiError(e);
@@ -282,7 +327,8 @@ async function submit(): Promise<void> {
           {
             mealDate: d.mealDate,
             quantity: quantity.value,
-            remark: remark.value.trim() || undefined,
+            // 自动选中的券（无券时不传，服务端按无券处理）
+            couponCode: bestCoupon.value?.code || undefined,
           },
           orderIdemKey,
         ),
@@ -434,6 +480,34 @@ onLoad((options) => {
     color: $c-text;
     line-height: 1.2;
   }
+
+  // ---- 券抵扣（只读行） ----
+  &__cut {
+    display: flex;
+    align-items: baseline;
+    justify-content: flex-end;
+    margin-bottom: $space-1;
+  }
+
+  &__cut-name {
+    margin-right: $space-2;
+    font-size: $fs-caption;
+    color: $c-text-weak;
+  }
+
+  // 原价：划除（券抵扣后仍让用户看见「原本是多少」，避免以为涨价/算错）
+  &__cut-origin {
+    margin-right: $space-2;
+    font-size: $fs-caption;
+    color: $c-text-weak;
+    text-decoration: line-through;
+  }
+
+  &__cut-amount {
+    font-size: $fs-body;
+    font-weight: bold;
+    color: $c-ok-fg;
+  }
 }
 
 // ---- 份数 stepper ----
@@ -509,19 +583,6 @@ onLoad((options) => {
       font-size: $fs-caption;
       color: $c-text-weak;
     }
-  }
-}
-
-// ---- 备注 ----
-.remark {
-  width: 100%;
-  min-height: 60rpx;
-  font-size: $fs-body;
-  color: $c-text;
-
-  &__placeholder {
-    font-size: $fs-caption;
-    color: $c-text-weak;
   }
 }
 

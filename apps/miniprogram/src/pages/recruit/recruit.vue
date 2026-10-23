@@ -53,17 +53,17 @@
             <view class="step__dot"><text class="step__num">1</text></view>
             <text class="step__st">取餐点\n统一取餐</text>
           </view>
-          <text class="step__arrow">{{ I.chev }}</text>
+          <text class="abi abi-16 step__arrow">{{ I.chev }}</text>
           <view class="step">
             <view class="step__dot"><text class="step__num">2</text></view>
             <text class="step__st">回楼\n按份分装</text>
           </view>
-          <text class="step__arrow">{{ I.chev }}</text>
+          <text class="abi abi-16 step__arrow">{{ I.chev }}</text>
           <view class="step">
             <view class="step__dot"><text class="step__num">3</text></view>
             <text class="step__st">带到\n工位</text>
           </view>
-          <text class="step__arrow">{{ I.chev }}</text>
+          <text class="abi abi-16 step__arrow">{{ I.chev }}</text>
           <view class="step">
             <view class="step__dot"><text class="step__num">4</text></view>
             <text class="step__st">同事\n零走动</text>

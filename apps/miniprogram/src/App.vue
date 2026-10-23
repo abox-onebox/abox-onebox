@@ -76,7 +76,10 @@ async function reconcileLeaderOnForeground(): Promise<void> {
 
   try {
     await ensureLogin(false);
-    const me = await fetchMe();
+    // ⚠️ 显式挂 `keepAuthState: true`：这里刚做完 `ensureLogin(false)`（**不强制重登**），
+    //    若 /auth/me 仍拿旧 token 撞 401，让它清掉本地登录态 = 把用户静默登出，
+    //    而本函数本意只是「对账一次、发现不一致就更新本地」。清态应交给下一次真登录。
+    const me = await fetchMe({ keepAuthState: true });
     const leader = useLeaderStore();
     if (me.isLeader && me.leader) {
       leader.setLeader({

@@ -1,12 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 
 import { LeaderLevel, LeaderStatus } from '@abox/shared-types';
 
 import { normalizePage, paginate } from '../../common/utils/response';
-import { LeaderInvite } from '../../database/entities/leader.entity';
+import { LeaderInvite, TeamLeader } from '../../database/entities/leader.entity';
 import { User } from '../../database/entities/user.entity';
+import { CouponService } from '../coupon/coupon.service';
 
 type PageInput = { page?: unknown; pageSize?: unknown };
 
@@ -27,9 +28,13 @@ type PageInput = { page?: unknown; pageSize?: unknown };
  */
 @Injectable()
 export class LeaderInviteService {
+  private readonly logger = new Logger('LeaderInvite');
+
   constructor(
     @InjectRepository(LeaderInvite) private readonly inviteRepo: Repository<LeaderInvite>,
     @InjectRepository(User) private readonly userRepo: Repository<User>,
+    @InjectRepository(TeamLeader) private readonly leaderRepo: Repository<TeamLeader>,
+    private readonly couponService: CouponService,
   ) {}
 
   /**
@@ -132,6 +137,33 @@ export class LeaderInviteService {
     invite.inviteeLevel = level;
     invite.formalAt = new Date();
     await this.inviteRepo.save(invite);
+
+    // 推荐奖励：被邀请人转正 → 给邀请人发 5 元代金券（referral）
+    // ⚠️ 券发放失败**不影响**转正主流程（best-effort，避免券系统抖动阻断晋级）；
+    //     仅记日志，转正结果仍返回 true。
+    if (invite.inviterLeaderId) {
+      try {
+        const inviter = await this.leaderRepo.findOne({
+          where: { id: invite.inviterLeaderId },
+        });
+        if (inviter) {
+          await this.couponService.grant({
+            userId: inviter.userId,
+            name: '推荐返券',
+            faceValueFen: 500,
+            thresholdFen: 0,
+            validityType: 'days',
+            validDays: 30,
+            obtainedFrom: 'referral',
+            remark: '推荐好友转正团长奖励',
+          });
+        }
+      } catch (e) {
+        this.logger.warn(
+          `推荐返券发放失败（inviterLeader=${invite.inviterLeaderId}）：${(e as Error).message}`,
+        );
+      }
+    }
     return true;
   }
 

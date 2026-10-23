@@ -9,6 +9,7 @@ import { OperationLog } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
 import { MessageModule } from '../message/message.module';
+import { CouponModule } from '../coupon/coupon.module';
 import { LeaderAdminController } from './leader-admin.controller';
 import { LeaderAdminService } from './leader-admin.service';
 import { LeaderInviteService } from './invite.service';
@@ -57,6 +58,8 @@ import { LeaderWorkbenchService } from './workbench.service';
     ]),
     // M4-3：L17 申请成为团长后的「提交确认」通知（场景 `leader_apply`）
     MessageModule,
+    // 代金券（markFormal 给邀请人发推荐返券）
+    CouponModule,
   ],
   controllers: [TeamLeaderController, LeaderAdminController],
   providers: [

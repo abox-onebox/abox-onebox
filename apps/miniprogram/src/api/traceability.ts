@@ -39,8 +39,20 @@ export function fetchTraceabilityToday(
  * 取代原「跳转外卖平台看店铺」的信任路径 —— 那条路撞《运营规范》
  * 5.10 / 5.20 / 5.15.4 / 5.16，处理是下架乃至封禁剪切板能力。
  */
-export function fetchSupplierQualifications(): Promise<SupplierQualificationListResult> {
-  return http.get<SupplierQualificationListResult>('/traceability/suppliers', { auth: false });
+/**
+ * ⚠️ `keepAuthState` **必须显式传 true**（默认就是 true）：本接口 `auth: false`
+ *    （免登录只读，压根不带 token），因此它**不可能**拿到 401 去触发
+ *    `clearAuthStorage()`；但 `mp:no-bare-call` 是**静态**扫描，看不出 `auth:false`，
+ *    会把它当成一条会清 token 的裸调。显式写出即同时满足：机器可判定 + 人读得懂
+ *    「这条腿刻意不参与鉴权态清理」。
+ */
+export function fetchSupplierQualifications(
+  options: { keepAuthState?: boolean } = { keepAuthState: true },
+): Promise<SupplierQualificationListResult> {
+  return http.get<SupplierQualificationListResult>('/traceability/suppliers', {
+    auth: false,
+    ...options,
+  });
 }
 
 /** 供应商资质墙 · 详情（**免登录只读**） */

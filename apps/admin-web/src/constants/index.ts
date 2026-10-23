@@ -253,7 +253,9 @@ export const ADMIN_NAV = [
         title: '门店实拍',
         page: 'P33',
         module: 'M34',
-        icon: 'photo',
+        // ⚠️ 图标名取 `ABOX_ICON_NAMES` 里的**键名**（`image`），不是字形名（`photo`）
+        //    —— 写成 'photo' 时 `nav:consistency` 报「图标悬空」：渲染为空且不报错。
+        icon: 'image',
       },
     ],
   },
@@ -316,6 +318,16 @@ export const ADMIN_NAV = [
         page: 'P34',
         module: 'M35-07',
         icon: 'invoice',
+      },
+      // 代金券（2026-10-23 · 独立券系统）：券种定义 + 手动发券（客服补偿）+ 发放记录。
+      //   ⚠️ 必须同时出现在 `ADMIN_NAV`（入口）与服务端 `ADMIN_MENU_KEYS`（授权），
+      //     否则会命中 `check-nav-consistency.mjs` 方向①（授权了但侧边栏没有入口）。
+      {
+        path: '/finance/coupon',
+        title: '代金券',
+        page: 'P34',
+        module: 'M35-08',
+        icon: 'gift',
       },
     ],
   },

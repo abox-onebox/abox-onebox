@@ -12,6 +12,7 @@ import { User } from '../../database/entities/user.entity';
 import { FinanceModule } from '../finance/finance.module';
 import { RatingModule } from '../rating/rating.module';
 import { TeamLeaderModule } from '../team-leader/team-leader.module';
+import { CouponModule } from '../coupon/coupon.module';
 import { LeaderOrderController } from './leader-order.controller';
 import { LeaderOrderService } from './leader-order.service';
 import { OrderAdminController } from './order-admin.controller';
@@ -55,6 +56,8 @@ import { OrderService } from './order.service';
     ]),
     FinanceModule,
     TeamLeaderModule,
+    // 代金券（下单核销 reserveForOrder 在同一事务内调用）
+    CouponModule,
     // P1-U2：detail() 借 RatingService 组装 U10 详情的 rating 块（canRate/rated/回显）
     RatingModule,
   ],

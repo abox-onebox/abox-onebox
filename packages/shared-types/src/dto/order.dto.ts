@@ -75,6 +75,8 @@ export interface OrderDetailResult {
   balanceUsedFen: number;
   payAmountFen: number;
   remark: string | null;
+  /** x 盲盒抽到的内容（下单时定，送达后揭晓）；`null` = 本单未含盲盒 */
+  blindBoxName: string | null;
   /**
    * ⚠️ `itemId`（P1-U2 新增）：评价提交按 `itemId` 定位商品 ——
    * `ab_dish.name` 无唯一约束（A3），按名字定位会把评价记到别家同名菜头上。

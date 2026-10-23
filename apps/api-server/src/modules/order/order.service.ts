@@ -49,6 +49,7 @@ import { RatingService } from '../rating/rating.service';
 import { CommissionService } from '../finance/commission.service';
 import { RefundService } from '../finance/refund.service';
 import { LeaderPromotionService } from '../team-leader/promotion.service';
+import { CouponService } from '../coupon/coupon.service';
 import { buildTimeline, explainSelfCancelBlock, userStatusText } from './order-state-machine';
 import { CancelOrderReqDto, CreateOrderReqDto } from './dto/order.dto';
 
@@ -188,6 +189,7 @@ export class OrderService {
     private readonly ratingService: RatingService,
     /** F-10：写钱前判「收款人是否还是个能收钱的人」（`ab_user.status` —— 全仓唯一实现） */
     private readonly payee: UserPayeeService,
+    private readonly couponService: CouponService,
   ) {}
 
   /**
@@ -273,17 +275,46 @@ export class OrderService {
     const totalAmountFen = toFen(unitPriceYuan * dto.quantity);
     const balanceUsedFen = useBalanceFen;
 
+    // 余额抵扣不得超过订单总额（超出的部分无意义，且会让实付为负）
     if (balanceUsedFen > totalAmountFen) {
-      // 抵扣不得超过订单总额（超出的部分无意义，且会让实付为负）
       throw new BizException(ErrorCode.BALANCE_AMOUNT_INVALID, '余额抵扣不得超过订单总额');
     }
-    const payAmountFen = totalAmountFen - balanceUsedFen;
+    // 实付 = 总额 − 余额抵扣 − 券抵扣（券在事务内核销后回写）
+    let payAmountFen = totalAmountFen - balanceUsedFen;
 
     const now = new Date();
     const orderNo = genOrderNo(now);
 
-    // ⑧ 落库 + 冻结余额（同一事务，避免「订单建成但余额没冻」）
+    // x 盲盒（轻量小辅助）：下单时从配置池随机抽一个，送达后揭晓
+    const blindBoxPool = await this.bizConfig.blindBoxItems();
+    const blindBoxName =
+      blindBoxPool.length > 0
+        ? blindBoxPool[Math.floor(Math.random() * blindBoxPool.length)]
+        : null;
+
+    // ⑧ 落库 + 冻结余额 + 核销券（同一事务，避免「订单成了券没扣 / 余额没冻」）
     const order = await this.dataSource.transaction(async (m: EntityManager) => {
+      // 代金券核销（若选用）：校验 + 标记已用，返回抵扣额（分）
+      let discountFen = 0;
+      if (dto.couponCode) {
+        discountFen = await this.couponService.reserveForOrder(
+          m,
+          userId,
+          dto.couponCode,
+          orderNo,
+          totalAmountFen,
+          now,
+        );
+      }
+
+      // 余额校验（扣除券后剩余可抵扣额度）
+      const balanceUsableFen = totalAmountFen - discountFen;
+      if (balanceUsedFen > balanceUsableFen) {
+        throw new BizException(
+          ErrorCode.BALANCE_AMOUNT_INVALID,
+          '余额抵扣不得超过「订单总额 − 券抵扣」',
+        );
+      }
       if (balanceUsedFen > 0) {
         const bal = await this.getOrCreateBalance(m, userId);
         if (toFen(bal.balance) < balanceUsedFen) {
@@ -295,6 +326,8 @@ export class OrderService {
         }
         await this.freezeBalance(m, userId, balanceUsedFen, orderNo);
       }
+
+      payAmountFen = Math.max(0, totalAmountFen - balanceUsedFen - discountFen);
 
       const entity = m.getRepository(Order).create({
         orderNo,
@@ -309,10 +342,10 @@ export class OrderService {
         unitPrice: unitPriceStr,
         totalAmount: toYuanStr(totalAmountFen),
         balanceUsed: toYuanStr(balanceUsedFen),
-        discountAmount: '0.00',
+        discountAmount: toYuanStr(discountFen),
         payAmount: toYuanStr(payAmountFen),
-        remark: dto.remark ?? null,
         status: OrderStatus.PENDING_PAY,
+        blindBoxName,
         version: 0,
       });
       return m.getRepository(Order).save(entity);
@@ -332,8 +365,8 @@ export class OrderService {
 
     this.logger.log(
       `下单成功 orderNo=${orderNo} user=${userId} mealDate=${mealDate} ×${dto.quantity} ` +
-        `总额=${totalAmountFen}分 余额抵扣=${balanceUsedFen}分 实付=${payAmountFen}分 ` +
-        `状态=${finalStatus}`,
+        `总额=${totalAmountFen}分 余额抵扣=${balanceUsedFen}分 券抵扣=${toFen(order.discountAmount)}分 ` +
+        `实付=${payAmountFen}分 状态=${finalStatus}`,
     );
 
     return {
@@ -344,6 +377,7 @@ export class OrderService {
       unitPriceFen: toFen(order.unitPrice),
       totalAmountFen: toFen(order.totalAmount),
       balanceUsedFen: toFen(order.balanceUsed),
+      discountAmountFen: toFen(order.discountAmount),
       payAmountFen: toFen(order.payAmount),
       expireAt: toBjIso(expireAt)!,
     };
@@ -448,6 +482,7 @@ export class OrderService {
       balanceUsedFen: toFen(order.balanceUsed),
       payAmountFen: toFen(order.payAmount),
       remark: order.remark ?? null,
+      blindBoxName: order.blindBoxName ?? null,
       items: items.map((i) => ({
         /**
          * ⭐ `itemId`（P1-U2 新增）：评价提交按 id 定位商品 ——
@@ -584,6 +619,10 @@ export class OrderService {
         }
 
         let payload: RefundApplyPayload | null = null;
+
+        // 退券（无论是否已支付）：券在建单时就已核销，订单不成立了必须还原，
+        // 否则用户取消一单就白丢一张券（幂等：本单没用券时静默跳过）
+        await this.couponService.releaseForOrder(m, order.orderNo);
 
         if (status === OrderStatus.PENDING_PAY) {
           // 未支付：解冻余额即可（T4 前半段，未收款无需退款）
@@ -764,6 +803,9 @@ export class OrderService {
             .andWhere('status = :st', { st: OrderStatus.PENDING_PAY })
             .execute();
           if ((claim.affected ?? 0) === 0) continue; // 已被 T4 自助取消处理 → 不重复退钱
+
+          // 退券：与 T4 自助取消同一口径（券在建单时已核销，订单不成立须还原）
+          await this.couponService.releaseForOrder(m, fresh.orderNo);
 
           const fen = toFen(fresh.balanceUsed);
           if (fen > 0) {

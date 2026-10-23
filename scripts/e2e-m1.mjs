@@ -510,10 +510,12 @@ async function run() {
 
   // ---------- 3. U6 下单（幂等） ----------
   const K1 = 'e2e-order-key-0001';
+  // ⚠️ 载荷里**没有** `remark`：订单备注已于 2026-10-23 整条链路删除（交付铁律：
+  //    用户侧表单必要字段仅「份数」一项）。DTO 开了 `forbidNonWhitelisted`，多传即 10001。
   const created = await call('POST', '/orders', {
     token,
     idem: K1,
-    body: { mealDate, quantity: 2, remark: 'e2e 冒烟' },
+    body: { mealDate, quantity: 2 },
   });
   const orderNo = created.body?.data?.orderNo;
   assert(created.body?.code === 0 && !!orderNo, 'U6 创建订单', `orderNo=${orderNo}`);
@@ -532,7 +534,7 @@ async function run() {
   const replay = await call('POST', '/orders', {
     token,
     idem: K1,
-    body: { mealDate, quantity: 2, remark: 'e2e 冒烟' },
+    body: { mealDate, quantity: 2 },
   });
   assert(
     replay.body?.code === 10006 && replay.body?.data?.orderNo === orderNo,

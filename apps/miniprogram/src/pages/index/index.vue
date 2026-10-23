@@ -115,6 +115,19 @@
             </view>
           </view>
         </view>
+
+        <!-- x 盲盒（轻量小辅助）：本单随附一份轻食惊喜，下单时不定内容，送达后揭晓 -->
+        <view class="blind-row">
+          <view class="blind-row__ico">
+            <text class="abi abi-deco-34">{{ I.gift }}</text>
+          </view>
+          <view class="blind-row__info">
+            <text class="blind-row__name">随单附赠 · x 盲盒</text>
+            <view class="blind-row__from-wrap">
+              <text class="blind-row__from">下单后送达时揭晓 · 一份轻食惊喜</text>
+            </view>
+          </view>
+        </view>
       </view>
 
       <!-- 价格 + 份数 -->
@@ -267,7 +280,9 @@ const supplierPhotos = ref<Record<number, { url: string }[]>>({});
  */
 async function loadSupplierPhotos(): Promise<void> {
   try {
-    const list = await fetchSupplierQualifications();
+    // ⚠️ 显式挂 `keepAuthState: true`：本接口 `auth:false`（免登录只读），
+    //    它不该参与鉴权态清理；`mp:no-bare-call` 是静态扫描，看不出 `auth:false`。
+    const list = await fetchSupplierQualifications({ keepAuthState: true });
     const map: Record<number, { url: string }[]> = {};
     for (const s of list.serving) {
       if (s.id && s.photos?.length) map[s.id] = s.photos.map((p) => ({ url: p.url }));
@@ -819,6 +834,51 @@ onShow(() => {
   &__from {
     font-size: $fs-caption;
     // 既有裸色值（端上裸色值基线之一），收归 token 由 S4「裸色值归零」统一处理，本批不动
+    color: $c-gold-fg;
+  }
+}
+
+// ---- x 盲盒（轻量小辅助 · 随单附赠惊喜） ----
+.blind-row {
+  display: flex;
+  align-items: center;
+  gap: $space-3;
+  margin-top: $space-3;
+  padding: $space-3;
+  background: $c-surface-2;
+  border: 1px dashed $c-gold;
+  border-radius: $radius-lg;
+
+  &__ico {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 112rpx;
+    height: 112rpx;
+    background: linear-gradient(135deg, $c-gold 0%, $c-gold-deep 100%);
+    border-radius: $radius-lg;
+    color: #ffffff;
+  }
+
+  &__info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__name {
+    display: block;
+    font-size: $fs-body;
+    font-weight: bold;
+    color: $c-text;
+  }
+
+  &__from-wrap {
+    margin-top: $space-1;
+  }
+
+  &__from {
+    font-size: $fs-caption;
     color: $c-gold-fg;
   }
 }

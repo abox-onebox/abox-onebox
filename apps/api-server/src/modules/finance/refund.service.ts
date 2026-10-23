@@ -22,6 +22,7 @@ import { TeamLeader } from '../../database/entities/leader.entity';
 import { Order, Refund } from '../../database/entities/order.entity';
 import { OperationLog } from '../../database/entities/system.entity';
 import { WX_PAY_PROVIDER, WxPayProvider } from '../../providers/wx-pay/wx-pay.provider';
+import { CouponService } from '../coupon/coupon.service';
 import { MessageService } from '../message/message.service';
 import { NOTIFY_PAGES } from '../admin/template/message-template.specs';
 import { RefundApplyPayload } from '../../queues/queue-payloads';
@@ -133,6 +134,7 @@ export class RefundService {
     private readonly message: MessageService,
     private readonly queue: QueueService,
     @InjectRepository(OperationLog) private readonly opLogRepo: Repository<OperationLog>,
+    private readonly couponService: CouponService,
   ) {}
 
   // ==========================================================================
@@ -779,6 +781,22 @@ export class RefundService {
     // ⭐ 第二步：账务冲销（余额退回 / 佣金反冲；自营口径：不冲减供应商应付）
     const reversal = await this.reversal.applyRefundEffects(m, order, refund);
 
+    /**
+     * ⭐ 第二步补：退券（代金券 · 2026-10-23）
+     *
+     * 券在**建单那一刻**就已核销（`order.service` 与建单同事务），而退款意味着
+     * 「这单没成立」—— 钱退了券不退，用户就白丢一张券，且**系统里查不到任何异常**
+     * （券是 `used` 状态，看起来就是正常用掉的）。
+     *
+     * ⚠️ 为什么挂在 `settleRefundDb`（**审批通过**）而不是 `buildRefundRow`（**建单**）：
+     *    退款单建了仍可能被 **D42 驳回**，那时代金券必须**保持已核销** ——
+     *    订单照旧成立、饭照吃，券当然不该还回去。挂在建单点会出现
+     *    「驳回退款后券凭空多一张」的反向错账。
+     *
+     * ⚠️ 这里仍是**事务内** DB 写，与冲销原子提交；幂等（本单没用券则静默跳过）。
+     */
+    await this.couponService.releaseForOrder(m, order.orderNo);
+
     // ⭐ 第三步：退款单收口
     refund.status = wxFen > 0 ? RefundStatus.REFUNDING : RefundStatus.REFUNDED;
     refund.refundedAt = wxFen > 0 ? null : now;
@@ -1143,8 +1161,14 @@ export class RefundService {
  * 可退金额（元）= 订单总额 − 优惠
  *
  * 即**用户实际付出去的钱**：微信实付（`pay_amount`）+ 余额抵扣（`balance_used`）。
- * `discountAmount` 为营销优惠位（一期恒 0），退回时不再区分来源，
- * 因为「优惠是平台让的利」—— 用户没为它付过钱。
+ *
+ * ⚠️ **2026-10-23 代金券上线后，本式已不再恒等于 `totalAmount`**：
+ *    `discountAmount` 自本日起承载**代金券抵扣**（此前是恒 0 的营销优惠预留位）。
+ *    减去它是**对的且必须的** —— 券是平台让的利，用户没为它付过钱，
+ *    退了就等于凭空送钱。
+ *    ⚠️ 但由此产生一条**必须配套**的动作：券在建单时就已核销，
+ *    退款时若不还原，用户就是「钱退了、券没了」。退券由
+ *    `settleRefundDb` 内的 `couponService.releaseForOrder()` 负责（事务内、幂等）。
  */
 export function refundableYuan(order: Order): number {
   return round2(Number(order.totalAmount) - Number(order.discountAmount));

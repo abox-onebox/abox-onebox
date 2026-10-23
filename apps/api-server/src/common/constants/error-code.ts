@@ -355,6 +355,50 @@ export enum ErrorCode {
    * 与 `40015` 同属「**账实不符信号**」，要查的是数据结构而不是催人充值。
    */
   BALANCE_ACCOUNT_MISSING = 40019,
+  /**
+   * 扩展（代金券 · 2026-10-23）：这张券**现在用不了**（D: 核销入口）
+   *
+   * 四种成因**合流一个码**：券码不存在 / 不属于当前用户 / 已使用 / 不在有效期窗口
+   * （未到生效日 或 已过期）。
+   *
+   * ⚠️ 为什么合流：对**用户**是同一件事 —— 他手上那张券当下不能抵；
+   *    排查入口也同一处 —— 去「我的优惠券」看这张券的状态与有效期。
+   *    拆成四个码只会让端上写四条分支，而**动作完全一样**（回券列表刷新）。
+   *    具体的那一条原因由 `message` 说清（`reserveForOrder` 逐条覆写）。
+   *
+   * ⚠️ 刻意**不复用** `10004 NOT_FOUND`：券码查不到跟「资源不存在」形态相同，
+   *    但这里是**钱**的路径（影响 `payAmount`），必须能单独告警与对账。
+   */
+  COUPON_NOT_USABLE = 40020,
+  /**
+   * 扩展（代金券 · 2026-10-23）：订单金额未达券的使用门槛（D: 核销入口）
+   *
+   * ⚠️ 刻意**与 `40020` 分开**：两者端上动作**不同** ——
+   *    `40020` 是「这张券废了，回列表刷新」；
+   *    本码是「这张券没问题，**加份数就能用**」（回下单页改份数重算）。
+   *    合成一个码会让用户以为券坏了，而正确的动作其实是多订一份。
+   *    回带 `data.thresholdFen` / `data.totalFen`，端上可直接提示「再订 N 元可用」。
+   */
+  COUPON_THRESHOLD_NOT_MET = 40021,
+  /**
+   * 扩展（代金券 · 2026-10-23）：**券种定义**不可用（D: 后台发券入口）
+   *
+   * 三种成因：券种不存在 / 已停用 / 已达发行上限（`issued_count >= total_limit`）。
+   *
+   * ⚠️ 刻意**与 `40020` 分开**：本码是**运营侧**（后台发券时选错了券种），
+   *    `40020` 是**用户侧**（下单核销）。两者的处理人、处理页面、下一步动作
+   *    全不同 —— 运营收到本码要去券种列表改配置；用户永远不会碰到它。
+   */
+  COUPON_DEF_INVALID = 40022,
+  /**
+   * 扩展（代金券 · 2026-10-23）：发券参数不合法（period 型券缺起止日 / 面额非正）
+   *
+   * ⚠️ 这是**调用方违约**而非用户输入错误：能调到这里的是后台与内部发放钩子
+   *    （如推荐转正发券），参数由代码拼装。故意**不复用** `10001 PARAM_INVALID`
+   *    —— 那个码走的是校验管线（前端能自己修），本码说明**后端拼参的那段写错了**，
+   *    重试无用、只能改代码（与 `30023` 拆 `30022` 同一取舍）。
+   */
+  COUPON_GRANT_PARAM_INVALID = 40023,
 
   /** ---- 5xxxx 财务 / 结算 / 供应商 ---- */
   SUPPLIER_NOT_QUALIFIED = 50001,
@@ -523,6 +567,10 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.WITHDRAW_STATUS_ILLEGAL]: '提现单当前状态不支持该操作',
   [ErrorCode.BALANCE_CONCURRENT_MODIFIED]: '余额已被其它操作改动，请重试',
   [ErrorCode.BALANCE_ACCOUNT_MISSING]: '该用户余额账户缺失，操作已中止（请联系技术核对余额数据）',
+  [ErrorCode.COUPON_NOT_USABLE]: '这张代金券当前不可用',
+  [ErrorCode.COUPON_THRESHOLD_NOT_MET]: '订单金额未达该券的使用门槛',
+  [ErrorCode.COUPON_DEF_INVALID]: '券种不可用（不存在 / 已停用 / 已达发行上限）',
+  [ErrorCode.COUPON_GRANT_PARAM_INVALID]: '发券参数不完整，本次未发放（请联系技术核对）',
   [ErrorCode.SUPPLIER_NOT_QUALIFIED]: '供应商资质未通过审核',
   [ErrorCode.DISTRIBUTION_CENTER_LOCKED]: '集散中心配置不可删除（存在历史结算）',
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',

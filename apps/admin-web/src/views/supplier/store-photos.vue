@@ -81,6 +81,21 @@
           class="hidden"
           @change="onPick"
         />
+        <div
+          class="dropzone"
+          :class="{ 'is-active': dragActive }"
+          role="button"
+          tabindex="0"
+          @click="pickFiles"
+          @keydown.enter.prevent="pickFiles"
+          @dragover.prevent="dragActive = true"
+          @dragenter.prevent="dragActive = true"
+          @dragleave.prevent="dragActive = false"
+          @drop.prevent="onDrop"
+        >
+          <span class="dropzone__icon">＋</span>
+          <span class="dropzone__text">将图片拖拽到此处，或点击选择</span>
+        </div>
         <span class="sub upload-hint">
           支持多选图片（JPG / PNG / WEBP / GIF / BMP / HEIC 等）；单个 ≤ 10MB，单次最多 20 张
           （与后端上限一致，超出会被忽略）。选多张会依次上传并追加；分类与说明可在每张图下方单独设置。
@@ -160,7 +175,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 
@@ -206,6 +221,7 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const uploading = ref(false);
 const pendingCount = ref(0);
 const uploadedCount = ref(0);
+const dragActive = ref(false);
 
 const auditTag = (status: string): 'info' | 'success' | 'danger' => {
   if (status === 'approved') return 'success';
@@ -259,7 +275,22 @@ async function onPick(ev: Event): Promise<void> {
   const files = input.files ? Array.from(input.files) : [];
   // 清空 value，保证选同一文件也能再次触发 change
   input.value = '';
-  if (!files.length) return;
+  await uploadFiles(files);
+}
+
+async function onDrop(ev: DragEvent): Promise<void> {
+  dragActive.value = false;
+  const dt = ev.dataTransfer;
+  const files = dt && dt.files ? Array.from(dt.files) : [];
+  await uploadFiles(files);
+}
+
+/**
+ * 上传前校验 + 依次上传追加。input 与拖拽两条入口共用。
+ * 校验：类型（image/* 或白名单扩展名）/ 大小（≤10MB）/ 总数（≤20）
+ */
+async function uploadFiles(rawFiles: File[]): Promise<void> {
+  if (!rawFiles.length) return;
   if (!supplierId.value) {
     ElMessage.warning('请先选择供应商');
     return;
@@ -268,7 +299,7 @@ async function onPick(ev: Event): Promise<void> {
   // ── 上传前校验：类型 / 大小 / 总数 ──
   const okFiles: File[] = [];
   const rejected: string[] = [];
-  for (const f of files) {
+  for (const f of rawFiles) {
     const isImage =
       (typeof f.type === 'string' && f.type.startsWith('image/')) || IMAGE_EXT_RE.test(f.name);
     if (!isImage) {
@@ -295,7 +326,6 @@ async function onPick(ev: Event): Promise<void> {
     ElMessage.warning(`已忽略 ${rejected.length} 个文件：${rejected.join('；')}`);
   }
   if (!toUpload.length) {
-    uploading.value = false;
     return;
   }
 
@@ -436,6 +466,45 @@ onMounted(async () => {
   display: none;
 }
 
+// 拖拽上传区（与「上传实拍」按钮并排；窄屏自动落下一行占满宽）
+.dropzone {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+  flex: 1;
+  min-height: 44px;
+  padding: $space-2 $space-3;
+  border: 1px dashed rgba(110, 84, 53, 0.4);
+  border-radius: 8px;
+  color: $c-text-weak;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
+
+  &:hover {
+    border-color: $c-text;
+  }
+
+  &.is-active {
+    border-color: $c-text;
+    background: rgba(110, 84, 53, 0.06);
+    color: $c-text;
+  }
+
+  &__icon {
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  &__text {
+    line-height: 1.4;
+  }
+}
+
 .grid {
   display: grid;
   // 与外卖链接同款 `min()` 防 320px 视口溢出
@@ -501,7 +570,7 @@ onMounted(async () => {
 .upload-hint {
   display: block;
   margin-top: $space-1;
-  color: #b45309;
+  color: $c-warn-fg;
   font-size: 11px;
   line-height: 1.5;
 }
@@ -552,6 +621,11 @@ onMounted(async () => {
       width: 100%;
       min-height: 44px;
     }
+  }
+
+  // 拖拽区在窄屏占满宽，与下方按钮同宽（拇指可达）
+  .dropzone {
+    width: 100%;
   }
 }
 </style>

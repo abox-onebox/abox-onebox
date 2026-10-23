@@ -12,12 +12,12 @@ export interface CreateOrderDto {
   mealDate?: string;
   /** 份数；上限 `ab_config.order.max_quantity`（默认 20） */
   quantity: number;
-  /** 备注（过敏忌口等），≤ 256 字 */
-  remark?: string;
   /** 余额抵扣（**整数分**，§1.6）；0 或省略表示不使用余额 */
   useBalanceFen?: number;
   /** 跟随的团长邀请码；缺省按用户默认归属团长 */
   leaderCode?: string;
+  /** 选用的代金券券码（`ab_user_coupon.code`）；省略表示不使用券 */
+  couponCode?: string;
 }
 
 /** U6 返回 —— 订单已创建（`pending_pay`），支付参数由 U7 单独获取 */
@@ -32,7 +32,9 @@ export interface CreateOrderResult {
   totalAmountFen: number;
   /** 余额抵扣（分） */
   balanceUsedFen: number;
-  /** 应付微信金额（分）= 总额 − 余额抵扣 */
+  /** 代金券抵扣（分）= min(券面额, 订单额)；未用券为 0 */
+  discountAmountFen: number;
+  /** 应付微信金额（分）= 总额 − 余额抵扣 − 券抵扣 */
   payAmountFen: number;
   /** 支付超时时刻（ISO 8601 +08:00）—— 30 分钟未支付自动取消（T3） */
   expireAt: string;

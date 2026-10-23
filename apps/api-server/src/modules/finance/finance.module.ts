@@ -14,6 +14,10 @@ import { Item, Supplier, SupplierItemDaily } from '../../database/entities/suppl
 import { OperationLog } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
+// 代金券（2026-10-23）：`RefundService.settleRefundDb` 在退款审批通过时**退券**
+//   （券在建单时已核销，不退则用户白丢一张）。依赖方向 `FinanceModule → CouponModule`
+//   单向：CouponModule 只依赖 DataSource，不回指 Finance，无环。
+import { CouponModule } from '../coupon/coupon.module';
 import { MessageModule } from '../message/message.module';
 import { StatsModule } from '../stats/stats.module';
 import { BalanceAdminService } from './balance-admin.service';
@@ -116,6 +120,8 @@ import { WithdrawAdminService } from './withdraw-admin.service';
     ]),
     // M3-12：退款成功后的「退款结果通知」投递口（必推项，见 message-template.specs）
     MessageModule,
+    // 代金券（2026-10-23）：退款审批通过时退券
+    CouponModule,
     // M3-13：D33 资金总览的**收入/成本/毛利口径**直接取看板服务（同一函数 = 不可能漂移）。
     //   依赖方向 `FinanceModule → StatsModule` 单向：StatsModule 只依赖
     //   DataSource 与 BizConfigService，不回指 Finance，无环。

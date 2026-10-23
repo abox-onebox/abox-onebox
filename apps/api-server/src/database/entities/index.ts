@@ -1,5 +1,5 @@
 /**
- * 实体统一出口（30 张表）
+ * 实体统一出口（33 张表）
  *
  * 依据：《数据库 ER 设计 v2.1》+《表结构评审意见 v1.0》（P0-1 ~ P0-6、P1-4、P2-1、P2-5、P2-6）
  *   + 2026-09-15 增补：`ab_withdraw` 提现申请单（M2 · 数据层缺口补齐）
@@ -13,8 +13,11 @@
  * 供应商生产域（2）：SupplierItemDaily / SupplierItemCenterDaily（M3-8 新增）
  * 订单与支付域（5）：Order / PaymentLog / Refund / DeliveryRecord / ItemRating（P1-U2 新增）
  * 财务域（6）：Commission / SupplierShare / Balance / BalanceLog / DistributionCenter / Withdraw
- * 系统域（7）：AdminUser / OperationLog / SysConfig / Message / MessageTemplate / OperationRequest（阶段3 新增） / PageTrack（U15 新增）
- * 合计 30 张
+ * 券域（2）：CouponDef / UserCoupon（独立券系统 · 2026-10-23）
+ * 系统域（8）：AdminUser / OperationLog / SysConfig / Message / MessageTemplate / OperationRequest（阶段3 新增） / OpBlocklist / PageTrack（U15 新增）
+ *
+ * ⚠️ 合计以 `ALL_ENTITIES` 为准（当前 33 张）—— `schema:parity` 是权威对账器，
+ *    上面分类注释只是人读的索引，别拿它当计数真源。
  */
 export * from './user.entity';
 export * from './leader.entity';
@@ -24,6 +27,7 @@ export * from './meal.entity';
 export * from './order.entity';
 export * from './finance.entity';
 export * from './withdraw.entity';
+export * from './coupon.entity';
 export * from './system.entity';
 
 import { User } from './user.entity';
@@ -40,6 +44,7 @@ import {
   DistributionCenter,
 } from './finance.entity';
 import { Withdraw } from './withdraw.entity';
+import { CouponDef, UserCoupon } from './coupon.entity';
 import {
   AdminUser,
   OperationLog,
@@ -76,6 +81,8 @@ export const ALL_ENTITIES = [
   BalanceLog,
   DistributionCenter,
   Withdraw,
+  CouponDef,
+  UserCoupon,
   AdminUser,
   OperationLog,
   SysConfig,
