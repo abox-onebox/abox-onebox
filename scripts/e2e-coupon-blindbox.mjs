@@ -37,6 +37,7 @@ import {
   installCleanupHooks,
   makeCall,
   openFixtureDb,
+  sleep,
   startApiServer,
   stopApiServer,
   waitHealthy,
@@ -57,6 +58,30 @@ function assert(cond, name, detail = '') {
   if (cond) ok(name, detail);
   else fail(name, detail);
   return cond;
+}
+
+/**
+ * 轮询 sqlite 直到某行满足 pred（mock 支付回调是异步的，下单后不能立刻读到 paid）。
+ * 复用 openFixtureDb + sleep，自带 busy/锁容错。
+ */
+async function waitDbStatus(sql, params, pred, timeoutMs = 4000) {
+  const t0 = Date.now();
+  let last = null;
+  while (Date.now() - t0 < timeoutMs) {
+    let db;
+    try {
+      db = openFixtureDb();
+      const row = db.prepare(sql).get(...params);
+      last = row;
+      if (row && pred(row)) return row;
+    } catch {
+      // 轮询期间偶发 busy/锁，忽略后重试
+    } finally {
+      if (db) db.close();
+    }
+    await sleep(150);
+  }
+  return last;
 }
 
 const DEFAULT_BLIND_BOX_POOL = ['小粗粮', '小水果', '小凉菜', '小糕点', '鸡蛋糕'];
@@ -237,6 +262,96 @@ async function run() {
       '高门槛券下单→40021(COUPON_THRESHOLD_NOT_MET)',
       `code=${bad.body?.code} msg=${bad.body?.message}`,
     );
+
+    // ---------- ⑧ 退款退券：下单用券 → mock支付 → 团长代退 → 后台审批 → 券还原 ----------
+    // ⚠️ 用独立用户 dev:1003（张磊·楼5，属团长1所辖）下单，避免与主流程 dev:1001 状态互相干扰。
+    //    团长代退端点 `refund-apply` 走 LeaderGuard，须由归属团长(李明 dev:1001)发起。
+    const u3 = await call('POST', '/auth/login', { body: { code: 'dev:1003' } });
+    const user3Token = u3.body?.data?.token;
+    const uid3 = u3.body?.data?.user?.id;
+    assert(u3.body?.code === 0 && !!user3Token && !!uid3, '退款退券·登录(dev:1003)', `uid=${uid3}`);
+
+    const g3 = await call('POST', '/admin/coupon/grant', {
+      token: adminToken,
+      body: {
+        userId: uid3,
+        faceValueFen: 500,
+        thresholdFen: 0,
+        validityType: 'days',
+        validDays: 30,
+        obtainedFrom: 'manual',
+        name: 'E2E退款退券测试券',
+      },
+    });
+    const code3 = g3.body?.data?.code;
+    assert(g3.body?.code === 0 && !!code3, '退款退券·发券(无门槛5元)', `code=${code3}`);
+
+    const idem3 = `e2e-refund-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const o3 = await call('POST', '/orders', {
+      token: user3Token,
+      idem: idem3,
+      body: { mealDate, quantity: 1, couponCode: code3 },
+    });
+    const no3 = o3.body?.data?.orderNo;
+    assert(
+      o3.body?.code === 0 && !!no3 && o3.body?.data?.discountAmountFen === 500,
+      '退款退券·用券下单',
+      `orderNo=${no3} discount=${o3.body?.data?.discountAmountFen}`,
+    );
+
+    // mock 支付（免 token；回调异步，轮询等 paid）
+    const paid3 = await call('POST', '/pay/mock/paid', { body: { orderNo: no3 } });
+    const paidRow3 = await waitDbStatus(
+      'SELECT status FROM ab_order WHERE order_no = ?',
+      [no3],
+      (r) => r.status === 'paid',
+    );
+    assert(
+      paid3.body?.code === 0 && paidRow3?.status === 'paid',
+      '退款退券·mock支付到账(paid)',
+      `status=${paidRow3?.status}`,
+    );
+
+    // 团长(李明 dev:1001)代退申请
+    const ap3 = await call('POST', `/orders/${no3}/refund-apply`, {
+      token: userToken,
+      body: { reasonType: 'quality', reason: 'e2e·退款退券' },
+    });
+    const rf3 = (() => {
+      let db;
+      try {
+        db = openFixtureDb();
+        return db
+          .prepare('SELECT id, status FROM ab_refund WHERE order_no = ? ORDER BY id DESC LIMIT 1')
+          .get(no3);
+      } finally {
+        if (db) db.close();
+      }
+    })();
+    assert(
+      ap3.body?.code === 0 && rf3?.status === 'applying',
+      '退款退券·团长代退申请(applying)',
+      `status=${rf3?.status}`,
+    );
+
+    // 后台审批通过 → settleRefundDb → releaseForOrder（退券）
+    const appr3 = await call('POST', `/admin/finance/refunds/${rf3.id}/approve`, {
+      token: adminToken,
+      body: { remark: 'e2e·退款退券' },
+    });
+    assert(appr3.body?.code === 0, '退款退券·后台审批通过', `code=${appr3.body?.code}`);
+
+    // 券还原：库内 status=unused & order_no=null
+    let released3 = false;
+    try {
+      const db = openFixtureDb();
+      const row = db.prepare('SELECT status, order_no FROM ab_user_coupon WHERE code = ?').get(code3);
+      released3 = !!row && row.status === 'unused' && row.order_no === null;
+      db.close();
+    } catch (e) {
+      log(`⚠ 查库失败：${e?.message ?? e}`);
+    }
+    assert(released3, '退款退券·退券生效(库内 status=unused & order_no=null)', `released=${released3}`);
   } catch (e) {
     fail('套件异常', e?.message ?? String(e));
     console.error(e);

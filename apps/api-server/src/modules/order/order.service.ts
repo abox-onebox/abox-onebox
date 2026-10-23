@@ -557,7 +557,7 @@ export class OrderService {
       );
     }
 
-    const now = new Date();
+    const now = nowTime();
     const balanceUsedFen = toFen(order.balanceUsed);
     const payAmountFen = toFen(order.payAmount);
     let refundInitiated = false;
@@ -741,7 +741,7 @@ export class OrderService {
    * @param date 出餐日（由 `ScheduleService.targetDate('today')` 得出，即 T 日）
    */
   async cutoffByDate(date: string, operatorId?: number | null): Promise<CutoffByDateResult> {
-    const now = new Date();
+    const now = nowTime();
     const logRepoOf = (m: EntityManager) => m.getRepository(OperationLog);
 
     // ---- ① 未支付 → 取消（解冻余额）--------------------------------------
@@ -1294,7 +1294,7 @@ export class OrderService {
       return { changed: false, reason: 'amount_mismatch' };
     }
 
-    const now = new Date();
+    const now = nowTime();
     let applied = false;
     await this.dataSource.transaction(async (m: EntityManager) => {
       // ⭐ 先抢占状态（**带守卫**），再谈扣钱。
