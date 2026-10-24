@@ -221,7 +221,7 @@
               class="rate__reason"
               type="text"
               maxlength="128"
-              placeholder="可选：哪里不满意（帮后厨改进）"
+              placeholder="可选：哪里不满意（帮我们改进）"
             />
           </view>
           <view class="rate__acts">

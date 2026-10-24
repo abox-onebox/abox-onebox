@@ -103,15 +103,17 @@
             </view>
           </view>
         </view>
-        <!-- 主食（随附 · 集散中心统一供应） -->
+        <!-- 随附（fmcg 为饮品，meal 为米饭 · 不再隐藏） -->
         <view v-if="daily.rice" class="dish-row">
           <view class="dish-row__ico">
-            <text class="abi abi-deco-34">{{ I.rice }}</text>
+            <text class="abi abi-deco-34">{{ daily?.kind === 'fmcg' ? I.package : I.rice }}</text>
           </view>
           <view class="dish-row__info">
             <text class="dish-row__name">{{ daily.rice }}</text>
             <view class="dish-row__from-wrap">
-              <text class="dish-row__from">随附 · 集散中心统一供应</text>
+              <text class="dish-row__from">{{
+                daily?.kind === 'fmcg' ? '随附饮品 · 开袋即食' : '随附 · 集散中心统一供应'
+              }}</text>
             </view>
           </view>
         </view>

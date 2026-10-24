@@ -41,8 +41,10 @@
           <text class="menu-row__from">来自：{{ d.supplierName }}</text>
         </view>
         <view v-if="daily.rice" class="menu-row">
-          <text class="menu-row__name">随附（米饭）</text>
-          <text class="menu-row__from">来自：集散中心</text>
+          <text class="menu-row__name">随附（{{ daily.kind === 'fmcg' ? '饮品' : '米饭' }}）</text>
+          <text class="menu-row__from"
+            >来自：{{ daily.kind === 'fmcg' ? '品牌方' : '集散中心' }}</text
+          >
         </view>
         <view class="menu-total">
           <text class="menu-total__calc">{{ quantity }} 份 × ¥{{ unitPriceText }}</text>

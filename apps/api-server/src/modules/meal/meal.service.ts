@@ -86,7 +86,7 @@ export class MealService {
       throw new BizException(ErrorCode.MEAL_NOT_PUBLISHED, `${targetDate} 该办公楼未开团`);
     }
 
-    const [setMeal, items, leader, existingOrders] = await Promise.all([
+    const [setMeal, rawItems, leader, existingOrders] = await Promise.all([
       this.setMealRepo.findOne({ where: { id: assignment.setMealId } }),
       this.itemsOfSetMeal(assignment.setMealId),
       this.resolveLeader(userId),
@@ -123,8 +123,16 @@ export class MealService {
           ? `今日 ${toBjIso(publishAtOf(targetDate))!.slice(11, 16)} 开团，敬请期待`
           : `距截单不足 ${cutoffWindow} 分钟，请明日再订`;
 
-    // 快消品套餐（fmcg）不供米饭：米饭行置 null，端上 `v-if="daily.rice"` 自动隐藏
-    const rice = setMeal?.kind === 'fmcg' ? null : '东北长粒香米饭（集散中心统一供米）';
+    // 快消品套餐（fmcg）：米饭位置改为「随附饮品」——
+    //   把 slot 5（随附位）的商品名填进 `rice` 行（端上 `v-if="daily.rice"` 照常展示，不再隐藏），
+    //   其余 1~4 档位进 `items` 网格。meal 饭类套餐仍走统一供米文案。
+    let items = rawItems;
+    let rice: string | null = '东北长粒香米饭（集散中心统一供米）';
+    if (setMeal?.kind === 'fmcg') {
+      const beverage = rawItems.find((i) => i.slot === 5);
+      rice = beverage ? beverage.name : null;
+      items = rawItems.filter((i) => i.slot !== 5);
+    }
 
     return {
       mealDate: targetDate,
@@ -218,7 +226,7 @@ export class MealService {
       leaderName: leader.realName,
       building: building?.name ?? null,
       floor: null,
-      slogan: `${building?.name ?? '本楼'} 团长 ${leader.realName} 邀你一起吃现做热饭`,
+      slogan: `${building?.name ?? '本楼'} 团长 ${leader.realName} 邀你一起尝今日精选零食`,
       // ⭐ 送达时刻（PR-02 收口）：落地页免登录、无法借其它接口取到该值，故随本响应下发
       deliverAt: formatTimeOfDay(currentTimeline().arrival),
       valid: true,
