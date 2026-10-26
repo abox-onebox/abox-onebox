@@ -330,6 +330,16 @@ export const routes: RouteRecordRaw[] = [
         name: 'SystemQueue',
         component: () => import('@/views/system/queue.vue'),
       },
+      // W1 · 一键停售（P3-6）—— 全局时间段内拦新单，落到 `ab_sales_pause` 表。
+      //   ⚠️ 挂在 `/system/` 而非 `building/`：停售是**全局**语义，放进 building 会让人
+      //      误以为是按楼粒度（§13.4 明确不做按楼 / 按楼群停售）。
+      //   ⚠️ 菜单 key 需同步登记进服务端 `ADMIN_MENU_KEYS`，且 **operator 可读列表**
+      //      要求再进 `OPERATOR_EXTRA_MENUS`（/system/* 会被 operator 派生规则默认挡住）。
+      {
+        path: 'system/sales-pause',
+        name: 'SystemSalesPause',
+        component: () => import('@/views/system/sales-pause.vue'),
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/dashboard' },

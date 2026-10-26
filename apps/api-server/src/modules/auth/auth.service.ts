@@ -378,7 +378,25 @@ export class AuthService {
     const passwordOk = !!admin && verifyPassword(dto.password, admin.passwordHash);
 
     if (!admin || !passwordOk) {
-      const n = await this.kv.incr(failKey, lockSec);
+      /**
+       * ⛔ **fail-closed（N3）**：计数不可用时**拒绝登录**，不放行。
+       *    计不到数 ⇒ 无法判断这是第几次失败 ⇒ 锁定保护失效 ⇒
+       *    放行等于开放暴力破解（与限流中间件 `failClosed` 同一取舍）。
+       *
+       * ⚠️ 必须包成 `BizException` —— `KvService.incr` 抛的是**裸 Error**，
+       *    裸 Error 会绕过 `AllExceptionsFilter` 的「HTTP 200 + body code」约定，
+       *    端上收到的是 500 而不是可解析的 `code`。
+       */
+      let n: number;
+      try {
+        n = await this.kv.incr(failKey, lockSec);
+      } catch (e) {
+        this.logger.error(
+          `后台登录失败计数不可用，拒绝登录（fail-closed）username=${username}：` +
+            `${(e as Error)?.message ?? e}`,
+        );
+        throw new BizException(ErrorCode.ADMIN_LOGIN_LOCKED, '登录校验暂不可用，请稍后重试');
+      }
       this.logger.warn(`后台登录失败 username=${username}（第 ${n}/${maxAttempts} 次）`);
       throw new BizException(
         ErrorCode.ADMIN_LOGIN_LOCKED,

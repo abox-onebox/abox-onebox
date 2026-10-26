@@ -156,7 +156,9 @@ export class WithdrawalsQueryDto {
  * L12 提现申请（《接口规范》§4.4 · C11）
  *
  * 金额单位为**元**（与实体 DECIMAL(12,2) 一致）；低于 `commission.min_withdraw`
- * （默认 ¥10.00）→ `40003`；未绑定收款方式 → `40007`；可用余额不足 → `50004`。
+ * （D3 定稿：0 = 不限起提；地板 ¥0.01 由本 DTO `@Min(0.01)` 兜住）→ `40003`；
+ * 未绑定收款方式 → `40007`；可用余额不足 → `50004`；
+ * 当日已有非终态申请 → `40025`；当日累计超 `commission.withdraw_daily_limit` → `40024`。
  */
 export class WithdrawApplyReqDto {
   @ApiProperty({

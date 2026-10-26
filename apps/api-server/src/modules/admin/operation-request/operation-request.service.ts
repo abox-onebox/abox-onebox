@@ -38,6 +38,12 @@ const OP_ENDPOINTS: Record<string, { method: 'POST' | 'PUT'; path: string }> = {
   send_message: { method: 'POST', path: '/admin/messages/orchestrate' },
   manual_adjust: { method: 'POST', path: '/admin/orders/manual-adjust' },
   force_refund: { method: 'POST', path: '/admin/orders/:orderNo/force-refund' },
+  /**
+   * N2（P3-5）：未完结订单数超过单人上限时的**强制停用**，走两级审批。
+   * ⚠️ 复用原 controller，不新造停用机制 —— 新造一套就是第二份判据。
+   */
+  suspend_building: { method: 'PUT', path: '/admin/buildings/:id' },
+  suspend_building_group: { method: 'PUT', path: '/admin/building-groups/:id' },
 };
 
 const OP_LABELS: Record<string, string> = {
@@ -50,6 +56,8 @@ const OP_LABELS: Record<string, string> = {
   send_message: '群发运营通知',
   manual_adjust: '手动改单（改份数/改取餐楼）',
   force_refund: '强制退款（原路退 + 反向结算）',
+  suspend_building: '停用办公楼（含强制停用）',
+  suspend_building_group: '停用楼群（含强制停用）',
 };
 
 @Injectable()

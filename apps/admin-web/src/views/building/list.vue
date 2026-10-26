@@ -12,7 +12,8 @@
           >营业中 {{ summary.activeCount }} / 待开通 {{ summary.preparingCount }} / 已暂停
           {{ summary.suspendedCount }}</b
         >
-        —— 只有<b>营业中</b>且<b>已归群</b>的楼栋能开团（当前 {{ summary.canOrderCount }} 栋）；
+        —— 只有<b>营业中</b>且<b>已归群</b>的楼栋能编排套餐（当前
+        {{ summary.canAssignCount }} 栋）；
         未归群的楼无法分配组合，用户端会显示「该办公楼今日未开团」。
       </template>
     </el-alert>
@@ -24,8 +25,8 @@
         <span class="stats__value">{{ summary.totalCount }}</span>
       </div>
       <div class="stats__item">
-        <span class="stats__label">可开团</span>
-        <span class="stats__value stats__value--ok">{{ summary.canOrderCount }}</span>
+        <span class="stats__label">可编排套餐</span>
+        <span class="stats__value stats__value--ok">{{ summary.canAssignCount }}</span>
       </div>
       <div class="stats__item">
         <span class="stats__label">覆盖人数（估算）</span>
@@ -318,6 +319,7 @@ import {
   type BuildingWritePayload,
   type Option,
 } from '@/api/building';
+import { guardSuspendWrite } from '@/views/building/suspend-guard';
 
 const loading = ref(false);
 const rows = ref<BuildingRow[]>([]);
@@ -333,7 +335,7 @@ const summary = ref<BuildingsPage['summary']>({
   populationUnregisteredCount: 0,
   leaderAssignedCount: 0,
   leaderVacantCount: 0,
-  canOrderCount: 0,
+  canAssignCount: 0,
   uncoveredCount: 0,
 });
 
@@ -474,6 +476,26 @@ function openEdit(row: BuildingRow) {
   dialog.visible = true;
 }
 
+/**
+ * 落库并收尾（成功提示 / warnings / 刷新）
+ *
+ * 拆出来是为了给 N2 闸门的「二次确认后重提交」复用 —— 那次提交要走**同一套**
+ * 成功处理，否则运营会看到「保存成功」但没有刷新列表。
+ */
+async function send(payload: BuildingWritePayload) {
+  const res = dialog.isEdit
+    ? await updateBuilding(dialog.origin!.id, payload)
+    : await createBuilding(payload);
+  dialog.warnings = res.warnings ?? [];
+  ElMessage.success(
+    dialog.isEdit
+      ? `已保存：${res.name}`
+      : `已创建：${res.name}（${res.canAssign ? '可编排' : '暂不可编排'}）`,
+  );
+  if (!dialog.warnings.length) dialog.visible = false;
+  await load();
+}
+
 async function submit() {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) return;
@@ -501,19 +523,11 @@ async function submit() {
 
   dialog.saving = true;
   try {
-    const res = dialog.isEdit
-      ? await updateBuilding(dialog.origin!.id, payload)
-      : await createBuilding(payload);
-    dialog.warnings = res.warnings ?? [];
-    ElMessage.success(
-      dialog.isEdit
-        ? `已保存：${res.name}`
-        : `已创建：${res.name}（${res.canOrder ? '可开团' : '暂不可开团'}）`,
-    );
-    if (!dialog.warnings.length) dialog.visible = false;
-    await load();
+    await send(payload);
   } catch (e) {
-    ElMessage.error((e as Error).message || '保存失败');
+    // N2 闸门：60006 / 60012 / 60013 / 10001 各有独立处置，handled=true 时不再叠通用报错
+    const handled = await guardSuspendWrite(e, (force) => send({ ...payload, ...force }));
+    if (!handled) ElMessage.error((e as Error).message || '保存失败');
   } finally {
     dialog.saving = false;
   }

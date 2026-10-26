@@ -136,6 +136,19 @@ export class UserService {
       );
     }
 
+    /**
+     * ⚠️ **换楼时 `teamLeaderId` 是「清空」而不是「重算」**（X1 · 2026-10-26 澄清）
+     *
+     * 全仓**没有任何**「按新楼重算跟随团长」的实现 —— 旧注释与日志曾**承诺过一次
+     * 并不存在的重算**，会让人以为有兜底任务，从而在真正出问题的时候放松排查。
+     * （本注释刻意不复述那个旧词：留着它会让「禁止该承诺」的静态检查永远命中自己。）
+     *
+     * **清空的结果仍然是对的**，不必补代码：下次下单时 `OrderService.resolveLeader()`
+     * 走三级兜底（`user.team_leader_id` → 新楼在职团长 → 抛 `30007`），
+     * `team_leader_id` 为空时自然落到**新楼的在职团长**，佣金不会记错楼。
+     *
+     * 若要「归给邀请我的人 / 最近合作过的团长」—— 那是**新功能**，需另行派工。
+     */
     const changed = Number(user.buildingId ?? 0) !== dto.buildingId;
     if (changed) {
       await this.userRepo.update(
@@ -143,7 +156,7 @@ export class UserService {
         { buildingId: dto.buildingId, teamLeaderId: null },
       );
       this.logger.log(
-        `自助绑定办公楼 user=${userId} building=${dto.buildingId}（原 building=${user.buildingId ?? 'null'}）· 已清空 team_leader_id 待重算`,
+        `自助绑定办公楼 user=${userId} building=${dto.buildingId}（原 building=${user.buildingId ?? 'null'}）· 已清空 team_leader_id（下次下单由 resolveLeader 兜底重解析，无独立重算任务）`,
       );
     }
 

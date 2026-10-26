@@ -5,6 +5,8 @@ import { Building, BuildingGroup } from '../../database/entities/building.entity
 import { DistributionCenter } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { MealAssignment, SetMeal } from '../../database/entities/meal.entity';
+import { Order } from '../../database/entities/order.entity';
+import { MessageModule } from '../message/message.module';
 import { BuildingAdminController, BuildingGroupAdminController } from './building-admin.controller';
 import { BuildingAdminService } from './building-admin.service';
 import { BuildingController } from './building.controller';
@@ -36,7 +38,22 @@ import { BuildingService } from './building.service';
       DistributionCenter,
       MealAssignment,
       SetMeal,
+      /**
+       * N2（P3-5）：停用闸门要数「这栋楼 / 这个楼群还有多少未完结订单」。
+       * ⚠️ 同本模块既有做法 —— **只登记实体，不 import `OrderModule`**：实体级 forFeature
+       *    不构成模块循环，而服务级 import 会（`OrderModule` 反过来依赖本域的楼/楼群）。
+       */
+      Order,
     ]),
+    /**
+     * N2（P3-5）：强制停用放行后要通知存量订单用户（spec §6.5）。
+     *
+     * ⚠️ 这里**必须**走模块依赖而不是再注入 `Order` 自己拼投递 —— 投递规则（启用闸门 /
+     *    渠道 / `userId → openid` / 落 `ab_message`）**只在 `MessageService` 一处**，
+     *    自己拼就是第二份投递判据。
+     * ⚠️ `MessageModule` 只依赖实体（不依赖 `BuildingModule`），**不会成环**。
+     */
+    MessageModule,
   ],
   controllers: [BuildingController, BuildingAdminController, BuildingGroupAdminController],
   providers: [BuildingService, BuildingAdminService],

@@ -158,7 +158,7 @@ export interface MessageTemplateSpec {
 }
 
 /**
- * 7 个场景
+ * 9 个场景
  *
  * ## ⚠️ 与原型 P36 的关系（必须如实说明，别让它变成「两个真相」）
  *
@@ -172,7 +172,11 @@ export interface MessageTemplateSpec {
  * 第 7 行 `cutoff_remind` 是 **F5 新增**：对应真源《系统地图》F5 点名的「忘了下单」，
  * 与 `leader_delivery`（=「忘了取餐」）配成一对。二者同属「原型没写、但业务上必需」的行。
  *
- * → 后台 P36 页面会显示 **7 行**。这不是页面写错了，是代码事实比原型多了 2 行；
+ * 第 8 / 9 行 `building_suspend_fulfill` / `building_suspend_refund` 是 **N2 新增**：
+ * 楼宇停用只拦新单、存量继续履约（用户已拍板不做批量退款）⇒ 存量订单的用户
+ * **必须被告知**。两行**刻意不合成一行** —— 见第 8 行的注释。
+ *
+ * → 后台 P36 页面会显示 **9 行**。这不是页面写错了，是代码事实比原型多了 4 行；
  *   若运营问「为什么多了」，答案在本段。
  *
  * ⚠️ **新增行一律追加在末尾**（保持「前 5 行 = 原型」这一结构的可核对性）——
@@ -366,6 +370,76 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
       wechatTemplateId: null,
       groupContent:
         '【ABox 提醒】{{mealDate}} 的午餐将于 {{cutoffTime}} 截单，还没下单的话记得尽快。',
+    },
+  },
+  {
+    /**
+     * 楼宇 / 楼群停用后，**存量订单照常履约**的用户告知（N2 · 全清单第 8 行）
+     *
+     * ⚠️ 与下一个场景 `building_suspend_refund` **必须分成两个场景，不能合成一个
+     *    模板换变量**（spec §6.5 D-N2-3b）：B 组内部两类用户的**结局相反** ——
+     *    一类最终拿到餐、一类最终拿到退款。合成一份「继续履约」文案，会让一个正在
+     *    退款的用户收到「你的订单将照常送达」：那是**事实性错误**，而且用户会据此
+     *    **不做午饭安排**。不发是失职，发错是误导。
+     *    ⇒ 分组决定「系统做什么」，结局决定「用户收到什么」。
+     */
+    scene: 'building_suspend_fulfill',
+    label: '楼宇停用 · 存量订单照常配送',
+    audience: '被停用楼宇 / 楼群下，持有待支付 / 已支付订单的用户',
+    channels: ['wechat_subscribe'],
+    trigger: '楼宇或楼群被停用（含强制停用），存量订单处于 pending_pay / paid',
+    // `mandatory: true` —— 用户手上已有一笔待履约的订单，停用后「会不会照常送」
+    // 是他**必须知道**的事；这属于原型「异常处理属必推项」，不适用「常规状态不推」。
+    mandatory: true,
+    /**
+     * ⚠️ `orderNo` **不出现在文案里**，只落进 `ab_message.payload`
+     *    —— spec §6.5 要求「让运营事后看得到有幾個人沒通知到、**是誰**」，
+     *    那个「是谁」靠的就是它。白名单里必须声明，否则投递侧塞进去的字段无据可查。
+     */
+    variables: ['mealDate', 'orderNo'],
+    requestSubscribe: true,
+    consumedBy: 'building/building-admin.service.ts → notifySuspendAffected()（N2 接线）',
+    wiring: 'live',
+    note:
+      '⭐ **N2 新增（全清单第 8 行）**：停用只拦**新单**，存量继续履约（用户已拍板，不做批量退款）。' +
+      '⚠️ 一期没有微信模板 ID ⇒ 启用闸门拦住启用 ⇒ 如实「未启用（缺模板 ID）」，' +
+      '投递点返回 `delivered=false`，**不许粉饰成已发送**。' +
+      '⚠️ 只覆盖 `pending_pay` / `paid` 两态 —— 已截单及之后（A 组）的订单已在履约链上，' +
+      '「照常」是它们唯一可能的结局，再发一条属于打扰；退款中间态走 **另一个场景**。',
+    seed: {
+      enabled: 0,
+      wechatTemplateId: null,
+      groupContent: '【ABox 通知】您 {{mealDate}} 的订单照常配送，不受本次调整影响。',
+    },
+  },
+  {
+    /** 楼宇 / 楼群停用后，**退款仍在处理**的用户告知（N2 · 全清单第 9 行） */
+    scene: 'building_suspend_refund',
+    label: '楼宇停用 · 存量订单退款中',
+    audience: '被停用楼宇 / 楼群下，持有退款申请中 / 退款中订单的用户',
+    channels: ['wechat_subscribe'],
+    trigger: '楼宇或楼群被停用（含强制停用），存量订单处于 refund_applying / refunding',
+    mandatory: true,
+    /**
+     * ⚠️ `orderNo` **不出现在文案里**，只落进 `ab_message.payload`
+     *    —— spec §6.5 要求「让运营事后看得到有幾個人沒通知到、**是誰**」，
+     *    那个「是谁」靠的就是它。白名单里必须声明，否则投递侧塞进去的字段无据可查。
+     */
+    variables: ['mealDate', 'orderNo'],
+    requestSubscribe: true,
+    consumedBy: 'building/building-admin.service.ts → notifySuspendAffected()（N2 接线）',
+    wiring: 'live',
+    note:
+      '⭐ **N2 新增（全清单第 9 行）**。与 `building_suspend_fulfill` **不是同一件事**：' +
+      '这批用户的结局是**退款**，不是餐。' +
+      '⚠️ 文案里**不得**出现「照常配送 / 照常送达」等履约承诺措辞 —— ' +
+      '用户会据此不做午饭安排，而他的饭根本不会来（AC **N2-AC-07**）。' +
+      '⚠️ 停用**不改变**退款流程：退款照自己的通道走完，本场景只是告知。',
+    seed: {
+      enabled: 0,
+      wechatTemplateId: null,
+      groupContent:
+        '【ABox 通知】您 {{mealDate}} 的订单退款正在处理中，款项将原路退回，请注意查收。',
     },
   },
 ];

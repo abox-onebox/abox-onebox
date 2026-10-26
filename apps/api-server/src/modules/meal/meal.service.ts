@@ -16,10 +16,10 @@ import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { BizConfigService } from '../../common/services/biz-config.service';
 import { LeaderLookupService } from '../../common/services/leader-lookup.service';
+import { OrderAvailabilityService } from '../../common/services/order-availability.service';
 import { paginate, PageResult } from '../../common/utils/response';
 import {
   cutoffAtOf,
-  isOrderable,
   publishAtOf,
   secondsToCutoff,
   toBjIso,
@@ -63,6 +63,8 @@ export class MealService {
     private readonly bizConfig: BizConfigService,
     /** M5-11：邀请码解析的**唯一实现**（见 `LeaderLookupService` 头注 · 缺陷 #92） */
     private readonly leaderLookup: LeaderLookupService,
+    /** N1（P3-4）：「此刻能否下单」的唯一判定口，与 U6 / 团长工作台同源 */
+    private readonly availability: OrderAvailabilityService,
   ) {}
 
   /**
@@ -72,10 +74,11 @@ export class MealService {
    */
   async daily(userId: number, mealDate?: string): Promise<HomeDailyResult> {
     const targetDate = mealDate ?? tomorrowBj();
+    // ⚠️ 截单窗口不再在这里读：它已随「能否下单」下沉到 `OrderAvailabilityService`，
+    //    本服务再读一份就是第二条口径来源（改一处漏一处）。
     const priceFen = await this.bizConfig.unitPriceFen();
-    const cutoffWindow = await this.bizConfig.cutoffWindowMinutes();
 
-    const buildingGroupId = await this.resolveUserGroup(userId);
+    const { building, groupId: buildingGroupId } = await this.resolveUserGroup(userId);
 
     // 该楼群在该出餐日的分配（已取消的不算）
     const assignment = await this.assignmentRepo.findOne({
@@ -101,36 +104,32 @@ export class MealService {
       }),
     ]);
 
-    const canOrder = assignment.status === 'active' && isOrderable(targetDate, cutoffWindow);
-
     /**
-     * `reason` 必须区分「还没开团」与「快截单了」—— 两者都会让 `canOrder=false`，
-     * 但文案完全相反：前者是「再等等」，后者是「来不及了」。
+     * ⚠️ 「此刻能不能下单」由编排层统一判定（N1 · P3-4 接线）
      *
-     * ⚠️ 曾经的写法只判断 `status !== 'active'`，于是**未到开团时刻**（T-1 14:00 之前）
-     *    也会落进「距截单不足 N 分钟」分支，对着一个还要等好几小时的套餐说
-     *    「请明日再订」。M3-2 支持运营提前编排后，这个分支从「几乎走不到」变成常见路径。
+     * 原写法 `assignment.status === 'active' && isOrderable(...)` **完全不参与楼宇状态** ——
+     *    楼被停用（`status=3`）或所属楼群被停用时，这里照样 `canOrder = true`，
+     *    用户点下单才在 U6 撞墙。两处口径不一致 = 首页说能订、下单说不能。
+     *
+     * 用 `forBuilding` 而不是 `forUser`：`resolveUserGroup()` 已经把 `building` 取出来了，
+     *    走 `forUser` 会为了拿同一个 buildingId 再查一次 `ab_user`。
+     *
+     * `reason` 文案一律取编排层的 `reasonText`（`reasonText()` 是文案**唯一出口**）——
+     *    本处不再自己拼：那会是第五份文案，且 `not_open_yet` / `cutoff` 漏插值就是空文案。
      */
-    const now = Date.now();
-    const publishAtMs = publishAtOf(targetDate).getTime();
-    const notOpenYet = assignment.status === 'active' && now < publishAtMs;
+    const availability = await this.availability.forBuilding(targetDate, Number(building.id));
 
-    const reason = canOrder
-      ? null
-      : assignment.status !== 'active'
-        ? '该办公楼今日未开团'
-        : notOpenYet
-          ? `今日 ${toBjIso(publishAtOf(targetDate))!.slice(11, 16)} 开团，敬请期待`
-          : `距截单不足 ${cutoffWindow} 分钟，请明日再订`;
-
-    // 快消品套餐（fmcg）：米饭位置改为「随附饮品」——
-    //   把 slot 5（随附位）的商品名填进 `rice` 行（端上 `v-if="daily.rice"` 照常展示，不再隐藏），
+    // 快消品套餐（fmcg）：主食位展示品牌饮品——
+    //   把 slot 5 的商品名与其品牌（供应商展示名）分别填进 `rice` / `riceFrom`
+    //   （端上按商品口径展示「来自：品牌」，不再写「随附饮品/开袋即食」，2026-10-24 整改），
     //   其余 1~4 档位进 `items` 网格。meal 饭类套餐仍走统一供米文案。
     let items = rawItems;
     let rice: string | null = '东北长粒香米饭（集散中心统一供米）';
+    let riceFrom: string | null = null;
     if (setMeal?.kind === 'fmcg') {
       const beverage = rawItems.find((i) => i.slot === 5);
       rice = beverage ? beverage.name : null;
+      riceFrom = beverage ? beverage.supplierName : null;
       items = rawItems.filter((i) => i.slot !== 5);
     }
 
@@ -140,12 +139,13 @@ export class MealService {
       cutoffAt: toBjIso(cutoffAtOf(targetDate))!,
       // ⭐ 送达时刻（PR-02 收口）：与 `cutoffAt` **同源派生** —— 端上「下单确认页」不再写死 `11:30`
       deliverAt: formatTimeOfDay(currentTimeline().arrival),
-      canOrder,
+      canOrder: availability.canOrder,
       countdownSec: secondsToCutoff(targetDate),
-      reason,
+      reason: availability.reasonText,
       setName: setMeal?.name ?? null,
       items,
       rice,
+      riceFrom,
       kind: setMeal?.kind ?? 'meal',
       priceFen,
       // MVP 不设总份数上限（供应商按备料量生产），故返回 null 表示不限量；
@@ -167,7 +167,7 @@ export class MealService {
    *    保留而非删除，是为了下一次要做「订单/历史」入口时**直接可用**，不必重写聚合。
    */
   async history(userId: number, page = 1, pageSize = 20): Promise<PageResult<HomeHistoryItem>> {
-    const buildingGroupId = await this.resolveUserGroup(userId);
+    const { groupId: buildingGroupId } = await this.resolveUserGroup(userId);
     const today = todayBj();
 
     const qb = this.assignmentRepo
@@ -245,8 +245,13 @@ export class MealService {
     return this.leaderLookup.byCode(code);
   }
 
-  /** 用户所属楼群（缺失即报错，避免「未绑定办公楼」被静默当成可下单） */
-  private async resolveUserGroup(userId: number): Promise<number> {
+  /**
+   * 用户所属楼群（缺失即报错，避免「未绑定办公楼」被静默当成可下单）
+   *
+   * ⚠️ 返回 `{ building, groupId }`：`building.status` 是「此刻能否下单」的判据之一，
+   *    只带 `groupId` 出去就等于在这一步把楼宇状态丢掉（N1 的洞）。
+   */
+  private async resolveUserGroup(userId: number): Promise<{ building: Building; groupId: number }> {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new BizException(ErrorCode.USER_NOT_FOUND);
     if (!user.buildingId) {
@@ -262,9 +267,21 @@ export class MealService {
 
     const building = await this.buildingRepo.findOne({ where: { id: user.buildingId } });
     if (!building?.buildingGroupId) {
-      throw new BizException(ErrorCode.NOT_FOUND, '所属办公楼未配置楼群，请联系运营');
+      /**
+       * ⚠️ 契约变更（N1 · P3-4）：`NOT_FOUND`(10004) → `BUILDING_NOT_GROUPED`(60011)
+       *
+       * 10004 是「资源不存在」，而这里是**配置缺失** —— 楼在、楼群没配。两者处置动作不同：
+       * 前者该查数据，后者该找运营配楼群。合成一码，监控与告警就完全同形，
+       * 60011 的默认文案统一由 `ERROR_MESSAGE` 提供，调用点不再内联覆写。
+       */
+      throw new BizException(ErrorCode.BUILDING_NOT_GROUPED);
     }
-    return building.buildingGroupId;
+    /**
+     * ⚠️ 返回 `building` 而不仅是 `groupId`：N1 的洞正是「楼宇状态不参与下单判定」——
+     *    以前只把 `buildingGroupId` 带出来，`status` 在这一步被丢掉，
+     *    于是楼已停用也照样 `canOrder = true`。
+     */
+    return { building, groupId: building.buildingGroupId };
   }
 
   /**

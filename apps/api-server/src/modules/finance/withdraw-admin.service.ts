@@ -17,7 +17,7 @@ import { maskPhone } from '../../common/utils/crypto';
 import { money, toFen, toYuan } from '../../common/utils/money';
 import { payoutBatchNoOf } from '../../common/utils/order-no';
 import { normalizePage, paginate } from '../../common/utils/response';
-import { toBjIso } from '../../common/utils/time';
+import { addDays, bjDateTime, now, toBjIso, todayBj } from '../../common/utils/time';
 import { Balance, BalanceLog, Commission } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { User } from '../../database/entities/user.entity';
@@ -674,6 +674,33 @@ export class WithdrawAdminService {
     }
   }
 
+  /**
+   * D3 定稿 T+1 · 预计到账时刻（**仅用于后台标红与端上展示，不参与任何业务判定**）
+   *
+   * ⚠️ **一期只能算出「承诺时点」，做不出自动到账** —— `markPaid` 是人工回填，
+   *    全仓无第三方打款调用。要「审批后立即到账」必须先接 `FLEX_API`（二期）。
+   *
+   * 口径：审批通过（`auditAt`）后 **1 个工作日** 的 18:00 为承诺时点。
+   *
+   * ⚠️ 只按**周末**顺延 —— 法定节假日全仓无配置表，故法定假由运营人工兜底。
+   *    要在系统里做精确承诺，需落库 `expected_arrival_at` + 节假日表（方案乙）。
+   */
+  private expectedArrivalOf(w: Withdraw, st: WithdrawStatus): Date | null {
+    if (!w.auditAt) return null;
+    // 已到账 / 已驳回 / 打款失败都谈不上「还等多久」
+    if (st !== WithdrawStatus.APPROVED && st !== WithdrawStatus.PAYING) return null;
+
+    let cur = todayBj(w.auditAt);
+    let left = 1;
+    while (left > 0) {
+      cur = addDays(cur, 1);
+      // 正午 UTC 取样 —— 任何服务器时区下都不会因日界偏移把星期几算错
+      const dow = new Date(`${cur}T12:00:00Z`).getUTCDay();
+      if (dow !== 0 && dow !== 6) left -= 1;
+    }
+    return bjDateTime(cur, 18);
+  }
+
   /** 行装饰：一次补齐团长 / 用户 / 余额快照（避免前端 N+1） */
   private async decorate(rows: Withdraw[]): Promise<Record<string, unknown>[]> {
     if (!rows.length) return [];
@@ -726,6 +753,19 @@ export class WithdrawAdminService {
        */
       const isPending = st === WithdrawStatus.PENDING;
       const isPayable = st === WithdrawStatus.APPROVED || st === WithdrawStatus.PAYING;
+
+      /**
+       * D3 定稿 T+1 可观测：`waitHours` 给运营看「压了多久」，`overdue` 供清单标红。
+       *
+       * ⚠️ 只给**已审批且未终态**的单子算 —— `pending`（还没审）不算「压着」，
+       *    那是运营自己的审批节奏，标红只会制造噪音（与 C5「平了就不写日志」同一取舍）。
+       */
+      const expectedAt = this.expectedArrivalOf(w, st);
+      const waitHours =
+        expectedAt && w.auditAt
+          ? Math.round(((now().getTime() - w.auditAt.getTime()) / 3600000) * 10) / 10
+          : null;
+      const overdue = !!expectedAt && now().getTime() > expectedAt.getTime();
 
       return {
         id: Number(w.id),
@@ -781,6 +821,12 @@ export class WithdrawAdminService {
 
         auditorId: w.auditorId ?? null,
         auditAt: w.auditAt ? toBjIso(w.auditAt) : null,
+        /** D3 T+1：等待时长（小时，1 位小数）· 未审批 / 已终态为 null */
+        waitHours,
+        /** D3 T+1：承诺到账时刻（审批通过 + 1 个工作日 18:00，周末顺延）· 端上只展示不判定 */
+        expectedArrivalAt: expectedAt ? toBjIso(expectedAt) : null,
+        /** D3 T+1：已超承诺时点 ⇒ 后台清单标红。**这是唯一该驱动 UI 的布尔位** */
+        overdue,
         auditRemark: w.auditRemark ?? null,
         failReason: w.failReason ?? null,
         paidAt: w.paidAt ? toBjIso(w.paidAt) : null,

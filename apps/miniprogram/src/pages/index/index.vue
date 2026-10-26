@@ -66,18 +66,22 @@
       </view>
       <view v-else-if="!daily.canOrder" class="guide guide--warn">
         <text class="guide__text">{{ daily.reason ?? '当前不可下单' }}</text>
+        <!-- W1 · 被拦时同步说明「已下订单不受影响」（判据 W1-UI-4）：
+               在任何被拦场景下这句都成立 —— 停售 / 截单 / 未开团都不动历史订单。 -->
+        <text class="guide__sub">{{ SALES_PAUSED_UNAFFECTED_NOTICE }}</text>
       </view>
 
-      <!-- 本日精选（两列菜品卡网格 · 点击卡片打开菜品弹窗；「查看资质」→ 出品方资质页） -->
+      <!-- 本日精选（两列菜品卡网格 · 点击卡片打开菜品弹窗；出品方以「来自：X」展示） -->
       <view class="card">
+        <!-- ⭐ 2026-10-24 整改：饮料图标回归项目自带 Tabler 字体 I.cup（与 I.rice 同一套子集字体，跟整体 UI 一致）；
+            仅按 kind 切换字形，版式与餐饮套餐完全共用 -->
         <text class="card__title"
-          ><text class="abi abi-16">{{ daily?.kind === 'fmcg' ? I.package : I.rice }}</text>
-          本日精选</text
+          ><text class="abi abi-16">{{ isFmcg ? I.cup : I.rice }}</text> 本日精选</text
         >
         <view class="dish-grid">
           <view
-            v-for="(d, i) in daily.items"
-            :key="i"
+            v-for="(d, i) in gridItems"
+            :key="'snack' + i"
             class="dish-card"
             hover-class="dish-card--hover"
             @tap="openDish(d)"
@@ -85,49 +89,51 @@
             <view class="dish-card__media" :class="{ 'dish-card__media--fallback': !d.imageUrl }">
               <image v-if="d.imageUrl" class="dish-card__img" :src="d.imageUrl" mode="aspectFill" />
               <text v-else class="dish-card__letter">{{ initial(d.name) }}</text>
-              <view v-if="d.category" class="dish-card__badge">{{ d.category }}</view>
+              <text v-if="d.mark" class="dish-card__mark">{{ d.mark }}</text>
+              <view v-if="d.category && !d.mark" class="dish-card__badge">{{ d.category }}</view>
             </view>
             <view class="dish-card__body">
               <text class="dish-card__name">{{ d.name }}</text>
-              <text v-if="d.supplierName" class="dish-card__supplier">{{ d.supplierName }}</text>
-              <view
-                v-if="d.supplierId"
-                class="dish-card__qual"
-                hover-class="dish-card__qual--hover"
-                @tap.stop="openSupplier(d)"
+              <!-- ⭐ 2026-10-24 整改（用户要求）：不再写「查看资质」，与餐饮套餐口径一致写「来自：X」 -->
+              <text v-if="d.supplierName" class="dish-card__supplier"
+                >来自：{{ d.supplierName }}</text
               >
-                <text class="abi abi-16 dish-card__qual-icon">{{ I.shield }}</text>
-                <text class="dish-card__qual-text">查看资质</text>
-                <text class="abi abi-16 dish-card__qual-arrow">{{ I.chev }}</text>
-              </view>
+            </view>
+          </view>
+
+          <!-- x 盲盒：fmcg 套餐的第 4 张卡。⭐ 2026-10-24 整改（用户要求）：
+               盲盒是**付费**套餐内的一件（不是附赠），与餐饮套餐一样给用户「送达揭晓」的惊喜；
+               媒体区弃用 low 的 gift 字形，改用品牌级盲盒插画 -->
+          <view
+            v-if="isFmcg"
+            class="dish-card dish-card--blind"
+            hover-class="dish-card--hover"
+            @tap="openBlind"
+          >
+            <view class="dish-card__media dish-card__media--blind">
+              <text class="dish-card__mark dish-card__mark--x">x</text>
+              <image class="dish-card__blind-img" :src="BLIND_BOX_IMG" mode="aspectFill" />
+            </view>
+            <view class="dish-card__body">
+              <text class="dish-card__name">x 盲盒</text>
+              <text class="dish-card__supplier">下单即含 · 送达揭晓</text>
             </view>
           </view>
         </view>
-        <!-- 随附（fmcg 为饮品，meal 为米饭 · 不再隐藏） -->
+        <!-- 饮品行（fmcg 为品牌饮品 · 来自：品牌；meal 为米饭 · 统一供米）。
+             ⭐ 2026-10-24 整改（用户要求）：不再写「随附饮品/开袋即食」——
+             饮品是套餐内的一件商品，按商品口径展示品牌来源 -->
         <view v-if="daily.rice" class="dish-row">
           <view class="dish-row__ico">
-            <text class="abi abi-deco-34">{{ daily?.kind === 'fmcg' ? I.package : I.rice }}</text>
+            <text class="abi abi-deco-34">{{ isFmcg ? I.cup : I.rice }}</text>
           </view>
           <view class="dish-row__info">
             <text class="dish-row__name">{{ daily.rice }}</text>
-            <view class="dish-row__from-wrap">
-              <text class="dish-row__from">{{
-                daily?.kind === 'fmcg' ? '随附饮品 · 开袋即食' : '随附 · 集散中心统一供应'
-              }}</text>
-            </view>
-          </view>
-        </view>
-
-        <!-- x 盲盒（轻量小辅助）：本单随附一份轻食惊喜，下单时不定内容，送达后揭晓 -->
-        <view class="blind-row">
-          <view class="blind-row__ico">
-            <text class="abi abi-deco-34">{{ I.gift }}</text>
-          </view>
-          <view class="blind-row__info">
-            <text class="blind-row__name">随单附赠 · x 盲盒</text>
-            <view class="blind-row__from-wrap">
-              <text class="blind-row__from">下单后送达时揭晓 · 一份轻食惊喜</text>
-            </view>
+            <!-- ⭐ 与餐饮套餐「米饭行」同款结构：图标 + 名字 + 来源两行，自然填满横条。
+                 旧版 API 未下发 riceFrom 时降级为不显示来源行，避免出现「来自：」空尾巴 -->
+            <text v-if="!isFmcg || daily.riceFrom" class="dish-row__from">{{
+              isFmcg ? '来自：' + daily.riceFrom : '集散中心统一供应'
+            }}</text>
           </view>
         </view>
       </view>
@@ -197,7 +203,7 @@
 
     <ab-bottom-bar active="index" />
 
-    <!-- 菜品弹窗（方案B 居中模态卡 · 下拉关闭 · 门店实拍 · 查看资质入口） -->
+    <!-- 菜品弹窗（方案B 居中模态卡 · 下拉关闭 · 门店实拍） -->
     <ab-dish-popup
       :visible="popupVisible"
       :item="popupItem"
@@ -225,9 +231,8 @@
  * ① **移除「往日这盒」**：首页只保留「今天订不订」这一件事。U2 接口与端上封装
  *    `fetchHistory` **均保留**（M1 既有验收点，且日后做「历史」入口可直接复用），
  *    只是不再占首页版位 —— 首页每多一块，主按钮就往下掉一屏。
- * ② **「查看资质」可点** → 每道菜卡片底部「查看资质 ›」跳 `supplier/detail?id=`
- *    （自持证照，不引外链；溯源页已于 2026-10-23 删除）。按 id 不按名字：
- *    `ab_supplier.name` 无唯一约束。
+ * ② **出品方以「来自：X」展示**（⭐ 2026-10-24 整改：用户要求首页不写「查看资质」，
+ *    与餐饮套餐「来自：供应商」口径一致）。资质详情仍可经菜品弹窗等处查看。
  * ③ **明示佣金归属**（`leader.source`）：未走邀请链接的用户会被**自动挂靠**本楼在任团长，
  *    下单佣金也归那位 —— 这件事必须写在脸上，而不是让用户以为「我没跟谁」。
  *    ⭐ 与之配套的后端修正：U1 的团长判据此前**不看在职**，与真正决定钱的
@@ -247,9 +252,21 @@ import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
 import { buildUrl, navigateTo } from '@/utils/router';
 import { formatMealDate, formatTime } from '@/utils/format';
-import { ORDER_MAX_QUANTITY } from '@/constants';
+import { ORDER_MAX_QUANTITY, SALES_PAUSED_UNAFFECTED_NOTICE } from '@/constants';
 import { useLeaderStore } from '@/stores/leader';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
+import { ENV } from '@/constants/env';
+
+/**
+ * fmcg 品牌视觉资产（走 /static/，与商品图同源；构建期由 ENV 派生，不写死主机）
+ *
+ * ⭐ 2026-10-24 整改（用户要求）：
+ * · 饮料图标回归项目自带 Tabler 子集字体 I.cup（与 I.rice 同一套 iconfont，彻底消除孤立 PNG 造成的风格割裂）；
+ * · x 盲盒媒体区弃用孤立 gift 字形与实色块 → 改为磨砂玻璃面板（半透米色 + 内里模糊礼盒剪影，呼应"未揭晓"），
+ *   并改为 aspectFill 满铺，与真实零食照片卡的媒体区保持一致。
+ */
+const STATIC_BASE = ENV.apiBaseUrl.replace(/\/api\/v1\/?$/, '') + '/static/';
+const BLIND_BOX_IMG = `${STATIC_BASE}blind-box.jpg?v=7`;
 
 const leaderStore = useLeaderStore();
 const { run, loading } = useRequest();
@@ -312,22 +329,69 @@ function initial(name: string | null | undefined): string {
 }
 
 /**
- * ⭐ 空态**按错误码分级**，不再一句「本楼今日未开团」兜全部
+ * 首页网格项类型：在 `MealItemView` 基础上补一个 fmcg 专属的 A/B/o 小标识位
  *
- * 此前 `emptyText` 对**任何** `loadError.code` 都返回同一句，于是
- * 「你还没绑定办公楼」（本可自助）与「本楼今日真的没开团」（只能等）
- * 在界面上长得一模一样 —— 用户能做的只有反复点「重新加载」。
- * 服务端已把前者拆成独立码 `20016`（见 `ErrorCode.USER_BUILDING_UNBOUND`），
- * 这里据此把**主按钮也换掉**：能自己解决的事，按钮就该指向解决办法。
+ * ⭐ 2026-10-24 整改（用户要求）：首页四张图须带 **A / B / o / x** 小标识。
+ *   其中 A/B/o 对应每天 3 个**不同品牌**的零食（slot1-3），第 4 张 **x** 是盲盒
+ *   （端上合成，不在库中建项）。饭类套餐（meal）仍走原 4 道菜、无此标识。
+ */
+type GridItem = MealItemView & { mark?: string };
+
+/** 是否快消品（零食）套餐 —— 决定网格是否带 A/B/o/x 标识 + 第 4 张盲盒卡 */
+const isFmcg = computed(() => daily.value?.kind === 'fmcg');
+
+/** 网格展示项：fmcg 取前 3 个真实零食并补 A/B/o 标识；饭类原样返回 4 道菜 */
+const SLOT_MARKS = ['A', 'B', 'o'] as const;
+const gridItems = computed<GridItem[]>(() => {
+  const items = daily.value?.items ?? [];
+  if (!isFmcg.value) return items;
+  return items.slice(0, 3).map((d, i) => ({ ...d, mark: SLOT_MARKS[i] ?? '' }));
+});
+
+/** x 盲盒卡点击：仅提示「下单即含、送达揭晓」，不跳转（内容下单时未定，无详情可看） */
+function openBlind(): void {
+  uni.showToast({ title: 'x 盲盒：下单即含，送达时揭晓惊喜', icon: 'none' });
+}
+
+/**
+ * ⭐ 空态分**三类**，只有「用户能自己解决」的那一类配专属分支
+ *
+ * 1. **没有错误**（`loadError` 为空 / 服务端没给码）→ 端上自己的话
+ *    「今日暂无开团」。这一支服务端根本没下发 message，端上必须有兜底。
+ * 2. **`20016`（未绑楼，用户能自己解决）** → 专属文案 + 专属按钮（见 `emptyActionText`）。
+ *    值得专属：它的处置动作是**自助选楼**，按钮要跟着换。
+ * 3. **其余任何码 → 回落服务端 `message`**（判据 N1-23）。
+ *
+ * ⚠️ **为什么第三类是「回落」而不是「给每个码加分支」**：
+ *    60011（楼未归群）、60009（全局停售）、60010（楼已停用）…… 这些码的共性是
+ *    **用户无能为力，只能看运营给的话**。若按码穷举分支，等于把「硬编码中文」这个病
+ *    从一个码摊到 N 个码 —— 服务端每拆一个新码，端上就得跟着改一遍，
+ *    契约变更就从「服务端一处」扩散成「服务端 + 端上两处」，正是本批在消灭的第二真相。
+ *    兜底一旦回落服务端 message，**新码不需要端上做任何事就自动被正确呈现**。
+ *    ⇒ **不要再往这里加第四个分支**，要加就先问：这个码用户能自己解决吗？
+ *    能（像 20016）才配专属分支，不能就让它回落。
  */
 const needsBuilding = computed(() => loadError.value?.code === CODE_BUILDING_UNBOUND);
 
 const emptyText = computed(() => {
-  if (loadError.value?.code === undefined) return '今日暂无开团';
-  return needsBuilding.value ? '你还没有选择办公楼' : '本楼今日未开团';
+  const err = loadError.value;
+  if (!err || err.code === undefined) return '今日暂无开团';
+  if (err.code === CODE_BUILDING_UNBOUND) return '你还没有选择办公楼';
+  return err.message || '今日暂无开团';
 });
 
-const emptyHint = computed(() => loadError.value?.message ?? '选好办公楼后即可查看次日组合');
+/**
+ * ⚠️ 主标题已回落服务端文案时，提示行**必须置空** —— 否则同一句会上下重复一次。
+ *    `ab-empty-state` 内部是 `v-if="hint"`，传空串即不渲染，模板侧无需再判断。
+ */
+const emptyHint = computed(() => {
+  const err = loadError.value;
+  if (!err) return '选好办公楼后即可查看次日组合';
+  if (err.code === CODE_BUILDING_UNBOUND) {
+    return err.message || '选好办公楼后即可查看次日组合';
+  }
+  return '';
+});
 
 /**
  * 截单时刻（`HH:mm`）—— **从响应取**，端上不写死
@@ -388,14 +452,16 @@ const heroSlogan = computed(() => '四家好味，汇于一盒');
 /**
  * 功能行（与口号同框、零后端）：用 U1 已下发但未在首页展示的 `deliverAt`
  *
- * · 有团长 → 「明早 {t} 送达楼下，团长会送货上门」（贴合「团长统一取餐分发」模型）
- * · 无团长 → 回落「明早 {t} 送达楼下取餐点」，避免在无团长楼里谎称「团长送货」
+ * · 有团长 → 「明早 {t} 送达，团长送到你工位」（贴合「团长统一派送」模型）
+ * · 无团长 → 回落「明早 {t} 送达，开团后由本楼团长派送」，避免在无团长楼里谎称「团长送货」
  * ⚠️ 取不到 `deliverAt` ⇒ 整行不显示（不回落写死值，与 countdown 纪律一致）
  */
 const deliverLine = computed(() => {
   const t = daily.value?.deliverAt;
   if (!t || t === '--') return '';
-  return daily.value?.leader ? `明早 ${t} 送达楼下，团长会送货上门` : `明早 ${t} 送达楼下取餐点`;
+  return daily.value?.leader
+    ? `明早 ${t} 送达，团长送到你工位`
+    : `明早 ${t} 送达，开团后由本楼团长派送`;
 });
 
 const leaderLevelLabel = computed(() => {
@@ -502,19 +568,6 @@ function goDetail(): void {
 
 function goWorkbench(): void {
   navigateTo('/pages/leader/workbench');
-}
-
-/**
- * 「查看资质」→ 出品方资质页（supplier/detail?id=）
- *
- * ⭐ 2026-10-23 重构：原「来自：X」跳转溯源页（traceability），现供应商资质已下沉到
- *    `supplier/detail`（自持证照，不引外链），故这里直接带 `supplierId` 跳资质页。
- *    只带 id 不带整份对象：跳过去的是另一个页面实例，数据由它自己按 id 现取，单一真相。
- *    `supplierId` 缺失时静默不跳。
- */
-function openSupplier(d: MealItemView): void {
-  if (!d.supplierId) return;
-  navigateTo(buildUrl('/pages/supplier/detail', { id: d.supplierId }));
 }
 
 function goLeaderApply(): void {
@@ -782,73 +835,25 @@ onShow(() => {
     color: $c-gold-fg;
     text-decoration: underline;
   }
+
+  &__sub {
+    margin-top: $space-1;
+    font-size: $fs-caption;
+    line-height: 1.6;
+    color: $c-text-weak;
+    opacity: 0.85;
+  }
 }
 
-// ---- 一饭四菜 ----
+// ---- 一饭四菜（饮品行 · 与上方网格卡同款小卡，消除悬空与右侧留白） ----
 .dish-row {
   display: flex;
   align-items: center;
   gap: $space-3;
-  padding: $space-3 0;
-  border-bottom: 1px dashed $c-border-strong;
-
-  &:last-child {
-    border-bottom: none;
-  }
-
-  &__ico {
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 112rpx;
-    height: 112rpx;
-    background: $c-surface-2;
-    border-radius: $radius-lg;
-  }
-
-  &__info {
-    flex: 1;
-    min-width: 0;
-  }
-
-  &__name {
-    display: block;
-    font-size: $fs-body;
-    font-weight: bold;
-    color: $c-text;
-  }
-
-  // 主食行（随附说明，无跳转）。整块作为说明即可。
-  &__from-wrap {
-    margin-top: $space-1;
-    text-align: right;
-
-    &.is-link {
-      padding: 4rpx 0 4rpx $space-3;
-    }
-
-    &--hover {
-      opacity: 0.6;
-    }
-  }
-
-  &__from {
-    font-size: $fs-caption;
-    // 既有裸色值（端上裸色值基线之一），收归 token 由 S4「裸色值归零」统一处理，本批不动
-    color: $c-gold-fg;
-  }
-}
-
-// ---- x 盲盒（轻量小辅助 · 随单附赠惊喜） ----
-.blind-row {
-  display: flex;
-  align-items: center;
-  gap: $space-3;
-  margin-top: $space-3;
   padding: $space-3;
+  margin-top: $space-3;
   background: $c-surface-2;
-  border: 1px dashed $c-gold;
+  border: 1px solid $c-border;
   border-radius: $radius-lg;
 
   &__ico {
@@ -856,11 +861,11 @@ onShow(() => {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 112rpx;
-    height: 112rpx;
-    background: linear-gradient(135deg, $c-gold 0%, $c-gold-deep 100%);
-    border-radius: $radius-lg;
-    color: #ffffff;
+    width: 104rpx;
+    height: 104rpx;
+    background: #fff;
+    border: 1px solid $c-border;
+    border-radius: 50%;
   }
 
   &__info {
@@ -873,14 +878,16 @@ onShow(() => {
     font-size: $fs-body;
     font-weight: bold;
     color: $c-text;
-  }
-
-  &__from-wrap {
-    margin-top: $space-1;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   &__from {
+    display: block;
+    margin-top: $space-1;
     font-size: $fs-caption;
+    // 既有裸色值（端上裸色值基线之一），收归 token 由 S4「裸色值归零」统一处理，本批不动
     color: $c-gold-fg;
   }
 }
@@ -928,6 +935,47 @@ onShow(() => {
     color: rgba(255, 255, 255, 0.85);
   }
 
+  // A/B/o/x 小标识（fmcg 网格卡左上角圆形角标）
+  &__mark {
+    position: absolute;
+    top: 12rpx;
+    left: 12rpx;
+    z-index: 2;
+    width: 40rpx;
+    height: 40rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26rpx;
+    font-weight: bold;
+    color: #ffffff;
+    background: rgba(110, 84, 53, 0.82);
+    border-radius: 50%;
+
+    // x（盲盒）用品牌金，强化「第 4 张 = 盲盒」辨识
+    &--x {
+      background: linear-gradient(135deg, $c-gold 0%, $c-gold-deep 100%);
+    }
+  }
+
+  // 盲盒卡媒体区：磨砂盲盒图 aspectFill 满铺覆盖整块，背景仅作兜底（token 占位，不写裸色值）
+  &__media--blind {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: $c-surface-2;
+  }
+
+  &__blind-img {
+    width: 100%;
+    height: 100%;
+  }
+
+  // 盲盒卡整体用虚线金边，呼应「未揭晓」语义
+  &--blind {
+    border: 1px dashed $c-gold;
+  }
+
   &__badge {
     position: absolute;
     top: 12rpx;
@@ -956,33 +1004,6 @@ onShow(() => {
     margin-top: 4rpx;
     font-size: $fs-caption;
     color: $c-text-weak;
-  }
-
-  &__qual {
-    display: flex;
-    align-items: center;
-    gap: 8rpx;
-    margin-top: $space-2;
-    padding-top: $space-2;
-    border-top: 1px dashed $c-border-strong;
-
-    &--hover {
-      opacity: 0.6;
-    }
-  }
-
-  &__qual-icon {
-    color: $c-gold-fg;
-  }
-
-  &__qual-text {
-    flex: 1;
-    font-size: $fs-caption;
-    color: $c-gold-fg;
-  }
-
-  &__qual-arrow {
-    color: $c-gold-fg;
   }
 }
 

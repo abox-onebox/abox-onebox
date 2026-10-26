@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import {
   BUILDING_GROUP_STATUS_LABEL,
@@ -57,7 +57,9 @@ export class BuildingAdminController {
       '`summary` 为**全量**统计（翻页不跳 KPI）；' +
       '`gap` 是派生值，区分三种「送不出去」：no_group 未归群 / no_center 楼群无集散 / ' +
       'all_center_disabled 集散已停用 —— 三种成因对应三种修法。' +
-      '`canOrder` = 营业中 ∧ 已归群（未归群无法分配套餐）。' +
+      '`canAssign` = 配置上能不能开团（营业中 ∧ 已归群 ∧ 所属楼群未停用），**无时间维度**；' +
+      '与用户端「此刻能否下单」的 `canOrder` 不是同一件事 —— 此处的 `canOrder` 是' +
+      '**解释性引用**，⚠️ **不要全局替换**为 `canAssign`（用户端 / 团长端字段仍叫 `canOrder`）。' +
       '主/备集散中心与路线号由「集散中心 → 服务楼群」配置**实时派生**，楼栋上不存副本。',
   })
   list(@Query() q: AdminBuildingsQueryDto, @CurrentAdmin('role') role: string) {
@@ -135,7 +137,7 @@ export class BuildingAdminController {
     summary: 'D14 新增办公楼',
     description:
       '楼名重复 → 60005（同名楼会让「按楼筛选」变成歧义操作）；楼群不存在 → 60002。' +
-      '不传 `buildingGroupId` 即「未归群」：楼能建档，但无法分配套餐（`canOrder=false`）。' +
+      '不传 `buildingGroupId` 即「未归群」：楼能建档，但无法分配套餐（`canAssign=false`）。' +
       '出参 `warnings` 逐条说明「还差什么才能开团」。',
   })
   create(@Body() dto: CreateBuildingDto) {
@@ -145,6 +147,12 @@ export class BuildingAdminController {
   @Put(':id')
   @Roles('super_admin', 'admin')
   @OperationLog({ module: 'building', action: '编辑办公楼', targetParam: 'id' })
+  @ApiResponse({
+    status: 200,
+    description:
+      '业务失败仍为 HTTP 200：60006 BUILDING_UNFINISHED_ORDERS；60008 BUILDING_GROUP_SUSPENDED_REJECT；' +
+      '60012 SUSPEND_REQUIRE_APPROVAL；60013 SUSPEND_CANNOT_REVOKE_ACCEPTED。',
+  })
   @ApiOperation({
     summary: 'D15 编辑办公楼（含归群 / 状态）',
     description:
@@ -220,6 +228,12 @@ export class BuildingGroupAdminController {
   @Put(':id')
   @Roles('super_admin', 'admin')
   @OperationLog({ module: 'building', action: '编辑楼群', targetParam: 'id' })
+  @ApiResponse({
+    status: 200,
+    description:
+      '业务失败仍为 HTTP 200：60007 BUILDING_GROUP_UNFINISHED_ORDERS；60008 BUILDING_GROUP_SUSPENDED_REJECT；' +
+      '60012 SUSPEND_REQUIRE_APPROVAL；60013 SUSPEND_CANNOT_REVOKE_ACCEPTED。',
+  })
   @ApiOperation({
     summary: 'D18 编辑楼群（含成员办公楼增删）',
     description:

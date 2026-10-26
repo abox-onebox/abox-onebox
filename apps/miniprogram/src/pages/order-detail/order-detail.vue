@@ -99,10 +99,10 @@
           <text class="dish__from" />
         </view>
 
-        <!-- x 盲盒（轻量小辅助）：随单附赠的轻食惊喜，下单时不定内容，送达后揭晓 -->
+        <!-- x 盲盒（套餐内付费件）：下单即含的惊喜，下单时不定内容，送达后揭晓（2026-10-24 整改） -->
         <view v-if="detail.blindBoxName" class="blind">
           <view class="blind__head">
-            <text class="blind__tag">x 盲盒 · 随单附赠</text>
+            <text class="blind__tag">x 盲盒 · 下单即含</text>
             <text class="blind__state" :class="{ 'is-revealed': blindBoxRevealed }">{{
               blindBoxRevealed ? '已揭晓' : '待揭晓'
             }}</text>
@@ -142,16 +142,16 @@
       <!-- 取餐方式 -->
       <view class="card">
         <text class="card__title"
-          ><text class="abi abi-16">{{ I.pin }}</text> 取货方式</text
+          ><text class="abi abi-16">{{ I.pin }}</text> 配送方式</text
         >
         <text class="pickup__who">
           <text class="pickup__strong">{{ leaderName }}</text
-          >（团长）· {{ detail.pickup.point }}
+          >（团长） · 统一派送
         </text>
         <!-- ⚠️ 时刻来自响应（`pickup.expectAt`，服务端按生效时间轴派生）—— 曾写死 `11:30`，
              改配置后会与系统行为不一致（PR-02 收口） -->
         <text class="pickup__when"
-          >明日 {{ detail.pickup.expectAt }} 由团长统一取货并分发至取货点</text
+          >明日 {{ detail.pickup.expectAt }} 由团长统一派送，直接送到你的工位</text
         >
         <view class="pickup__acts">
           <button class="ghost-btn" hover-class="ghost-btn--hover" @tap="contactLeader">
@@ -374,7 +374,7 @@ const statusHint = computed(() => {
       // ⚠️ 曾写死 `'配送途中，11:30 送达办公楼'`（PR-02 收口）—— 同上，改用响应值
       return arriveAt.value ? `配送途中，${arriveAt.value} 送达办公楼` : '配送途中，即将送达办公楼';
     case OrderStatus.DELIVERED:
-      return '已送达取货点，请凭订单号取货';
+      return '已送达，团长会送到你的工位';
     case OrderStatus.COMPLETED:
       return '订单已完成，感谢支持';
     case OrderStatus.CANCELLED:
@@ -776,7 +776,7 @@ onShow(() => {
   }
 }
 
-// ---- x 盲盒（轻量小辅助 · 随单附赠惊喜） ----
+// ---- x 盲盒（套餐内付费件 · 下单即含惊喜） ----
 .blind {
   margin-top: $space-3;
   padding: $space-3;

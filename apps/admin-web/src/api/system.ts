@@ -471,3 +471,66 @@ export function rejectOperationRequest(id: number, reason: string): Promise<Oper
 export function executeOperationRequest(id: number): Promise<OperationRequestRow> {
   return http.post<OperationRequestRow>(`/admin/operation-requests/${id}/execute`);
 }
+
+// ============================================================================
+// W1 一键停售（《接口规范》§7.4 · P3-6）
+//
+// ⚠️ **两条不得**（《PHASE3 落码规格》§13.1）：
+//    1. **不得读 `ab_config` / 不得调 `BizConfigService`**：那套读路径有 60 秒进程内 TTL
+//       且 `ensureLoaded()` 的 catch 静默 fail-open，停售要的是「立刻」，用它读会出现
+//       「后台显示已停售、用户端仍可下单最多 60 秒」且零报错。停售状态只走本组端点。
+//    2. 不得依赖 `OrderAvailabilityService.salesPaused()` —— 那是后端 private 方法且
+//       当前是 `return false` 占位，它不是后台 UI 的读路径。
+//
+// ⚠️ **与 N2 楼宇停用正交，不要复用闸门**（§13.3）：停售是「临时、全局、不动历史订单」，
+//    楼宇停用是「长期下线一栋楼、要过未完结订单闸门」。本组接口不带任何停用闸门码
+//    （60006 / 60007 / 60012 / 60013 —— 那四个是**停用**码，不是停售码）。
+// ============================================================================
+
+/** 停售区间（`ab_sales_pause` 一行）—— 字段形态与实体 `SalesPause` 一致 */
+export interface SalesPauseRow {
+  id: number;
+  /** 停售起始出餐日（含）· `YYYY-MM-DD` */
+  mealDateFrom: string;
+  /** 停售截止出餐日（含）· `YYYY-MM-DD`；允许等于 `mealDateFrom`（「停售明日」即此形态）*/
+  mealDateTo: string;
+  /** 停售原因 —— 会原样随用户端文案下发，故后端强制必填且 ≥ 4 字 */
+  reason: string;
+  createdBy: number | null;
+  /** 恢复时刻；`null` = 该区间**仍生效** */
+  resumedAt: string | null;
+  resumedBy: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SalesPausePayload {
+  mealDateFrom: string;
+  mealDateTo: string;
+  reason: string;
+}
+
+/**
+ * 停售列表（**含历史**）· GET —— operator 可读
+ *
+ * ❗ 出参是**裸数组**（`SalesPauseRow[]`），与 `fetchOperationRequests` 同形，
+ *    后端刻意**不套** `{ list }`。`http.get<T>` 只解包业务信封、不解包自定义信封，
+ *    所以套错了**编译期看不出来** —— 改这个签名前先回源 `SalesPauseController.list()`。
+ *
+ * ⚠️ 已恢复的行（`resumedAt` 非空）**不会被过滤掉**，只是按 `id DESC` 排在后面 ——
+ *    历史区间是审计事实，服务端刻意不吞。要区分「生效中 / 已恢复」必须端上自己按
+ *    `resumedAt === null` 过滤，**不能假设第一条就是生效的那条**。
+ */
+export function fetchSalesPauses(): Promise<SalesPauseRow[]> {
+  return http.get<SalesPauseRow[]>('/admin/sales-pause');
+}
+
+/** 创建停售区间 · POST —— 仅 super_admin / admin（真正的闸门是后端 `@Roles`）*/
+export function createSalesPause(payload: SalesPausePayload): Promise<SalesPauseRow> {
+  return http.post<SalesPauseRow>('/admin/sales-pause', payload);
+}
+
+/** 恢复（写 resumedAt / resumedBy）· POST —— 仅 super_admin / admin */
+export function resumeSalesPause(id: number): Promise<SalesPauseRow> {
+  return http.post<SalesPauseRow>(`/admin/sales-pause/${id}/resume`);
+}

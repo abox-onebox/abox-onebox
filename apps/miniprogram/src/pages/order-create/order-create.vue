@@ -41,10 +41,11 @@
           <text class="menu-row__from">来自：{{ d.supplierName }}</text>
         </view>
         <view v-if="daily.rice" class="menu-row">
-          <text class="menu-row__name">随附（{{ daily.kind === 'fmcg' ? '饮品' : '米饭' }}）</text>
-          <text class="menu-row__from"
-            >来自：{{ daily.kind === 'fmcg' ? '品牌方' : '集散中心' }}</text
-          >
+          <!-- ⭐ 2026-10-24 整改：饮品按商品口径展示「来自：品牌」，不再写「随附/开袋即食」 -->
+          <text class="menu-row__name">{{ daily.rice }}</text>
+          <text v-if="daily.kind !== 'fmcg' || daily.riceFrom" class="menu-row__from">{{
+            daily.kind === 'fmcg' ? '来自：' + daily.riceFrom : '集散中心统一供应'
+          }}</text>
         </view>
         <view class="menu-total">
           <text class="menu-total__calc">{{ quantity }} 份 × ¥{{ unitPriceText }}</text>
@@ -75,7 +76,7 @@
         <!-- 取餐信息（M5-17：把「这一单的团长是谁 / 佣金归谁」写清楚） -->
         <view class="card">
           <text class="card__title">
-            <text class="abi abi-16">{{ I.pin }}</text> 取货信息（{{
+            <text class="abi abi-16">{{ I.pin }}</text> 配送信息（{{
               daily.leader?.source === 'bound' ? '跟随团长' : '本楼团长'
             }}）
           </text>
@@ -90,7 +91,7 @@
             TA；如需更换，请通过该楼团长的邀请链接进入。
           </text>
           <!-- ⚠️ 时刻来自响应（`daily.deliverAt`）—— 曾写死 `11:30`（PR-02 收口） -->
-          <text class="pickup-row__hint">明天 {{ daily.deliverAt }} 由团长统一取货并分发</text>
+          <text class="pickup-row__hint">明天 {{ daily.deliverAt }} 由团长统一派送，送到工位</text>
           <view class="pickup-row__tip">
             <text
               ><text class="abi abi-16">{{ I.info }}</text> 有问题？微信直接联系团长沟通</text
@@ -119,6 +120,10 @@
           </text>
         </view>
 
+        <view v-if="isBlocked" class="pay-block">
+          <text class="pay-block__reason">{{ blockedText }}</text>
+          <text class="pay-block__ok">{{ SALES_PAUSED_UNAFFECTED_NOTICE }}</text>
+        </view>
         <button
           class="btn-primary"
           :class="{ 'is-disabled': !canSubmit }"
@@ -126,7 +131,7 @@
           :disabled="!canSubmit"
           @tap="submit"
         >
-          {{ submitting ? '提交中…' : daily.canOrder ? `确认支付 ¥${payText}` : '本场已截单' }}
+          {{ submitting ? '提交中…' : daily.canOrder ? `确认支付 ¥${payText}` : blockedText }}
         </button>
       </block>
 
@@ -170,11 +175,11 @@ import { fetchAvailableCoupons } from '@/api/coupon';
 import type { AvailableCouponItem } from '@/api/coupon';
 import { fetchDaily } from '@/api/meal';
 import { createOrder } from '@/api/order';
-import { ApiError } from '@/api/request';
+import { ApiError, CODE_SALES_PAUSED } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
 import { useWechatPay } from '@/composables/use-wechat-pay';
-import { ORDER_MAX_QUANTITY } from '@/constants';
+import { ORDER_MAX_QUANTITY, SALES_PAUSED_UNAFFECTED_NOTICE } from '@/constants';
 import { fenToYuan, formatTime, uuid } from '@/utils/format';
 import { buildUrl, navigateBack, navigateTo, pageQuery, redirectTo } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
@@ -264,6 +269,32 @@ watch(totalFen, () => {
 const canSubmit = computed(() => !!daily.value?.canOrder && !submitting.value);
 
 /**
+ * 不可下单时**按钮为什么要禁用**（W1 §13.2）
+ *
+ * ⚠️ 按钮保持**渲染并置灰**，不隐藏 —— 隐藏会让人以为今天本来就没开团，转而去问团长，
+ *    把运营决策导致的客诉转成团长的。
+ * ⚠️ 文案取服务端下发的 `daily.reason`（已含原因），不要端上自己组织 ——
+ *    原本这里写死的「本场已截单」在停售场景是错的：原因根本不是截单。
+ */
+const blockedText = computed(() => daily.value?.reason?.trim() || '当前不可下单');
+
+/**
+ * 是否处于「被拦住」态（W1 §13.2）
+ *
+ * ⚠️ 这里**不能写 `reason === 'sales_paused'`**：本字段是服务端下发的**中文原因**
+ *    （`home.dto.ts` 的「不可下单原因文案」），不是枚举码 —— 写成等值匹配去区分成因，
+ *    等于把服务端语义拷一份到端上：服务端一改口径就**静默失配**（恒 false，分支不进，
+ *    页面只是少一句话，构建 / 类型 / e2e 全不红）。这正是判据 W1-UI-5 禁的那一类写法。
+ *    ⚠️ 同名不同义：`api/order.ts` 里取消单的 `reason === 'other'` 是**端上自己**的枚举、
+ *    属**请求入参**，与本字段无关 —— 判据按变量名扫会误伤那一处，必须限定到 `daily.reason`。
+ *    可靠的停售信号只有 U6 下单返回的 **`60009`**（⚠️ 不是 `60010`，那是「某栋楼停用」）。
+ *
+ * ⚠️ 「已下订单不受影响」在**任何**被拦场景下都成立（停售 / 截单 / 未开团都不动历史单），
+ *    故统一展示（判据 W1-UI-4 要求的停售态分支必然包含它）。
+ */
+const isBlocked = computed(() => !!daily.value && !daily.value.canOrder);
+
+/**
  * 已订概览文案（与首页 P1 同一口径）
  *
  * ⚠️ 后端未下发聚合字段时（如线上仍是旧版 API）退化成只报单数 —— 直接插值
@@ -349,7 +380,16 @@ async function submit(): Promise<void> {
 
     redirectTo(buildUrl('/pages/pay-result/pay-result', { orderNo: created.orderNo }));
   } catch (e) {
-    toastApiError(e);
+    // W1 · SALES_PAUSED：与「某栋楼停用」那个相邻码是两码事，别把停售落到楼宇分支上
+    if (e instanceof ApiError && e.code === CODE_SALES_PAUSED) {
+      uni.showToast({
+        title: `${e.message} ${SALES_PAUSED_UNAFFECTED_NOTICE}`,
+        icon: 'none',
+        duration: 3000,
+      });
+    } else {
+      toastApiError(e);
+    }
   } finally {
     submitting.value = false;
   }
@@ -657,6 +697,32 @@ onLoad((options) => {
 
   &.is-disabled {
     background: rgba(154, 139, 114, 0.2);
+    color: $c-text-weak;
+  }
+}
+
+.pay-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+  padding: 20rpx 24rpx;
+  margin-bottom: 20rpx;
+  background: $c-surface;
+  border-left: 4rpx solid $c-warn-fg;
+  border-radius: 12rpx;
+
+  // ⚠️ 停售文案现在是**动态句**（`今日暂停接单：{reason}`，reason 上限 255 字），
+  //    不再是固定 15 字 ⇒ 必须允许换行并保留服务端原样（控制字符已在 JS 侧 trim）。
+  &__reason {
+    font-size: 26rpx;
+    line-height: 1.6;
+    color: $c-warn-fg;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  &__ok {
+    font-size: 24rpx;
     color: $c-text-weak;
   }
 }

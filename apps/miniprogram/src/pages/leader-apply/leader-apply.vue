@@ -51,7 +51,7 @@
             v-model="phone"
             class="field__input"
             type="number"
-            placeholder="用于到楼下提醒用户取货"
+            placeholder="用于团长联络与送达提醒"
             placeholder-class="field__placeholder"
             :maxlength="11"
           />
@@ -170,7 +170,9 @@ const submitting = ref(false);
 const refCode = ref('');
 
 const hasBuilding = computed(() => !!userStore.info?.buildingId);
-const buildingText = computed(() => (hasBuilding.value ? '已绑定（见首页取货点）' : '未绑定'));
+const buildingText = computed(() =>
+  hasBuilding.value ? '已绑定（由本楼团长统一派送）' : '未绑定',
+);
 
 const phoneValid = computed(() => /^1[3-9]\d{9}$/.test(phone.value.trim()));
 const canSubmit = computed(

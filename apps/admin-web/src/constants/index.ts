@@ -437,6 +437,18 @@ export const ADMIN_NAV = [
         module: 'admin/queue',
         icon: 'refresh',
       },
+      // W1 · 一键停售（P3-6）—— 全局拦新单，落在独立表 ab_sales_pause。
+      //   ⚠️ 同上一条的派生规则：operator 的菜单会滤掉 system 段，而本页列表对 operator
+      //      是可读的 ⇒ 必须同步在服务端 OPERATOR_EXTRA_MENUS 里显式加回，
+      //      否则会出现「控制器放行、菜单看不见」（等同页面不存在）。
+      //   ⚠️ 挂在系统段而非 building 段：停售是全局语义，放 building 会被误读成按楼粒度。
+      {
+        path: '/system/sales-pause',
+        title: '一键停售',
+        page: '—',
+        module: 'W1',
+        icon: 'pause',
+      },
     ],
   },
 ] as const;

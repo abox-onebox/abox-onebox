@@ -51,8 +51,13 @@ export interface BuildingRow {
   /** none / no_group / no_center / all_center_disabled */
   gap: string;
   gapLabel: string;
-  /** 营业中 ∧ 已归群 */
-  canOrder: boolean;
+  /**
+   * 能否编排套餐（配置层面，无时间维度）= 营业中 ∧ 已归群
+   *
+   * ⚠️ 语义 ≠ 用户端 / 团长端那个仍用旧名的字段：那边问的是「此刻能否下单」，
+   *    带开团~截单的时间窗口；此字段只表达「配置上够不够格挂套餐」，不随当天团期变化。
+   */
+  canAssign: boolean;
 }
 
 export interface BuildingsSummary {
@@ -65,7 +70,7 @@ export interface BuildingsSummary {
   populationUnregisteredCount: number;
   leaderAssignedCount: number;
   leaderVacantCount: number;
-  canOrderCount: number;
+  canAssignCount: number;
   uncoveredCount: number;
 }
 
@@ -112,7 +117,7 @@ export interface BuildingDetail {
     population: number | null;
     status: number;
     statusLabel: string | null;
-    canOrder: boolean;
+    canAssign: boolean;
   };
   group: { id: number; name: string | null } | null;
   leader: { id: number; realName: string; level: string; levelLabel: string } | null;
@@ -178,7 +183,7 @@ export interface BuildingOverview {
     preparingCount: number;
     suspendedCount: number;
     populationTotal: number;
-    canOrderCount: number;
+    canAssignCount: number;
   };
   leaderStats: {
     assignedCount: number;
@@ -284,6 +289,55 @@ export interface BuildingWritePayload {
   /** 传 null = 移出楼群（不参与任何套餐分配）*/
   buildingGroupId?: number | null;
   status?: number;
+  /**
+   * N2 闸门 · 仅在被 60006 拦下后由二次确认带上（《ADR-N1N2W1》§7）
+   *
+   * ⚠️ 常态表单**不采集**这两个字段 —— 只有被拦下、运营读完影响摘要后
+   *    才要求显式确认。默认写 `true` 会让这个闸门变成装饰性的。
+   */
+  forceSuspend?: boolean;
+  /** 强制停用原因（≥10 字，进 `ab_operation_log` 留痕；不足由后端 `@MinLength(10)` 拒成 10001）*/
+  suspendReason?: string;
+}
+
+/**
+ * N2 闸门 · 停用被拦下时随错误码下发的**影响摘要**（《ADR-N1N2W1》§7）
+ *
+ * ⚠️ 三个介面**按错误码分开建模**，不是一份合并的可选型：
+ *    服务端对不同原因只下发各自有的字段（60012 没有 `samples`，60013 没有 `unfinishedCount`）。
+ *    合成一个「全都可能有的类型」的结果是端上把不存在的字段渲染成 `undefined` ——
+ *    这正是 P3-4 那次改名踩过的失败形状，别再复制一次。
+ *
+ * ⚠️ `hint` 一律**原样展示**：服务端已按「卡退款审批 / 待履约 / 不可撤回」分套措辞，
+ *    端上自己组织词就是第二份中文（《ADR-N1N2W1》§7 采纳 QA 异议 3）。
+ */
+
+/** 60006 楼宇 / 60007 楼群：`1 ≤ N ≤ 阈值`，可走强制停用 */
+export interface UnfinishedOrdersPayload {
+  unfinishedCount: number;
+  /** 履约阶段（cut_off / cooked / delivering / delivered）—— 无权通过停用撤回 */
+  groupA: { count: number; orderNos: string[] };
+  /** 其余未完结（含 refund_applying / refunding）*/
+  groupB: { count: number };
+  earliestMealDate: string;
+  samples: Array<{ orderNo: string; mealDate: string; statusLabel: string }>;
+  threshold: number;
+  hint: string;
+}
+
+/** 60012：`N > 阈值`，即使带 force 也无效，须走两级审批 */
+export interface SuspendRequireApprovalPayload {
+  unfinishedCount: number;
+  threshold: number;
+  /** 提交 `/admin/operation-requests` 用的 opCode（如 `suspend_building`），原样展示 */
+  opCode: string;
+  hint: string;
+}
+
+/** 60013：A 组已进履约阶段，硬约束不可撤回 */
+export interface SuspendIrrevocablePayload {
+  groupA: { count: number; orderNos: string[] };
+  hint: string;
 }
 
 export interface BuildingWriteResult {
@@ -295,7 +349,7 @@ export interface BuildingWriteResult {
   population: number | null;
   gap: string;
   gapLabel: string;
-  canOrder: boolean;
+  canAssign: boolean;
   changed?: string[];
   /** 「还差什么才能开团」的逐条说明（不阻断保存）*/
   warnings: string[];
@@ -412,6 +466,10 @@ export interface GroupWritePayload {
   buildingIds?: number[];
   /** 停用要求成员楼已清空，否则 60003 */
   status?: number;
+  /** N2 闸门 · 同 `BuildingWritePayload`（被 60007 拦下后才会带上）*/
+  forceSuspend?: boolean;
+  /** 强制停用原因（≥10 字，进 `ab_operation_log` 留痕）*/
+  suspendReason?: string;
 }
 
 export interface GroupWriteResult {

@@ -131,6 +131,13 @@ export const CONFIG_GROUPS: Array<{ group: string; label: string; description: s
     description: '下单与支付环节的硬约束。改动**立即生效**（进程内缓存同步失效）。',
   },
   {
+    group: 'building',
+    label: '楼宇与楼群',
+    description:
+      '停用动作的闸门阈值。⚠️ 改动**立即生效**（进程内缓存同步失效）。' +
+      '调大上限等于放宽运营的单人操作权限，请谨慎。',
+  },
+  {
     group: 'timeline',
     label: '业务时刻（联动下单窗口与跑批）',
     description:
@@ -251,11 +258,45 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     type: 'money',
     impact: 'commission',
     wiring: 'live',
-    description: '团长发起提现的金额下限；低于此值直接拒绝，避免小额出款被手续费吃掉。',
+    description:
+      '团长发起提现的金额下限，低于此值直接拒绝（40003）。D3 定稿：**0 = 不限起提**' +
+      '（与「单日 1 笔」并存，笔数已被锁死）；地板 ¥0.01 由 DTO 的 `@Min(0.01)` 兜住，' +
+      '故配 0 不会放行 ¥0。',
     unit: '元',
     min: 0,
     max: 99999,
     consumedBy: '`commission.service` 提现校验 · `withdraw.service` 提现校验',
+  },
+  {
+    key: 'commission.withdraw_daily_limit',
+    group: 'commission',
+    label: '单日提现上限',
+    type: 'money',
+    impact: 'commission',
+    wiring: 'live',
+    description:
+      'D3 定稿：每人每自然日（北京时区 00:00–24:00）累计提现申请额上限，' +
+      '含本次申请额，超出拒绝（40024）。计入 pending/approved/paying/success，' +
+      'rejected/failed 不计入（钱已原路解冻，再拦等于罚站长）。0 = 不限。',
+    unit: '元',
+    min: 0,
+    max: 99999,
+    consumedBy: '`withdraw.service.apply()` 当日累计校验',
+  },
+  {
+    key: 'commission.withdraw_daily_count',
+    group: 'commission',
+    label: '单日提现笔数上限',
+    type: 'int',
+    impact: 'commission',
+    wiring: 'live',
+    description:
+      'D3 定稿：同一自然日允许的非终态提现申请笔数，超出拒绝（40025）。' +
+      '驳回 / 打款失败后可再次申请。0 = 不限。',
+    unit: '笔',
+    min: 0,
+    max: 99,
+    consumedBy: '`withdraw.service.apply()` 当日笔数校验',
   },
   {
     key: 'commission.payout_channel',
@@ -390,6 +431,45 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     max: 1440,
     fallbackValue: '30',
     consumedBy: '`order.service` 支付超时判定',
+  },
+
+  // ------------------------------------------------------------ building 楼宇与楼群
+  {
+    key: 'building.suspend_force_max_count',
+    group: 'building',
+    label: '单人可强制停用的未完结订单上限',
+    type: 'int',
+    impact: 'master',
+    wiring: 'live',
+    description:
+      '未完结订单数不超过此值时，运营可填原因强制停用；超过则必须走高危操作审批（两级 approve→execute）。',
+    unit: '笔',
+    min: 0,
+    max: 1000,
+    fallbackValue: '20',
+    consumedBy: '`BuildingAdminService.assertBuildingSuspendable()` / `assertGroupSuspendable()`',
+  },
+  {
+    key: 'building.suspend_reason_min_length',
+    group: 'building',
+    label: '强制停用原因最少字数',
+    // ⚠️ ConfigWiring 只有 'live' | 'unwired' | 'policy' 三档（见本文件 :57），没有 'none'。
+    //    本键的真实状态是「口径记录」，必须照既有的 unwired 键用 'unwired' + unwiredReason。
+    type: 'int',
+    impact: 'master',
+    wiring: 'unwired',
+    description:
+      '强制停用时必须填写的原因字数下限。用于事后追溯「谁、为什么在有几笔单未完结时停了这栋楼」。' +
+      '⚠️ **当前实现固定为 10 字**（写在 `UpdateBuildingDto` / `UpdateBuildingGroupDto` 的 ' +
+      '`@MinLength(10)` 装饰器上，编译期常量），**本键仅记录口径，修改本键不会生效**。',
+    unit: '字',
+    min: 0,
+    max: 200,
+    fallbackValue: '10',
+    unwiredReason:
+      '字数下限由 DTO 装饰器 `@MinLength(10)` 在编译期固定，运行时不读 `ab_config`。' +
+      '要让它真可配，得绕开 ValidationPipe 自造一份运行时校验 —— 那是第二份校验逻辑，本批不做。',
+    consumedBy: '`UpdateBuildingDto` / `UpdateBuildingGroupDto` 的 `@MinLength`（DTO 侧静态校验）',
   },
 
   // ------------------------------------------------------------ service 客服入口

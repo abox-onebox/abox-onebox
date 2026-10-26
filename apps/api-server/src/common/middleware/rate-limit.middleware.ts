@@ -71,6 +71,21 @@ export interface RateLimitRule {
   maxPerAccount?: number;
   /** 账号标识提取（仅在能拿到**稳定**标识时才给这个函数，见文件头「维度」一节） */
   accountOf?: (req: Request) => string | undefined;
+  /**
+   * ⛔ **计数失败时是否拒绝请求（fail-closed）** —— 默认 `false`（放行，保可用）。
+   *
+   * ⚠️ 只对**安全边界**设 `true`，判断标准只有一条：
+   *    **「放行」会不会让攻击者拿到本不该拿的能力？**
+   *      · 登录接口 —— 是。计数不可用 ⇒ 暴力破解保护静默失效 ⇒ 必须拒绝。
+   *      · 业务防刷（如 `order:create`）—— 否。它防的是「刷」，不是「攻」；
+   *        为了防刷在 Redis 抖动时把整个下单接口打挂，**得不偿失**。
+   *
+   * ⚠️ 与 `KvService.incr()` 的 fail-closed 是**两件事**，别互相替代：
+   *    那边管「不许静默降级到内存」（降级⇒计数偏小），
+   *    这边管「真的抛错之后怎么办」（拒绝 or 放行）。
+   *    **只改那边而这里是 fail-open，等于白改** —— 保护照样失效，且不抛错、更难发现。
+   */
+  failClosed?: boolean;
 }
 
 /**
@@ -102,6 +117,8 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
       const u = (req.body as { username?: unknown } | undefined)?.username;
       return typeof u === 'string' && u.trim() ? u.trim().toLowerCase() : undefined;
     },
+    // 后台账号是**最高权限入口**，无计数保护即等于开放暴力破解 ⇒ 故障时拒绝
+    failClosed: true,
   },
   {
     label: 'auth:login',
@@ -109,6 +126,8 @@ export const RATE_LIMIT_RULES: RateLimitRule[] = [
     path: /^\/auth\/login$/,
     windowSec: 60,
     maxPerIp: 60,
+    // 同 `auth:admin-login`：登录是安全边界，计数不可用 ⇒ 不放行
+    failClosed: true,
   },
   {
     label: 'order:create',
@@ -278,8 +297,27 @@ export function createRateLimitMiddleware(kv: KvService) {
         filter.catch(new BizException(ErrorCode.TOO_MANY_REQUESTS), hostOf(req, res));
       })
       .catch((e: unknown) => {
-        // fail-open：限流器自身故障不得阻断业务
-        logger.warn(`限流计数失败，本次放行：${(e as Error)?.message ?? e}`);
+        const msg = (e as Error)?.message ?? String(e);
+        /**
+         * ⛔ **分流点**：安全边界（`failClosed`）故障时**拒绝**，其余**放行**保可用。
+         *
+         * ⚠️ **这里是 `KvService.incr` fail-closed 的另一半** —— 那边只保证
+         *    「不静默降级到内存」，若此处一律放行，抛错后保护照样失效，
+         *    而且比降级更难发现（降级至少还在计数，放行是零计数、零日志）。
+         *
+         * 借道 `TOO_MANY_REQUESTS`（429）产出响应 —— **不新增错误码**：
+         *    端上不必为「限流器坏了」再加一条分支（一次性故障，不值得端上分支）。
+         * ⚠️ 但日志必须能区分：运维看到 429 时要分得清「真被限了」与「限流器坏了」，
+         *    故本前缀严格写成 `限流不可用`，与上面的 `限流命中` 区分。
+         */
+        if (rule.failClosed) {
+          logger.error(
+            `限流不可用，fail-closed 拒绝请求（${rule.label}）· ${req.method} ${path} · ${msg}`,
+          );
+          filter.catch(new BizException(ErrorCode.TOO_MANY_REQUESTS), hostOf(req, res));
+          return;
+        }
+        logger.warn(`限流计数失败，本次放行（非安全边界 ${rule.label}）：${msg}`);
         next();
       });
   };

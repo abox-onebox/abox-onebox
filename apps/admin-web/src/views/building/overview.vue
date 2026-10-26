@@ -45,9 +45,9 @@
         <span class="stats__value">{{ data?.buildings.populationTotal ?? 0 }}</span>
       </div>
       <div class="stats__item">
-        <span class="stats__label">可开团楼栋</span>
+        <span class="stats__label">可编排楼栋</span>
         <span class="stats__value">
-          {{ data?.buildings.canOrderCount ?? 0 }}
+          {{ data?.buildings.canAssignCount ?? 0 }}
           <span class="stats__sub">/ {{ data?.buildings.totalCount ?? 0 }}</span>
         </span>
       </div>

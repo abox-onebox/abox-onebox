@@ -11,16 +11,10 @@ import {
 } from '@abox/shared-types';
 
 import { BizConfigService } from '../../common/services/biz-config.service';
+import { OrderAvailabilityService } from '../../common/services/order-availability.service';
 import { toFen } from '../../common/utils/money';
 import { currentTimeline, formatTimeOfDay } from '../../common/utils/order-timeline';
-import {
-  addDays,
-  arrivalAtOf,
-  cutoffAtOf,
-  isOrderable,
-  todayBj,
-  toBjIso,
-} from '../../common/utils/time';
+import { addDays, arrivalAtOf, cutoffAtOf, todayBj, toBjIso } from '../../common/utils/time';
 import { Building } from '../../database/entities/building.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { DeliveryRecord, Order } from '../../database/entities/order.entity';
@@ -49,22 +43,33 @@ export class LeaderWorkbenchService {
     @InjectRepository(DeliveryRecord) private readonly deliveryRepo: Repository<DeliveryRecord>,
     @InjectRepository(Building) private readonly buildingRepo: Repository<Building>,
     private readonly bizConfig: BizConfigService,
+    /** N1（P3-4）：「明日能不能下单」与用户端 U1 同一判据，避免团长端与用户端对不上 */
+    private readonly availability: OrderAvailabilityService,
   ) {}
 
   async getWorkbench(leader: TeamLeader) {
     const today = todayBj();
     const tomorrow = addDays(today, 1);
 
-    const [todayOrders, tomorrowOrders, building, cutoffWindowMinutes, unitPriceYuan] =
-      await Promise.all([
-        this.scopeOrders(leader, today),
-        this.scopeOrders(leader, tomorrow),
-        leader.buildingId
-          ? this.buildingRepo.findOne({ where: { id: Number(leader.buildingId) } })
-          : Promise.resolve(null),
-        this.bizConfig.cutoffWindowMinutes(),
-        this.bizConfig.unitPriceYuan(),
-      ]);
+    // ⚠️ 截单窗口不再在这里读：它已随「能否下单」一起下沉到 `OrderAvailabilityService`
+    //    （本服务若再读一份，就是第二条口径来源）
+    const [todayOrders, tomorrowOrders, building, unitPriceYuan] = await Promise.all([
+      this.scopeOrders(leader, today),
+      this.scopeOrders(leader, tomorrow),
+      leader.buildingId
+        ? this.buildingRepo.findOne({ where: { id: Number(leader.buildingId) } })
+        : Promise.resolve(null),
+      this.bizConfig.unitPriceYuan(),
+    ]);
+
+    /**
+     * ⚠️ 团长端「明日能不能订单」必须与用户端 U1 **同源**：原来是 `isOrderable()` 纯时间判定，
+     *    楼宇被停用时团长端仍显示可下单，而用户端点下去就是 60010 —— 两边对不上时团长
+     *    只会以为是用户操作问题。`building` 已在上面取到，这里按 buildingId 复用，不重查。
+     */
+    const availability = building
+      ? await this.availability.forBuilding(tomorrow, Number(building.id))
+      : null;
 
     const rate = Number(leader.commissionRate);
     const unitPriceFen = toFen(unitPriceYuan);
@@ -120,7 +125,14 @@ export class LeaderWorkbenchService {
         orderedOrders: tomorrowActive.length,
         /** 截单时刻 T-1 24:00（= 明日 00:00） */
         cutoffAt: toBjIso(cutoffAtOf(tomorrow)),
-        canOrder: isOrderable(tomorrow, cutoffWindowMinutes),
+        /**
+         * ⚠️ 字段名**保持 `canOrder` 不变**：团长端问的是「此刻还能不能追加」，
+         *    与管家端那个「配置上能否编排」的同名同义字段是两件事 —— 管家端那个
+         *    已改名 `canAssign`（无时间维度），本端跟着改名等于改了团长端契约而语义没变。
+         */
+        canOrder: availability?.canOrder ?? false,
+        /** 为什么不能下单（现在只有 `canOrder` 没有原因，团长看不出是楼停了还是过了截单） */
+        reasonText: availability?.reasonText ?? null,
         unitPriceFen,
       },
       pickup: {

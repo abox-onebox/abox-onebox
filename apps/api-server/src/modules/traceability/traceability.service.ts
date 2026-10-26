@@ -282,7 +282,7 @@ export class TraceabilityService {
       throw new BizException(ErrorCode.NOT_FOUND, `办公楼 #${buildingId} 不存在`);
     }
     if (!building.buildingGroupId) {
-      throw new BizException(ErrorCode.NOT_FOUND, '所属办公楼未配置楼群，请联系运营');
+      throw new BizException(ErrorCode.BUILDING_NOT_GROUPED);
     }
     return Number(building.buildingGroupId);
   }

@@ -103,8 +103,30 @@ const data = ref<SupplierQualificationDetail | null>(null);
 const loadError = ref<ApiError | null>(null);
 const supplierId = ref<number | null>(null);
 
-const emptyText = computed(() => (supplierId.value ? '取不到该出品方的证照' : '缺少出品方编号'));
-const emptyHint = computed(() => loadError.value?.message ?? '请返回列表重新选择一家出品方');
+/**
+ * ⭐ 空态兜底的分界线只有一条：**这一支拿不拿得到服务端 message**
+ *
+ * 1. **有 `supplierId` 但取不到证照** —— 请求确实发出去过，服务端驳回必然带了 message
+ *    ⇒ **回落服务端 message**（判据 N1-26）。端上那句兜底只在真拿不到时才用
+ *    （异常不是 `ApiError`、或服务端给了空串）—— 它就写在下面这行里，不在此复述。
+ * 2. **没有 `supplierId`** —— 压根没发请求，服务端不可能给过 message
+ *    ⇒ 端上自己的话，属 N1-26 明确豁免的那一类（与 `index.vue` 的「没码」同族）。
+ *
+ * ⚠️ 分界线是「能不能拿到 message」，**不是**「这个码重不重要 / 值不值得专属分支」：
+ *    按码挑选哪些该回落，等于把「硬编码中文」从一个码摊到 N 个码 —— 服务端每拆一个
+ *    新码端上就要跟着改一遍，契约变更就从一处扩散成两处，正是本批在消灭的第二真相。
+ */
+const emptyText = computed(() =>
+  supplierId.value ? loadError.value?.message || '取不到该出品方的证照' : '缺少出品方编号',
+);
+
+/**
+ * 提示行只承担「下一步怎么办」，与标题的「为什么拿不到」互补。
+ *
+ * ⚠️ 标题既已回落服务端文案，这里**绝不能再放 message** —— 同一句会上下各渲染一次
+ *    （`ab-empty-state` 是 `v-if="hint"`，传空串才不渲染）。
+ */
+const emptyHint = '请返回列表重新选择一家出品方';
 
 async function load(): Promise<void> {
   const id = supplierId.value;

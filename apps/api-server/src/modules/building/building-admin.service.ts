@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, IsNull, Repository } from 'typeorm';
+import { In, IsNull, MoreThanOrEqual, Not, Repository } from 'typeorm';
 
 import {
   BUILDING_GROUP_STATUS_LABEL,
@@ -13,16 +13,34 @@ import {
   GroupCoverageState,
   LEADER_LEVEL_META,
   LeaderLevel,
+  ORDER_STATUS_VIEW,
+  ORDER_TERMINAL_STATUS,
+  OrderStatus,
 } from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
+import { BizConfigService } from '../../common/services/biz-config.service';
+import { evaluateStructure } from '../../common/utils/orderability';
 import { normalizePage, paginate } from '../../common/utils/response';
+import {
+  SuspendCounts,
+  SuspendHintKey,
+  SuspendScope,
+  decideSuspend,
+  groupOf,
+  hintKeyOf,
+  isUnfinished,
+  suspendBlockCode,
+} from '../../common/utils/suspend-gate';
 import { todayBj, tomorrowBj } from '../../common/utils/time';
+import { NOTIFY_PAGES } from '../admin/template/message-template.specs';
 import { Building, BuildingGroup } from '../../database/entities/building.entity';
 import { DistributionCenter } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { MealAssignment, SetMeal } from '../../database/entities/meal.entity';
+import { Order } from '../../database/entities/order.entity';
+import { MessageService } from '../message/message.service';
 import {
   AdminBuildingGroupsQueryDto,
   AdminBuildingsQueryDto,
@@ -36,6 +54,47 @@ type Row = Record<string, unknown>;
 
 /** 集散中心状态（`ab_distribution_center.status`）· 与 M3-6 同一口径 */
 const DC_ACTIVE = 1;
+
+/**
+ * 往已停用楼群搬楼 / 挂楼时的提示（两句：错什么 + 怎么修 · 沿用 ADR §7 的 `hint` 写法）
+ *
+ * ⚠️ 抽成常量的原因：这条 `hint` 由 `assertGroupOpen()` **一处**持有、`createBuilding` /
+ *    `updateBuilding` / `assignMembers` **三条**写路径共用；若各写一份，就是三份会
+ *    各自漂移的文案 —— 正是本批 N1 在治的病。
+ */
+const GROUP_SUSPENDED_HINT =
+  '目标楼群已停用：成员楼会静默失去开团能力（楼自身仍显示「营业中」，用户端却显示「今日未开团」）。请先恢复该楼群，或改挂一个启用中的楼群。';
+
+/**
+ * N2 停用被拦时的 hint —— 与 `GROUP_SUSPENDED_HINT` 同一写法：**错什么 + 怎么修**
+ *
+ * ⚠️ 为什么必须区分「卡退款审批」与「待履约」：8 态里 `refund_applying` / `refunding`
+ *    和 `paid` 一样会被闸门拦下，但运营该做的动作完全不同。不区分的话他看到
+ *    「有未完结订单」却不知道该去点退款审批还是去等配送，最常见的处理是**反复重试停用**
+ *    —— 把一次配置疏漏变成一串无效操作日志。
+ */
+const SUSPEND_HINT: Record<SuspendHintKey, string> = {
+  refund_stuck:
+    '有订单卡在退款审批 —— 停用不会推进退款，也不会取消它。请先去退款审批放行或驳回，再停用。',
+  fulfill_pending:
+    '有订单待履约 —— 停用不等于退款，这些单会照常配送。确认无需配送后再停用，或先逐单退款。',
+  irrevocable:
+    '已有订单进入履约阶段（已截单 / 出餐 / 在途 / 已送达），供应商已按份数备货，无法通过停用撤回 —— 只能逐单走 force_refund 审批。',
+  threshold:
+    '未完结订单数超过单人可强制停用的上限，force 在此无效 —— 须走高危操作审批（两级 approve→execute）。',
+};
+
+/** 未完结订单样例条数（只用于出参 `samples`，不参与判定） */
+const SUSPEND_SAMPLE_SIZE = 5;
+
+/**
+ * 单次停用**最多通知多少人**（防误触全量；与编排侧 `DEFAULT_LIMIT=500` 同量级）
+ *
+ * ⚠️ 为什么要有上限：停用是**一次点击**，而它的通知面是「这栋楼所有未完结订单」。
+ *    真出现几百笔存量单时，那不是通知，是群发事故 —— 且失败行会一起写进 `ab_message`，
+ *    把这张表（语义是「发过什么」）冲淡。超上限只处理最早的一批并**如实 WARN**。
+ */
+const SUSPEND_NOTIFY_LIMIT = 500;
 
 /**
  * 后台 · 办公楼 / 楼群服务（M3-7 · 《接口规范》§6.3 D13–D18 · 原型 P37 · 模块 M33-01/02）
@@ -77,6 +136,8 @@ const DC_ACTIVE = 1;
  */
 @Injectable()
 export class BuildingAdminService {
+  private readonly logger = new Logger('BuildingAdmin');
+
   constructor(
     @InjectRepository(Building) private readonly buildingRepo: Repository<Building>,
     @InjectRepository(BuildingGroup) private readonly groupRepo: Repository<BuildingGroup>,
@@ -84,6 +145,19 @@ export class BuildingAdminService {
     @InjectRepository(DistributionCenter) private readonly dcRepo: Repository<DistributionCenter>,
     @InjectRepository(MealAssignment) private readonly assignRepo: Repository<MealAssignment>,
     @InjectRepository(SetMeal) private readonly setMealRepo: Repository<SetMeal>,
+    /** N2（P3-5）：停用闸门要数未完结订单 */
+    @InjectRepository(Order) private readonly orderRepo: Repository<Order>,
+    /** N2：闸门阈值 `building.suspend_force_max_count`（`@Global()` 的 CommonModule 已导出） */
+    private readonly bizConfig: BizConfigService,
+    /**
+     * N2：强制停用放行后通知存量订单用户（spec §6.5）
+     *
+     * ⚠️ 用的是 **投递侧** `MessageService.notify()`，不是编排侧
+     *    `MessageOrchestratorService.orchestrate()` —— 理由见 `notifySuspendAffected()`。
+     *    投递规则（场景 / 启用闸门 / 渠道 / 收件人解析 / 落 `ab_message`）仍只在
+     *    `message.service.ts` 一处，本服务不写第二份。
+     */
+    private readonly message: MessageService,
   ) {}
 
   // ==========================================================================
@@ -165,6 +239,31 @@ export class BuildingAdminService {
     return map;
   }
 
+  /**
+   * 管家端「配置上能不能开团」—— **判据只有 `evaluateStructure()` 一份**
+   *
+   * ⚠️ 为什么管家端只调结构层、不调 `evaluateAvailability()`：管家端是运营 KPI，
+   *    **没有时间维度**。叠了时间层，运营夜里看列表会因为「过了截单」看到 false，
+   *    把**周期性状态**误报成**配置缺口** —— 两种问题的处置动作完全不同。
+   *
+   * ⚠️ `buildingGroupStatus` 由调用方传入而不是在这里查：列表 / 概览页已经把楼群整表
+   *    取在内存里（`loadContext()`），本方法若内部再查一次就是 N+1。
+   */
+  private canAssignOf(
+    buildingStatus: number,
+    buildingGroupId: number | null,
+    buildingGroupStatus: number | null,
+  ): boolean {
+    return evaluateStructure({ buildingStatus, buildingGroupId, buildingGroupStatus }).ok;
+  }
+
+  /** 单栋楼所属楼群的 `status`（新增 / 编辑后回显用；列表页不要走这里，见上面注释） */
+  private async groupStatusOf(gid: number | null): Promise<number | null> {
+    if (gid === null) return null;
+    const g = await this.groupRepo.findOne({ where: { id: gid, deletedAt: IsNull() } });
+    return g?.status ?? null;
+  }
+
   // ==========================================================================
   // D13 · 办公楼列表
   // ==========================================================================
@@ -214,8 +313,22 @@ export class BuildingAdminService {
 
         gap,
         gapLabel: DISTRIBUTION_GAP_LABEL[gap],
-        /** 现在能不能真的开团 = 营业中 ∧ 已归群（未归群无法分配套餐） */
-        canOrder: b.status === BuildingStatus.ACTIVE && gid !== null,
+        /**
+         * 配置上能不能开团（**无时间维度** · 管家端语义，与用户端 `canOrder` 不是一回事）
+         *
+         * ⚠️ 这里的 `canOrder` 是**解释性引用**（说明两个语义为何不同名），
+         *    **不要全局替换**为 `canAssign` —— 用户端 / 团长端的字段名仍是 `canOrder`，
+         *    一替换这句就变成「与用户端 `canAssign` 不是一回事」，自相矛盾且不再解释任何东西。
+         *
+         * ⚠️ 判据改为 `evaluateStructure()`：原写法 `status===ACTIVE && gid!==null`
+         *    漏了「所属楼群已停用」—— 楼群停用后成员楼**静默**失去开团能力，
+         *    而这里仍显示「可开团」。
+         */
+        canAssign: this.canAssignOf(
+          b.status,
+          gid,
+          gid ? (groupMap.get(gid)?.status ?? null) : null,
+        ),
       };
     });
 
@@ -252,7 +365,7 @@ export class BuildingAdminService {
       populationUnregisteredCount: rows.filter((r) => r.population === null).length,
       leaderAssignedCount: rows.filter((r) => r.leaderId !== null).length,
       leaderVacantCount: rows.filter((r) => r.leaderId === null).length,
-      canOrderCount: rows.filter((r) => r.canOrder).length,
+      canAssignCount: rows.filter((r) => r.canAssign).length,
       uncoveredCount: rows.filter((r) => r.gap !== DistributionGap.NONE).length,
     };
 
@@ -322,7 +435,11 @@ export class BuildingAdminService {
         population: b.population ?? null,
         status: b.status,
         statusLabel: BUILDING_STATUS_LABEL[b.status] ?? null,
-        canOrder: b.status === BuildingStatus.ACTIVE && gid !== null,
+        canAssign: this.canAssignOf(
+          b.status,
+          gid,
+          gid ? (groups.find((g) => Number(g.id) === gid)?.status ?? null) : null,
+        ),
       },
       group: gid
         ? {
@@ -376,6 +493,7 @@ export class BuildingAdminService {
     const { buildings, groups, leaders, dcList } = await this.loadContext();
     const dcMap = this.dcByGroup(dcList);
     const leaderMap = new Map(leaders.map((l) => [Number(l.buildingId), l]));
+    const groupStatusMap = new Map(groups.map((g) => [Number(g.id), g.status]));
 
     const groupDistribution = groups.map((g) => {
       const gid = Number(g.id);
@@ -435,9 +553,16 @@ export class BuildingAdminService {
         preparingCount: buildings.filter((b) => b.status === BuildingStatus.PREPARING).length,
         suspendedCount: buildings.filter((b) => b.status === BuildingStatus.SUSPENDED).length,
         populationTotal: buildings.reduce((s, b) => s + Number(b.population ?? 0), 0),
-        canOrderCount: buildings.filter(
-          (b) => b.status === BuildingStatus.ACTIVE && b.buildingGroupId,
-        ).length,
+        /**
+         * ⚠️ 这行**原本根本没读列表页那个字段**，而是自己内联了第二份同样的判据
+         *    （`status===ACTIVE && buildingGroupId`）—— 改名时若只改字段名而漏掉它，
+         *    「楼宇概览」就会留一份没人管的旧判据，与列表页是两个独立数字、
+         *    将来对不上也没人查得出。改为与列表页同源，都走 `evaluateStructure()`。
+         */
+        canAssignCount: buildings.filter((b) => {
+          const gid = b.buildingGroupId ? Number(b.buildingGroupId) : null;
+          return this.canAssignOf(b.status, gid, gid ? (groupStatusMap.get(gid) ?? null) : null);
+        }).length,
       },
       leaderStats: {
         assignedCount: leaders.length,
@@ -589,7 +714,13 @@ export class BuildingAdminService {
     const name = dto.name.trim();
     await this.assertBuildingNameFree(name, null);
 
-    if (dto.buildingGroupId) await this.assertGroupExists(dto.buildingGroupId);
+    /**
+     * ⚠️ N4：新建时挂楼群**同样**要过 60008 —— 这是 spec 与 AC 都**没点到**的第三条写路径
+     *    （它们只列了 `assignMembers` 与 `updateBuilding`）。只查「在不在」不够 ——
+     *    楼群存在但已停用时照样放行 ⇒ 楼建进去之后因 `group_suspended`
+     *    不可下单，而后台给运营的回执是「创建成功」。与另两条路径共用同一判据。
+     */
+    if (dto.buildingGroupId) await this.assertGroupOpen(dto.buildingGroupId);
 
     const saved = await this.buildingRepo.save(
       this.buildingRepo.create({
@@ -620,7 +751,7 @@ export class BuildingAdminService {
       population: saved.population ?? null,
       gap,
       gapLabel: DISTRIBUTION_GAP_LABEL[gap],
-      canOrder: saved.status === BuildingStatus.ACTIVE && gid !== null,
+      canAssign: this.canAssignOf(saved.status, gid, await this.groupStatusOf(gid)),
       warnings: this.buildingWarnings(saved, gap, gid),
     };
   }
@@ -671,10 +802,22 @@ export class BuildingAdminService {
       const next = dto.buildingGroupId ?? null;
       const cur = b.buildingGroupId ? Number(b.buildingGroupId) : null;
       if (next !== cur) {
-        if (next !== null) await this.assertGroupExists(next);
+        if (next !== null) {
+          /**
+           * ⚠️ 同 `assignMembers()`：**挂楼**也要查目标楼群状态（N4 · 60008）。
+           *    只查「在不在」不够 —— 楼群存在但已停用时照样放行，成员楼同样会
+           *    静默失去开团能力。这是 60003 的第二条旁路。
+           */
+          await this.assertGroupOpen(next);
+        }
         patch.buildingGroupId = next;
       }
     }
+    /**
+     * N2 闸门 —— 必须放在 `patch.status` 赋值**之前**：拦下时这栋楼的状态还没被改，
+     *    运营改完参数就能直接重试，不需要先把它恢复成营业中。
+     */
+    const gate = await this.assertBuildingSuspendable(id, dto);
     if (dto.status !== undefined && dto.status !== b.status) patch.status = dto.status;
 
     if (Object.keys(patch).length === 0) {
@@ -684,6 +827,14 @@ export class BuildingAdminService {
     Object.assign(b, patch);
     b.version = (b.version ?? 0) + 1;
     const saved = await this.buildingRepo.save(b);
+
+    /**
+     * N2 通知 —— 必须在 `save()` **之后**（`MessageService` 硬约束②：投递点在事务之外）。
+     *    只有「强制停用放行」这一条路径才会产生它，普通编辑不会多出这个字段。
+     */
+    const notifyFailedCount = gate.forced
+      ? await this.notifySuspendAffected('building', Number(saved.id))
+      : undefined;
 
     const gid = saved.buildingGroupId ? Number(saved.buildingGroupId) : null;
     const dcMap = this.dcByGroup(await this.dcRepo.find({ where: { deletedAt: IsNull() } }));
@@ -698,8 +849,14 @@ export class BuildingAdminService {
       population: saved.population ?? null,
       gap,
       gapLabel: DISTRIBUTION_GAP_LABEL[gap],
-      canOrder: saved.status === BuildingStatus.ACTIVE && gid !== null,
+      canAssign: this.canAssignOf(saved.status, gid, await this.groupStatusOf(gid)),
       changed: Object.keys(patch),
+      /**
+       * ⚠️ `notifyFailedCount` **只在强制停用放行时出现**（其余路径不返回该键）。
+       *    它同时会随响应体落进 `ab_operation_log.response_data`（`OperationLogInterceptor`
+       *    回写的就是响应体）—— 这正是 spec §6.5「失败必须留痕」要的那一条。
+       */
+      ...(notifyFailedCount === undefined ? {} : { notifyFailedCount }),
       warnings: this.buildingWarnings(saved, gap, gid),
     };
   }
@@ -964,6 +1121,9 @@ export class BuildingAdminService {
       changedMembers = await this.assignMembers(gid, ids);
     }
 
+    /** N2 闸门回带：是否走了「强制停用放行」（只有这条路径才需要通知存量用户） */
+    let gate: { forced: boolean } | null = null;
+
     if (patch.status === BuildingGroupStatus.SUSPENDED) {
       const remaining = await this.buildingRepo.count({
         where: { buildingGroupId: gid, deletedAt: IsNull() },
@@ -976,11 +1136,21 @@ export class BuildingAdminService {
           { remaining, hint: '请先把成员楼移到其他楼群（或移出楼群）再停用' },
         );
       }
+      /**
+       * N2 闸门 —— 放在 60003 **之后**：先判「成员非空」（一次 `count`），
+       *    再数未完结订单（多次查询）。顺序与既有「先搬楼再判闸门」同一精神。
+       */
+      gate = await this.assertGroupSuspendable(gid, dto);
     }
 
     Object.assign(g, patch);
     g.version = (g.version ?? 0) + 1;
     const saved = await this.groupRepo.save(g);
+
+    /** N2 通知 —— 同上：只在强制停用放行后、且 `save()` 之后 */
+    const notifyFailedCount = gate?.forced
+      ? await this.notifySuspendAffected('building_group', gid)
+      : undefined;
 
     const buildings = await this.buildingRepo.find({
       where: { buildingGroupId: gid, deletedAt: IsNull() },
@@ -998,6 +1168,8 @@ export class BuildingAdminService {
       memberCount: buildings.length,
       changedMembers,
       changed: Object.keys(patch),
+      /** 同楼宇侧：只在强制停用放行时出现，并随响应体落进 `ab_operation_log` */
+      ...(notifyFailedCount === undefined ? {} : { notifyFailedCount }),
       coverageState: state,
       coverageLabel: GROUP_COVERAGE_LABEL[state],
       warnings:
@@ -1007,6 +1179,301 @@ export class BuildingAdminService {
             ]
           : [],
     };
+  }
+
+  // ==========================================================================
+  // 内部：N2 停用闸门（未完结订单校验）
+  //
+  // ⚠️ 本服务**只做 IO + 调用**，不写任何 `if` 判据 —— 判据全在 `utils/suspend-gate.ts`
+  //    的纯函数里。理由见该文件头：这里的三条防线（8 态反算 / A-B 现算 / hint 分支）
+  //    漏了都**不报错、不崩溃、e2e 还全绿**，埋在 service 里就没有任何东西能验它们。
+  // ==========================================================================
+
+  /**
+   * 未完结订单谓词 —— **全仓唯一实现**，禁止在别处再写一份 `Not(In([...]))`
+   *
+   * ⚠️ 必须**反算**（终态之外皆未完结）：硬编码未完结清单是 fail-open —— 将来状态机
+   *    新增非终态时它默认放行且无任何信号；反算是 fail-closed，新增状态自动受拦。
+   *
+   * ⚠️ `mealDate >= todayBj()`：历史订单（已过出餐日）不算「未完结」—— 它们的钱、
+   *    货、佣金都已走完自己的通道，停用不影响它们，不该拿来挡运营。
+   */
+  private unfinishedWhere() {
+    return { status: Not(In(ORDER_TERMINAL_STATUS)), mealDate: MoreThanOrEqual(todayBj()) };
+  }
+
+  /**
+   * 统计某个作用域下的未完结订单（8 态）
+   *
+   * ⚠️ 楼群**按 `building_group_id` 查、不查成员楼名单**：60003 要求先清空成员楼才能停用，
+   *    等你真能停用时名单已空，查出来是假绿；而历史订单的 `building_group_id` 是**快照**，
+   *    楼搬走后历史单仍指向旧群 —— 只有按它查才抓得到「人已走、债还在」的单。
+   *
+   * ⚠️ `groupB` 由 `total - groupA` 得出，不单独查：两组的并集恒等于未完结全集
+   *    （未知状态按保守侧归 A，见 `groupOf`），分开查反而会造出「两边加起来不等于总数」
+   *    的静默不一致。
+   */
+  private async countSuspendable(scope: SuspendScope, id: number): Promise<SuspendCounts> {
+    const col = scope === 'building' ? 'o.building_id' : 'o.building_group_id';
+
+    /**
+     * ① 按状态聚合计数（**一条 SQL，最多十几行**）
+     *
+     * ⚠️ 为什么不在 SQL 里写 `status NOT IN (...)`：那样就等于把「哪些状态算未完结」
+     *    又写了一遍 —— 判据从此有 SQL 和 TS 两份表述，改一边漏一边正是本批在治的病。
+     *    这里**故意把全状态都取回来**（`GROUP BY` 后行数恒定），由 `isUnfinished()` /
+     *    `groupOf()` 在 TS 侧判定 —— 判据因此**只有一份**。
+     */
+    const rows = await this.orderRepo
+      .createQueryBuilder('o')
+      .select('o.status', 'status')
+      .addSelect('COUNT(*)', 'n')
+      .where(`${col} = :id`, { id })
+      .andWhere('o.meal_date >= :today', { today: todayBj() })
+      .groupBy('o.status')
+      .getRawMany<{ status: string; n: string | number }>();
+
+    let total = 0;
+    let groupB = 0;
+    let refundStuck = 0;
+    let fulfillPending = 0;
+    for (const r of rows) {
+      const n = Number(r.n);
+      if (!isUnfinished(r.status)) continue;
+      total += n;
+      if (groupOf(r.status) === 'B') {
+        groupB += n;
+        // B 组内部再分两小类：运营的下一步动作完全不同（见 SUSPEND_HINT）
+        if (r.status === OrderStatus.REFUND_APPLYING || r.status === OrderStatus.REFUNDING) {
+          refundStuck += n;
+        } else {
+          fulfillPending += n;
+        }
+      }
+    }
+
+    /** ② 样例与 A 组单号：都只取头几条，不参与判定；A/B 同样交给 `groupOf()` 判 */
+    const where = {
+      ...this.unfinishedWhere(),
+      ...(scope === 'building' ? { buildingId: id } : { buildingGroupId: id }),
+    };
+    const [samples, aRows] = await Promise.all([
+      this.orderRepo.find({
+        where,
+        order: { mealDate: 'ASC' },
+        take: SUSPEND_SAMPLE_SIZE,
+        select: { orderNo: true, mealDate: true, status: true },
+      }),
+      this.orderRepo.find({
+        where,
+        order: { mealDate: 'ASC' },
+        take: 10,
+        select: { orderNo: true, status: true },
+      }),
+    ]);
+
+    return {
+      total,
+      groupA: total - groupB,
+      groupB,
+      refundStuck,
+      fulfillPending,
+      aOrderNos: aRows.filter((r) => groupOf(r.status) === 'A').map((r) => r.orderNo),
+      earliestMealDate: samples.length ? samples[0].mealDate : null,
+      samples: samples.map((r) => ({
+        orderNo: r.orderNo,
+        mealDate: r.mealDate,
+        statusLabel: ORDER_STATUS_VIEW[r.status as OrderStatus]?.admin ?? r.status,
+      })),
+    };
+  }
+
+  /**
+   * 闸门执行（楼宇 / 楼群共用，唯一出口）
+   *
+   * ⚠️ 抛码的**决策**来自 `decideSuspend()`，本方法只负责把它翻译成 HTTP 契约
+   *    （错误码 + payload）。payload 里 `hint` 的分支选择也来自纯函数 `hintKeyOf()`。
+   *
+   * ⚠️ **通知不在这里发**：`MessageService` 的硬约束②是「投递点必须在业务事务之外」，
+   *    而本方法跑在 `patch.status` 赋值与 `save()` **之前** —— 此时发通知，一旦后续
+   *    保存失败，就是「用户收到『照常配送』而楼其实没被停用」。故这里只**回带**
+   *    `forced`，由调用方在 `save()` 之后调 `notifySuspendAffected()`。
+   */
+  private async runSuspendGate(
+    scope: SuspendScope,
+    id: number,
+    targetSuspended: boolean,
+    forceSuspend: boolean,
+  ): Promise<{ unfinishedCount: number; forced: boolean }> {
+    const counts = await this.countSuspendable(scope, id);
+    const threshold = await this.bizConfig.suspendForceMaxCount();
+    const d = decideSuspend({ scope, targetSuspended, counts, threshold, forceSuspend });
+
+    if (d.kind === 'allow') return { unfinishedCount: counts.total, forced: false };
+    if (d.kind === 'allow_forced') {
+      /**
+       * 放行，但两件事不能省：
+       *   · 审计 —— 控制器上既有的 `@OperationLog` 会记**请求体**（`forceSuspend` /
+       *     `suspendReason` 都在里面）与**响应体**（响应里的 `notifyFailedCount` 会
+       *     一并落到 `response_data`），本处**不另写一份日志**（写就是第二份审计）。
+       *   · 通知 —— B 组用户必须被告知，见 `notifySuspendAffected()`。
+       */
+      return { unfinishedCount: counts.total, forced: true };
+    }
+
+    throw new BizException(suspendBlockCode(scope, d.reason) as ErrorCode, undefined, undefined, {
+      unfinishedCount: counts.total,
+      groupA: { count: counts.groupA, orderNos: counts.aOrderNos },
+      groupB: { count: counts.groupB },
+      earliestMealDate: counts.earliestMealDate,
+      samples: counts.samples,
+      threshold,
+      hint: SUSPEND_HINT[hintKeyOf(counts, d.reason)],
+      opCode: scope === 'building' ? 'suspend_building' : 'suspend_building_group',
+    });
+  }
+
+  /** 楼宇停用闸门 —— 在 `patch.status` 赋值**之前**调用（拦下时楼的状态尚未被改） */
+  private async assertBuildingSuspendable(
+    id: number,
+    dto: UpdateBuildingDto,
+  ): Promise<{ forced: boolean }> {
+    return this.runSuspendGate(
+      'building',
+      id,
+      dto.status === BuildingStatus.SUSPENDED,
+      dto.forceSuspend === true,
+    );
+  }
+
+  /** 楼群停用闸门 —— 在 60003（成员非空）闸门**之后**调用：先判便宜的，再判贵的 */
+  private async assertGroupSuspendable(
+    gid: number,
+    dto: UpdateBuildingGroupDto,
+  ): Promise<{ forced: boolean }> {
+    return this.runSuspendGate(
+      'building_group',
+      gid,
+      dto.status === BuildingGroupStatus.SUSPENDED,
+      dto.forceSuspend === true,
+    );
+  }
+
+  /**
+   * 强制停用放行后，通知存量订单用户（spec §6.5 · 场景 `building_suspend_fulfill`
+   * / `building_suspend_refund`，声明在 `admin/template/message-template.specs.ts`）
+   *
+   * 返回**没通知到的人数**（`0` = 全部通知到位）。
+   *
+   * ## ⚠️ 为什么调 `MessageService.notify()` 而不是编排侧 `orchestrate()`
+   *
+   * 不是另起一套 —— `orchestrate()` 内部就是**逐条调 `notify()`**（见其类头），
+   * 投递规则（场景 / 启用闸门 / 渠道 / 收件人 openid 解析 / 落 `ab_message`）**仍只有一份**。
+   * 是 `orchestrate()` 的**受众模型装不下**这件事，三条都是硬冲突：
+   *   1. `resolveAudience()` 的口径是「近 N 天下过单 **且目标日尚未下单**」，而我们要
+   *      通知的恰恰是「**已经下单、单还没完结**」的人 —— 两者互为补集，按它解析
+   *      出来的受众**恒为空**，且出参 `audienceSize=0` 看起来完全正常（**静默零投递**）；
+   *   2. `orchestrate()` 一次只带**一个** `mealDate`，而存量订单**每人每单的出餐日不同**，
+   *      统一填一个日期，就是给用户发一条日期写错的话；
+   *   3. 它的日级去重键 `orchestrate:sent:{scene}:{mealDate}:{today}` 会让同一天
+   *      **第二次停用直接抛 `DUPLICATE_SUBMIT`** —— 两次停用是两栋楼、两批人，却被当重复。
+   *
+   * ## ⚠️ 两批两套模板，绝不合成一套（D-N2-3b）
+   *
+   * `paid` 的人最终拿到**餐**，`refunding` 的人最终拿到**退款**。合成一句「照常配送」，
+   * 会让一个正在退款的用户据此**不做午饭安排** —— 不发是失职，发错是误导。
+   *
+   * ## ⚠️ 不阻断 / 不重试
+   *
+   * 整块包在 try/catch 里，任何失败都不改变「楼已停用」这个结果；**不做自动重试**
+   * （重复打扰），留运营按 `ab_message` 的失败行手动补发。
+   */
+  private async notifySuspendAffected(scope: SuspendScope, id: number): Promise<number> {
+    let attempted = 0;
+    let notified = 0;
+    const skipped = new Map<string, number>();
+
+    try {
+      const rows = await this.orderRepo.find({
+        where: {
+          ...this.unfinishedWhere(),
+          ...(scope === 'building' ? { buildingId: id } : { buildingGroupId: id }),
+        },
+        select: { id: true, orderNo: true, userId: true, mealDate: true, status: true },
+        order: { mealDate: 'ASC' },
+        take: SUSPEND_NOTIFY_LIMIT,
+      });
+      if (rows.length >= SUSPEND_NOTIFY_LIMIT) {
+        this.logger.warn(
+          `停用通知受众达到上限 ${SUSPEND_NOTIFY_LIMIT}（scope=${scope} id=${id}）：` +
+            '只处理最早的一批，其余**不会自动补发** —— 请拆分处理或人工核对',
+        );
+      }
+
+      /**
+       * 只通知 **B 组**：A 组（已截单及之后）已在履约链上，「照常配送」是它唯一
+       * 可能的结局，再发一条属于打扰（原型「常规状态不推」同一原则）。
+       * ⚠️ 分组仍由 `groupOf()` 判 —— 不在这里手抄一份状态清单。
+       */
+      const targets = rows.filter((r) => r.userId && groupOf(r.status) === 'B');
+      attempted = targets.length;
+
+      const results = await Promise.all(
+        targets.map(async (o) => {
+          const mealDate = String(o.mealDate);
+          try {
+            const r = await this.message.notify({
+              scene:
+                o.status === OrderStatus.REFUND_APPLYING || o.status === OrderStatus.REFUNDING
+                  ? 'building_suspend_refund'
+                  : 'building_suspend_fulfill',
+              userId: Number(o.userId),
+              page: NOTIFY_PAGES.orderDetail,
+              /**
+               * ⚠️ `orderNo` **必须**进 `variables`：它落进 `ab_message.payload`，
+               *    是 spec §6.5「让运营事后看得到……是谁」那一条里「是谁」的唯一凭据。
+               *    只记 `notifyFailedCount` 一个数字，事后无从知道漏的是哪几笔。
+               *    ⚠️ 它**不进** `wxData`（用户看不到，也不是模板变量）—— 两者不是一回事：
+               *    `wxData` 是给用户看的内容，`variables` 是给排查看的落库字段。
+               */
+              variables: { mealDate, orderNo: String(o.orderNo) },
+              wxData: { mealDate: { value: mealDate } },
+            });
+            return {
+              ok: r.delivered && r.ok === true,
+              reason: r.delivered
+                ? (r.errMsg ?? '通道未回报')
+                : (r.reason ?? '未投递（未给出原因）'),
+            };
+          } catch (e) {
+            return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+          }
+        }),
+      );
+
+      for (const r of results) {
+        if (r.ok) notified += 1;
+        else skipped.set(r.reason, (skipped.get(r.reason) ?? 0) + 1);
+      }
+    } catch (e) {
+      // ⚠️ 连查询都失败时**受众规模未知** —— 这种失败不能回 `0`（那会被读成
+      //    「都通知到了」）。回 `1` 表示「至少一次失败、且规模未知」，并单独留痕。
+      this.logger.warn(
+        `停用通知未能执行（scope=${scope} id=${id}）：${e instanceof Error ? e.message : String(e)}` +
+          ' —— 停用**不受影响**，但存量订单用户本轮没有收到任何告知，请人工补发',
+      );
+      return attempted - notified + 1;
+    }
+
+    const failed = attempted - notified;
+    if (failed > 0) {
+      this.logger.warn(
+        `停用通知未完成（scope=${scope} id=${id}）：目标 ${attempted} 人、已通知 ${notified} 人、` +
+          `未通知 ${failed} 人（${[...skipped].map(([r, n]) => `${r}×${n}`).join('、')}）` +
+          ' —— 不自动重试，请按 `ab_message` 的失败行手动补发',
+      );
+    }
+    return failed;
   }
 
   // ==========================================================================
@@ -1022,6 +1489,16 @@ export class BuildingAdminService {
    *   · 不动「属于其他楼群、且不在本列表里」的楼
    */
   private async assignMembers(gid: number, ids: number[]): Promise<number> {
+    /**
+     * ⚠️ 入口查目标楼群状态（N4 · 60008）—— 60003 的**旁路堵漏**
+     *
+     * `BUILDING_GROUP_NOT_EMPTY`(60003) 只保证「停用楼群的那一刻成员为 0」，
+     *    却管不到「停用之后再把楼搬进来」。本方法此前完全不查目标楼群状态，
+     *    运营往一个已停用的楼群里搬楼，成员楼会**静默**失去开团能力 —— 这正是
+     *    裁决 3 里「错了以后看不见」的那类，必须拦。
+     */
+    await this.assertGroupOpen(gid);
+
     const target = [...new Set(ids.map(Number))];
     const current = await this.buildingRepo.find({
       where: { buildingGroupId: gid, deletedAt: IsNull() },
@@ -1088,8 +1565,47 @@ export class BuildingAdminService {
     }
   }
 
-  private async assertGroupExists(gid: number): Promise<void> {
+  /**
+   * N4 判据（**全仓唯一**）—— 目标楼群此刻收不收楼（60008 旁路堵漏）
+   *
+   * ⚠️ **三条写路径**都会把 `building_group_id` 指向某个楼群：`createBuilding` /
+   *    `updateBuilding` 的归群分支 / `assignMembers`（批量搬楼）。判据只能在**这一处**，
+   *    否则就是同一件事三份表述、将来各自漂移 —— 正是本批 N1 在治的病。
+   *    ⚠️ `throw` **不在这里、也不在各调用点**：60008 的抛点收口后全仓只剩
+   *    `assertGroupOpen()` **一处**（见其头注），三条路径共用、payload 形状一致。
+   *    本方法只回**判据**不抛码，是因为 `missing` / `suspended` 对应两个不同的码
+   *    （`BUILDING_GROUP_NOT_FOUND` / 60008），压成一个 boolean 就把区分弄丢了。
+   *
+   * ⚠️ **直接读 `status`**，不做「楼群停用了但楼还想挂进去」这类一致性判定 ——
+   *    楼群停用是它**自己**的属性，与被挂那栋楼当前什么状态**无关**。
+   *
+   * ⚠️ `missing` 与 `suspended` **必须分开返回**，不能合成一个 boolean：
+   *    行取不到该抛 `BUILDING_GROUP_NOT_FOUND`，而不是被当成「没收楼」放行。
+   *    写成 `g?.status === SUSPENDED` 时，`g` 为 undefined ⇒ 恒 false ⇒ **静默放行** ——
+   *    这正是 D-N1-8 那一类「拿语义判定去承担存在性」的 fail-open，本批刚治过。
+   */
+  private async groupGate(gid: number): Promise<'missing' | 'suspended' | 'ok'> {
     const g = await this.groupRepo.findOne({ where: { id: gid, deletedAt: IsNull() } });
-    if (!g) throw new BizException(ErrorCode.BUILDING_GROUP_NOT_FOUND, `楼群不存在：#${gid}`);
+    if (!g) return 'missing';
+    return g.status === BuildingGroupStatus.SUSPENDED ? 'suspended' : 'ok';
+  }
+
+  /**
+   * 往某个楼群挂楼 / 搬楼之前的统一准入（三条写路径共用）
+   *
+   * ⚠️ 抛码留在**这里**而不是散在各调用点：60008 的 payload 形状
+   *    （`{ targetGroupId, hint }`，见 spec §8）三条路径完全一致，没有理由抄三遍。
+   */
+  private async assertGroupOpen(gid: number): Promise<void> {
+    const gate = await this.groupGate(gid);
+    if (gate === 'missing') {
+      throw new BizException(ErrorCode.BUILDING_GROUP_NOT_FOUND, `楼群不存在：#${gid}`);
+    }
+    if (gate === 'suspended') {
+      throw new BizException(ErrorCode.BUILDING_GROUP_SUSPENDED_REJECT, undefined, undefined, {
+        targetGroupId: gid,
+        hint: GROUP_SUSPENDED_HINT,
+      });
+    }
   }
 }

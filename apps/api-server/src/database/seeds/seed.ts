@@ -120,7 +120,10 @@ async function main(): Promise<void> {
       ['commission.rate.chief', '0.1200', '首席团长佣金（C2 锁定）'],
       ['commission.auto_confirm_time', '14:00', '自动确认收货（T 日 14:00）'],
       ['commission.settle_hour', '02:00', '佣金结算时点（T+1）'],
-      ['commission.min_withdraw', '10.00', '最低提现金额'],
+      // D3 定稿（2026-10-26）：0 = 不限起提（与「当日 1 笔」并存）
+      ['commission.min_withdraw', '0.00', '最低提现金额'],
+      ['commission.withdraw_daily_limit', '2000.00', '单日提现上限（元）'],
+      ['commission.withdraw_daily_count', '1', '单日提现笔数上限'],
       ['commission.payout_channel', 'FLEX_MANUAL', '出款通道（C11：灵活用工平台人工通道）'],
       ['distribution_center.default_count', '4', '集散中心默认数量（C4 表驱动）'],
       // —— C9 成本项（全部可变，默认 0，按实际登记）——

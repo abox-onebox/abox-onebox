@@ -11,10 +11,27 @@ import { maskAccount } from '../../common/utils/crypto';
 import { round2 } from '../../common/utils/money';
 import { genWithdrawNo } from '../../common/utils/order-no';
 import { normalizePage, paginate } from '../../common/utils/response';
+import { bjDateTime, todayBj } from '../../common/utils/time';
 import { Balance, BalanceLog } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
 import { WithdrawApplyReqDto, WithdrawalsQueryDto } from './dto/finance.dto';
+
+/**
+ * D3 提现规则定稿（2026-10-26）：计入「当日笔数 / 当日累计额」的提现状态。
+ *
+ * ⚠️ 刻意**不含** `REJECTED` / `FAILED` —— 这两种状态钱已原路解冻，
+ *    再占用当日额度等于罚站长（被驳回不是团长的错）。
+ *
+ * ⚠️ 与 `summaryOf()` 的「冻结中」判据是**两套口径**，别互相抄：
+ *    那里问的是「钱还冻着吗」（排除终态），这里问的是「今天提过吗」（排除作废态）。
+ */
+const DAILY_COUNTED_STATUS: string[] = [
+  WithdrawStatus.PENDING,
+  WithdrawStatus.APPROVED,
+  WithdrawStatus.PAYING,
+  WithdrawStatus.SUCCESS,
+];
 
 /**
  * 提现服务（M2 · 2.6 · 接口 L12 / L13）
@@ -29,6 +46,10 @@ import { WithdrawApplyReqDto, WithdrawalsQueryDto } from './dto/finance.dto';
  *
  * **资金语义**：申请即把金额从 `ab_balance.balance` 移入 `frozen`（可用 → 冻结），
  *   驳回 / 打款失败时原路解冻（`withdraw_refund`）；到账后写 `withdrawn_amount` 快照。
+ *
+ * **D3 定稿（2026-10-26）**：起提不限 / T+1 / 免手续费 / 单日 ¥2000 / 当日 1 笔。
+ *   其中 T+1 在本服务只能落成「**承诺文案 + 可观测**」—— 一期没有自动打款能力
+ *   （`markPaid` 是人工回填），要「审批后立即到账」必须先接 `FLEX_API`（二期）。
  */
 @Injectable()
 export class WithdrawService {
@@ -46,12 +67,21 @@ export class WithdrawService {
    * L12 · 提现申请
    *
    * 校验顺序（错误码即端上分支依据）：
-   *   1. 金额 ≥ 最低提现额（`ab_config.commission.min_withdraw`，默认 ¥10.00）→ 40003
-   *   2. 收款方式已绑定（本次入参 或 团长资料已存）                          → 40007
-   *   3. 可用余额充足                                                       → 50004
+   *   1. 金额 ≥ 最低提现额（`commission.min_withdraw`，D3 定稿 0 = 不限）   → 40003
+   *   2. 收款方式已绑定（本次入参 或 团长资料已存）                         → 40007
+   *   3. 当日笔数未超 `commission.withdraw_daily_count`（默认 1）           → 40025
+   *   4. 当日累计额未超 `commission.withdraw_daily_limit`（默认 ¥2000）     → 40024
+   *   5. 可用余额充足                                                      → 50004
+   *
+   * ⚠️ **第 3、4 步必须在事务内读**（第 5 步的余额写也在同一事务里）：
+   *    事务外读、事务内写 ⇒ 两个并发请求「都读到旧值、都通过」，日限额形同虚设。
+   *    即便如此仍可能有并发漏网，最终由 `ab_balance` 乐观锁（`version + 1`）兜住 ——
+   *    **不需要另加悲观锁**。
    */
   async apply(leader: TeamLeader, dto: WithdrawApplyReqDto) {
     const minYuan = await this.bizConfig.minWithdraw();
+    const dailyLimitYuan = await this.bizConfig.withdrawDailyLimit();
+    const dailyCount = await this.bizConfig.withdrawDailyCount();
     const amount = round2(dto.amount);
     const minFen = Math.round(minYuan * 100);
 
@@ -76,13 +106,55 @@ export class WithdrawService {
     const channel = await this.bizConfig.payoutChannel();
     const withdrawNo = genWithdrawNo();
 
+    // 当日区间：北京自然日 [00:00, 次日 00:00)。hour 传 24 = 次日 0 点，正好作含尾上界。
+    const dayFrom = bjDateTime(todayBj(), 0);
+    const dayTo = bjDateTime(todayBj(), 24);
+
     const created = await this.dataSource.transaction(async (m) => {
+      // 3 + 4) 当日笔数与累计额 —— **同一区间一次查询**（走 idx_withdraw_leader_time）
+      const agg = await m
+        .createQueryBuilder(Withdraw, 'w')
+        .select('COALESCE(SUM(w.amount), 0)', 'sumYuan')
+        .addSelect('COUNT(1)', 'cnt')
+        .where('w.leaderId = :leaderId', { leaderId: Number(leader.id) })
+        .andWhere('w.createdAt >= :from AND w.createdAt < :to', { from: dayFrom, to: dayTo })
+        .andWhere('w.status IN (:...counted)', { counted: DAILY_COUNTED_STATUS })
+        .getRawOne<{ sumYuan: string; cnt: string }>();
+
+      const usedCount = Number(agg?.cnt ?? 0);
+      const usedFen = Math.round(Number(agg?.sumYuan ?? 0) * 100);
+      const amountFen = Math.round(amount * 100);
+
+      // 3) 当日笔数（0 = 不限）。**先判笔数** —— daily_count=1 时它必然先于金额命中。
+      if (dailyCount > 0 && usedCount >= dailyCount) {
+        throw new BizException(
+          ErrorCode.WITHDRAW_DAILY_DUPLICATED,
+          '今日已有一笔提现在处理中，请等这笔完成后再申请',
+          undefined,
+          { usedCount, dailyCount },
+        );
+      }
+
+      // 4) 当日累计额（0 = 不限），**含本次申请额**
+      if (dailyLimitYuan > 0) {
+        const limitFen = Math.round(dailyLimitYuan * 100);
+        if (usedFen + amountFen > limitFen) {
+          const remainYuan = Math.max(0, limitFen - usedFen) / 100;
+          throw new BizException(
+            ErrorCode.WITHDRAW_DAILY_LIMIT_EXCEEDED,
+            `今日剩余可提 ¥${remainYuan.toFixed(2)}（单日上限 ¥${dailyLimitYuan.toFixed(2)}）`,
+            undefined,
+            { usedFen, limitFen },
+          );
+        }
+      }
+
       const account = await m.findOne(Balance, { where: { userId: Number(leader.userId) } });
       const balance = Number(account?.balance ?? 0);
       const frozen = Number(account?.frozen ?? 0);
 
-      // 3) 余额校验
-      if (Math.round(balance * 100) < Math.round(amount * 100)) {
+      // 5) 余额校验
+      if (Math.round(balance * 100) < amountFen) {
         throw new BizException(
           ErrorCode.WITHDRAW_BALANCE_NOT_ENOUGH,
           `可提现余额 ¥${balance.toFixed(2)} 不足`,
@@ -163,7 +235,10 @@ export class WithdrawService {
       payoutChannel: created.payoutChannel,
       receiveType: created.receiveType,
       receiveAccount: created.receiveAccount,
-      tips: '申请已提交，运营审批后由灵活用工平台代发（个税代扣代缴，到账为税后金额）',
+      // D3 定稿 T+1：一期只能承诺（无自动打款），故写「1 个工作日内」而非「立即」
+      tips:
+        '申请已提交，运营审批后 1 个工作日内到账（节假日顺延）· ' +
+        '平台不收手续费，个税由灵活用工平台依法代扣代缴，到账为税后金额',
     };
   }
 

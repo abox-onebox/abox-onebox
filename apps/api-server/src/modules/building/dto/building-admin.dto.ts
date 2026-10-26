@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
@@ -267,6 +268,32 @@ export class UpdateBuildingDto {
   @IsIn(Object.values(BuildingStatus), { message: '状态需为 1 / 2 / 3' })
   status?: number;
 
+  /**
+   * 强制停用（N2）—— 存在未完结订单时仍要停用
+   *
+   * ⚠️ **不声明会被 `forbidNonWhitelisted` 拒成 10001**（G9）：端上传了而 DTO 没收，
+   *    请求直接被拒，运营连「为什么点不动」都不知道。这两个字段必须显式列出。
+   *
+   * ⚠️ `suspendReason` 的字数下限由 `@MinLength(10)` 在 ValidationPipe 里拒成 **10001**，
+   *    **不新增错误码** —— 格式校验与「业务不允许」是两条路径，混在一起会让端上分不清
+   *    该提示用户改输入还是该走审批。
+   *
+   * ⚠️ 字数下限**刻意不可配**：配了就得绕开 ValidationPipe 自造一份运行时校验，那是
+   *    第二份校验逻辑（见 `config.specs.ts` 的 `building.suspend_reason_min_length`）。
+   */
+  @ApiPropertyOptional({
+    description: '强制停用：存在未完结订单时仍要停用（需同时填 suspendReason，不少于 10 字）',
+  })
+  @IsOptional()
+  @IsBoolean()
+  forceSuspend?: boolean;
+
+  @ApiPropertyOptional({ description: '强制停用原因（强制停用时必填，不少于 10 字，进审计）' })
+  @IsOptional()
+  @IsString()
+  @MinLength(10, { message: '强制停用原因不少于 10 字' })
+  suspendReason?: string;
+
   // ⚠️ 刻意不声明 leaderId —— 传了会被 forbidNonWhitelisted 拒（10001）
 }
 
@@ -407,6 +434,20 @@ export class UpdateBuildingGroupDto {
   @Type(() => Number)
   @IsIn(Object.values(BuildingGroupStatus), { message: '楼群状态需为 1（启用）或 2（停用）' })
   status?: number;
+
+  /** 与 `UpdateBuildingDto` 同名字段同口径 —— 不声明会被 `forbidNonWhitelisted` 拒成 10001 */
+  @ApiPropertyOptional({
+    description: '强制停用：存在未完结订单时仍要停用（需同时填 suspendReason，不少于 10 字）',
+  })
+  @IsOptional()
+  @IsBoolean()
+  forceSuspend?: boolean;
+
+  @ApiPropertyOptional({ description: '强制停用原因（强制停用时必填，不少于 10 字，进审计）' })
+  @IsOptional()
+  @IsString()
+  @MinLength(10, { message: '强制停用原因不少于 10 字' })
+  suspendReason?: string;
 }
 
 // ============================================================================

@@ -168,6 +168,21 @@ export class BizConfigService {
     return this.getNumber('order.pay_timeout_minutes', BIZ.payTimeoutMinutes);
   }
 
+  /**
+   * N2 · 单人可强制停用的未完结订单上限（笔）
+   *
+   * ⚠️ 刻意**没有**与之成对的「原因最少字数」reader：那个键是 `wiring: 'unwired'`，运行时
+   *    没有任何消费点 —— 加一个没人调的 reader 就是死代码，而且会给出「代码读了这个键」
+   *    的**反向暗示**，与它自己声明的未接线原因自相矛盾。字数下限由 DTO 的
+   *    `@MinLength(10)` 在编译期固定（见 `config.specs.ts` 的 `building.suspend_reason_min_length`）。
+   *
+   * ⚠️ 不要在注释里写出那个不存在的 reader 名：N2-12 判据按「有没有这个方法」扫本文件，
+   *    注释里出现同名串会让它恒红（与 `BUILDING_NOT_ORDERABLE` 那次同一族）。
+   */
+  suspendForceMaxCount(): Promise<number> {
+    return this.getNumber('building.suspend_force_max_count', 20);
+  }
+
   /** C2 · 团长等级费率（trainee/formal/gold/chief） */
   async commissionRate(level: string): Promise<number> {
     const fallback =
@@ -175,9 +190,31 @@ export class BizConfigService {
     return this.getNumber(`commission.rate.${level}`, fallback);
   }
 
-  /** 最低提现金额（元） */
+  /**
+   * D3 定稿（2026-10-26）：**最低提现金额（元）· 0 = 不限起提**
+   *
+   * 「起提不限」之所以成立，是因为「当日 1 笔」已把人工打款笔数锁死
+   *（一人一天最多一笔）—— 两项可以并存。
+   * 地板 ¥0.01 由 `WithdrawApplyReqDto` 的 `@Min(0.01)` 兜住，故配 0 **不会**放行 ¥0。
+   */
   minWithdraw(): Promise<number> {
-    return this.getNumber('commission.min_withdraw', 10);
+    return this.getNumber('commission.min_withdraw', 0);
+  }
+
+  /**
+   * D3 定稿：单日提现上限（元）—— 每人每自然日（北京时区 00:00–24:00）累计申请额。
+   * 含本次申请额；rejected/failed **不计入**（钱已原路解冻）。0 = 不限。
+   */
+  withdrawDailyLimit(): Promise<number> {
+    return this.getNumber('commission.withdraw_daily_limit', 2000);
+  }
+
+  /**
+   * D3 定稿：单日提现笔数上限 —— 同一自然日已有非终态申请数。
+   * 计入 pending/approved/paying/success；rejected/failed 后可再提。0 = 不限。
+   */
+  withdrawDailyCount(): Promise<number> {
+    return this.getNumber('commission.withdraw_daily_count', 1);
   }
 
   /** C11 · 出款通道（一期 FLEX_MANUAL） */

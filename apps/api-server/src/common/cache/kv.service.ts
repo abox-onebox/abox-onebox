@@ -15,9 +15,18 @@ interface MemoryEntry {
  *   memory —— 本地零依赖：进程内 Map，重启即丢（仅开发期，够用）
  *   redis  —— 生产 / 云端：ioredis
  *
- * ⚠️ **降级策略**：`redis` 驱动下若连接失败（本地忘开 Redis、网络不通），
+ * ⚠️ **降级策略（2026-10-26 修订，仅适用于缓存类操作）**：
+ *    `redis` 驱动下若连接失败（本地忘开 Redis、网络不通），
  *    自动降级为内存实现并打 WARN —— 保证「本地零依赖」承诺不被一个缓存拖垮。
  *    生产环境应通过监控告警暴露该 WARN。
+ *
+ * ⛔ **例外：`setNx` 与 `incr` 永不降级（fail-closed）**。
+ *    原因：`setNx` 是幂等占位与分布式锁的**正确性原语**，不是缓存。
+ *    一旦降级到进程内 Map，多实例各自持有互不相通的内存 ⇒
+ *    同一个幂等键会在每个实例上都抢到一次 ⇒ 同一请求被真正执行两次，
+ *    且不抛错、业务无感，只在日志留一行 WARN（实测已复现）。
+ *    故此处与项目队列口径统一：**Redis 连不上就抛错，不静默降级**。
+ *    ——宁可让下单失败报错，也不能让同一笔钱的事静默做两遍。
  */
 @Injectable()
 export class KvService implements OnModuleDestroy {
@@ -25,10 +34,13 @@ export class KvService implements OnModuleDestroy {
   private readonly memory = new Map<string, MemoryEntry>();
   private redis: Redis | null = null;
   private degraded = false;
+  /** 配置声明的驱动是否为 redis（与运行期是否降级无关） */
+  private readonly driverIsRedis: boolean;
 
   constructor(private readonly config: ConfigService) {
     const driver = this.config.get<string>('redis.driver') ?? 'memory';
-    if (driver !== 'redis') {
+    this.driverIsRedis = driver === 'redis';
+    if (!this.driverIsRedis) {
       this.logger.log('KV 驱动：memory（进程内，重启即丢）');
       return;
     }
@@ -107,26 +119,34 @@ export class KvService implements OnModuleDestroy {
 
   /**
    * 仅当键不存在时写入（幂等占位 / 分布式锁的核心原语）
+   *
+   * ⛔ **fail-closed**：`redis` 驱动下**不降级**到进程内内存，Redis 出错直接向上抛。
+   *    （降级会让多实例各抢到一次同一幂等键，见类注释。缓存类的 get/set/del 仍可降级。）
+   *
    * @returns true = 本次抢到；false = 已被占用
+   * @throws Redis 不可用 —— 调用方须按「无法保证幂等」处理，不可继续走资金路径
    */
   async setNx(key: string, value: string, ttlSec?: number): Promise<boolean> {
-    if (this.useMemory()) {
-      const hit = this.memory.get(key);
-      if (hit && (hit.expireAt === 0 || hit.expireAt > Date.now())) return false;
-      await this.set(key, value, ttlSec);
-      return true;
-    }
-    try {
+    // ① redis 驱动：永不走内存，异常直接抛（fail-closed）
+    if (this.driverIsRedis) {
+      if (!this.redis) {
+        throw new Error(
+          `KV setNx 不可用：redis 驱动已声明但客户端未初始化，且禁止降级到内存（key=${key}）`,
+        );
+      }
       // 用显式分支而非 args 数组：ioredis 的 set 重载对动态数组不友好（TS2352）
       const r =
         ttlSec && ttlSec > 0
-          ? await this.redis!.set(key, value, 'EX', ttlSec, 'NX')
-          : await this.redis!.set(key, value, 'NX');
+          ? await this.redis.set(key, value, 'EX', ttlSec, 'NX')
+          : await this.redis.set(key, value, 'NX');
       return r === 'OK';
-    } catch {
-      this.degraded = true;
-      return this.setNx(key, value, ttlSec);
     }
+
+    // ② memory 驱动（仅开发期）：进程内语义，单实例下等价
+    const hit = this.memory.get(key);
+    if (hit && (hit.expireAt === 0 || hit.expireAt > Date.now())) return false;
+    await this.set(key, value, ttlSec);
+    return true;
   }
 
   async del(key: string): Promise<void> {
@@ -148,29 +168,40 @@ export class KvService implements OnModuleDestroy {
    * ⚠️ **TTL 只在首次自增时落，后续自增沿用首次的到期时刻**（滑动窗口的固定窗口版）。
    *    若每次自增都刷新 TTL，攻击者只要保持每 14 分钟失败一次就能把账号**永久锁死**。
    *
+   * ⛔ **fail-closed（2026-10-26 修订 · N3）**：与 `setNx` 同口径，
+   *    `redis` 驱动下**不降级**到进程内内存，Redis 出错直接向上抛。
+   *
+   *    原因：`incr` 的两个调用方都是**安全原语**，不是缓存 ——
+   *      · `rate-limit.middleware` 接口限流
+   *      · `auth.service` 登录失败次数锁定（防暴力破解）
+   *    一旦降级，多实例各自持有一份互不相通的计数 ⇒ 限流阈值被放大到 N 倍、
+   *    **暴力破解保护形同虚设**，且不抛错、业务无感，只在日志留一行 WARN。
+   *    这是**安全问题**，不是可用性问题 —— 宁可拒绝请求，也不能让保护静默失效。
+   *
    * @returns 自增后的值（从 1 开始）
+   * @throws Redis 不可用 —— 调用方须按「无法计数」处理：
+   *         限流应**拒绝**请求，登录失败计数应**拒绝**本次登录（都不可放行）
    */
   async incr(key: string, ttlSec?: number): Promise<number> {
-    if (this.useMemory()) {
-      const hit = this.memory.get(key);
-      const alive = !!hit && (hit.expireAt === 0 || hit.expireAt > Date.now());
-      const next = (alive ? Number(hit!.value) : 0) + 1;
-      const expireAt = alive
-        ? hit!.expireAt
-        : ttlSec && ttlSec > 0
-          ? Date.now() + ttlSec * 1000
-          : 0;
-      this.memory.set(key, { value: String(next), expireAt });
-      return next;
-    }
-    try {
-      const n = await this.redis!.incr(key);
-      if (n === 1 && ttlSec && ttlSec > 0) await this.redis!.expire(key, ttlSec);
+    // ① redis 驱动：永不走内存，异常直接抛（fail-closed）
+    if (this.driverIsRedis) {
+      if (!this.redis) {
+        throw new Error(
+          `KV incr 不可用：redis 驱动已声明但客户端未初始化，且禁止降级到内存（key=${key}）`,
+        );
+      }
+      const n = await this.redis.incr(key);
+      if (n === 1 && ttlSec && ttlSec > 0) await this.redis.expire(key, ttlSec);
       return n;
-    } catch {
-      this.degraded = true;
-      return this.incr(key, ttlSec);
     }
+
+    // ② memory 驱动（仅开发期）：进程内语义，单实例下等价
+    const hit = this.memory.get(key);
+    const alive = !!hit && (hit.expireAt === 0 || hit.expireAt > Date.now());
+    const next = (alive ? Number(hit!.value) : 0) + 1;
+    const expireAt = alive ? hit!.expireAt : ttlSec && ttlSec > 0 ? Date.now() + ttlSec * 1000 : 0;
+    this.memory.set(key, { value: String(next), expireAt });
+    return next;
   }
 
   async onModuleDestroy(): Promise<void> {

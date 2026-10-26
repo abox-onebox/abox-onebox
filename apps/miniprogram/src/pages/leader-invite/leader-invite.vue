@@ -30,7 +30,8 @@
         <!-- ⚠️ 时刻来自响应（`landing.deliverAt`）—— 曾写死 `11:30`（PR-02 收口）；
              本页**免登录**，无法借其它接口取值，故随落地响应一并下发 -->
         <text class="card__desc">
-          加入后，你将自动跟随该办公楼预订，明天 {{ landing?.deliverAt || '' }} 由团长统一取货分发。
+          加入后，你将自动跟随该办公楼预订，明天
+          {{ landing?.deliverAt || '' }} 由团长统一派送到工位。
         </text>
       </view>
 
@@ -60,7 +61,7 @@
              `deliverAt`（送达），没有开团与截单 ⇒ 这里**不写时刻**，而不是抄一份写死的。
              （真要显示时段，应由服务端在 landing 里下发，与本页 `deliverAt` 同源。） -->
         <text class="promise__line"
-          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 可预订明日组合，随团长统一取货</text
+          ><text class="abi abi-16">{{ I['ok-circle'] }}</text> 可预订明日组合，随团长统一派送</text
         >
       </view>
 

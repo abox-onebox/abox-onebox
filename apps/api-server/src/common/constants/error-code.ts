@@ -104,15 +104,21 @@ export enum ErrorCode {
    * 扩展：用户未绑定办公楼（`ab_user.building_id` 为空）→ 无法解析楼群与次日套餐
    *
    * ⚠️ **为什么不能继续复用 `10004 NOT_FOUND`**：`MealService.resolveUserGroup`
-   *    有两处抛 10004 —— 「未绑定办公楼」与「所属办公楼未配置楼群」。
+   *    **原**有两处抛 10004 —— 「未绑定办公楼」与「所属办公楼未配置楼群」。
    *    前者**用户可以自己解决**（自助选楼），后者**只能找运营**（配楼群）。
+   *
+   *    ⚠️ **现状（N1 · P3-4 + 收尾批已改码，此处保留旧口径仅为说明「为什么必须拆开」）**：
+   *    「未绑定办公楼」→ **`20016 USER_BUILDING_UNBOUND`**（本码）；
+   *    「所属办公楼未配置楼群」→ **`60011 BUILDING_NOT_GROUPED`**。
+   *    **不要照这段旧描述把任何一处回改成 10004。** 拆码的理由见 N1 的 ADR。
+   *
    *    合成一个码，端上就只能给一句两可的兜底文案，结果是：
    *    首页 `emptyText` 对任何错误都显示「本楼今日未开团」，
    *    「你还没选楼」这件本可自助的事被彻底藏起来（真实联调里表现为
    *    「扫码进来一片空白 + 重新加载」，没有任何出口）。
    *
    *    端上收到本码 → 空态主按钮换成「选择办公楼」直达 `pages/building/switch`；
-   *    收到 10004 → 仍是「重新加载」，提示语用服务端 message（此时它讲的是楼群）。
+   *    收到 `60011` → 提示语用服务端 message（讲的是楼群配置，用户只能找运营）。
    */
   USER_BUILDING_UNBOUND = 20016,
 
@@ -400,6 +406,30 @@ export enum ErrorCode {
    */
   COUPON_GRANT_PARAM_INVALID = 40023,
 
+  /**
+   * D3 提现规则定稿（2026-10-26）：单日累计提现额超过 `commission.withdraw_daily_limit`。
+   *
+   * ⚠️ **判定基准是「自然日」而非「滚动 24 小时」**：北京时区 00:00–24:00，
+   *    用 `bjDateTime(dateStr, 24)` 取含尾上界（详见 `withdraw.service.apply()`）。
+   *    只在**数据库事务内**读当日 SUM，事务外读会让两个并发请求都读到旧值、都通过。
+   *
+   * ⚠️ 计入 pending/approved/paying/success，**rejected/failed 不计**（钱已原路解冻，
+   *    再拦一次等于罚站长）。
+   */
+  WITHDRAW_DAILY_LIMIT_EXCEEDED = 40024,
+
+  /**
+   * D3 提现规则定稿（2026-10-26）：同一自然日已有非终态提现申请，不可重复申请。
+   *
+   * ⚠️ **刻意与 `40024` 分开**：两者端上动作不同 ——
+   *    `40024` 是「今天额度用完了，明天再来 / 改小金额」；
+   *    `40025` 是「今天已经提过了，等这笔处理完（或驳回后）再说」。
+   *
+   * 与 `40024` 共用一次查询（同一区间取 SUM + COUNT），**先判笔数再判金额**，
+   * 故 `daily_count=1` 时永远先看到本码 —— 验收 `40024` 需临时把 `daily_count` 调大。
+   */
+  WITHDRAW_DAILY_DUPLICATED = 40025,
+
   /** ---- 5xxxx 财务 / 结算 / 供应商 ---- */
   SUPPLIER_NOT_QUALIFIED = 50001,
   DISTRIBUTION_CENTER_LOCKED = 50002,
@@ -480,6 +510,44 @@ export enum ErrorCode {
   BUILDING_GROUP_NAME_TAKEN = 60004,
   /** 扩展（M3-7）：办公楼名已存在（D14/D15）—— 同名楼会让「按楼筛选」变成歧义操作 */
   BUILDING_NAME_TAKEN = 60005,
+  /** 扩展（N2）：办公楼存在未完结订单，不能直接停用（1 ≤ N ≤ 阈值，需 force + reason） */
+  BUILDING_UNFINISHED_ORDERS = 60006,
+  /** 扩展（N2）：楼群存在未完结订单，不能直接停用 */
+  BUILDING_GROUP_UNFINISHED_ORDERS = 60007,
+  /**
+   * 扩展（N1）：不能把办公楼挂进已停用的楼群
+   *
+   * ⚠️ 为什么必须有它：`BUILDING_GROUP_NOT_EMPTY`(60003) 只保证「停用楼群时成员为 0」，
+   *    但 `assignMembers()` 与 `updateBuilding(buildingGroupId)` **都不检查目标楼群状态** ——
+   *    运营往已停用楼群里搬楼，成员楼会静默失去开团能力。这是 60003 的两条旁路。
+   */
+  BUILDING_GROUP_SUSPENDED_REJECT = 60008,
+  /** 扩展（W1）：当前已一键停售（全局暂停接单） */
+  SALES_PAUSED = 60009,
+  /**
+   * 扩展（N1）：该办公楼**已被运营主动停用**（preparing / suspended / 所属楼群已停用）
+   *
+   * ⚠️ 与 60011 的区别是**处置动作不同**：本码 = 运营自己停的（无需动作，不该告警）；
+   *    60011 = 漏配（是事故，要告警）。合成一码会让日志/监控/告警完全同形 ——
+   *    本仓拆 `30022` / `30023` 时给的就是这个理由。
+   */
+  BUILDING_SUSPENDED = 60010,
+  /**
+   * 扩展（N1）：该办公楼**未配置楼群**（配置缺失 · 取代现状的 `10004`）
+   *
+   * ⚠️ 这是**契约变更**：`meal.service.ts:269` 与 `order.service.ts:1628` 现状抛
+   *    `ErrorCode.NOT_FOUND`(10004)。见本规格 §5.1 / §5.2 与 §12 的同步动作。
+   */
+  BUILDING_NOT_GROUPED = 60011,
+  /** 扩展（N2）：未完结订单超过阈值，强制停用不可用，须走运营审批 */
+  SUSPEND_REQUIRE_APPROVAL = 60012,
+  /**
+   * 扩展（N2）：已截单订单无法通过停用撤回（**硬约束，不可配置**）
+   *
+   * ⚠️ 用户已裁定：供应商已按份数采购备货，此阶段撤回让用户与供应商承担损失、
+   *    而运营零成本，权责不对等。故即使带 `forceSuspend` 且选「一并退款」也拒绝。
+   */
+  SUSPEND_CANNOT_REVOKE_ACCEPTED = 60013,
 
   /** ---- 9xxxx 系统 ---- */
   INTERNAL_ERROR = 90001,
@@ -571,6 +639,8 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.COUPON_THRESHOLD_NOT_MET]: '订单金额未达该券的使用门槛',
   [ErrorCode.COUPON_DEF_INVALID]: '券种不可用（不存在 / 已停用 / 已达发行上限）',
   [ErrorCode.COUPON_GRANT_PARAM_INVALID]: '发券参数不完整，本次未发放（请联系技术核对）',
+  [ErrorCode.WITHDRAW_DAILY_LIMIT_EXCEEDED]: '今日提现额度已用完，请明日再试（单日上限见运营配置）',
+  [ErrorCode.WITHDRAW_DAILY_DUPLICATED]: '今日已有一笔提现在处理中，请等这笔完成后再申请',
   [ErrorCode.SUPPLIER_NOT_QUALIFIED]: '供应商资质未通过审核',
   [ErrorCode.DISTRIBUTION_CENTER_LOCKED]: '集散中心配置不可删除（存在历史结算）',
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',
@@ -589,6 +659,14 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.BUILDING_GROUP_NOT_EMPTY]: '楼群下仍有办公楼，请先移出成员楼',
   [ErrorCode.BUILDING_GROUP_NAME_TAKEN]: '楼群名已存在',
   [ErrorCode.BUILDING_NAME_TAKEN]: '办公楼名已存在',
+  [ErrorCode.BUILDING_UNFINISHED_ORDERS]: '该办公楼仍有未完结订单，不能直接停用',
+  [ErrorCode.BUILDING_GROUP_UNFINISHED_ORDERS]: '该楼群仍有未完结订单，不能直接停用',
+  [ErrorCode.BUILDING_GROUP_SUSPENDED_REJECT]: '目标楼群已停用，不能把办公楼挂进去',
+  [ErrorCode.SALES_PAUSED]: '当前已暂停接单',
+  [ErrorCode.BUILDING_SUSPENDED]: '该办公楼已停用时不可下单',
+  [ErrorCode.BUILDING_NOT_GROUPED]: '该办公楼暂未开通服务，请联系运营',
+  [ErrorCode.SUSPEND_REQUIRE_APPROVAL]: '未完结订单超过阈值，强制停用不可用，请提交运营审批',
+  [ErrorCode.SUSPEND_CANNOT_REVOKE_ACCEPTED]: '已有订单进入履约阶段，无法通过停用撤回',
   [ErrorCode.INTERNAL_ERROR]: '系统繁忙，请稍后再试',
   [ErrorCode.SERVICE_UNAVAILABLE]: '服务暂不可用',
 };

@@ -19,6 +19,7 @@ import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { BizConfigService } from '../../common/services/biz-config.service';
 import { LeaderLookupService } from '../../common/services/leader-lookup.service';
+import { OrderAvailabilityService } from '../../common/services/order-availability.service';
 import { UserPayeeService } from '../../common/services/user-payee.service';
 import { maskPhone } from '../../common/utils/crypto';
 // ⚠️ M4-3：`genRefundNo` 已随「退款单建单下沉到 `RefundService.buildRefundRow`」一并移除
@@ -190,6 +191,8 @@ export class OrderService {
     /** F-10：写钱前判「收款人是否还是个能收钱的人」（`ab_user.status` —— 全仓唯一实现） */
     private readonly payee: UserPayeeService,
     private readonly couponService: CouponService,
+    /** N1（P3-4）：下单前的可订性判定，与 U1 / 团长工作台同源 */
+    private readonly availability: OrderAvailabilityService,
   ) {}
 
   /**
@@ -247,12 +250,70 @@ export class OrderService {
     const leader = await this.resolveLeader(dto.leaderCode, user);
 
     // ⑤ 楼群与分配矩阵命中 → 30005
-    const buildingGroupId = await this.resolveGroup(user);
+    const { building, groupId: buildingGroupId } = await this.resolveGroup(user);
     const assignment = await this.assignmentRepo.findOne({
       where: { mealDate, buildingGroupId },
     });
     if (!assignment || assignment.status !== 'active') {
       throw new BizException(ErrorCode.MEAL_NOT_PUBLISHED, `${mealDate} 该办公楼未开团`);
+    }
+
+    /**
+     * ⑤b 停售层 / 结构层（N1 · P3-4 新增）—— 落在 ⑤ 之后、⑦ 之前
+     *
+     * ⚠️ 为什么不能在 ① 一起判：这两层需要 `building`，只有 `resolveGroup()` 之后才有。
+     *    而 ① 的 `ORDER_CUTOFF`(30001) 是**纯时间维度**、与楼无关，故保留它在最前
+     *    —— 沿用既有码与文案，不动既有优先级（改优先级就是改契约）。
+     *
+     * ⚠️ `not_open_yet` / `cutoff` **不会**走到这里：它们在 ① 已被同一时间层拦掉
+     *    （`isOrderable()` 与编排层的时间层是同一个区间），故本处不再重复映射 30001。
+     *
+     * ⚠️ 号位拆成 60010 / 60011 两码而不是合成一码（合成码已废弃）：
+     *    `building_not_grouped` 是**配置缺失**（60011，该告警），
+     *    其余三条是**运营主动停用**（60010，无需动作，不该告警）—— 合成一码
+     *    会让监控与告警完全同形。
+     */
+    const availability = await this.availability.forBuilding(mealDate, Number(building.id));
+    /**
+     * ⚠️ **现状注记（2026-10-26 · W1）**：本支的 payload 只有 `{ reason: 'sales_paused' }`
+     *    —— 装的是**枚举值**，**不含**运营填的停售原因；而下面 60010 / 60011 两支
+     *    同时给了 `reason` + `reasonText`。这个不对称是**已知的**，不是漏。
+     *
+     * **为什么不补**（两条，都是「信息有没有丢」而不是「每个现场都要重复一遍」）：
+     *   ① **信息没丢**：运营填的原因已由 `reasonText()` 插进
+     *      `今日暂停接单：{why}`，在 **U1 首页 `daily.reason`** 上渲染了；
+     *      下单这里是**第二现场**，再给一遍是重复，不是补全。
+     *   ② **补进 payload 就是死数据**：前端 60009 分支**只读 `e.message`、不读 payload**
+     *      （`backend-w1` 已核）⇒ 补进去没有任何消费方，而它会变成第二份真源。
+     *
+     * **将来真要补时，补 `message` 不要补 `payload`**：
+     *     `throw new BizException(ErrorCode.SALES_PAUSED, availability.reasonText)`
+     *     —— 动态文案本来住不进 `ERROR_MESSAGE` 静态表，走 `BizException(code, msg)`
+     *     才是正解，且**前端零改动**。但这属跨端契约变更，
+     *     **待开票**，留到下一批 —— ⚠️ 截至 2026-10-26 该票**尚未落盘**（`docs/` 下没有
+     *     对应文件）；票落进 `docs/` 后，请把本句改成**具体文件路径**，不要留着「已开票」
+     *     这种指了个空的说法（注释声称存在一张票而票不存在，与注释漂移是同一个病）。
+     */
+    if (availability.reason === 'sales_paused') {
+      throw new BizException(ErrorCode.SALES_PAUSED, undefined, undefined, {
+        reason: availability.reason,
+      });
+    }
+    if (
+      availability.reason === 'building_preparing' ||
+      availability.reason === 'building_suspended' ||
+      availability.reason === 'group_suspended'
+    ) {
+      throw new BizException(ErrorCode.BUILDING_SUSPENDED, undefined, undefined, {
+        reason: availability.reason,
+        reasonText: availability.reasonText,
+      });
+    }
+    if (availability.reason === 'building_not_grouped') {
+      throw new BizException(ErrorCode.BUILDING_NOT_GROUPED, undefined, undefined, {
+        reason: availability.reason,
+        reasonText: availability.reasonText,
+      });
     }
 
     /**
@@ -1619,15 +1680,36 @@ export class OrderService {
     throw new BizException(ErrorCode.LEADER_NOT_FOUND, '未绑定团长，请通过团长邀请链接进入');
   }
 
-  private async resolveGroup(user: User): Promise<number> {
+  /**
+   * 用户所属楼群（U6 下单 · 缺失即报错）
+   *
+   * ⚠️ 返回 `{ building, groupId }`：`building.status` 要喂给可订性判定，
+   *    只带 `groupId` 出去等于在这一步丢掉楼宇状态（N1 的洞）。
+   *
+   * ⚠️ `resolveLeader` 上方那行「未绑定团长，请通过团长邀请链接进入」（`LEADER_NOT_FOUND`）
+   *    **与本方法无关，不要一起改** —— 「未绑团长」与「未绑楼」是两件事，
+   *    而且两行的旧文案里都有「请通过团长邀请链接进入」，极易被顺手清掉。
+   */
+  private async resolveGroup(user: User): Promise<{ building: Building; groupId: number }> {
     if (!user.buildingId) {
-      throw new BizException(ErrorCode.NOT_FOUND, '你还未绑定办公楼，请通过团长邀请链接进入');
+      /**
+       * ⚠️ 契约变更（N1 · P3-4）：`NOT_FOUND`(10004) → `USER_BUILDING_UNBOUND`(20016)
+       *
+       * 与 `meal.service.ts` 的**同一条件**对齐 —— 那边早就是 20016，只有下单这条路径
+       * 是漏网之鱼。端上已支持：`index.vue` 按 `code === 20016` 换空态主按钮。
+       *
+       * ⚠️ 文案**不照抄** meal 那句「选好即可查看次日套餐」：这里是下单场景，
+       *    给「去看套餐」的指引是错的。同码不同文案不是第二真相 ——
+       *    同一文案对应两个码才是病，同一码在不同场景给不同行动指引是正常的。
+       */
+      throw new BizException(ErrorCode.USER_BUILDING_UNBOUND, '你还没有选择办公楼，选好即可下单');
     }
     const building = await this.buildingRepo.findOne({ where: { id: user.buildingId } });
     if (!building?.buildingGroupId) {
-      throw new BizException(ErrorCode.NOT_FOUND, '所属办公楼未配置楼群，请联系运营');
+      /** 同 `meal.service`：**配置缺失**而非资源不存在 ⇒ 60011（见该处注释） */
+      throw new BizException(ErrorCode.BUILDING_NOT_GROUPED);
     }
-    return building.buildingGroupId;
+    return { building, groupId: building.buildingGroupId };
   }
 
   /** 批量取「主荤菜名」（slot=1），避免列表页 N+1 */

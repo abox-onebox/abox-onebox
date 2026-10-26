@@ -38,10 +38,24 @@ export const CODE_ACCOUNT_CANCEL_BLOCKED = 20015;
  * U-B1 未绑定办公楼（`ab_user.building_id` 为空）
  *
  * ⭐ 端上收到本码 → 空态主按钮换成「选择办公楼」直达自助选楼页；
- *    它与 `10004 NOT_FOUND`（如「所属办公楼未配置楼群」）是**两件事** ——
+ *    它与 `60011 BUILDING_NOT_GROUPED`（如「该办公楼暂未开通服务，请联系运营」）是**两件事** ——
  *    前者用户能自己解决，后者只能找运营。合成一码时端上就只能给一句两可的兜底文案。
+ *
+ * ⚠️ 两者**处置动作不同，不要按「都算没找到」并成一路**：
+ *    本码 `20016` → 用户能自己解决（去「我的」自助选楼）；
+ *    `60011`    → 用户自己解决不了，只能找运营（去后台给该楼配楼群）。
  */
 export const CODE_BUILDING_UNBOUND = 20016;
+
+/**
+ * W1 · 全局已停售（U6 下单被拦）—— payload `{ reason }`（运营填的停售说明）
+ *
+ * ⚠️ **不要写成 `60010`**：那是 `BUILDING_SUSPENDED`（**某栋楼**被停用），与本码号位相邻、
+ *    极易记串。写错的后果是静默的 —— 端上会把「全站停售」显示成「你这栋楼停了」，
+ *    而其余楼其实也停了。⇒ 判停售必须比对**码号**，别比对文案（判据 W1-UI-2）。
+ *    《落码规格》§8：`SALES_PAUSED = 60009`，message「当前已暂停接单」。
+ */
+export const CODE_SALES_PAUSED = 60009;
 
 /** 业务异常（携带服务端 code / data / requestId，便于端上分支与排障） */
 export class ApiError extends Error {

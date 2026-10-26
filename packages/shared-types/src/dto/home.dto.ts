@@ -81,6 +81,8 @@ export interface HomeDailyResult {
   items: MealItemView[];
   /** 主食说明（统一供米） */
   rice: string | null;
+  /** fmcg：饮品的品牌（供应商展示名）；meal 恒 null —— 端上按商品口径展示「来自：X」（2026-10-24 整改） */
+  riceFrom: string | null;
   /** 套餐类型：meal 饭类 / fmcg 快消品（去餐化·2026-10-15）；端上据此切换图标与米饭行 */
   kind?: string | null;
   /** 单价（分）· 锁定 2580 */

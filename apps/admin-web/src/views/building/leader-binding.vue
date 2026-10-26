@@ -100,10 +100,10 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="可开团" width="90">
+      <el-table-column label="可编排" width="90">
         <template #default="{ row }">
-          <el-tag :type="row.canOrder ? 'success' : 'info'" size="small" effect="plain">
-            {{ row.canOrder ? '是' : '否' }}
+          <el-tag :type="asRow(row).canAssign ? 'success' : 'info'" size="small" effect="plain">
+            {{ asRow(row).canAssign ? '是' : '否' }}
           </el-tag>
         </template>
       </el-table-column>
@@ -160,7 +160,7 @@ const summary = ref<BuildingsPage['summary']>({
   populationUnregisteredCount: 0,
   leaderAssignedCount: 0,
   leaderVacantCount: 0,
-  canOrderCount: 0,
+  canAssignCount: 0,
   uncoveredCount: 0,
 });
 

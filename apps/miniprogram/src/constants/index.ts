@@ -19,6 +19,15 @@ export const UNIT_PRICE = 25.8;
 export const ORDER_MAX_QUANTITY = 20;
 
 /**
+ * W1 · 停售态必须同时说清的一句：停售**只拦新单**，已下的订单不受影响
+ *
+ * ⚠️ 这是判据 W1-UI-4 盯的字面：只做拦截、不说明历史订单 ⇒ 用户以为自己的单也黄了，
+ *    客诉会转嫁到团长身上（《落码规格》§13.2）。分布在首页与下单页**共用此常量**，
+ *    避免同一个承诺演化出两份措辞。
+ */
+export const SALES_PAUSED_UNAFFECTED_NOTICE = '你已下的订单不受影响，会照常配送。';
+
+/**
  * 列表分页默认条数（与《接口规范》§1.3 `PAGE_DEFAULT.pageSize` 一致）
  * ⚠️ 权威值在 `@abox/shared-types` 的 `PAGE_DEFAULT`；此处仅供端上分页请求复用。
  */

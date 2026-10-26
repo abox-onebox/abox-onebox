@@ -269,6 +269,7 @@ import {
   type GroupWritePayload,
   type Option,
 } from '@/api/building';
+import { guardSuspendWrite } from '@/views/building/suspend-guard';
 
 const loading = ref(false);
 const rows = ref<GroupRow[]>([]);
@@ -379,6 +380,21 @@ function openEdit(g: GroupRow) {
   dialog.visible = true;
 }
 
+/** 落库并收尾 —— 同样拆出来给 N2 闸门的二次确认重提交复用 */
+async function send(payload: GroupWritePayload) {
+  const res = dialog.isEdit
+    ? await updateGroup(dialog.origin!.id, payload)
+    : await createGroup(payload);
+  dialog.warnings = res.warnings ?? [];
+  ElMessage.success(
+    dialog.isEdit
+      ? `已保存：${res.name}（成员楼 ${res.memberCount} 栋）`
+      : `已创建：${res.name}（成员楼 ${res.memberCount} 栋）`,
+  );
+  if (!dialog.warnings.length) dialog.visible = false;
+  await load();
+}
+
 async function submit() {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) return;
@@ -392,19 +408,11 @@ async function submit() {
 
   dialog.saving = true;
   try {
-    const res = dialog.isEdit
-      ? await updateGroup(dialog.origin!.id, payload)
-      : await createGroup(payload);
-    dialog.warnings = res.warnings ?? [];
-    ElMessage.success(
-      dialog.isEdit
-        ? `已保存：${res.name}（成员楼 ${res.memberCount} 栋）`
-        : `已创建：${res.name}（成员楼 ${res.memberCount} 栋）`,
-    );
-    if (!dialog.warnings.length) dialog.visible = false;
-    await load();
+    await send(payload);
   } catch (e) {
-    ElMessage.error((e as Error).message || '保存失败');
+    // N2 闸门：与楼宇同套分支（60007 / 60012 / 60013 / 10001），handled=true 时不再叠通用报错
+    const handled = await guardSuspendWrite(e, (force) => send({ ...payload, ...force }));
+    if (!handled) ElMessage.error((e as Error).message || '保存失败');
   } finally {
     dialog.saving = false;
   }

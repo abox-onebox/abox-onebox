@@ -447,3 +447,73 @@ export class PageTrack {
   @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
   createdAt!: Date;
 }
+
+/**
+ * ab_sales_pause 全局停售区间（W1 · ADR-N1N2W1 · 第 34 张表）
+ *
+ * ## ⭐ 为什么是独立表而不是 `ab_config` 的一个键
+ *
+ * `BizConfigService` 有 **60 秒进程内缓存**，而「一键停售」的语义就是**立刻** ——
+ * 走配置路线会有最长 60 秒的放单窗口，且**无任何报错**：运营点下停售、页面显示成功，
+ * 这一分钟内用户照常下单成功。这正是本项目反复栽的那一类错（给了输入框，却没接上线）。
+ * （生产当前只有 1 个 api 容器：`docker-compose.prod.yml:88–96`，无 replicas，
+ *   故「立刻」在本部署形态下是可达的 —— 多副本时须另行评估。）
+ *
+ * ## ⭐ 生效判定 = 「区间覆盖该出餐日 ∧ resumed_at IS NULL」
+ *
+ * 判定是**点查**（`meal_date_from <= :d AND meal_date_to >= :d`），两端**含首尾**。
+ * 刻意**允许重叠区间**：「停售明天」+「停售下周一」是两条独立记录，各自独立恢复 ——
+ * 运营先恢复其中一条，不该连带把另一条也解了。故**无唯一约束**。
+ * 允许 `from == to`（「停售明日」就是这个形态），不做第二套开关。
+ *
+ * ## ⚠️ 恢复是「写 `resumed_at`」，不是删行
+ *
+ * 停售区间是**审计事实**（谁在什么时候停了哪几天、又因为什么停的）。删行会让
+ * 「上个月到底停过哪几天」事后查无此事，故只打恢复标记（+ 恢复人），行永久保留。
+ *
+ * ## ⚠️ 多词列必须显式写 `name:`
+ *
+ * 本仓 TypeORM 默认命名策略**不做** camelCase→snake_case 转换（见 `OpBlocklist` 同文件写法）。
+ * 漏写会在生产建出 `mealDateFrom` 而迁移里是 `meal_date_from`，`schema:parity` 会**同时**
+ * 报「迁移缺列」+「迁移多出列」—— 既造噪声又掩盖真问题。
+ *
+ * ## 无 version 列
+ *
+ * append-only + 单行 `resumed_at` 更新，不是并发争抢资源，不加乐观锁。
+ */
+@Entity('ab_sales_pause')
+@Index('idx_sales_pause_range', ['mealDateFrom', 'mealDateTo'])
+export class SalesPause {
+  @PkColumn()
+  id!: number;
+
+  @Column({ name: 'meal_date_from', type: 'date', comment: '停售起始出餐日（含）' })
+  mealDateFrom!: string;
+
+  @Column({ name: 'meal_date_to', type: 'date', comment: '停售截止出餐日（含）' })
+  mealDateTo!: string;
+
+  @Column({ type: 'varchar', length: 255, comment: '停售原因（后台必填，随用户端文案下发）' })
+  reason!: string;
+
+  @Column({ name: 'created_by', type: 'bigint', transformer: bigintTransformer, nullable: true })
+  createdBy?: number | null;
+
+  @Column({
+    name: 'resumed_at',
+    type: 'datetime',
+    precision: 3,
+    nullable: true,
+    comment: '恢复时刻（NULL = 仍生效）',
+  })
+  resumedAt?: Date | null;
+
+  @Column({ name: 'resumed_by', type: 'bigint', transformer: bigintTransformer, nullable: true })
+  resumedBy?: number | null;
+
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
+  updatedAt!: Date;
+}
