@@ -293,7 +293,9 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     channels: ['wechat_subscribe'],
     trigger: '退款到账即触达',
     mandatory: true,
-    variables: ['orderNo', 'amount', 'refundedAt'],
+    // ⚠️ `refundNo` **不出现在文案里**，只落进 `ab_message.payload`（与 `refund_result`
+    //     场景的 `orderNo` 同理）—— 供运营事后追溯「是哪笔退款」，白名单必须声明否则无据可查。
+    variables: ['orderNo', 'amount', 'refundedAt', 'refundNo'],
     requestSubscribe: true,
     consumedBy: 'finance/refund.service.ts → MessageService.notify()（M3-12 接线）',
     wiring: 'live',

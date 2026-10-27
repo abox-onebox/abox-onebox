@@ -275,29 +275,21 @@ export class OrderService {
      */
     const availability = await this.availability.forBuilding(mealDate, Number(building.id));
     /**
-     * ⚠️ **现状注记（2026-10-26 · W1）**：本支的 payload 只有 `{ reason: 'sales_paused' }`
-     *    —— 装的是**枚举值**，**不含**运营填的停售原因；而下面 60010 / 60011 两支
-     *    同时给了 `reason` + `reasonText`。这个不对称是**已知的**，不是漏。
-     *
-     * **为什么不补**（两条，都是「信息有没有丢」而不是「每个现场都要重复一遍」）：
-     *   ① **信息没丢**：运营填的原因已由 `reasonText()` 插进
-     *      `今日暂停接单：{why}`，在 **U1 首页 `daily.reason`** 上渲染了；
-     *      下单这里是**第二现场**，再给一遍是重复，不是补全。
-     *   ② **补进 payload 就是死数据**：前端 60009 分支**只读 `e.message`、不读 payload**
-     *      （`backend-w1` 已核）⇒ 补进去没有任何消费方，而它会变成第二份真源。
-     *
-     * **将来真要补时，补 `message` 不要补 `payload`**：
-     *     `throw new BizException(ErrorCode.SALES_PAUSED, availability.reasonText)`
-     *     —— 动态文案本来住不进 `ERROR_MESSAGE` 静态表，走 `BizException(code, msg)`
-     *     才是正解，且**前端零改动**。但这属跨端契约变更，
-     *     **待开票**，留到下一批 —— ⚠️ 截至 2026-10-26 该票**尚未落盘**（`docs/` 下没有
-     *     对应文件）；票落进 `docs/` 后，请把本句改成**具体文件路径**，不要留着「已开票」
-     *     这种指了个空的说法（注释声称存在一张票而票不存在，与注释漂移是同一个病）。
+     * ⚠️ **不对称已收口（2026-10-26 · W1）**：下面 60010 / 60011 两支给 `reason` + `reasonText`，
+     *    本支原先只给 `reason`、把原因文案留在 U1 首页 `daily.reason` 渲染（下单 toast 是第二现场）。
+     *    但前端 60009 分支**只读 `e.message`、不读 payload**，导致用户在下单这一现场看不到
+     *    运营填的停售原因 ⇒ 故补 `message` 而非 `payload`：动态文案住不进 `ERROR_MESSAGE`
+     *    静态表，走 `BizException(code, msg)` 才是正解，且**前端零改动**。
      */
     if (availability.reason === 'sales_paused') {
-      throw new BizException(ErrorCode.SALES_PAUSED, undefined, undefined, {
-        reason: availability.reason,
-      });
+      throw new BizException(
+        ErrorCode.SALES_PAUSED,
+        availability.reasonText ?? undefined,
+        undefined,
+        {
+          reason: availability.reason,
+        },
+      );
     }
     if (
       availability.reason === 'building_preparing' ||
