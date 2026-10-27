@@ -114,7 +114,15 @@ const F = {
   adminBuildingApi: join(ROOT, 'apps', 'admin-web', 'src', 'api', 'building.ts'),
   // ⚠️ `.vue` 文件：`stripComments()` 按 `'` / `"` / `` ` `` 判字符串，模板属性里的引号是配对的，
   //    可安全剥离；但 `<template>` 标签内的中文正文**不含**这些引号，不受影响。
-  leaderBindingVue: join(ROOT, 'apps', 'admin-web', 'src', 'views', 'building', 'leader-binding.vue'),
+  leaderBindingVue: join(
+    ROOT,
+    'apps',
+    'admin-web',
+    'src',
+    'views',
+    'building',
+    'leader-binding.vue',
+  ),
   apiSpec: join(ROOT, 'docs', 'ABox一盒接口规范v1.0.md'),
   historyReport: join(ROOT, 'docs', 'ABox一盒深度测试第二轮报告v1.0.md'),
   // ── W1 呈现层（v2.5 新增）────────────────────────────────────────────────
@@ -122,7 +130,15 @@ const F = {
   //    Team Lead 派单里写的 `apps/miniprogram/pages/index/index.vue` 不存在 ——
   //    本批第四次「消息里的路径 grep 不到」。判据一律按 `src/` 下的真实路径取。
   salesPauseVue: join(ROOT, 'apps', 'admin-web', 'src', 'views', 'system', 'sales-pause.vue'),
-  orderCreateVue: join(ROOT, 'apps', 'miniprogram', 'src', 'pages', 'order-create', 'order-create.vue'),
+  orderCreateVue: join(
+    ROOT,
+    'apps',
+    'miniprogram',
+    'src',
+    'pages',
+    'order-create',
+    'order-create.vue',
+  ),
   tplSpecs: join(SRC, 'modules', 'admin', 'template', 'message-template.specs.ts'),
   salesPauseService: join(SRC, 'modules', 'admin', 'sales-pause', 'sales-pause.service.ts'),
   salesPauseController: join(SRC, 'modules', 'admin', 'sales-pause', 'sales-pause.controller.ts'),
@@ -156,24 +172,49 @@ function stripComments(src) {
     const c = src[i];
     const n = src[i + 1];
     if (mode === 'code') {
-      if (c === '/' && n === '/') { mode = 'line'; i += 2; continue; }
-      if (c === '/' && n === '*') { mode = 'block'; i += 2; continue; }
+      if (c === '/' && n === '/') {
+        mode = 'line';
+        i += 2;
+        continue;
+      }
+      if (c === '/' && n === '*') {
+        mode = 'block';
+        i += 2;
+        continue;
+      }
       if (c === "'" || c === '"' || c === '`') {
         mode = c === "'" ? 'sq' : c === '"' ? 'dq' : 'tpl';
-        out += c; i += 1; continue;
+        out += c;
+        i += 1;
+        continue;
       }
-      out += c; i += 1; continue;
+      out += c;
+      i += 1;
+      continue;
     }
     if (mode === 'line') {
-      if (c === '\n') { mode = 'code'; out += c; }
-      i += 1; continue;
+      if (c === '\n') {
+        mode = 'code';
+        out += c;
+      }
+      i += 1;
+      continue;
     }
     if (mode === 'block') {
-      if (c === '*' && n === '/') { mode = 'code'; i += 2; continue; }
-      i += 1; continue;
+      if (c === '*' && n === '/') {
+        mode = 'code';
+        i += 2;
+        continue;
+      }
+      i += 1;
+      continue;
     }
     out += c;
-    if (c === '\\') { out += src[i + 1] ?? ''; i += 2; continue; }
+    if (c === '\\') {
+      out += src[i + 1] ?? '';
+      i += 2;
+      continue;
+    }
     const end = mode === 'sq' ? "'" : mode === 'dq' ? '"' : '`';
     if (c === end) mode = 'code';
     i += 1;
@@ -357,9 +398,7 @@ function scanHits(rootDir, needle, { radius = 120, ext = /\.ts$/ } = {}) {
             lineText: lineText.trim(),
             stmt: from >= 0 ? text.slice(from, to < 0 ? text.length : to) : lineText,
             fwd:
-              fw >= 0 && fw - m.index <= 300
-                ? text.slice(fw, fwEnd < 0 ? text.length : fwEnd)
-                : '',
+              fw >= 0 && fw - m.index <= 300 ? text.slice(fw, fwEnd < 0 ? text.length : fwEnd) : '',
             // `call`：**命中点所在的 `BizException(...)` 完整调用**（圆括号配对，**可跨行**）
             //
             // ⚠️ 为什么必须单列：首版 N1-24 用 `stmt`（回扫到 `throw new`、
@@ -699,14 +738,21 @@ const RULES = [
   {
     id: 'N1-3b',
     desc: '管家端只得调 evaluateStructure，不得调 evaluateAvailability / OrderAvailabilityService',
-    file: 'buildingAdmin',
-    // ⚠️ **必须剥注释**：`building-admin.service.ts:244` 的说明注释里写着
+    // T5 第三步（2026-10-27）：读侧四视图迁进 `building-query.service.ts` 后，管家端
+    //    分散在两个文件里 —— 只盯主文件 ⇒ 新文件引入可用性层没人拦。
+    //    **判据跟着真源走**：改成扫两个文件，不放宽判据本身。
+    files: ['buildingAdmin', 'buildingQuery'],
+    // ⚠️ **必须剥注释**：`building-admin.service.ts` 的说明注释里写着
     //    （行号仅作路标，随时会漂 —— 它不参与判定，判的是「为什么」那句话在不在）
     //    「为什么管家端只调结构层、不调 `evaluateAvailability()`」—— 这句话是本次判据要求的
     //    **正面 exemplar**（它把「为什么」讲给下一个人听）。不剥注释 ⇒ 判据恒红，
     //    逼着执行者删掉一份正确的说明。**门禁报假警比不报更伤，因为它会让人下次不信它。**
-    pred: (t) => !/evaluateAvailability|OrderAvailabilityService/.test(stripComments(t)),
-    mutate: (t) =>
+    pred: (ts) =>
+      ts.every((t) => !/evaluateAvailability|OrderAvailabilityService/.test(stripComments(t))),
+    // 走 REAL 分支（无 sample）⇒ 破化作用于 `files[0]`（主文件）；锚点
+    //    `import { BizException }` 在主文件里真实存在 ✓ —— 多文件判据的
+    //    `mutateFirst` 锚点**必须**存在于 `files[0]`，否则破化无效、自证假绿。
+    mutateFirst: (t) =>
       t.replace(
         'import { BizException }',
         "import { OrderAvailabilityService } from '../../common/services/order-availability.service';\nimport { BizException }",
@@ -763,7 +809,11 @@ const RULES = [
       if (!a || !b) return false;
       return a[1] !== '' && b[1] !== '' && a[1] !== b[1];
     },
-    mutate: (t) => t.replace("building_preparing: '该办公楼尚未开通，敬请期待'", "building_preparing: '该办公楼已暂停服务'"),
+    mutate: (t) =>
+      t.replace(
+        "building_preparing: '该办公楼尚未开通，敬请期待'",
+        "building_preparing: '该办公楼已暂停服务'",
+      ),
   },
   {
     // ───────────────────────────────────────────────────────────────────────
@@ -822,8 +872,14 @@ const RULES = [
       );
     },
     scanGood: () => [
-      guardOf('if (!building.buildingGroupId) {', 'throw new BizException(ErrorCode.BUILDING_NOT_GROUPED);'),
-      guardOf('if (!building?.buildingGroupId) {', 'throw new BizException(ErrorCode.BUILDING_NOT_GROUPED);'),
+      guardOf(
+        'if (!building.buildingGroupId) {',
+        'throw new BizException(ErrorCode.BUILDING_NOT_GROUPED);',
+      ),
+      guardOf(
+        'if (!building?.buildingGroupId) {',
+        'throw new BizException(ErrorCode.BUILDING_NOT_GROUPED);',
+      ),
     ],
     scanBroken: () => [
       guardOf('if (!building.buildingGroupId) {', 'throw new BizException(ErrorCode.NOT_FOUND);'),
@@ -839,16 +895,18 @@ const RULES = [
     pred: (t) => {
       const b = fnOf(t, 'evaluateStructure');
       if (!b) return false;
-      return isAscending(orderOf(b, [
-        "s.buildingGroupId === null",
-        "s.buildingStatus === BuildingStatus.PREPARING",
-        "s.buildingStatus === BuildingStatus.SUSPENDED",
-        "s.buildingGroupStatus === BuildingGroupStatus.SUSPENDED",
-      ]));
+      return isAscending(
+        orderOf(b, [
+          's.buildingGroupId === null',
+          's.buildingStatus === BuildingStatus.PREPARING',
+          's.buildingStatus === BuildingStatus.SUSPENDED',
+          's.buildingGroupStatus === BuildingGroupStatus.SUSPENDED',
+        ]),
+      );
     },
     mutate: (t) =>
       t.replace(
-        '  if (s.buildingStatus === BuildingStatus.PREPARING) {\n    return { ok: false, reason: \'building_preparing\' };\n  }\n',
+        "  if (s.buildingStatus === BuildingStatus.PREPARING) {\n    return { ok: false, reason: 'building_preparing' };\n  }\n",
         '',
       ),
   },
@@ -861,14 +919,17 @@ const RULES = [
       if (!b) return false;
       const i = b.indexOf('i.salesPaused');
       if (i < 0) return false;
-      return isAscending(orderOf(b, ['i.salesPaused', 'evaluateStructure(i)', 'assignmentStatus', 'publishAtMs']));
+      return isAscending(
+        orderOf(b, ['i.salesPaused', 'evaluateStructure(i)', 'assignmentStatus', 'publishAtMs']),
+      );
     },
     mutate: (t) =>
-      t.replace(
-        "  if (i.salesPaused) return { canOrder: false, reason: 'sales_paused' };\n\n",
-        '',
-      ).replace('  return { canOrder: true, reason: null };',
-        "  if (i.salesPaused) return { canOrder: false, reason: 'sales_paused' };\n  return { canOrder: true, reason: null };"),
+      t
+        .replace("  if (i.salesPaused) return { canOrder: false, reason: 'sales_paused' };\n\n", '')
+        .replace(
+          '  return { canOrder: true, reason: null };',
+          "  if (i.salesPaused) return { canOrder: false, reason: 'sales_paused' };\n  return { canOrder: true, reason: null };",
+        ),
   },
   {
     id: 'N1-9-a',
@@ -973,7 +1034,7 @@ const RULES = [
     scanGood: () => [
       ctxOf(
         'throw new BizException(ErrorCode.BUILDING_GROUP_SUSPENDED_REJECT, undefined, undefined, {\n      targetGroupId: gid,\n    });',
-        'private async assertGroupOpen(gid: number): Promise<void> {\n    const gate = await this.groupGate(gid);\n    if (gate === \'suspended\') {\n      throw new BizException(ErrorCode.BUILDING_GROUP_SUSPENDED_REJECT, undefined, undefined, {\n        targetGroupId: gid,\n      });',
+        "private async assertGroupOpen(gid: number): Promise<void> {\n    const gate = await this.groupGate(gid);\n    if (gate === 'suspended') {\n      throw new BizException(ErrorCode.BUILDING_GROUP_SUSPENDED_REJECT, undefined, undefined, {\n        targetGroupId: gid,\n      });",
       ),
     ],
     // 破化方向 = 把抛点复制一份到第二个函数体 ⇒ 数量变 2 ⇒ 必红
@@ -1014,7 +1075,7 @@ const RULES = [
     mutate: (t) =>
       t.replace(
         'return !ORDER_TERMINAL_STATUS.includes(status as OrderStatus);',
-        "return [OrderStatus.PAID, OrderStatus.CUT_OFF].includes(status as OrderStatus);",
+        'return [OrderStatus.PAID, OrderStatus.CUT_OFF].includes(status as OrderStatus);',
       ),
   },
   {
@@ -1074,7 +1135,11 @@ export function decideSuspend(i: SuspendGateInput): SuspendDecision {
   return { ok: true, reason: null };
 }`,
     // 破坏方向：把时钟读回来 —— 决策函数一旦能读钟，就重新有了随时间漂移的入口
-    mutate: (t) => t.replace('export function isUnfinished(', 'const __now = Date.now();\nexport function isUnfinished('),
+    mutate: (t) =>
+      t.replace(
+        'export function isUnfinished(',
+        'const __now = Date.now();\nexport function isUnfinished(',
+      ),
   },
   {
     id: 'N2-3',
@@ -1101,12 +1166,26 @@ export function decideSuspend(i: SuspendGateInput): SuspendDecision {
   {
     id: 'N2-8',
     desc: 'A/B 分组必须从常量派生，不得 `OrderStatus.X || OrderStatus.Y ||` 长串',
-    file: 'buildingAdmin',
-    pred: (t) => !(/OrderStatus\.[A-Z_]+\s*\|\|[\s\S]{0,120}OrderStatus\.[A-Z_]+\s*\|\|/.test(stripComments(t))),
-    sample: `
+    // 同 N1-3b：读侧迁出后管家端在两个文件里，判据跟着真源扫两个文件。
+    files: ['buildingAdmin', 'buildingQuery'],
+    // ⚠️ **锚点腐烂登记（2026-10-27 核实，未修）**：`mutateFirst` 的锚点
+    //    `const GROUP_A_STATUS` 在真文件里**已不存在**（A/B 分组常量随停用闸门迁出后
+    //    已不叫这个名字）⇒ 真文件侧无法破化，本条只能靠 `sample` 自证（SYNTH 路径）。
+    //    这是「判据还在绿，但已经不能证明真文件被守着」的形状，与 N1-16 旧盲区同类
+    //    —— 下批应把锚点换成真文件里真实存在的串，别让自证只活在样本上。
+    pred: (ts) =>
+      ts.every(
+        (t) =>
+          !/OrderStatus\.[A-Z_]+\s*\|\|[\s\S]{0,120}OrderStatus\.[A-Z_]+\s*\|\|/.test(
+            stripComments(t),
+          ),
+      ),
+    sample: [
+      `
   const GROUP_A_STATUS = [OrderStatus.CUT_OFF, OrderStatus.COOKED,
     OrderStatus.DELIVERING, OrderStatus.DELIVERED];`,
-    mutate: (t) =>
+    ],
+    mutateFirst: (t) =>
       t.replace(
         'const GROUP_A_STATUS',
         'const x = s === OrderStatus.CUT_OFF || s === OrderStatus.COOKED || s === OrderStatus.DELIVERING;',
@@ -1135,7 +1214,9 @@ export function decideSuspend(i: SuspendGateInput): SuspendDecision {
       const win = t.slice(i, i + 240);
       return (
         /wiring:\s*'live'/.test(win) &&
-        /suspendForceMaxCount\(\)[\s\S]{0,200}?getNumber\('building\.suspend_force_max_count',\s*20\)/.test(b)
+        /suspendForceMaxCount\(\)[\s\S]{0,200}?getNumber\('building\.suspend_force_max_count',\s*20\)/.test(
+          b,
+        )
       );
     },
     sample: [
@@ -1237,8 +1318,7 @@ export class SalesPause {
     desc: 'config.specs.ts 不得出现任何停售键（防把 config 路线加回来）',
     file: 'specs',
     pred: (t) => !/key:\s*'[^']*(sales_pause|stop_sale|global_stop)[^']*'/.test(t),
-    mutate: (t) =>
-      t.replace("key: 'commission.min_withdraw'", "key: 'order.global_stop_sale'"),
+    mutate: (t) => t.replace("key: 'commission.min_withdraw'", "key: 'order.global_stop_sale'"),
   },
   {
     id: 'W1-5',
@@ -1255,7 +1335,11 @@ export class SalesPause {
   }`,
     // ⚠️ 必须落成能被 `\bcache\b` 命中的形态：`cachedRows` 里的 cache 后面跟着 d，
     //    \b 不成立 ⇒ 判据不会变红（mutate 假生效，自证当场抓出来）
-    mutate: (t) => t.replace('const b = await this.buildingRepo.findOne', 'const rows = this.cache.get(key);\n    const b = await this.buildingRepo.findOne'),
+    mutate: (t) =>
+      t.replace(
+        'const b = await this.buildingRepo.findOne',
+        'const rows = this.cache.get(key);\n    const b = await this.buildingRepo.findOne',
+      ),
   },
   {
     id: 'W1-6',
@@ -1269,7 +1353,11 @@ export class SalesPause {
     const rows = await this.pauseRepo.find({ where: { resumedAt: IsNull() } });
     return { salesPaused: rows.length > 0 };
   }`,
-    mutate: (t) => t.replace('const rows = await this.pauseRepo.find', 'await this.forceRefund(buildingId);\n    const rows = await this.pauseRepo.find'),
+    mutate: (t) =>
+      t.replace(
+        'const rows = await this.pauseRepo.find',
+        'await this.forceRefund(buildingId);\n    const rows = await this.pauseRepo.find',
+      ),
   },
   {
     id: 'W1-7',
@@ -1401,8 +1489,7 @@ export class SalesPause {
     file: 'orderability',
     pred: reasonTextCoversDynamicKeys,
     // 破化方向 = **删掉一个空串键的插值分支**（`sales_paused` 正是这样入网的）
-    mutate: (t) =>
-      t.replace("    case 'sales_paused': {", "    case 'sales_paused_moved': {"),
+    mutate: (t) => t.replace("    case 'sales_paused': {", "    case 'sales_paused_moved': {"),
   },
   {
     id: 'N1-13',
@@ -1543,7 +1630,10 @@ export class SalesPause {
     return { buildingStatus: building?.status ?? null, groupId, group } as any;
   }`,
     // 破坏方向：摘掉 group 那一处的过滤（只漏一处就够 ⇒ 证明不是靠「全文出现过一次」蒙混）
-    mutate: (t) => t.replaceAll('deletedAt: IsNull()', 'deletedAt: undefined').replace('{ id: groupId, deletedAt: undefined }', '{ id: groupId }'),
+    mutate: (t) =>
+      t
+        .replaceAll('deletedAt: IsNull()', 'deletedAt: undefined')
+        .replace('{ id: groupId, deletedAt: undefined }', '{ id: groupId }'),
   },
   {
     id: 'N1-15',
@@ -1577,35 +1667,57 @@ export class SalesPause {
     };`,
     // 破坏方向：把唯一出口换成「自己造一份」—— 同时触发 `REASON_TEXT[` 与 `reasonTextOf`，
     // 且 `/reasonText\(/` 因 `reasonTextOf(` 而不匹配 ⇒ 四个合取一起变红。
-    mutate: (t) => t.replace('reasonText(result.reason, {', 'REASON_TEXT[result.reason] ?? reasonTextOf('),
+    mutate: (t) =>
+      t.replace('reasonText(result.reason, {', 'REASON_TEXT[result.reason] ?? reasonTextOf('),
   },
   {
     id: 'N1-16',
-    desc: '★「楼状态 ∧ 已归群」的内联合取在 building-admin.service.ts 内命中数必须为 0（唯一持有者 = evaluateStructure）',
-    file: 'buildingAdmin',
-    // ⚠️ **缘起**：改名巡检时挖出楼宇概览里那个 `canAssignCount`（现约 `:494`）是
-    //    **第三份判据** —— 它既不消费列表页那个字段，也不调纯函数，而是自己内联了
+    desc: '★「楼状态 ∧ 已归群」的内联合取命中数必须为 0（唯一持有者 = evaluateStructure；`buildingWarnings` 的分条文案为**显式豁免**）',
+    files: ['buildingAdmin', 'buildingQuery'],
+    // ⚠️ **缘起**：改名巡检时挖出楼宇概览里那个 `canAssignCount` 是**第三份判据**
+    //    —— 它既不消费列表页那个字段，也不调纯函数，而是自己内联了
     //    `b.status === BuildingStatus.ACTIVE && b.buildingGroupId`。
     //    改名若只改字段名而漏掉它，「楼宇概览」就会留一份没人管的旧判据，与列表页是
     //    两个独立数字，将来对不上也没人查得出。
     //
-    // ⚠️ 三种书写形态都要覆盖（**自证当场抓出过这个盲区**）：
-    //    · `b.status` / `saved.status` —— 列表、编辑回显（现约 `:259` `:370` `:680` `:774`）
+    // ⚠️ **四种书写形态都要覆盖**（旧版只认前两档，**自证当场抓出过这个盲区**）：
+    //    · `b.status` / `saved.status` —— 列表、编辑回显
     //    · `buildingStatus` —— 抽成 `canAssignOf()` 后用**形参名**写（最容易被漏的一档：
     //      首版正则写成 `status\s*===`，而 `buildingStatus` 里的 S 是大写 ⇒ **匹配不上**，
     //      判据对它完全失明。故前缀放开成 `[A-Za-z]*[Ss]tatus`）
-    //    · `b.buildingGroupId` / `gid !== null` —— 归群那一半的两种写法
+    //    · `!==` —— 旧版只写 `===` ⇒ `buildingWarnings` 的第一行**在视野外**
+    //    · `gid === null` —— 旧版只写 `gid !== null` ⇒ 第二行同样在视野外
     //
-    // ⚠️ 必须 `stripComments()`：本文件注释极多（`:556` 那段就原样抄了这行合取做说明），
+    // ⚠️ 必须 `stripComments()`：本文件注释极多（说明性注释里原样抄了这行合取做说明），
     //    全文匹配会**恒红**。
-    pred: (t) => {
-      const b = stripComments(t);
-      const m = b.match(
-        /[A-Za-z]*[Ss]tatus\s*===\s*BuildingStatus\.ACTIVE\s*&&\s*(?:gid\s*!==?\s*null|(?:[\w.]+\.)?buildingGroupId\b(?:\s*!==?\s*null)?)/g,
-      );
-      return (m ?? []).length === 0;
-    },
-    sample: `  private canAssignOf(
+    //
+    // ── 2026-10-27 盲区裁定（G14 · 有意保留的字面两边都要写清）──────────────
+    // 旧版因为上面第 3、4 档没覆盖 ⇒ `buildingWarnings()` 的两行**完全失明**：
+    //    判据恒绿，但不是因为它对，是因为它看不见 —— 这比红更坏。
+    // 修法 = **先让它看得见，再显式豁免**，而不是继续看不见：
+    //    `buildingWarnings` 是**合法形态**，理由是本判据的**缘起**管不到它 ——
+    //    缘起防的是「第二份判据 ⇒ 两个独立**数字**对不上」；而它产出的是**分条文案**
+    //    （「已非营业中」/「未归入楼群」），粒度比 `canAssign` 的三态更细：
+    //    三态合一回答不了「为什么不行」，运营要看的正是分条原因。它不是数字，
+    //    不存在与列表页对不上的问题 ⇒ **不改为派生**（那会改动出参文案，属行为变更）。
+    // ⚠️ 豁免必须**指着一个真实存在的对象**：`blockOf()` 取不到方法块就直接判红 ——
+    //    豁免指向空气 ⇒ 判据退化成永久盲区，比不豁免更坏（HELPER_CHECKS 有专项自证）。
+    //
+    // ⚠️ T5 第三步（2026-10-27）：读侧四视图迁进 `building-query.service.ts`，
+    //    判据**跟着真源**改成扫两个文件（不放宽判据本身）。
+    pred: (ts) =>
+      ts.every((t) => {
+        if (!t) return false;
+        const b = stripComments(t);
+        const re =
+          /[A-Za-z]*[Ss]tatus\s*(?:===|!==)\s*BuildingStatus\.ACTIVE\s*&&\s*(?:gid\s*(?:===|!==)\s*null|(?:[\w.]+\.)?buildingGroupId\b(?:\s*(?:===|!==)\s*null)?)/g;
+        if ((b.match(re) ?? []).length === 0) return true;
+        const w = blockOf(b, 'private buildingWarnings(');
+        if (!w) return false; // 豁免对象不在 ⇒ 严格判红
+        return (b.replace(w, '').match(re) ?? []).length === 0;
+      }),
+    sample: [
+      `  private canAssignOf(
     buildingStatus: number,
     buildingGroupId: number | null,
     buildingGroupStatus: number | null,
@@ -1617,10 +1729,12 @@ export class SalesPause {
     const gid = b.buildingGroupId ? Number(b.buildingGroupId) : null;
     return this.canAssignOf(b.status, gid, gid ? (groupStatusMap.get(gid) ?? null) : null);
   }).length,`,
+    ],
     // 破坏方向：**写回**一份内联合取（这正是 438 被挖出来时的现状）。
-    //    刻意用 `b.status ... gid !== null` 这一档——它与概览页原状同形，
+    //    刻意用 `b.status ... gid !== null` 这一档 —— 它与概览页原状同形，
     //    是执行者「把判据抄回内联」时最自然的写法。
-    mutate: (t) =>
+    //    ⚠️ 多文件判据只破化 `files[0]`，故锚点必须写在 `sample[0]` 里。
+    mutateFirst: (t) =>
       t.replace(
         'return evaluateStructure({ buildingStatus, buildingGroupId, buildingGroupStatus }).ok;',
         'return b.status === BuildingStatus.ACTIVE && gid !== null;',
@@ -1685,7 +1799,8 @@ export class SalesPause {
       '与用户端「此刻能否下单」的 \`canOrder\` 不是同一件事。' +`,
       `| **D13 \`canAssign\`** | = 营业中 ∧ 已归群 | 与 U1「今日这盒」是否可下单不是同一判据 |`,
     ],
-    mutateFirst: (t) => t.replace('`canAssign` = 配置上能不能开团', '`canOrder` = 配置上能不能开团'),
+    mutateFirst: (t) =>
+      t.replace('`canAssign` = 配置上能不能开团', '`canOrder` = 配置上能不能开团'),
   },
   {
     id: 'N1-19',
@@ -1797,7 +1912,8 @@ export class SalesPause {
     // 破化方向 = 三种真实误操作里最隐蔽的一种：注释还在、字数没变，但警示语被删了
     // （另两种「整段删除」与「改成 canAssign」由下面 HELPER_CHECKS 里的两条专项自证覆盖）
     mutateFirst: (t) => t.replace('**不要全局替换**为 `canAssign`', '**改名后**为 `canAssign`'),
-    absentHint: 'building-admin.service.ts / building-admin.controller.ts 存在性检查（两文件缺一即不判定）',
+    absentHint:
+      'building-admin.service.ts / building-admin.controller.ts 存在性检查（两文件缺一即不判定）',
   },
 
   // ════════════════════════════════════════════════════════════════════════════
@@ -1837,7 +1953,10 @@ export class SalesPause {
     ],
     // 破化方向 = 最可能的误操作：只改了 REASON_TEXT 一侧，忘了 ERROR_MESSAGE
     mutateFirst: (t) =>
-      t.replace("building_not_grouped: '该办公楼暂未开通服务，请联系运营'", "building_not_grouped: '该办公楼未配置楼群'"),
+      t.replace(
+        "building_not_grouped: '该办公楼暂未开通服务，请联系运营'",
+        "building_not_grouped: '该办公楼未配置楼群'",
+      ),
     absentHint: 'orderability.ts / error-code.ts 两侧文案一致性检查（两文件缺一即不判定）',
   },
   {
@@ -1855,7 +1974,8 @@ export class SalesPause {
     id: 'N1-24',
     desc: '★ 抛 BUILDING_NOT_GROUPED 时不得传第二参数（文案统一由 ERROR_MESSAGE 提供，调用点不得内联覆写）',
     scan: { dir: () => SRC, needle: 'BUILDING_NOT_GROUPED', radius: 200 },
-    scope: (hits) => hits.filter((h) => !h.isComment && /^throw\s+new\s+BizException\s*\(/.test(h.stmt ?? '')),
+    scope: (hits) =>
+      hits.filter((h) => !h.isComment && /^throw\s+new\s+BizException\s*\(/.test(h.stmt ?? '')),
     pred: (hits) => {
       const throws = hits.filter(
         (h) => !h.isComment && /^throw\s+new\s+BizException\s*\(/.test(h.stmt ?? ''),
@@ -1870,12 +1990,17 @@ export class SalesPause {
     },
     scanGood: () => [
       ctxOf('throw new BizException(ErrorCode.BUILDING_NOT_GROUPED);'),
-      ctxOf('throw new BizException(ErrorCode.BUILDING_NOT_GROUPED, undefined, undefined, { a: 1 });'),
+      ctxOf(
+        'throw new BizException(ErrorCode.BUILDING_NOT_GROUPED, undefined, undefined, { a: 1 });',
+      ),
     ],
     scanBroken: () => [
-      ctxOf("throw new BizException(ErrorCode.BUILDING_NOT_GROUPED, '所属办公楼未配置楼群，请联系运营');"),
+      ctxOf(
+        "throw new BizException(ErrorCode.BUILDING_NOT_GROUPED, '所属办公楼未配置楼群，请联系运营');",
+      ),
     ],
-    absentHint: '全仓未扫到 BUILDING_NOT_GROUPED 的抛点 ⇒ 要么抛点被删，要么改名了（需同步 needle）',
+    absentHint:
+      '全仓未扫到 BUILDING_NOT_GROUPED 的抛点 ⇒ 要么抛点被删，要么改名了（需同步 needle）',
   },
   {
     // ───────────────────────────────────────────────────────────────────────
@@ -1999,7 +2124,8 @@ export class SalesPause {
   return needsBuilding.value ? '你还没有选择办公楼' : '本楼今日未开团';
 })`),
     ],
-    absentHint: '小程序侧未扫到含 `code === undefined` 判定的 computed ⇒ 要么兜底形态整体改了，要么路径变了',
+    absentHint:
+      '小程序侧未扫到含 `code === undefined` 判定的 computed ⇒ 要么兜底形态整体改了，要么路径变了',
   },
 
   // ════════════════════════════════════════════════════════════════════════════
@@ -2066,7 +2192,11 @@ export class SalesPause {
   resume(@Param('id') id: number) { return this.svc.resume(id, null); }`,
     ],
     // 破化方向 = 顺手把停用码搬过来当停售码用
-    mutateFirst: (t) => t.replace('async create(dto: CreateSalesPauseDto', 'const X = 60012;\n  async create(dto: CreateSalesPauseDto'),
+    mutateFirst: (t) =>
+      t.replace(
+        'async create(dto: CreateSalesPauseDto',
+        'const X = 60012;\n  async create(dto: CreateSalesPauseDto',
+      ),
     absentHint: 'apps/api-server/src/modules/admin/sales-pause/ 尚未落地',
   },
   {
@@ -2341,7 +2471,7 @@ function nextMigrationName(slug = 'sales-pause') {
   const dir = join(SRC, 'database', 'migrations');
   if (!existsSync(dir)) return `1700000000001-${slug}.ts`;
   const max = readdirSync(dir)
-    .map((f) => Number((f.match(/^(\d{10,})-/)?.[1]) ?? 0))
+    .map((f) => Number(f.match(/^(\d{10,})-/)?.[1] ?? 0))
     .reduce((a, b) => (b > a ? b : a), 0);
   return `${max + 1}-${slug}.ts`;
 }
@@ -2360,7 +2490,13 @@ function samplesOf(r) {
     // ⚠️ 刻意**不复用** `mutate`：扫描型判据的输入是 `scanHits()` 的产物，
     //    对文本做字符串替换造不出「某个命中点变了」这个事件。
     const real = scanHits(r.scan.dir(), r.scan.needle, r.scan);
-    return { kind: 'SCAN', real, root: r.scanGood(), broken: r.scanBroken(), realAlso: r.pred(real) === true };
+    return {
+      kind: 'SCAN',
+      real,
+      root: r.scanGood(),
+      broken: r.scanBroken(),
+      realAlso: r.pred(real) === true,
+    };
   }
   if (r.migration) {
     const real = readMigration(r.migration);
@@ -2408,7 +2544,9 @@ function samplesOf(r) {
     //    真检已绿，自证却标 [SYNTH]「尚未满足」）。
     //    ⇒ 收口验收条件是「[SYNTH] 全部退化」，标签失真会让这个条件没法核。
     const realAlso =
-      real !== null && r.sample !== undefined && (() => {
+      real !== null &&
+      r.sample !== undefined &&
+      (() => {
         try {
           return r.pred(real) === true;
         } catch {
@@ -2440,12 +2578,32 @@ function samplesOf(r) {
 // 如果我不知道正确答案，我就没有在验证，只是在记录。
 const HELPER_CHECKS = [
   {
+    name: 'N1-16 · 豁免对象 `buildingWarnings` 必须真实存在（防豁免指向空气 ⇒ 判据退化成永久盲区）',
+    // 已知答案：豁免的前提是「被豁免的东西还在原位」。方法一旦被删或改名，
+    //   `blockOf()` 取不到块 ⇒ pred 走严格分支 ⇒ 同样的合取立刻红。
+    //   ⇒ 「豁免」不是一次性免死金牌，它**随对象消失而失效**。
+    fn: () => {
+      const r = RULES.find((x) => x.id === 'N1-16');
+      const withWarn = [
+        '  private buildingWarnings(b: Building) {',
+        "    if (b.status !== BuildingStatus.ACTIVE && gid !== null) { w.push('x'); }",
+        '  }',
+      ].join('\n');
+      const renamed = [
+        '  private helper(b: Building) {',
+        "    if (b.status !== BuildingStatus.ACTIVE && gid !== null) { w.push('x'); }",
+        '  }',
+      ].join('\n');
+      return r.pred([withWarn]) === true && r.pred([renamed]) === false;
+    },
+  },
+  {
     name: 'blockOf · 返回类型是泛型对象 Promise<{…}> 时仍能取到完整函数体',
     // 已知答案：应当取到含 `USER_BUILDING_UNBOUND` 与 `return { … }` 的整个函数体
     fn: () => {
       const src = [
         '  private async resolveGroup(user: User): Promise<{ building: Building; groupId: number }> {',
-        "    if (!user.buildingId) {",
+        '    if (!user.buildingId) {',
         "      throw new BizException(ErrorCode.USER_BUILDING_UNBOUND, 'x');",
         '    }',
         '    return { building, groupId: 1 };',
@@ -2464,7 +2622,7 @@ const HELPER_CHECKS = [
     fn: () => {
       const src = [
         '  private async resolveGroup(user: User): Promise<number> {',
-        "    if (!user.buildingId) {",
+        '    if (!user.buildingId) {',
         "      throw new BizException(ErrorCode.USER_BUILDING_UNBOUND, 'x');",
         '    }',
         '    return 1;',
@@ -2479,7 +2637,11 @@ const HELPER_CHECKS = [
     // ⚠️ 这条专门守 `=>` 的坑：不给 `=>` 特殊处理时，箭头那个 `>` 会把 gen 减到 0，
     //    紧随的 `{ y: 1 }` 会被当成函数体 ⇒ 取到 `… => { y: 1 }`，永远拿不到 BODY_MARK。
     fn: () => {
-      const src = ['  async f(x: number): Promise<(x: number) => { y: 1 }> {', '    return BODY_MARK;', '  }'].join('\n');
+      const src = [
+        '  async f(x: number): Promise<(x: number) => { y: 1 }> {',
+        '    return BODY_MARK;',
+        '  }',
+      ].join('\n');
       const b = blockOf(src, 'async f(');
       return b.includes('return BODY_MARK;');
     },
@@ -2547,7 +2709,7 @@ const HELPER_CHECKS = [
           isComment: false,
           stmt: 'throw new BizException(ErrorCode.NOT_FOUND, `办公楼 #1 不存在`);',
           fwd: 'throw new BizException(ErrorCode.BUILDING_NOT_GROUPED);',
-          ctx: "if (!building.buildingGroupId) {\nthrow new BizException(ErrorCode.NOT_FOUND, `办公楼 #1 不存在`);",
+          ctx: 'if (!building.buildingGroupId) {\nthrow new BizException(ErrorCode.NOT_FOUND, `办公楼 #1 不存在`);',
         },
       ];
       return r.pred(fixed) === true;
@@ -2569,7 +2731,9 @@ const HELPER_CHECKS = [
     fn: () => {
       const r = RULES.find((x) => x.id === 'N1-20');
       const pad = 'x'.repeat(400); // 撑开距离，让「用户端」掉出邻域窗口
-      const far = [`此处提到 canOrder，也写了不要全局替换，${pad}而「用户端」这三个字在 400 字之外。`];
+      const far = [
+        `此处提到 canOrder，也写了不要全局替换，${pad}而「用户端」这三个字在 400 字之外。`,
+      ];
       return r.pred(far) === false;
     },
   },
@@ -2676,9 +2840,7 @@ for (const h of HELPER_CHECKS) {
   }
 }
 if (helperFail) {
-  console.error(
-    `\n工具自证失败 ${helperFail} 条 ⇒ 判据取数不可信，判红判绿都没有意义，退出 2`,
-  );
+  console.error(`\n工具自证失败 ${helperFail} 条 ⇒ 判据取数不可信，判红判绿都没有意义，退出 2`);
   process.exit(2);
 }
 console.log(`工具自证 ${HELPER_CHECKS.length}/${HELPER_CHECKS.length} 通过 ✅\n`);
@@ -2726,7 +2888,8 @@ for (const r of RULES) {
         '确实持续报红才是判据或产物的问题。',
     );
     // ⚠️ 三种自证失败的形态不一样，提示必须分别给，否则看的人无从下手：
-    if (!changed) console.log('   → 破化根本没生效：`mutate` 的锚点在样本里不存在，改判据或改锚点。');
+    if (!changed)
+      console.log('   → 破化根本没生效：`mutate` 的锚点在样本里不存在，改判据或改锚点。');
     if (!passOnGood) console.log('   → good 样本就没过：判据写错了，或目标形态本身不符合本判据。');
     if (!failOnBroken && changed) {
       console.log(
@@ -2759,9 +2922,7 @@ console.log(
 );
 if (selfFail) {
   console.error(`\n自证失败 ${selfFail} 条 ⇒ 检查器自身不可信，退出 2`);
-  console.error(
-    '⚠️ 若只在某一次运行中出现：先原样重跑一次 —— 门禁可能读到了并发写入中途的文件。',
-  );
+  console.error('⚠️ 若只在某一次运行中出现：先原样重跑一次 —— 门禁可能读到了并发写入中途的文件。');
   process.exit(2);
 }
 
@@ -2790,7 +2951,8 @@ for (const r of RULES) {
   else text = read(r.file);
 
   const absent =
-    text === null || (Array.isArray(text) && text.length === 0) ||
+    text === null ||
+    (Array.isArray(text) && text.length === 0) ||
     (Array.isArray(text) && text.some((v) => v === null));
 
   // ⚠️ 扫描型判据的「空命中」**不是文件缺失**，是**真的没扫到** ⇒ 必须判红，不能算 ⚠。
@@ -2831,9 +2993,11 @@ function detailOf(r, text) {
   const scope = `命中 ${hits.length} 处 · 非注释 ${code.length} · **受判 ${throws.length}**`;
   if (throws.length === 0) return ` · ${scope}（⚠ 受判对象为 0 必须判红，见 scanHits 注释）`;
   const bads = throws.filter((h) => !r.pred([h]));
-  return ` · ${scope}${bads.length ? `，其中 ${bads.length} 处不合：${bads
-    .map((b) => `${b.file}:${b.line}`)
-    .join(' / ')}` : ''}`;
+  return ` · ${scope}${
+    bads.length
+      ? `，其中 ${bads.length} 处不合：${bads.map((b) => `${b.file}:${b.line}`).join(' / ')}`
+      : ''
+  }`;
 }
 
 console.log('\n──────── 汇总 ────────');
@@ -2845,12 +3009,15 @@ if (missing) console.warn(`未判定（文件缺失）${missing} 条 ⚠`);
 if (bad) process.exit(1);
 if (missing) {
   console.warn('\n⚠️ 存在「文件缺失」的未判定项 —— Phase 3 收口前不得视为门禁通过。');
-  console.warn('   届时本脚本应全绿且无 ⚠，用 `node scripts/check-n1n2-w1-suspend-rules.mjs` 复跑确认。');
+  console.warn(
+    '   届时本脚本应全绿且无 ⚠，用 `node scripts/check-n1n2-w1-suspend-rules.mjs` 复跑确认。',
+  );
 }
 // ⚠️ **提示项不得被算成「通过」** —— 首版写成 `RULES.length - bad - missing`，
 //    于是 `N1-2` 那条「判据形态不匹配、已降级」的也被算进了通过数，
 //    输出「通过 40/40」⇒ **门禁在说假话**：它暗示 N1-2 被判过了，而它恰恰是判不了的。
 //    ⇒ 分母分子都减掉 hintCount：受判 39 条里通过 39 条，另有 1 条提示项。
 const judged = RULES.length - hintCount;
-console.log(`受判 ${judged} 条：通过 ${judged - bad - missing}/${judged} ✅（另有提示项 ${hintCount} 条未受判）`);
-
+console.log(
+  `受判 ${judged} 条：通过 ${judged - bad - missing}/${judged} ✅（另有提示项 ${hintCount} 条未受判）`,
+);
