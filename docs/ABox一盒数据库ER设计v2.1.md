@@ -986,6 +986,15 @@ e2e 全绿，而生产（MySQL，结构**只由迁移决定**）首迁会建出�
 
 ## 七、初始数据 Seed
 
+> ⚠️ 本节的 `ab_config` 三元组与 `apps/api-server/src/database/seeds/seed.ts` **逐行对应**，
+> 改一处必须同步另一处。
+>
+> `commission.min_withdraw` 的出厂值 **0.00 = 不限起提**，真源是 D3 定稿（2026-10-26 用户拍板）
+> 与项目负责人 2026-10-27 裁定；《接口规范 v1.0》（09-14）的「≥ ¥10.00」**已被取代**，勿据此改回。
+>「不限」不等于「¥0 也能提」：地板 ¥0.01 由后端 DTO `@Min(0.01)` 兜住。
+> 口径说明的**唯一真源**在后台配置清单 `config.specs.ts`（运营在配置页看得到），
+> **不写在 `description` 列里** —— 那一列运行期无读取点，且跑 seed 会被静默覆盖。
+
 ```sql
 -- 楼群
 INSERT INTO ab_building_group (name, city, district) VALUES
@@ -1012,7 +1021,7 @@ INSERT INTO ab_config (config_key, config_value, description) VALUES
 ('commission.rate.chief', '0.1200', '首席团长佣金比例（C2）'),
 ('commission.auto_confirm_time', '14:00', '自动确认收货时间'),
 ('commission.settle_hour', '02:00', '佣金自动结算时点'),
-('commission.min_withdraw', '0.00', '最低提现金额（0=不限起提；项目负责人 2026-10-27 裁定，取代旧值 10.00）'),
+('commission.min_withdraw', '0.00', '最低提现金额'),
 ('order.cutoff_window_minutes', '10', '截单前 10 分钟禁止下单'),
 ('distribution_center.default_count', '4', '集散中心默认数量（表驱动，可增删 · C4）'),
 ('distribution_center.rice_fee', '0.00', '集散/场地费（复用供应商场地 → 默认 0 · C9 修订）'),

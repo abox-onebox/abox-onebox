@@ -128,7 +128,15 @@ export interface LeaderBalanceData {
   withdrawnFen: number;
   /** 在途提现单数（仅统计 `pending`） */
   inFlightCount: number;
-  /** 最低提现额（整数分，默认 1000 = ¥10.00） */
+  /**
+   * 最低提现额（整数分）—— **缺省 0 = 不限起提**
+   *
+   * ⚠️ 真源是 D3 定稿（2026-10-26 用户拍板）与项目负责人 2026-10-27 裁定，
+   *    **不是**《接口规范 v1.0》（09-14）的旧口径「≥ ¥10.00 / `minWithdrawFen: 1000`」——
+   *    那个值已被取代，本字段在缺省配置下就是 0。
+   *    「不限」不等于「¥0 也能提」：地板 ¥0.01 由后端 DTO `@Min(0.01)` 兜住。
+   *    同文件下提现入参的口径说明见 {@link WithdrawApplyPayload} 的 `amount` 注释。
+   */
   minWithdrawFen: number;
   /** `balanceFen >= minWithdrawFen` */
   canWithdraw: boolean;
