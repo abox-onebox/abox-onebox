@@ -54,9 +54,69 @@ PRE_BACKUP=1
 DRY_RUN=0
 VERIFY_ONLY=0
 FORCE_CROSS_DB=0
+SELFTEST=0
 
 # 反引号放进变量再用，避免被 bash 当成命令替换（提交信息里踩过同款）
 BT='`'
+
+# ------------------------------------------------------------
+# 三个**纯文本**函数：判据只有一份，自证测的就是生产真正执行的那一份
+# ------------------------------------------------------------
+
+# 读出「这份备份自己要恢复到哪个库」：mysqldump 头部 `Database:` 与 `USE` 行都写。
+# ⚠️ 两种写法都要认：带反引号的 `USE \`db\`;` 与不带的 `USE db;`。
+#    只认一种 ⇒ 闸门在另一种写法下形同虚设。
+dump_db_from_backup() {
+  local f="$1" v=""
+  v="$(gunzip -c "$f" 2>/dev/null | head -60 \
+        | sed -n 's/.*Database: *`\{0,1\}\([A-Za-z0-9_]*\)`\{0,1\}.*/\1/p' | head -1)"
+  [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+  gunzip -c "$f" 2>/dev/null | head -80 \
+    | sed -n 's/^ *USE *`\{0,1\}\([A-Za-z0-9_]*\)`\{0,1\}.*/\1/p' | head -1
+}
+
+# 跨库闸门判据（纯函数 · 零 IO）
+#   allow: 0 = 允许 · 1 = 拒绝
+#   ⛔ backup_db 为空也**拒绝**：读不出库名就不知道 USE 会指去哪 ⇒ 不许盲导。
+gate_cross_db() {
+  local backup_db="${1:-}" target_db="${2:-}" force="${3:-0}"
+  [ "$force" = 1 ] && return 0
+  [ -z "$backup_db" ] && return 1
+  [ "$backup_db" = "$target_db" ] && return 0
+  return 1
+}
+
+# 把导入流里的目标库名改写成新库名（stdin → stdout）
+# ⚠️ 改的是**语句**，不是无脑全文替换：只动 CREATE DATABASE / USE / 限定的 `db`.`t`，
+#    避免把表名、数据里恰好同名的字符串也改掉。
+rewrite_dump_target() {
+  local old="$1" new="$2"
+  sed \
+    -e "s/\(CREATE DATABASE[^;]*\)${BT}${old}${BT}/\1${BT}${new}${BT}/" \
+    -e "s/\(CREATE DATABASE[^;]*\)\([ \t]\)${old}\([ \t;]\)/\1\2${BT}${new}${BT}\3/" \
+    -e "s/^\([ \t]*[Uu][Ss][Ee][ \t]*\)${BT}${old}${BT}[ \t]*;/\1${BT}${new}${BT};/" \
+    -e "s/^\([ \t]*[Uu][Ss][Ee][ \t]*\)${old}[ \t]*;/\1${BT}${new}${BT};/" \
+    -e "s/\(Database: *\)${BT}${old}${BT}/\1${BT}${new}${BT}/" \
+    -e "s/\(Database: *\)${old}[ \t]*$/\1${new}/" \
+    -e "s/database '${old}'/database '${new}'/" \
+    -e "s/${BT}${old}${BT}\./${BT}${new}${BT}./g"
+}
+
+# 改写后残留检测（纯函数）：流里若**还**出现旧库名 ⇒ 改写不干净 ⇒ 不许导入
+rewrite_leftover_count() {
+  local f="$1" old="$2" new="$3"
+  # ⚠️ 备份是 .gz ⇒ 必须先解压再改写，不能直接 `<"$f"`（那会把二进制喂给 sed）
+  #
+  # ⭐ 只数**会切库的语句**（USE / CREATE DATABASE），不数整份文件：
+  #    数据值里恰好出现库名（比如某行配置里存着库名）是合法的，
+  #    按全文计数会误红 —— 误红会让人学会加 --force 绕过，那就等于没闸门。
+  #    真正致命的只有「还有一条 USE/CREATE DATABASE 指向旧库」。
+  gunzip -c "$f" | rewrite_dump_target "$old" "$new" \
+    | grep -E "^[[:space:]]*([Uu][Ss][Ee][[:space:]]|CREATE DATABASE)" \
+    | grep -c "${old}" || true
+  # ⚠️ `grep -c` 在「0 处」时**退出码是 1** ⇒ 配上 `set -euo pipefail` 会让整条
+  #    赋值语句失败、脚本静默退出（表现为「打印两行就没了」）。故必须 `|| true`。
+}
 
 log() { printf '\n[%s] %s\n' "$1" "$2"; }
 ok() { printf '     OK   %s\n' "$1"; }
@@ -69,12 +129,125 @@ while [ $# -gt 0 ]; do
     --no-pre-backup) PRE_BACKUP=0; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --verify-only) VERIFY_ONLY=1; shift ;;
+    --selftest) SELFTEST=1; shift ;;
     --force-cross-db) FORCE_CROSS_DB=1; shift ;;
     -h|--help) sed -n '5,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "未知参数：$1" >&2; exit 2 ;;
     *) BACKUP_FILE="$1"; shift ;;
   esac
 done
+
+# ------------------------------------------------------------
+# --selftest：不碰 docker / 不碰数据库，只测上面那三个纯函数
+#   必绿 3 个 + 必红 4 个，每个必红**点名必须红的那一条**
+#   （⚠️ 匹配必须写成「代号 FAIL」，写成「FAIL 代号」会永远匹配不上
+#     ⇒ 必红样本全变成恒绿样本。assert-deploy-boundary.sh 里踩过一次。）
+# ------------------------------------------------------------
+if [ "$SELFTEST" = 1 ]; then
+  # ⚠️ 自证就是要**故意跑出红** ⇒ 必须关掉 `set -e`，
+  #    否则第一条必红样本就让脚本在 `out="$(cmd)"` 处退出，后面的样本根本跑不到
+  #    （表现是「只打印了几个绿就静默结束」—— 那是自证没跑完，不是通过）。
+  set +e
+  TD="$(mktemp -d)"
+  trap 'rm -rf "$TD"' EXIT
+  PROD=abox_onebox
+  TMPX=abox_verify_selftest
+
+  # 标准 mysqldump --databases 头部（带反引号）
+  {
+    echo "-- MySQL dump 10.13  Distrib 8.0.46"
+    echo "-- Host: localhost    Database: ${PROD}"
+    echo "CREATE DATABASE /*!32312 IF NOT EXISTS*/ \`${PROD}\` /*!40100 DEFAULT CHARACTER SET utf8mb4 */;"
+    echo "USE \`${PROD}\`;"
+    echo "DROP TABLE IF EXISTS \`ab_user\`;"
+    echo "CREATE TABLE \`ab_user\` (\`id\` int NOT NULL);"
+    echo "INSERT INTO \`ab_user\` VALUES (1);"
+  } | gzip >"$TD/std.sql.gz"
+
+  # 写法二：USE 不带反引号，且**没有** `Database:` 注释行
+  { echo "USE ${PROD};"; echo "CREATE TABLE \`ab_user\` (\`id\` int);"; } | gzip >"$TD/bare.sql.gz"
+
+  # 既没有 Database: 也没有 USE（例：--no-create-db 的产物）
+  { echo "DROP TABLE IF EXISTS \`ab_user\`;"; echo "CREATE TABLE \`ab_user\` (\`id\` int);"; } \
+    | gzip >"$TD/nodef.sql.gz"
+
+  pass=0; fail=0
+
+  # 每个样本跑一条判据，产出形如 `S1  OK  …` / `S1  FAIL  …` 的一行
+  run_s() { # run_s <期望 GREEN|RED> <代号> <说明> <样本命令...>
+    local want="$1" code="$2" desc="$3"; shift 3
+    local out rc=0
+    out="$("$@" 2>&1)" || rc=$?
+    if [ "$want" = GREEN ]; then
+      if [ $rc -eq 0 ]; then
+        printf '     OK   必绿 · %s\n' "$desc"; pass=$((pass+1))
+      else
+        printf '     FAIL 必绿竟然红 · %s\n%s\n' "$desc" "$out"; fail=$((fail+1))
+      fi
+    else
+      # ⚠️ 断言行是「**代号在前**」：`S1  FAIL  …`。
+      #    写成 `FAIL  S1` 会永远匹配不上 ⇒ 必红样本全变恒绿样本。
+      if [ $rc -ne 0 ] && printf '%s' "$out" | grep -qE "^[[:space:]]*${code}[[:space:]]+FAIL"; then
+        printf '     OK   必红 · %s（确由 %s 转红）\n' "$desc" "$code"; pass=$((pass+1))
+      else
+        printf '     FAIL 必红没红/没由 %s 红 · %s\n%s\n' "$code" "$desc" "$out"; fail=$((fail+1))
+      fi
+    fi
+  }
+
+  # S1：读出备份自带的库名
+  s1() { local want="$2" v; v="$(dump_db_from_backup "$1")"
+    if [ "${v:-}" = "${want:-}" ] && [ -n "${want:-}" ]; then printf 'S1  OK   读出 %s\n' "$v"; return 0; fi
+    printf 'S1  FAIL  读出=%s（期望 %s）\n' "${v:-<空>}" "${want:-<非空>}"; return 1; }
+  # S2：跨库闸门（应允许）
+  s2allow() { if gate_cross_db "$1" "$2"; then printf 'S2  OK   允许\n'; return 0; fi
+    printf 'S2  FAIL  被拒（backup=%s target=%s）\n' "$1" "$2"; return 1; }
+  # S3：跨库闸门（应拒绝）
+  s2reject() { if gate_cross_db "$1" "$2" "${3:-0}"; then
+                 printf 'S2  FAIL  竟然放行（backup=%s target=%s force=%s）\n' "$1" "$2" "${3:-0}"; return 1; fi
+    printf 'S2  OK   拒绝\n'; return 0; }
+  # S4：改写后残留必须为 0
+  s3() { local n; n="$(rewrite_leftover_count "$1" "$2" "$3")"
+    if [ "${n:-1}" -eq 0 ]; then printf 'S3  OK   残留 0 处\n'; return 0; fi
+    printf 'S3  FAIL  残留 %s 处旧库名\n' "$n"; return 1; }
+  # S5：改写后新库名必须真的出现（否则等于没改）
+  s4() { local c; c="$(gunzip -c "$1" | rewrite_dump_target "$2" "$3" | grep -c "$3")"
+    if [ "${c:-0}" -gt 0 ]; then printf 'S4  OK   新库名出现 %s 次\n' "$c"; return 0; fi
+    printf 'S4  FAIL  新库名 0 次出现\n'; return 1; }
+
+  printf '\n[selftest] 临时目录 %s（不连数据库、不需要 docker）\n' "$TD"
+
+  # ---------- 必绿 4 个 ----------
+  run_s GREEN S1 "标准 dump（Database: 注释 + 带反引号 USE）读出库名 ${PROD}" \
+    s1 "$TD/std.sql.gz" "$PROD"
+  run_s GREEN S1 "不带反引号的 USE 语句也要读出库名（只认一种写法 ⇒ 闸门形同虚设）" \
+    s1 "$TD/bare.sql.gz" "$PROD"
+  run_s GREEN S2 "备份库名 == 目标库名 ⇒ 允许" \
+    s2allow "$PROD" "$PROD"
+  run_s GREEN S2 "备份库名 != 目标库名 ⇒ 闸门**拒绝**（2026-10-27 事故就是这个形状）" \
+    s2reject "$PROD" "some_other_db"
+  O3="$(s3 "$TD/std.sql.gz" "$PROD" "$TMPX" 2>&1)"; R3=$?
+  O4="$(s4 "$TD/std.sql.gz" "$PROD" "$TMPX" 2>&1)"; R4=$?
+  if [ $R3 -eq 0 ] && [ $R4 -eq 0 ]; then
+    printf '     OK   必绿 · 改写后残留 0 处 且 新库名已就位（%s / %s）\n' "$O3" "$O4"; pass=$((pass+1))
+  else
+    printf '     FAIL 必绿竟然红 · 改写不干净\n  S3(rc=%s): %s\n  S4(rc=%s): %s\n' "$R3" "$O3" "$R4" "$O4"; fail=$((fail+1))
+  fi
+
+  # ---------- 必红 4 个 ----------
+  run_s RED S1 "dump 里既无 Database: 也无 USE ⇒ 读不出库名 ⇒ 红（不许盲导）" \
+    s1 "$TD/nodef.sql.gz" ""
+  run_s RED S2 "跨库但开了 --force-cross-db ⇒ 竟然放行 ⇒ 红（证明这条断言真能转红，不是恒绿）" \
+    s2reject "$PROD" "some_other_db" 1
+  run_s RED S3 "新库名写成了旧库名 ⇒ 改写等于没改 ⇒ 残留非 0 ⇒ 红" \
+    s3 "$TD/std.sql.gz" "$PROD" "$PROD"
+  run_s RED S4 "dump 不指定库（nodef）⇒ 改写后新库名 0 次 ⇒ 红（不能靠改写保证它进临时库）" \
+    s4 "$TD/nodef.sql.gz" "$PROD" "$TMPX"
+
+  printf '\n[selftest] 通过 %s / 失败 %s\n' "$pass" "$fail"
+  [ "$fail" -eq 0 ]
+  exit $?
+fi
 
 [ -n "$BACKUP_FILE" ] || die "必须指定备份文件，例如：./scripts/restore-db.sh backups/abox-xxx.sql.gz --yes"
 [ -f "$BACKUP_FILE" ] || die "备份文件不存在：$BACKUP_FILE"
@@ -87,17 +260,6 @@ done
 . "$ROOT/scripts/lib/db-name.sh"
 DB_NAME="$(abox_db_name "$COMPOSE_FILE" "$ENV_FILE")"
 
-# ------------------------------------------------------------
-# 读出「这份备份自己要恢复到哪个库」—— mysqldump 头部与 `USE` 行都会写
-# ------------------------------------------------------------
-dump_db_from_backup() {
-  local f="$1" v=""
-  v="$(gunzip -c "$f" 2>/dev/null | head -60 \
-        | sed -n 's/.*Database: *`\{0,1\}\([A-Za-z0-9_]*\)`\{0,1\}.*/\1/p' | head -1)"
-  [ -n "$v" ] && { printf '%s' "$v"; return 0; }
-  gunzip -c "$f" 2>/dev/null | head -80 \
-    | sed -n 's/^ *USE *`\{0,1\}\([A-Za-z0-9_]*\)`\{0,1\}.*/\1/p' | head -1
-}
 BACKUP_DB="$(dump_db_from_backup "$BACKUP_FILE")"
 
 # ------------------------------------------------------------
@@ -122,11 +284,19 @@ if [ "$VERIFY_ONLY" = 1 ]; then
   mysql_exec "CREATE DATABASE \`${TMPDB}\` DEFAULT CHARACTER SET utf8mb4;" 2>/dev/null \
     || die "建临时库失败（$TMPDB）"
 
-  # ⭐ 关键一步：把导入流里的 `旧库名` 全部改写成临时库名
-  #    ⇒ 即便 mysqldump 自带 `USE`，它也只会 USE 到临时库；生产库名在流里已不存在。
-  if gunzip -c "$BACKUP_FILE" \
-      | sed -e "s/${BT}${BACKUP_DB}${BT}/${BT}${TMPDB}${BT}/g" \
-      | mysql_db "$TMPDB"; then
+  # ⭐ 关键一步：把导入流里的 `旧库名` 改写成临时库名
+  #    ⇒ 即便 mysqldump 自带 `USE`，它也只会 USE 到临时库。
+  # ⭐ 改写完还要**再数一次残留**：流里若还出现旧库名 ⇒ 改写不干净 ⇒ 拒绝导入。
+  #    （只改写不校验的话，一旦 mysqldump 换了写法，这条防线会静默失效。）
+  # ⚠️ 同 `rewrite_leftover_count`：`grep -c` 数出 0 时退出码是 1 ⇒ 必须 `|| true`
+  LEFTOVER="$(gunzip -c "$BACKUP_FILE" | rewrite_dump_target "$BACKUP_DB" "$TMPDB" | grep -c "${BACKUP_DB}" || true)"
+  if [ "${LEFTOVER:-1}" -ne 0 ]; then
+    mysql_exec "DROP DATABASE IF EXISTS \`${TMPDB}\`;" 2>/dev/null || true
+    die "改写后流里仍残留旧库名 '${BACKUP_DB}' ${LEFTOVER} 处 ⇒ 改写不干净，拒绝导入（已清理临时库）"
+  fi
+  ok "改写后残留旧库名 = 0 处"
+
+  if gunzip -c "$BACKUP_FILE" | rewrite_dump_target "$BACKUP_DB" "$TMPDB" | mysql_db "$TMPDB"; then
     ok "导入完成"
   else
     mysql_exec "DROP DATABASE IF EXISTS \`${TMPDB}\`;" 2>/dev/null || true
