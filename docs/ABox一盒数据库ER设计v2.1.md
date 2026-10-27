@@ -1012,7 +1012,7 @@ INSERT INTO ab_config (config_key, config_value, description) VALUES
 ('commission.rate.chief', '0.1200', '首席团长佣金比例（C2）'),
 ('commission.auto_confirm_time', '14:00', '自动确认收货时间'),
 ('commission.settle_hour', '02:00', '佣金自动结算时点'),
-('commission.min_withdraw', '10.00', '最低提现金额'),
+('commission.min_withdraw', '0.00', '最低提现金额（0=不限起提；项目负责人 2026-10-27 裁定，取代旧值 10.00）'),
 ('order.cutoff_window_minutes', '10', '截单前 10 分钟禁止下单'),
 ('distribution_center.default_count', '4', '集散中心默认数量（表驱动，可增删 · C4）'),
 ('distribution_center.rice_fee', '0.00', '集散/场地费（复用供应商场地 → 默认 0 · C9 修订）'),

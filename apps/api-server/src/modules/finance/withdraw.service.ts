@@ -67,8 +67,8 @@ export class WithdrawService {
    * L12 · 提现申请
    *
    * 校验顺序（错误码即端上分支依据）：
-   *   1. 金额 ≥ 最低提现额（`commission.min_withdraw`，缺省 ¥10 · 书面依据见
-   *      `docs/ABox一盒接口规范v1.0.md:627/631`；配 0 = 不限起提）            → 40003
+   *   1. 金额 ≥ 最低提现额（`commission.min_withdraw`，缺省 **0 = 不限起提** ·
+   *      项目负责人 2026-10-27 裁定；配正数即起门槛）                        → 40003
    *   2. 收款方式已绑定（本次入参 或 团长资料已存）                         → 40007
    *   3. 当日笔数未超 `commission.withdraw_daily_count`（默认 1）           → 40025
    *   4. 当日累计额未超 `commission.withdraw_daily_limit`（默认 ¥2000）     → 40024

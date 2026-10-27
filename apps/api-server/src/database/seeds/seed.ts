@@ -120,11 +120,10 @@ async function main(): Promise<void> {
       ['commission.rate.chief', '0.1200', '首席团长佣金（C2 锁定）'],
       ['commission.auto_confirm_time', '14:00', '自动确认收货（T 日 14:00）'],
       ['commission.settle_hour', '02:00', '佣金结算时点（T+1）'],
-      // 2026-10-27 改回 10.00：与 `docs/ABox一盒接口规范v1.0.md:627/631`（≥ ¥10.00 ·
-      // minFen=1000）、`docs/ABox一盒数据库ER设计v2.1.md:1015`、
-      // `docs/ABox一盒种子数据清单v1.0.md:227` 以及 `scripts/e2e-m2.mjs:869`（断言 1000）
-      // 四处对齐。旧值 0.00 出自一条自称「D3 定稿」但全仓无出处的注释。
-      ['commission.min_withdraw', '10.00', '最低提现金额'],
+      // 0.00 = **不限起提**（项目负责人 2026-10-27 裁定；docs 三处与 e2e 断言已同步为 0）。
+      // ⚠️ 曾于 2026-10-27 上午按 `docs/ABox一盒接口规范v1.0.md` 旧文案（≥ ¥10.00）
+      //    改成 10.00，负责人复核后要「不限起提」，故改回 0.00 —— 不要再按旧文档改回 10。
+      ['commission.min_withdraw', '0.00', '最低提现金额'],
       ['commission.withdraw_daily_limit', '2000.00', '单日提现上限（元）'],
       ['commission.withdraw_daily_count', '1', '单日提现笔数上限'],
       ['commission.payout_channel', 'FLEX_MANUAL', '出款通道（C11：灵活用工平台人工通道）'],

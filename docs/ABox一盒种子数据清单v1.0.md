@@ -224,7 +224,7 @@
 | `commission.rate.chief` | `0.1200` | 首席（C2） |
 | `commission.auto_confirm_time` | `14:00` | 自动确认收货（T 日） |
 | `commission.settle_hour` | `02:00` | 结算时点（T+1） |
-| `commission.min_withdraw` | `10.00` | 最低提现 |
+| `commission.min_withdraw` | `0.00` | 最低提现（**0 = 不限起提**；项目负责人 2026-10-27 裁定，取代旧出厂值 `10.00` —— 不要按旧文档改回 10） |
 | `distribution_center.default_count` | `4` | 集散中心默认数（C4） |
 | `settlement.supplier_purchase_price` | `negotiated` | 供应商供价来源：**逐菜协商**（C9 修订） |
 | `settlement.site_fee` | `0.00` | ⚠️ 2026-09-16 自营口径：**ABox 自有持证场所摊销**；`0` 仅表示**尚未登记**（真实成本不为 0） |

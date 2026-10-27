@@ -71,20 +71,25 @@ describe('BizConfigService 读数字（服务层实跑）', () => {
   });
 
   /**
-   * 2026-10-27 追加（卜宕机 / 严过关回源带出）：
-   * `minWithdraw()` 的旧 fallback 是 **0**，而 0 在 `withdraw.service` 里被解释成
-   *「不限起提」—— 与 `docs/ABox一盒接口规范v1.0.md:627`「≥ ¥10.00」、`:631`
-   *「minFen: 1000」两条书面口径**方向相反**。现网显式配了 `10.00` 才没暴露。
+   * ⭐ 口径：**不限起提**（项目负责人 2026-10-27 裁定）。
+   *
+   * 2026-10-27 白天曾按 `docs/ABox一盒接口规范v1.0.md` 的旧文案（≥ ¥10.00）把缺省改成 10，
+   * 负责人复核后明确要「不限起提」，代码 / 文档 / seed / 门禁 / e2e 五处一并回 0。
+   * ⇒ 本条断言**跟着口径走**：要改成 10 必须先重新签字，否则单测会先红。
+   *
+   * 注意与上一组的区别（别混淆）：`suspendForceMaxCount` 缺键**必须**回落 20，
+   * 而 `minWithdraw` 缺键**必须**是 0 —— 因为 0 在后者是业务上想要的真值，
+   * 不是「没配」。`isMissingConfigValue` 只管「有没有配」，语义由调用点的 fallback 决定。
    */
-  it('缺键时最低提现额回落 10（旧 fallback 0 = 不限起提，与接口规范相反）', async () => {
-    await expect(build({}).minWithdraw()).resolves.toBe(10);
+  it('缺键时最低提现额为 0（不限起提 · 2026-10-27 裁定）', async () => {
+    await expect(build({}).minWithdraw()).resolves.toBe(0);
   });
 
-  it('【自证】最低提现额三态：缺键→10 · "10.00"（现网值）→10 · "0.00"→0（显式不限起提）', async () => {
-    await expect(build({}).minWithdraw()).resolves.toBe(10);
-    await expect(build({ 'commission.min_withdraw': '10.00' }).minWithdraw()).resolves.toBe(10);
-    // ⭐ 与「缺键」必须分得开：运营显式配 0 时要真是 0（不限起提），不能被当成缺键吞掉
+  it('【自证】最低提现额三态：缺键→0（不限起提）· "0.00"→0 · "10.00"→10（显式设门槛）', async () => {
+    await expect(build({}).minWithdraw()).resolves.toBe(0);
     await expect(build({ 'commission.min_withdraw': '0.00' }).minWithdraw()).resolves.toBe(0);
+    // 显式配正数必须真的生效（运营想设门槛时靠配值，不靠「键不存在」）
+    await expect(build({ 'commission.min_withdraw': '10.00' }).minWithdraw()).resolves.toBe(10);
     await expect(build({ 'commission.min_withdraw': '20.00' }).minWithdraw()).resolves.toBe(20);
   });
 

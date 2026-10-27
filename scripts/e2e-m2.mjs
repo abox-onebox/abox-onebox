@@ -866,7 +866,10 @@ async function main() {
     'M2-③ 余额与佣金一致（余额流水已入账）',
     `balanceFen=${b?.balanceFen} totalInFen=${b?.totalInFen}`,
   );
-  assert(b?.minWithdrawFen === 1000, 'L11 最低提现额 ¥10.00 来自 ab_config', `minFen=${b?.minWithdrawFen}`);
+  // ⚠️ 2026-10-27 项目负责人裁定「不限起提」：ab_config.commission.min_withdraw 缺省 0
+  //    ⇒ L11 下发的 minWithdrawFen 为 0（旧断言 1000 对应已被取代的「≥ ¥10.00」口径）。
+  //    若哪天要恢复起提门槛，此处必须同步改成那个正数，否则单测与实现对不上。
+  assert(b?.minWithdrawFen === 0, 'L11 最低提现额 0（不限起提）来自 ab_config', `minFen=${b?.minWithdrawFen}`);
   assert(
     b?.pendingCommissionFen === 0,
     'L11 中途入账后待入账归零（两段式：入账前该值=佣金净额，入账后=0）',
@@ -874,21 +877,29 @@ async function main() {
   );
 
   // ---- 4.5 L12 提现的三条拦截 + 正常提交
+  //
+  // ⚠️ 2026-10-27 项目负责人裁定「**不限起提**」：`ab_config.commission.min_withdraw`
+  //    **缺省 0** ⇒ `amount = 5` **不再**因金额被拒，`40003` 在缺省配置下**不可达**
+  //    （只有后台把该键配成正数时才触发；e2e 刻意不依赖那个状态）。
+  //    ⇒ 原「低于最低额 → 40003」的断言改为落在**下一道真实校验**上：
+  //      此时 `lming` 尚未绑定收款方式（绑定在下面 `bindLm`），故为 `40007`。
+  //    ⭐ 幂等键释放回归**不能跟着删**：它守的是「业务失败后幂等键要释放」，
+  //      与具体错误码无关 —— 载体从 40003 换成 40007，覆盖率不变。
   const lowW = await call('POST', '/leader/withdraw', {
     token: lming.token,
     idem: 'e2e-m2-wd-low',
     body: { amount: 5 },
   });
   assert(
-    lowW.body?.code === 40003 && lowW.body?.data?.minFen === 1000,
-    'L12 低于最低额 → 40003（data 附 minFen）',
+    lowW.body?.code === 40007 && lowW.body?.code !== 40003,
+    'L12 不限起提：¥5 不再因金额被拒（落在未绑定收款方式 40007；40003 在缺省 0 下不可达）',
     `code=${lowW.body?.code} minFen=${lowW.body?.data?.minFen}`,
   );
   assert(
     typeof lowW.body?.message === 'string' &&
       lowW.body.message !== '' &&
       lowW.body.message !== '业务异常',
-    "错误码 40003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    "错误码 40007 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
     `message=${JSON.stringify(lowW.body?.message)}`,
   );
   // 回归 · 幂等键必须在**业务失败后释放**：否则键停在 __pending__，
@@ -899,15 +910,15 @@ async function main() {
     body: { amount: 5 },
   });
   assert(
-    lowRetry.body?.code === 40003,
-    '回归 · 失败后同幂等键可立即重试（40003，而非 10006 卡死）',
+    lowRetry.body?.code === 40007,
+    '回归 · 失败后同幂等键可立即重试（40007，而非 10006 卡死）',
     `code=${lowRetry.body?.code}`,
   );
   assert(
     typeof lowRetry.body?.message === 'string' &&
       lowRetry.body.message !== '' &&
       lowRetry.body.message !== '业务异常',
-    "错误码 40003 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
+    "错误码 40007 的 message 非空且不是「业务异常」兜底（只断言 code 会恒绿：文案缺失时用户看不到任何原因）",
     `message=${JSON.stringify(lowRetry.body?.message)}`,
   );
 

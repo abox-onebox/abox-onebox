@@ -160,7 +160,7 @@ export function fetchLeaderBalance(
 // ---------------------------------------------------------------------------
 
 export interface WithdrawApplyPayload {
-  /** ⚠️ 单位**元**（不是分）；最低见 `ab_config.commission.min_withdraw`（默认 ¥10.00） */
+  /** ⚠️ 单位**元**（不是分）；最低见 `ab_config.commission.min_withdraw`（**默认 0 = 不限起提**，2026-10-27 项目负责人裁定；取消旧口径 ¥10.00） */
   amount: number;
   /** 缺省取团长已绑定的收款方式 */
   receiveType?: 'bank' | 'alipay';
