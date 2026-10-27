@@ -91,6 +91,9 @@ const F = {
   // T5（2026-10-27）：N2 停用闸门与存量通知从 `building-admin.service.ts` 拆出，
   //   判据**跟着真源走**（钉在原文件会因「产物变好」而假红 —— 本批第 5 次同类）
   buildingSuspend: join(SRC, 'modules', 'building', 'building-suspend.service.ts'),
+  // T5 第三步（2026-10-27）：读侧四视图 + `loadContext` 再拆出去。
+  //   ⚠️ 与上面同一条规矩：**判据跟着真源走**，不放宽、不删除。
+  buildingQuery: join(SRC, 'modules', 'building', 'building-query.service.ts'),
   // ⚠️ **本条路径是「按语义扫」扫出来的第三份**（Team Lead 2026-10-26 指出）：
   //    发现时 `meal.service` / `order.service` 已在 P3-4 改为 60011，唯独这里仍是 10004，
   //    而我们的判据只盯了前两个文件 —— 因为我们**按「已知文件清单」扫**，
@@ -1760,7 +1763,11 @@ export class SalesPause {
     // ───────────────────────────────────────────────────────────────────────
     id: 'N1-20',
     desc: '★ 后台两处 canOrder 解释性引用：必须存在 ∧ 与「用户端」同现 ∧ 含「不要全局替换」警示语',
-    files: ['buildingAdmin', 'buildingAdminController'],
+    // ⚠️ T5 第三步（2026-10-27）：那段解释性注释随 `listBuildings()` 迁进了
+    //    `building-query.service.ts`。**判据跟着真源改指**（钉在原文件 ⇒ 真文件侧
+    //    `realAlso` 恒 false，判据表面绿、实际已失明 —— 与 N1-16 盲区同一形状）。
+    //    `files[0]` 是破化对象，故 `buildingQuery` 必须排第一。
+    files: ['buildingQuery', 'buildingAdminController'],
     pred: (ts) =>
       ts.every((t) => {
         if (!t) return false;

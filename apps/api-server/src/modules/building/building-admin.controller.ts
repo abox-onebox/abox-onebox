@@ -24,6 +24,7 @@ import {
   UpdateBuildingGroupDto,
 } from './dto/building-admin.dto';
 import { BuildingAdminService } from './building-admin.service';
+import { BuildingQueryService } from './building-query.service';
 
 /**
  * 后台 · 办公楼管理（《接口规范 v1.0》§6.3 D13–D15 · 原型 P37 · 模块 M33-01）
@@ -38,6 +39,10 @@ import { BuildingAdminService } from './building-admin.service';
  *    D14/D15 **方法级收窄到 `super_admin`/`admin`** —— 改楼栋档案会影响
  *    套餐矩阵可选范围与配送归属，是「决定哪些楼能开团」的事。
  *    `finance` / `viewer` 类级就不放：菜单矩阵里两者都没有 `/building/*`。
+ *
+ * ⚠️ **读 / 写两个服务（2026-10-27 · T5 第三步）**：列表 / 详情 / 总览 / 配送映射
+ *    走 `BuildingQueryService`，新增 / 编辑 / 停用走 `BuildingAdminService`。
+ *    两个注入不要合并回去 —— 合并就是又把读与写塞回一个文件。
  */
 @ApiTags('后台·办公楼管理')
 @ApiBearerAuth()
@@ -45,7 +50,11 @@ import { BuildingAdminService } from './building-admin.service';
 @UseGuards(AdminGuard)
 @Roles('super_admin', 'admin', 'operator')
 export class BuildingAdminController {
-  constructor(private readonly buildingAdmin: BuildingAdminService) {}
+  constructor(
+    private readonly buildingAdmin: BuildingAdminService,
+    /** 读侧四视图（列表 / 详情 / 总览 / 配送映射）：T5 第三步起直连，不经写侧转发 */
+    private readonly buildingQuery: BuildingQueryService,
+  ) {}
 
   // ------------------------------------------------------------ D13 列表
 
@@ -63,7 +72,7 @@ export class BuildingAdminController {
       '主/备集散中心与路线号由「集散中心 → 服务楼群」配置**实时派生**，楼栋上不存副本。',
   })
   list(@Query() q: AdminBuildingsQueryDto, @CurrentAdmin('role') role: string) {
-    return this.buildingAdmin.listBuildings(q, role);
+    return this.buildingQuery.listBuildings(q, role);
   }
 
   @Get('filter-options')
@@ -74,7 +83,7 @@ export class BuildingAdminController {
       '楼群下拉来自真实数据。列表接口亦内联同名 options，独立接口供搜索表单组件单独拉取。',
   })
   async filterOptions() {
-    const { groupOptions } = await this.buildingAdmin.listBuildings(
+    const { groupOptions } = await this.buildingQuery.listBuildings(
       { page: 1, pageSize: 1 },
       'viewer',
     );
@@ -103,7 +112,7 @@ export class BuildingAdminController {
       '避免同一指标两处口径。含楼群分布、集散中心覆盖、未覆盖楼栋清单、待分配团长清单。',
   })
   overview(@CurrentAdmin('role') role: string) {
-    return this.buildingAdmin.overview(role);
+    return this.buildingQuery.overview(role);
   }
 
   @Get('delivery-map')
@@ -115,7 +124,7 @@ export class BuildingAdminController {
       '⚠️ **不返回距离与单段时长**：需地图与真实路况数据，一期不具备；原型上的 km/分钟为演示值。',
   })
   deliveryMap() {
-    return this.buildingAdmin.deliveryMap();
+    return this.buildingQuery.deliveryMap();
   }
 
   @Get(':id')
@@ -125,7 +134,7 @@ export class BuildingAdminController {
       '团长为**只读**：改团长走 D20/D21（楼栋编辑不提供 leaderId，避免绕过 20012 撞车闸门）。',
   })
   detail(@Param() p: BuildingIdParamDto) {
-    return this.buildingAdmin.buildingDetail(p.id);
+    return this.buildingQuery.buildingDetail(p.id);
   }
 
   // ------------------------------------------------------------ D14 / D15

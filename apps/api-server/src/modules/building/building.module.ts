@@ -9,6 +9,7 @@ import { Order } from '../../database/entities/order.entity';
 import { MessageModule } from '../message/message.module';
 import { BuildingAdminController, BuildingGroupAdminController } from './building-admin.controller';
 import { BuildingAdminService } from './building-admin.service';
+import { BuildingQueryService } from './building-query.service';
 import { BuildingSuspendService } from './building-suspend.service';
 import { BuildingController } from './building.controller';
 import { BuildingService } from './building.service';
@@ -63,8 +64,13 @@ import { BuildingService } from './building.service';
    *    `Nest can't resolve dependencies`，且是**启动期**才炸、编译期看不出来。
    *    ⚠️ 不必 export：停用能力只对楼栋/楼群编辑路径服务，没有第二个消费方
    *    （多 export 一个就是多开一条入口）。
+   *
+   * ⚠️ `BuildingQueryService` 与上面相反，**必须 export**：读侧四视图由
+   *    `BuildingAdminController` **直接**注入调用（T5 第三步分家后不再经
+   *    `BuildingAdminService` 转发 —— 转发层除了多一层间接不解决任何问题）。
+   *    它同时是 `BuildingAdminService` 的构造依赖（`loadContext` / `groupStatusOf`）。
    */
-  providers: [BuildingService, BuildingAdminService, BuildingSuspendService],
-  exports: [BuildingService, BuildingAdminService],
+  providers: [BuildingService, BuildingAdminService, BuildingQueryService, BuildingSuspendService],
+  exports: [BuildingService, BuildingAdminService, BuildingQueryService],
 })
 export class BuildingModule {}

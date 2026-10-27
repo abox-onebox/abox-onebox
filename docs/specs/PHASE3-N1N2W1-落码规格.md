@@ -4,7 +4,7 @@
 > 决策依据见 `docs/decisions/ADR-N1N2W1-楼宇停用与一键停售.md`（已 Accepted）；验收标准见 `docs/qa/AC-N1N2W1-楼宇停用与一键停售.md`。
 > 本规格未授权改任何**未列出**的文件。
 
-> **本批授权新建的文件（白名单，共 7 个）** —— 除这 7 个之外，本规格未授权新建或修改任何未列出的文件：
+> **本批授权新建的文件（白名单，共 8 个）** —— 除这 8 个之外，本规格未授权新建或修改任何未列出的文件：
 >
 > | # | 文件 | 出处 | 行数上限 |
 > |---|---|---|---|
@@ -15,6 +15,12 @@
 > | 5 | **`apps/api-server/test/unit/suspend-notify.spec.ts`** | **§6.5**（2026-10-26 Team Lead 派后端补，本规格补登） | **≤180** |
 > | 6 | **`apps/api-server/src/modules/building/building-suspend.service.ts`** | **§5.4.5**（2026-10-27 T5 拆分，从 `building-admin.service.ts` 迁出 N2 停用块） | **≤400** |
 > | 7 | **`apps/api-server/src/modules/building/building-derive.ts`** | **§5.4.6**（2026-10-27 T5 第二步，从 `building-admin.service.ts` 迁出 6 个派生纯函数 + `DC_ACTIVE`） | **≤150** |
+> | 8 | **`apps/api-server/src/modules/building/building-query.service.ts`** | **§5.4.7**（2026-10-27 T5 第三步，从 `building-admin.service.ts` 迁出读侧四视图 + `loadContext` + `groupStatusOf`） | **≤600** |
+>
+> ⚠️ **第 8 项为什么上限给 `≤600`**（2026-10-27 补登时裁定）：与第 6 项同一理由 ——
+>    它是 **Nest service（IO 编排 + 出参翻译）**，且迁入的四个视图里带的是**业务口径注释**
+>    （「不返回距离」「覆盖人数是估算值」这类），删注释凑行数等于删掉口径本身。
+>    实测 **521 行** ⇒ 合规。⚠️ 同样是**先斩后奏**（拆分在补登之前），本条即为追认动作本身。
 >
 > ⚠️ **第 6 项为什么上限给 `≤400`**（2026-10-27 补登时裁定）：前 5 项都是**纯函数 / 单测**
 >    （单一职责、无 IO），给 ≤150/≤180 是为了逼「一个文件只讲一件事」；第 6 项是
@@ -40,7 +46,8 @@
 > | `src/common/utils/suspend-gate.ts` | 140 | — | ≤150 | ✅ 合规 |
 > | `src/modules/building/building-derive.ts`（新 · T5 第二步） | **115** | — | ≤150 | ✅ 合规 |
 > | `src/modules/building/building-suspend.service.ts`（新 · T5 拆分） | **375** | — | ≤400 | ✅ 合规 |
-> | `src/modules/building/building-admin.service.ts`（**既有** · T5 拆分后） | **1263**（原 1611） | — | **无上限** | ➖ 不适用（见 §5.4.5 的动因更正） |
+> | `src/modules/building/building-query.service.ts`（新 · T5 第三步） | **521** | — | ≤600 | ✅ 合规 |
+> | `src/modules/building/building-admin.service.ts`（**既有** · T5 三步拆分后） | **726**（原 1611） | — | **无上限** | ➖ 不适用（见 §5.4.5 的动因更正） |
 >
 > ⚠️ **曾有「169 / 149 两个数」的疑云，已闭环 —— 根源不是格式化，是**同一个数字被用在了两个相近文件名的文件上**（后端把 `suspend-gate.spec.ts` 的 149 抄到了 `suspend-notify.spec.ts` 头上，随后自行更正）。留这句是为了下一个人**抄行数时知道要警惕相近文件名** —— G10 的「登记前先 grep」在这里多一层：**核的不只是符号存在，还要核这个数字属于哪个文件。**
 >
@@ -1015,6 +1022,50 @@ if (!user.buildingId) {
 
 **验收**：`tsc --noEmit` 0 · `eslint --max-warnings 0` 0 · jest 15 suites / 129 tests ·
 `check-n1n2-w1-suspend-rules.mjs` 51/51 · 全量门禁 31/31。
+
+### 5.4.7 T5 第三步：读侧 `building-query.service.ts`（2026-10-27 补登 · **新建文件，须进 §0 白名单第 8 项**）
+
+**新建** `apps/api-server/src/modules/building/building-query.service.ts`（**521 行 · prettier 后实测**），
+迁出 `loadContext()` / `groupStatusOf()` 与四个读视图（`listBuildings` / `buildingDetail` /
+`overview` / `deliveryMap`）。**主文件 1181 → 726 行**（原始 1611）。
+
+**为什么按「读 / 写」切，而不是按「楼栋 / 楼群」切**：楼群 CRUD 与楼栋 CRUD 看着是两条线，
+但它们**共用同一套主数据装载与同一套派生**（`loadContext` + `building-derive`）。按实体切 ⇒
+谁都想要 `loadContext`，共享依赖切不开，最后还是一个大文件加一层转发。读写切的好处是
+**依赖方向单一**：读侧不认识写侧，写侧只在回显时用读侧。
+
+**配套改动**
+
+- `building.module.ts`：`BuildingQueryService` 进 providers **并且 export** —— 与 §5.4.5 的
+  `BuildingSuspendService`（只 provide 不 export）相反，因为控制器要**直接**注入它。
+- `building-admin.controller.ts`：读四法改为注入 `buildingQuery` 直连，**不经写侧转发**。
+  ⚠️ 该控制器文件里有两个类，构造行逐字相同 —— 改注入时锚点必须带类名。
+- 主文件构造函数去掉 `leaderRepo`（随 `loadContext` 一并搬走，剩余代码零使用）；
+  `TeamLeader` 实体 import、`LEADER_LEVEL_META` / `LeaderLevel` / `countMultiBuilding` /
+  `routeNoMap` / `AdminBuildingsQueryDto` 一并清除。
+
+**判据跟迁（不放宽，只改指向）**：N1-20（`canOrder` 解释性引用）的两处之一随
+`listBuildings` 迁走 ⇒ `files` 由 `['buildingAdmin', 'buildingAdminController']` 改指
+`['buildingQuery', 'buildingAdminController']`。不改 ⇒ 真文件侧 `realAlso` 恒 false，
+判据表面绿、实际已失明（与 §5.4.6 那条盲区同一形状）。
+
+**⚠️ 新登记的扫描盲区（未修）**：`building-query.service.ts` 现在**不在**下列判据的扫描范围内
+（它们都**按路径**钉 `building-admin.service.ts`）：
+
+- **N1-3b** · 管家端不得调 `evaluateAvailability` / `OrderAvailabilityService`
+- **N1-16** · 「楼状态 ∧ 已归群」内联合取命中数为 0
+- **N2-8** · A/B 分组不得写成 `OrderStatus.X || OrderStatus.Y ||` 长串
+
+前两条盯的正是**管家端读视图**最容易出问题的地方，现在没人盯。新文件的类注释里已写明
+「本文件不在 N1-16 扫描范围内，不得内联判据、一律走 `canAssignOf()`」，但那是**人守**不是门禁守。
+
+⇒ **下批裁定**：把这几条改成 `files` 多文件扫描。改动要点（写给执行者）：多文件分支要求
+`files` + `pred(ts)` + `mutateFirst`（脚本只破化 `files[0]`），且 `mutateFirst` 的锚点必须
+在 `files[0]` 里真实存在 —— 见脚本 `if (r.files)` 分支与 HELPER_CHECKS 里那条
+「`mutateFirst` 只覆盖第一份」的专项自证。**不要顺手放宽判据。**
+
+**验收**：`tsc --noEmit` 0 · `eslint --max-warnings 0` 0 · jest 15 suites / 129 tests ·
+`check-n1n2-w1-suspend-rules.mjs` 51/51。
 
 ---
 
