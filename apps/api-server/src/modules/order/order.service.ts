@@ -537,7 +537,37 @@ export class OrderService {
       balanceUsedFen: toFen(order.balanceUsed),
       payAmountFen: toFen(order.payAmount),
       remark: order.remark ?? null,
-      blindBoxName: order.blindBoxName ?? null,
+      /**
+       * ⭐⭐ x 盲盒 · **服务端遮蔽**（2026-10-27 · 首轮测试反馈后立规）
+       *
+       * **原状**：`blindBoxName: order.blindBoxName ?? null` —— **无条件下发**，
+       *   不按订单状态区分。所谓「送达前不泄露」全靠小程序端**不显示**，
+       *   任何人抓一次响应体就能提前知道内容（隐藏 ≠ 拦住）。
+       *
+       * **现在**：送达（`delivered` / `completed`）之前**一律不下发**。
+       *   ⇒ 保密由服务端保证，端上不显示只是第二道防线，不再是唯一防线。
+       *
+       * ⚠️ **揭晓态的真源在此一处**。端上（原 `order-detail.vue` 的
+       *   `blindBoxRevealed`）曾按 `status === DELIVERED || COMPLETED` 自己判一遍 ——
+       *   那是第二份判据，与本批在治的「判据两份」同病。现在端上改为
+       *   `blindBoxName != null`（服务端给了就是揭晓了），判据收口到服务端。
+       *
+       * ⚠️ **为什么必须同时给 `blindBoxPending`**：只把 `blindBoxName` 抹成 null，
+       *   端上就分不清「有盲盒、待揭晓」和「这单没有盲盒」——占位行会整行消失，
+       *   用户连「还有个惊喜」都不知道。`blindBoxPending` 只回答「有没有」，
+       *   **不含内容**，可以安全下发。
+       */
+      /**
+       * ⚠️ 用 `Boolean()` 而不是 `!== null`：实体列的类型是
+       *    `string | null | undefined`（列未加载时是 `undefined`），
+       *    而 `undefined !== null` 为 **true** —— 会把「没查这个字段」
+       *    误判成「有盲盒待揭晓」，凭空多出一个惊喜位。
+       */
+      blindBoxPending: Boolean(order.blindBoxName),
+      blindBoxName:
+        order.status === OrderStatus.DELIVERED || order.status === OrderStatus.COMPLETED
+          ? (order.blindBoxName ?? null)
+          : null,
       items: items.map((i) => ({
         /**
          * ⭐ `itemId`（P1-U2 新增）：评价提交按 id 定位商品 ——
@@ -556,7 +586,25 @@ export class OrderService {
       ),
       timeline,
       pickup: {
-        point: building ? `${building.name} 1 楼大堂` : '待确认',
+        /**
+         * ⭐ `point` 的措辞（2026-10-27 修正 · M1 遗留）
+         *
+         * **原状**：`${building.name} 1 楼大堂` —— 2026-09-15 `130db8d`（feat(m1)）引入，
+         *   与「团长送上楼、团员零走动」的交付口径冲突（严禁自提 / 自提点 / 自行领取字样）。
+         *
+         * **现在**：改为「由团长送到工位」。楼名保留（楼维度信息仍有用），
+         *   但**不再指向任何需要用户走动的地点**。
+         *
+         * ⚠️ 本字段当前**用户端并未展示**（`order-detail.vue` 只取
+         *   `pickup.leaderName` / `pickup.expectAt`，第 154 行文案已是
+         *   「由团长统一派送，直接送到你的工位」）。改它是**数据卫生 +
+         *   防止将来被消费时踩红线**，不是修一个用户可见的缺陷。
+         *
+         * ⚠️ **别误伤团长端**：团长工作台的 `pickup.point` 是**另一个接口**
+         *   （`team-leader/workbench.service.ts:139`），语义是「团长去哪取货」——
+         *   团长确实要取餐，那里的「取货点」是**正确**的，不要一起改。
+         */
+        point: building ? `${building.name} · 由团长送到工位` : '待确认',
         leaderName: leader?.realName ?? null,
         leaderPhone: maskPhone(leader?.phone),
         /**

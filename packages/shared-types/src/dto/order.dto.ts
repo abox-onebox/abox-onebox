@@ -75,7 +75,24 @@ export interface OrderDetailResult {
   balanceUsedFen: number;
   payAmountFen: number;
   remark: string | null;
-  /** x 盲盒抽到的内容（下单时定，送达后揭晓）；`null` = 本单未含盲盒 */
+  /**
+   * 本单**是否含** x 盲盒（只回答「有没有」，**不含内容**）—— 可安全下发
+   *
+   * ⚠️ 为什么需要它：`blindBoxName` 在送达前被服务端抹成 `null`（见下），
+   *   没有本字段，端上就分不清「有盲盒、待揭晓」和「本单没有盲盒」，
+   *   「待揭晓」的占位移会整行消失，用户连「还有个惊喜」都不知道。
+   */
+  blindBoxPending: boolean;
+  /**
+   * x 盲盒抽到的内容 —— ⭐ **送达前一律为 `null`（服务端遮蔽）**
+   *
+   * ⚠️ 2026-10-27 立规：此前是**无条件下发**，「送达前不泄露」完全靠端上不显示，
+   *   抓一次响应体就能提前知道内容。现在由服务端在 `delivered` / `completed`
+   *   之前不出参 —— 端上不显示退为第二道防线，不再是唯一防线。
+   *
+   * ⚠️ 端上**不要**再按 `status` 自己判一遍是否揭晓（那是第二份判据）；
+   *   直接以本字段 `!= null` 为准 —— 揭晓态的真源在服务端一处。
+   */
   blindBoxName: string | null;
   /**
    * ⚠️ `itemId`（P1-U2 新增）：评价提交按 `itemId` 定位商品 ——

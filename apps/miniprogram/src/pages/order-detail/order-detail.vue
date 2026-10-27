@@ -100,7 +100,7 @@
         </view>
 
         <!-- x 盲盒（套餐内付费件）：下单即含的惊喜，下单时不定内容，送达后揭晓（2026-10-24 整改） -->
-        <view v-if="detail.blindBoxName" class="blind">
+        <view v-if="detail.blindBoxPending" class="blind">
           <view class="blind__head">
             <text class="blind__tag">x 盲盒 · 下单即含</text>
             <text class="blind__state" :class="{ 'is-revealed': blindBoxRevealed }">{{
@@ -323,15 +323,16 @@ const abnormal = computed(() => {
 const doneCount = computed(() => detail.value?.timeline.filter((n) => n.done).length ?? 0);
 
 /**
- * x 盲盒是否已揭晓：送达（含完成）后才揭晓，此前一律「待揭晓」
+ * x 盲盒是否已揭晓 —— **判据收口到服务端**
  *
- * ⚠️ 与出货进度同源用**状态机常量**判送达（DELIVERED / COMPLETED），
- *    不写字符串字面量；新增状态走类型检查。
+ * ⚠️ 此前端上按 `status === DELIVERED || COMPLETED` 自己判一遍，那与服务端
+ *    的「何时下发内容」是**两份判据**（本批正在治的病）。
+ *    ⭐ 2026-10-27 起：服务端在送达前**根本不下发** `blindBoxName`，
+ *    端上只需以「服务端给了没有」为准 —— 给了就是揭晓了。
+ *
+ * ⚠️ **不要**改回按状态判：那样又会与服务端各判一次，改一边漏一边。
  */
-const blindBoxRevealed = computed(() => {
-  const s = detail.value?.status;
-  return s === OrderStatus.DELIVERED || s === OrderStatus.COMPLETED;
-});
+const blindBoxRevealed = computed(() => detail.value?.blindBoxName != null);
 
 /**
  * 时间线节点三态 —— 规格 §八「时间线 · 节点 15px 圆形」+ 清单 §七「已过 / 当前 / 未到」。
