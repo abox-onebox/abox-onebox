@@ -19,12 +19,16 @@
  *
  * ── 判据 ────────────────────────────────────────────────────────────────────
  *   D3-1 三个提现配置键在 `config.specs.ts` 登记，`wiring: 'live'`
- *   D3-2 `biz-config.service.ts` 三个方法存在且默认值正确（0 / 2000 / 1）
+ *   D3-2 `biz-config.service.ts` 三个方法存在且默认值正确（10 / 2000 / 1）
+ *        ⚠️ 2026-10-27 起提缺省由 0 改为 **10**：依据是
+ *           `docs/ABox一盒接口规范v1.0.md:627`（≥ ¥10.00）与 `:631`（minFen: 1000），
+ *           以及 ER v2.1 / 种子数据清单两处出厂值 10.00、现网 ab_config 实际值 10.00。
+ *           （旧值 0 出自「D3 定稿」注释，但该决策文档全仓不存在。）
  *   D3-3 错误码 40024 / 40025 在 enum 与 ERROR_MESSAGE **两处**都登记
  *   D3-4 两个新错误码的**判定发生在事务内**（防并发穿透）
  *   D3-5 自然日区间用 `bjDateTime(…, 24)` 含尾上界（禁手写时区偏移）
  *   D3-6 计入当日额度的状态**不含** REJECTED / FAILED（钱已解冻，再拦等于罚站长）
- *   D3-7 seed 与默认值一致（新环境出厂不得还是 ¥10 门槛）
+ *   D3-7 seed 与默认值一致（新环境出厂即 ¥10 门槛，与接口规范 v1.0 对齐）
  *   D3-8 T+1 可观测：后台清单下发 waitHours / expectedArrivalAt / overdue
  *   N3-1 `incr` 方法体内**不得**出现降级路径（`useMemory` / `catch` / `degraded =`）
  *   N3-2 两条登录规则设 `failClosed: true`；`order:create` **不得**设（可用性优先）
@@ -211,10 +215,10 @@ const RULES = [
   },
   {
     id: 'D3-2',
-    desc: 'biz-config 三个方法存在且默认值正确（min=0 / limit=2000 / count=1）',
+    desc: 'biz-config 三个方法存在且默认值正确（min=10 / limit=2000 / count=1）',
     file: 'bizConfig',
     pred: (t) =>
-      /minWithdraw\(\)[\s\S]{0,200}?getNumber\('commission\.min_withdraw',\s*0\)/.test(t) &&
+      /minWithdraw\(\)[\s\S]{0,200}?getNumber\('commission\.min_withdraw',\s*10\)/.test(t) &&
       /withdrawDailyLimit\(\)[\s\S]{0,200}?getNumber\('commission\.withdraw_daily_limit',\s*2000\)/.test(
         t,
       ) &&
@@ -278,13 +282,13 @@ const RULES = [
   },
   {
     id: 'D3-7',
-    desc: 'seed 与定稿一致：起提 0.00 · 上限 2000 · 笔数 1',
+    desc: 'seed 与缺省一致：起提 10.00 · 上限 2000 · 笔数 1（接口规范 v1.0:627/631）',
     file: 'seed',
     pred: (t) =>
-      /\['commission\.min_withdraw',\s*'0\.00'/.test(t) &&
+      /\['commission\.min_withdraw',\s*'10\.00'/.test(t) &&
       /\['commission\.withdraw_daily_limit',\s*'2000\.00'/.test(t) &&
       /\['commission\.withdraw_daily_count',\s*'1'/.test(t),
-    mutate: (t) => t.replace("['commission.min_withdraw', '0.00'", "['commission.min_withdraw', '10.00'"),
+    mutate: (t) => t.replace("['commission.min_withdraw', '10.00'", "['commission.min_withdraw', '0.00'"),
   },
   {
     id: 'D3-8',

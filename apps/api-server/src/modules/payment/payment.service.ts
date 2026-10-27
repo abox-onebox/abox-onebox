@@ -4,6 +4,7 @@ import type { PayCreateResult, PayNotifyAck } from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
+import { isProductionRuntime } from '../../common/utils/prod-mock-gate';
 import { OrderService } from '../order/order.service';
 import { WxpayConfigService } from './wxpay-config';
 import { WxpayService } from './wxpay.service';
@@ -118,8 +119,27 @@ export class PaymentService implements OnModuleInit {
    *    就会**静默打开**一个免鉴权的改单口子。
    *    故此处显式按通道拒绝：非 mock 一律抛 `10004`（与「路由不存在」同码，
    *    不向外暴露该调试端点的存在）。
+   *
+   * ⛔ **再补一道「生产无条件拒绝」（2026-10-27 · 卜宕机提的口径）**：
+   *    上面那条 `!isMock` 在 `PROVIDER_MODE=mock` 下**恒不成立** —— 而线上此刻正是
+   *    `PROVIDER_MODE=mock` + `ALLOW_MOCK_IN_PROD=1`，于是这条免鉴权改支付状态的口子
+   *    在线上是**开着的**。nginx 层（`location ~*`）已经把它拦成 404，但那是一道
+   *    **配置文件**：会被覆盖、会漏端口、换机器就没了 —— 不能是唯一一道。
+   *
+   *    ⚠️ 判据是 `isProductionRuntime(process.env.NODE_ENV)`，**不看** `ALLOW_MOCK_IN_PROD`：
+   *       那个逃生开关放行的是「mock 通道能跑起来」，不是「任何人能把订单改成已支付」。
+   *       两者后果不对称：前者是安全模型失效，后者是**直接产生假资金流水**。
    */
   async simulatePaid(orderNo: string, amountFen?: number): Promise<{ triggered: boolean }> {
+    if (isProductionRuntime(process.env.NODE_ENV)) {
+      // 与 `!isMock` 同码：不向外暴露「这里有个调试端点」
+      this.logger.error(
+        '生产环境收到 /pay/mock/paid 调用（免鉴权改支付状态），已拒绝。' +
+          '该端点仅服务于本地开发与 e2e；nginx 层应已拦成 404，此处是第二道。' +
+          '若这条日志在出现，说明边界那道被绕过或被覆盖了，请立即核对 nginx 配置。',
+      );
+      throw new BizException(ErrorCode.NOT_FOUND);
+    }
     if (!this.wxpay.isMock) {
       throw new BizException(ErrorCode.NOT_FOUND);
     }

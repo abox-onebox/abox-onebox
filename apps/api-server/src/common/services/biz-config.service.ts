@@ -8,6 +8,7 @@ import type { SettlementCostRegistration } from '@abox/shared-utils';
 import { summarizeCostRegistration } from '@abox/shared-utils';
 
 import { SysConfig } from '../../database/entities/system.entity';
+import { isMissingConfigValue, pickConfigNumber } from '../utils/config-value';
 import {
   BusinessTimeline,
   TimelineDiff,
@@ -51,6 +52,8 @@ export class BizConfigService {
    *    一次 DB 抖动就改变了下单窗口，且没有任何报错。宁可沿用旧值。
    */
   private loadedOk = false;
+  /** 已告警过的缺键（`getNumber` 在热路径，见 `warnMissingOnce`）—— 防日志刷屏 */
+  private readonly missingWarned = new Set<string>();
 
   constructor(
     private readonly dataSource: DataSource,
@@ -132,15 +135,46 @@ export class BizConfigService {
     return this.rows.get(key) ?? null;
   }
 
+  /**
+   * 数字配置读取（2026-10-27 修 · 缺陷：fallback 曾是死代码）
+   *
+   * 旧写法 `Number(raw)` + `Number.isFinite` 有个**方向不一致**的坑：
+   * `raw` 缺键时是 `null`，而 `Number(null) === 0`、0 又过得了 `Number.isFinite`
+   * ⇒ 缺键拿到的是 **0**，不是 `fallback`。后果按业务分叉：
+   *   · 阈值类（停用上限 20）拿到 0 ⇒ 变**更严**（1 笔就 60012）；
+   *   · 限额类（提现日额 2000 / 日笔 1）拿到 0 ⇒ 变**更松**（这两处的 0 = 不限）。
+   * 同一个成因，一处收紧一处放开，且**毫无症状** —— 故判据抽到
+   * `common/utils/config-value.ts`（纯函数），由单测钉死。
+   */
   private async getNumber(key: string, fallback: number): Promise<number> {
     const raw = await this.getRaw(key);
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : fallback;
+    if (isMissingConfigValue(raw)) {
+      this.warnMissingOnce(key, String(fallback));
+      return fallback;
+    }
+    return pickConfigNumber(raw, fallback);
+  }
+
+  /**
+   * 缺键只告警**一次**（每进程每键）
+   *
+   * ⚠️ 为什么必须去重：`getNumber` 在热路径上（售价、佣金费率…每请求都会读），
+   *    不去重的话一次 DB 抖动能把日志刷爆，而刷爆之后真正的告警就没人看了 ——
+   *    「每次都告警」等价于「没有告警」。
+   */
+  private warnMissingOnce(key: string, fallbackText: string): void {
+    if (this.missingWarned.has(key)) return;
+    this.missingWarned.add(key);
+    this.logger.warn(
+      `ab_config 缺键 ${key}（是「没配」，不是配了 0）→ 回落缺省 ${fallbackText}。` +
+        '若这确实是要长期生效的值，请在后台系统配置页**显式写入**并确认已生效（改配置后需 invalidate）；' +
+        '否则它会在任何人看不到的时候悄悄等于缺省值。',
+    );
   }
 
   private async getString(key: string, fallback: string): Promise<string> {
     const raw = await this.getRaw(key);
-    return raw && raw.trim().length ? raw.trim() : fallback;
+    return isMissingConfigValue(raw) ? fallback : (raw as string).trim();
   }
 
   /** C1 · 售价（元）—— 锁定 ¥25.80，配置可覆写（后台系统配置页） */
@@ -191,27 +225,52 @@ export class BizConfigService {
   }
 
   /**
-   * D3 定稿（2026-10-26）：**最低提现金额（元）· 0 = 不限起提**
+   * 最低提现金额（元）—— 缺省 **¥10.00**
    *
-   * 「起提不限」之所以成立，是因为「当日 1 笔」已把人工打款笔数锁死
-   *（一人一天最多一笔）—— 两项可以并存。
-   * 地板 ¥0.01 由 `WithdrawApplyReqDto` 的 `@Min(0.01)` 兜住，故配 0 **不会**放行 ¥0。
+   * ⭐ **书面依据（三处，互相印证）**
+   *   · `docs/ABox一盒接口规范v1.0.md:627` —— L12 提现申请「**≥ ¥10.00**」
+   *   · `docs/ABox一盒接口规范v1.0.md:631` —— 低于最低额 → `40003`，`data.minFen: 1000`
+   *   · `docs/ABox一盒数据库ER设计v2.1.md:1015`、`docs/ABox一盒种子数据清单v1.0.md:227`
+   *     —— 出厂值 `10.00`
+   *   现网 `ab_config` 实际配置同为 `10.00`，故本次改动**不改变现网行为**。
+   *
+   * ⚠️ 2026-10-27 前这里的 fallback 是 **0**（= 不限起提），与上述书面口径**相反**。
+   *    没暴露只是因为现网**显式配了** `10.00` —— 键一旦缺失就退化成「不限起提」，
+   *    方向与书面口径相反（与 `getNumber` 那次「缺键得到 0」是同一族病根）。
+   *    ⇒ 缺省值必须与书面口径**同向**：缺键 = ¥10。
+   *
+   * ⚠️ 旧注释自称「D3 定稿（2026-10-26）：0 = 不限起提」，但全仓**没有**叫 D3 的决策文档
+   *    （docs/ 里的 D3 全是日程编号或接口编号；`scripts/check-d3-withdraw-rules.mjs`
+   *     里的 D3 是脚本自编号，不是决策出处）。口径不能只由代码注释自述 —— 故改为
+   *    指向上面那几行书面依据。若业务确实要「不限起提」，请**显式配 0**，
+   *    不要靠「键不存在」拿到。
    */
   minWithdraw(): Promise<number> {
-    return this.getNumber('commission.min_withdraw', 0);
+    return this.getNumber('commission.min_withdraw', 10);
   }
 
   /**
-   * D3 定稿：单日提现上限（元）—— 每人每自然日（北京时区 00:00–24:00）累计申请额。
+   * 单日提现上限（元）—— 每人每自然日（北京时区 00:00–24:00）累计申请额。
    * 含本次申请额；rejected/failed **不计入**（钱已原路解冻）。0 = 不限。
+   *
+   * ⚠️ 缺省 2000 的来源：2026-10-27 由项目负责人确认（当日报批口径），
+   *    **不是**「D3 定稿」—— 全仓没有叫 D3 的决策文档，旧注释那条出处是编的。
+   *    ⚠️ 该值**无书面口径**（docs/ 全库搜 `daily_limit` / `daily_count` 零命中），
+   *    属于「先修代码 + 业务口径待确认」：方向（变严）是按「限额键缺键不该等于不限」
+   *    定的，具体数字 2000 待业务书面确认后可只改这一处。
    */
   withdrawDailyLimit(): Promise<number> {
     return this.getNumber('commission.withdraw_daily_limit', 2000);
   }
 
   /**
-   * D3 定稿：单日提现笔数上限 —— 同一自然日已有非终态申请数。
+   * 单日提现笔数上限 —— 同一自然日已有非终态申请数。
    * 计入 pending/approved/paying/success；rejected/failed 后可再提。0 = 不限。
+   *
+   * ⚠️ 缺省 1 的来源与局限同 `withdrawDailyLimit`（2026-10-27 项目负责人确认，
+   *    **无书面口径**，待补）。方向说明：旧代码缺键拿到 0 ⇒ 两道日限检查
+   *    （`withdraw.service.ts` 的 `dailyCount > 0` / `dailyLimitYuan > 0`）**整段跳过**，
+   *    等于「提现无日限额、无日笔数」—— 这是 fail-open，方向必须纠正。
    */
   withdrawDailyCount(): Promise<number> {
     return this.getNumber('commission.withdraw_daily_count', 1);

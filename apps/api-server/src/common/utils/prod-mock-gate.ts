@@ -1,4 +1,30 @@
 /**
+ * 生产形态判据（纯函数 · 零 IO）
+ *
+ * ⚠️ 本文件**刻意零 import**：`scripts/probes/prod-mock-gate.mjs` 是用 Node 的
+ *    类型剥离**直接 import 这份 .ts** 来跑四场景 + 反证的（判据只有一份、不测复刻）。
+ *    而 Node 的 ESM 解析不了**无扩展名**的相对路径 ⇒ 一旦这里 import 了别的模块，
+ *    `Node.js v22` 会报 `ERR_MODULE_NOT_FOUND`，探针会以"空跑"形态失败。
+ *    （2026-10-27 实测踩到：把判据拆到 `runtime-env.ts` 后探针立刻红。）
+ *    ⇒ 与「生产形态」相关的判据**都放这个文件**，不要另起模块。
+ *
+ * ## 两条判据的分工（不许混）
+ *   · `isProductionRuntime` —— 只回答「这个进程是不是生产」（只看 NODE_ENV）；
+ *   · `judgeProdMock`       —— 回答「生产 + mock 能不能起来」（看 providerMode 与逃生开关）。
+ */
+export const PRODUCTION_ENV = 'production';
+
+/**
+ * 当前 `NODE_ENV` 是否表示生产（trim + 严格相等；空 / 未设一律非生产）
+ *
+ * 2026-10-27 前这条判据在仓里有两份各自独立的写法（`main.ts` 与 `judgeProdMock`），
+ * 收口到这一处。
+ */
+export function isProductionRuntime(nodeEnv?: string): boolean {
+  return (nodeEnv ?? '').trim() === PRODUCTION_ENV;
+}
+
+/**
  * 「生产禁 mock」启动硬闸的**判据**（纯函数 · 零 IO）
  *
  * ## 它挡的是什么
@@ -74,7 +100,8 @@ export function isEscapeOn(raw?: string): boolean {
  * @param input 见 `ProdMockGateInput`
  */
 export function judgeProdMock(input: ProdMockGateInput = {}): ProdMockGateVerdict {
-  if ((input.nodeEnv ?? '').trim() !== 'production') {
+  // ⭐ 「是不是生产」复用上面那一份，不另写一遍
+  if (!isProductionRuntime(input.nodeEnv)) {
     // 非生产：mock 是**依赖**（本地开发与 e2e 全链路都靠它），本闸不介入
     return { allow: true, reason: null, escapeOn: false, notice: null };
   }

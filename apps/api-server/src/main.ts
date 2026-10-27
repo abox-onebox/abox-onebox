@@ -12,7 +12,7 @@ import { resolve } from 'path';
 
 import { AppModule } from './app.module';
 import { requestIdMiddleware } from './common/middleware/request-id.middleware';
-import { judgeProdMock } from './common/utils/prod-mock-gate';
+import { isProductionRuntime, judgeProdMock } from './common/utils/prod-mock-gate';
 import { clockShiftMs, isClockShifted, now, toBjIso } from './common/utils/time';
 
 /**
@@ -48,7 +48,8 @@ import { clockShiftMs, isClockShifted, now, toBjIso } from './common/utils/time'
 const REQUIRED_IN_PROD = ['JWT_SECRET', 'PROVIDER_MODE'] as const;
 
 function assertProdSecrets(): void {
-  if (process.env.NODE_ENV !== 'production') return;
+  // ⭐ 「是不是生产」的判据只有 `common/utils/prod-mock-gate.ts` 一份
+  if (!isProductionRuntime(process.env.NODE_ENV)) return;
   const missing = REQUIRED_IN_PROD.filter((k) => !process.env[k]?.trim());
   if (!missing.length) return;
   Logger.error(

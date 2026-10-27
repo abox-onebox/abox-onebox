@@ -259,9 +259,10 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     impact: 'commission',
     wiring: 'live',
     description:
-      '团长发起提现的金额下限，低于此值直接拒绝（40003）。D3 定稿：**0 = 不限起提**' +
-      '（与「单日 1 笔」并存，笔数已被锁死）；地板 ¥0.01 由 DTO 的 `@Min(0.01)` 兜住，' +
-      '故配 0 不会放行 ¥0。',
+      '团长发起提现的金额下限，低于此值直接拒绝（40003）。**缺省 ¥10.00**' +
+      '（依据 `docs/ABox一盒接口规范v1.0.md:627`「≥ ¥10.00」与 `:631`「minFen: 1000」）；' +
+      '配 **0 表示不限起提**（`withdraw.service` 按 `minFen` 判，0 即只受 DTO `@Min(0.01)` 约束）。' +
+      '⚠️ 不要靠「键缺失」拿到 0 —— 键缺失走 `BizConfigService.minWithdraw()` 的缺省 10。',
     unit: '元',
     min: 0,
     max: 99999,
