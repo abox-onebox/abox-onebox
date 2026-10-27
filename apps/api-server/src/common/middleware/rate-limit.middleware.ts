@@ -290,7 +290,7 @@ export function createRateLimitMiddleware(kv: KvService) {
           return;
         }
         logger.warn(
-          `限流命中 ${rule.label}（${hit.dimension}=${hit.key.slice(hit.key.lastIndexOf(':') + 1)}）` +
+          `${RATE_LIMIT_LOG_TOKEN.HIT} 限流命中 ${rule.label}（${hit.dimension}=${hit.key.slice(hit.key.lastIndexOf(':') + 1)}）` +
             `${hit.count}/${hit.limit} · ${req.method} ${path} · ip=${ipOf(req)}`,
         );
         // 交给同一个异常过滤器产出 —— 响应体与「抛 BizException(10005)」逐字节一致
@@ -312,7 +312,8 @@ export function createRateLimitMiddleware(kv: KvService) {
          */
         if (rule.failClosed) {
           logger.error(
-            `限流不可用，fail-closed 拒绝请求（${rule.label}）· ${req.method} ${path} · ${msg}`,
+            `${RATE_LIMIT_LOG_TOKEN.UNAVAILABLE} 限流不可用，fail-closed 拒绝请求` +
+              `（${rule.label}）· ${req.method} ${path} · ${msg}`,
           );
           filter.catch(new BizException(ErrorCode.TOO_MANY_REQUESTS), hostOf(req, res));
           return;
@@ -325,3 +326,17 @@ export function createRateLimitMiddleware(kv: KvService) {
 
 /** 供日志 / e2e 断言引用（文案与实现同源，避免两处各写一遍） */
 export const RATE_LIMIT_MESSAGE = ERROR_MESSAGE[ErrorCode.TOO_MANY_REQUESTS];
+
+/**
+ * 日志标记（**机器可读**，供运维侧单独告警）
+ *
+ * ⚠️ 为什么需要：`限流命中` 与 `限流不可用` 对外**都是 HTTP 429 + code 10005**，
+ *    只靠人眼读中文分不清 —— 而两者处置**完全不同**：
+ *      · 命中 = 有人在刷，正常现象，看趋势即可；
+ *      · 不可用 = Redis 出问题，**全站登录此刻正在被拒绝**，要立刻处理。
+ *    ⇒ 给两个稳定 token，运维侧 `grep RATE_LIMIT_UNAVAILABLE` 即可独立告警。
+ */
+export const RATE_LIMIT_LOG_TOKEN = {
+  HIT: '[RATE_LIMIT_HIT]',
+  UNAVAILABLE: '[RATE_LIMIT_UNAVAILABLE]',
+} as const;

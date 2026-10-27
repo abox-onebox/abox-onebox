@@ -9,6 +9,18 @@ interface MemoryEntry {
 }
 
 /**
+ * 单条命令的最长等待（毫秒）—— **fail-closed 的安全阀**
+ *
+ * ⚠️ 为什么必须有它：下面把 `enableOfflineQueue` 打开了（让「连接还没建立/正在重连」
+ *    的命令排队而不是立刻抛），这同时意味着 Redis **真的**不可用时命令会**一直排队**。
+ *    没有这个超时，fail-closed 就会从「拒绝」退化成「挂住」—— 那比拒绝更糟：
+ *    请求不返回、连接池被占满、值班的人连错误日志都看不到。
+ *    ⇒ 有了它，`incr` / `setNx` 的 fail-closed 语义**一点没动**：
+ *      抖动 / 首次握手（毫秒级）⇒ 排队后成功；真不可用 ⇒ 超时后照旧抛错。
+ */
+const KV_COMMAND_TIMEOUT_MS = 1000;
+
+/**
  * 轻量 KV（缓存 / 幂等键 / 任务锁）
  *
  * 双驱动（`QUEUE_DRIVER`，与队列共用开关，语义即「有无 Redis」）：
@@ -46,14 +58,37 @@ export class KvService implements OnModuleDestroy {
     }
 
     try {
+      /**
+       * ⚠️ **连接层抗抖（2026-10-27 修 · 生产实测：部署后第一次登录直接 429）**
+       *
+       * 旧配置 `enableOfflineQueue: false` 的后果：ioredis 在 **socket 握手完成之前**
+       * 收到命令会**立刻抛**
+       *   `Stream isn't writeable and enableOfflineQueue options is false`
+       * 而这与「Redis 整个不可达」的报错**一字不差**（本仓
+       *   `scripts/test-kv-idempotency-degradation.mjs:73-77` 早就记载过这个陷阱，
+       *   但那是给测试脚手架用的，生产代码一直没修）。
+       * 再叠加 `lazyConnect: true`（第一次命令才去连接）⇒
+       *   **进程启动后的第一批请求必然命中这个窗口**，且因为是 `failClosed`，
+       *   表现为「登录 429 / 登录失败计数拒绝 / 幂等键拒绝 ⇒ 下单失败」。
+       * 这不是「Redis 抖了一下」的可用性取舍，而是**把「还没连上」误判成「不可用」**。
+       *
+       * ⇒ 修法是**改判定粒度，不是放宽 fail-closed**：
+       *     · `enableOfflineQueue: true` —— 握手/重连窗口内的命令**排队**，
+       *       连上后自动执行（抖动对用户完全无感）；
+       *     · `commandTimeout` —— 安全阀：真不可用时到点就抛，**fail-closed 照旧生效**；
+       *     · `retryStrategy` —— 退避重连，避免网络恢复瞬间把连接打爆。
+       */
       this.redis = new Redis({
         host: this.config.get<string>('redis.host'),
         port: this.config.get<number>('redis.port'),
         password: this.config.get<string>('redis.password'),
         db: this.config.get<number>('redis.db') ?? 0,
         lazyConnect: true,
-        maxRetriesPerRequest: 1,
-        enableOfflineQueue: false,
+        enableOfflineQueue: true,
+        maxRetriesPerRequest: 2,
+        commandTimeout: KV_COMMAND_TIMEOUT_MS,
+        connectTimeout: 10_000,
+        retryStrategy: (times: number) => Math.min(times * 200, 2000),
       });
       this.redis.on('error', (e: Error) => {
         if (!this.degraded) {

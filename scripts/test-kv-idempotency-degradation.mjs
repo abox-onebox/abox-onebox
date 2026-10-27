@@ -70,11 +70,18 @@ async function withTimeout(p, ms, tag) {
 
 /**
  * ⚠️ 必须等连接真正 ready 再发命令。
- * 本项目 KvService 用 `lazyConnect:true + enableOfflineQueue:false`，
- * ioredis 在 socket 握手完成前收到命令会直接抛
+ *
+ * ioredis 在 socket 握手完成前收到命令会抛
  * "Stream isn't writeable and enableOfflineQueue options is false" ——
  * 这与「Redis 整个不可达」的报错**一字不差**。不等 ready 的话，
  * 「故障」与「还没连上」无法区分，整个测试会假绿/假红。
+ *
+ * ⚠️ 2026-10-27：`KvService` 的连接选项已改为 `enableOfflineQueue: true`
+ *    （`common/cache/kv.service.ts`）—— 旧配置 `false` 会让**生产**在「进程启动后、
+ *    握手完成前」的窗口里把第一批请求判成「Redis 不可用」，叠加 failClosed 表现为
+ *    登录 429 / 下单被拒（实测：部署后第一次冒烟登录直接 10005）。
+ *    ⇒ 这里**仍然**等 ready：本脚本要测的是「Redis 真的不可达时的行为」，
+ *      若不等 ready，排队成功的命令会让「故障注入」根本没生效 ⇒ 假绿。
  */
 async function waitReady(kv, ms = 6000) {
   const start = Date.now();
