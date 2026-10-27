@@ -17,13 +17,24 @@ import {
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
-import { evaluateStructure } from '../../common/utils/orderability';
+// ⚠️ `evaluateStructure` 随 `canAssignOf()` 一并迁入 `./building-derive`（T5 第二步）——
+//    主服务不再直接持有结构层判据，管家端「能不能开团」的唯一入口是那个纯函数。
 import { normalizePage, paginate } from '../../common/utils/response';
 import { todayBj, tomorrowBj } from '../../common/utils/time';
 import { Building, BuildingGroup } from '../../database/entities/building.entity';
 import { DistributionCenter } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { MealAssignment, SetMeal } from '../../database/entities/meal.entity';
+import {
+  DC_ACTIVE,
+  canAssignOf,
+  centerPair,
+  countMultiBuilding,
+  coverageOf,
+  dcByGroup,
+  gapOf,
+  routeNoMap,
+} from './building-derive';
 import { BuildingSuspendService } from './building-suspend.service';
 import {
   AdminBuildingGroupsQueryDto,
@@ -35,9 +46,6 @@ import {
 } from './dto/building-admin.dto';
 
 type Row = Record<string, unknown>;
-
-/** 集散中心状态（`ab_distribution_center.status`）· 与 M3-6 同一口径 */
-const DC_ACTIVE = 1;
 
 /**
  * 往已停用楼群搬楼 / 挂楼时的提示（两句：错什么 + 怎么修 · 沿用 ADR §7 的 `hint` 写法）
@@ -127,83 +135,6 @@ export class BuildingAdminService {
     return { buildings, groups, leaders, dcList };
   }
 
-  /** 楼群 id → 服务它的集散中心（按启用优先、id 升序） */
-  private dcByGroup(dcList: DistributionCenter[]): Map<number, DistributionCenter[]> {
-    const map = new Map<number, DistributionCenter[]>();
-    for (const dc of dcList) {
-      for (const gid of (dc.serviceGroups ?? []) as number[]) {
-        const key = Number(gid);
-        if (!map.has(key)) map.set(key, []);
-        map.get(key)!.push(dc);
-      }
-    }
-    for (const list of map.values()) {
-      list.sort(
-        (a, b) => Number(b.status === DC_ACTIVE) - Number(a.status === DC_ACTIVE) || a.id - b.id,
-      );
-    }
-    return map;
-  }
-
-  /**
-   * 覆盖缺口判定（**派生** · 见 `DistributionGap`）
-   *
-   * ⚠️ 三种成因分三种码，端上给三种修法 —— 合成一个「未覆盖」运营只能猜。
-   */
-  private gapOf(
-    buildingGroupId: number | null | undefined,
-    dcMap: Map<number, DistributionCenter[]>,
-  ): DistributionGap {
-    if (!buildingGroupId) return DistributionGap.NO_GROUP;
-    const dcs = dcMap.get(Number(buildingGroupId)) ?? [];
-    if (dcs.length === 0) return DistributionGap.NO_CENTER;
-    if (!dcs.some((d) => d.status === DC_ACTIVE)) return DistributionGap.ALL_CENTER_DISABLED;
-    return DistributionGap.NONE;
-  }
-
-  /** 主 / 备集散中心（派生 · 裁决 1） */
-  private centerPair(dcs: DistributionCenter[]) {
-    const active = dcs.filter((d) => d.status === DC_ACTIVE);
-    return { main: active[0] ?? null, backup: active[1] ?? null };
-  }
-
-  /** 楼群覆盖状态（**派生**）：空楼群 / 已覆盖 / 未覆盖 */
-  private coverageOf(memberCount: number, dcs: DistributionCenter[]): GroupCoverageState {
-    if (memberCount === 0) return GroupCoverageState.EMPTY;
-    return dcs.some((d) => d.status === DC_ACTIVE)
-      ? GroupCoverageState.COVERED
-      : GroupCoverageState.UNCOVERED;
-  }
-
-  /** 路线号：按主集散中心 id 升序 → R1…Rn（派生 · 裁决 1） */
-  private routeNoMap(dcList: DistributionCenter[]): Map<number, string> {
-    const ordered = dcList
-      .filter((d) => d.status === DC_ACTIVE)
-      .map((d) => Number(d.id))
-      .sort((a, b) => a - b);
-    const map = new Map<number, string>();
-    ordered.forEach((id, i) => map.set(id, `R${i + 1}`));
-    return map;
-  }
-
-  /**
-   * 管家端「配置上能不能开团」—— **判据只有 `evaluateStructure()` 一份**
-   *
-   * ⚠️ 为什么管家端只调结构层、不调 `evaluateAvailability()`：管家端是运营 KPI，
-   *    **没有时间维度**。叠了时间层，运营夜里看列表会因为「过了截单」看到 false，
-   *    把**周期性状态**误报成**配置缺口** —— 两种问题的处置动作完全不同。
-   *
-   * ⚠️ `buildingGroupStatus` 由调用方传入而不是在这里查：列表 / 概览页已经把楼群整表
-   *    取在内存里（`loadContext()`），本方法若内部再查一次就是 N+1。
-   */
-  private canAssignOf(
-    buildingStatus: number,
-    buildingGroupId: number | null,
-    buildingGroupStatus: number | null,
-  ): boolean {
-    return evaluateStructure({ buildingStatus, buildingGroupId, buildingGroupStatus }).ok;
-  }
-
   /** 单栋楼所属楼群的 `status`（新增 / 编辑后回显用；列表页不要走这里，见上面注释） */
   private async groupStatusOf(gid: number | null): Promise<number | null> {
     if (gid === null) return null;
@@ -218,16 +149,16 @@ export class BuildingAdminService {
   async listBuildings(q: AdminBuildingsQueryDto, viewerRole: string): Promise<Row> {
     const { page, pageSize, skip } = normalizePage(q);
     const { buildings, groups, leaders, dcList } = await this.loadContext();
-    const dcMap = this.dcByGroup(dcList);
-    const routeMap = this.routeNoMap(dcList);
+    const dcMap = dcByGroup(dcList);
+    const routeMap = routeNoMap(dcList);
 
     const groupMap = new Map(groups.map((g) => [Number(g.id), g]));
     const leaderMap = new Map(leaders.map((l) => [Number(l.buildingId), l]));
 
     const rows = buildings.map((b) => {
       const gid = b.buildingGroupId ? Number(b.buildingGroupId) : null;
-      const gap = this.gapOf(gid, dcMap);
-      const { main, backup } = this.centerPair(gid ? (dcMap.get(gid) ?? []) : []);
+      const gap = gapOf(gid, dcMap);
+      const { main, backup } = centerPair(gid ? (dcMap.get(gid) ?? []) : []);
       const leader = leaderMap.get(Number(b.id));
       const level = (leader?.level ?? LeaderLevel.TRAINEE) as LeaderLevel;
       return {
@@ -271,11 +202,7 @@ export class BuildingAdminService {
          *    漏了「所属楼群已停用」—— 楼群停用后成员楼**静默**失去开团能力，
          *    而这里仍显示「可开团」。
          */
-        canAssign: this.canAssignOf(
-          b.status,
-          gid,
-          gid ? (groupMap.get(gid)?.status ?? null) : null,
-        ),
+        canAssign: canAssignOf(b.status, gid, gid ? (groupMap.get(gid)?.status ?? null) : null),
       };
     });
 
@@ -350,12 +277,12 @@ export class BuildingAdminService {
     const b = buildings.find((x) => Number(x.id) === Number(id));
     if (!b) throw new BizException(ErrorCode.BUILDING_NOT_FOUND, `办公楼不存在：#${id}`);
 
-    const dcMap = this.dcByGroup(dcList);
-    const routeMap = this.routeNoMap(dcList);
+    const dcMap = dcByGroup(dcList);
+    const routeMap = routeNoMap(dcList);
     const gid = b.buildingGroupId ? Number(b.buildingGroupId) : null;
-    const gap = this.gapOf(gid, dcMap);
+    const gap = gapOf(gid, dcMap);
     const dcs = gid ? (dcMap.get(gid) ?? []) : [];
-    const { main, backup } = this.centerPair(dcs);
+    const { main, backup } = centerPair(dcs);
     const leader = leaders.find((l) => Number(l.buildingId) === Number(b.id));
 
     const assignments = gid
@@ -382,7 +309,7 @@ export class BuildingAdminService {
         population: b.population ?? null,
         status: b.status,
         statusLabel: BUILDING_STATUS_LABEL[b.status] ?? null,
-        canAssign: this.canAssignOf(
+        canAssign: canAssignOf(
           b.status,
           gid,
           gid ? (groups.find((g) => Number(g.id) === gid)?.status ?? null) : null,
@@ -438,7 +365,7 @@ export class BuildingAdminService {
 
   async overview(viewerRole: string): Promise<Row> {
     const { buildings, groups, leaders, dcList } = await this.loadContext();
-    const dcMap = this.dcByGroup(dcList);
+    const dcMap = dcByGroup(dcList);
     const leaderMap = new Map(leaders.map((l) => [Number(l.buildingId), l]));
     const groupStatusMap = new Map(groups.map((g) => [Number(g.id), g.status]));
 
@@ -446,8 +373,8 @@ export class BuildingAdminService {
       const gid = Number(g.id);
       const members = buildings.filter((b) => Number(b.buildingGroupId) === gid);
       const dcs = dcMap.get(gid) ?? [];
-      const { main } = this.centerPair(dcs);
-      const state = this.coverageOf(members.length, dcs);
+      const { main } = centerPair(dcs);
+      const state = coverageOf(members.length, dcs);
       return {
         groupId: gid,
         name: g.name,
@@ -485,7 +412,7 @@ export class BuildingAdminService {
         name: b.name,
         status: b.status,
         statusLabel: BUILDING_STATUS_LABEL[b.status] ?? null,
-        gap: this.gapOf(b.buildingGroupId ? Number(b.buildingGroupId) : null, dcMap),
+        gap: gapOf(b.buildingGroupId ? Number(b.buildingGroupId) : null, dcMap),
       }))
       .map((r) => ({ ...r, gapLabel: DISTRIBUTION_GAP_LABEL[r.gap] }));
 
@@ -508,14 +435,14 @@ export class BuildingAdminService {
          */
         canAssignCount: buildings.filter((b) => {
           const gid = b.buildingGroupId ? Number(b.buildingGroupId) : null;
-          return this.canAssignOf(b.status, gid, gid ? (groupStatusMap.get(gid) ?? null) : null);
+          return canAssignOf(b.status, gid, gid ? (groupStatusMap.get(gid) ?? null) : null);
         }).length,
       },
       leaderStats: {
         assignedCount: leaders.length,
         vacantBuildingCount: vacant.length,
         /** 一名团长服务的楼栋数（>1 表示兼管多栋，与原型「赵静一人管两栋」同口径）*/
-        multiBuildingCount: this.countMultiBuilding(leaders),
+        multiBuildingCount: countMultiBuilding(leaders),
       },
       groupStats: {
         totalCount: groups.length,
@@ -533,7 +460,7 @@ export class BuildingAdminService {
         disabledCount: dcList.filter((d) => d.status !== DC_ACTIVE).length,
         coveredBuildingCount: buildings.filter(
           (b) =>
-            this.gapOf(b.buildingGroupId ? Number(b.buildingGroupId) : null, dcMap) ===
+            gapOf(b.buildingGroupId ? Number(b.buildingGroupId) : null, dcMap) ===
             DistributionGap.NONE,
         ).length,
       },
@@ -551,23 +478,14 @@ export class BuildingAdminService {
     };
   }
 
-  private countMultiBuilding(leaders: TeamLeader[]): number {
-    const byLeader = new Map<number, number>();
-    for (const l of leaders) {
-      const uid = Number(l.userId);
-      byLeader.set(uid, (byLeader.get(uid) ?? 0) + 1);
-    }
-    return [...byLeader.values()].filter((n) => n > 1).length;
-  }
-
   // ==========================================================================
   // 配送映射（P37 视图 5 · 全派生）
   // ==========================================================================
 
   async deliveryMap(): Promise<Row> {
     const { buildings, groups, dcList } = await this.loadContext();
-    const dcMap = this.dcByGroup(dcList);
-    const routeMap = this.routeNoMap(dcList);
+    const dcMap = dcByGroup(dcList);
+    const routeMap = routeNoMap(dcList);
     const groupMap = new Map(groups.map((g) => [Number(g.id), g]));
 
     const routes = new Map<number, Row>();
@@ -575,8 +493,8 @@ export class BuildingAdminService {
 
     for (const b of buildings) {
       const gid = b.buildingGroupId ? Number(b.buildingGroupId) : null;
-      const gap = this.gapOf(gid, dcMap);
-      const { main, backup } = this.centerPair(gid ? (dcMap.get(gid) ?? []) : []);
+      const gap = gapOf(gid, dcMap);
+      const { main, backup } = centerPair(gid ? (dcMap.get(gid) ?? []) : []);
       if (!main) {
         unassigned.push({
           buildingId: Number(b.id),
@@ -685,8 +603,8 @@ export class BuildingAdminService {
     );
 
     const gid = saved.buildingGroupId ? Number(saved.buildingGroupId) : null;
-    const dcMap = this.dcByGroup(await this.dcRepo.find({ where: { deletedAt: IsNull() } }));
-    const gap = this.gapOf(gid, dcMap);
+    const dcMap = dcByGroup(await this.dcRepo.find({ where: { deletedAt: IsNull() } }));
+    const gap = gapOf(gid, dcMap);
 
     return {
       id: Number(saved.id),
@@ -698,7 +616,7 @@ export class BuildingAdminService {
       population: saved.population ?? null,
       gap,
       gapLabel: DISTRIBUTION_GAP_LABEL[gap],
-      canAssign: this.canAssignOf(saved.status, gid, await this.groupStatusOf(gid)),
+      canAssign: canAssignOf(saved.status, gid, await this.groupStatusOf(gid)),
       warnings: this.buildingWarnings(saved, gap, gid),
     };
   }
@@ -784,8 +702,8 @@ export class BuildingAdminService {
       : undefined;
 
     const gid = saved.buildingGroupId ? Number(saved.buildingGroupId) : null;
-    const dcMap = this.dcByGroup(await this.dcRepo.find({ where: { deletedAt: IsNull() } }));
-    const gap = this.gapOf(gid, dcMap);
+    const dcMap = dcByGroup(await this.dcRepo.find({ where: { deletedAt: IsNull() } }));
+    const gap = gapOf(gid, dcMap);
 
     return {
       id: Number(saved.id),
@@ -796,7 +714,7 @@ export class BuildingAdminService {
       population: saved.population ?? null,
       gap,
       gapLabel: DISTRIBUTION_GAP_LABEL[gap],
-      canAssign: this.canAssignOf(saved.status, gid, await this.groupStatusOf(gid)),
+      canAssign: canAssignOf(saved.status, gid, await this.groupStatusOf(gid)),
       changed: Object.keys(patch),
       /**
        * ⚠️ `notifyFailedCount` **只在强制停用放行时出现**（其余路径不返回该键）。
@@ -842,7 +760,7 @@ export class BuildingAdminService {
   async listGroups(q: AdminBuildingGroupsQueryDto, viewerRole: string): Promise<Row> {
     const { page, pageSize, skip } = normalizePage(q);
     const { buildings, groups, leaders, dcList } = await this.loadContext();
-    const dcMap = this.dcByGroup(dcList);
+    const dcMap = dcByGroup(dcList);
     const leaderMap = new Map(leaders.map((l) => [Number(l.buildingId), l]));
 
     // 当日 / 次日套餐名（供「楼群划分」视图展示「今天这栋楼群吃什么」）
@@ -859,8 +777,8 @@ export class BuildingAdminService {
       const gid = Number(g.id);
       const members = buildings.filter((b) => Number(b.buildingGroupId) === gid);
       const dcs = dcMap.get(gid) ?? [];
-      const { main, backup } = this.centerPair(dcs);
-      const state = this.coverageOf(members.length, dcs);
+      const { main, backup } = centerPair(dcs);
+      const state = coverageOf(members.length, dcs);
       const pick = (date: string) => {
         const a = assigns.find((x) => Number(x.buildingGroupId) === gid && x.mealDate === date);
         if (!a) return null;
@@ -964,8 +882,8 @@ export class BuildingAdminService {
     if (!g) throw new BizException(ErrorCode.BUILDING_GROUP_NOT_FOUND, `楼群不存在：#${id}`);
     const gid = Number(g.id);
     const members = buildings.filter((b) => Number(b.buildingGroupId) === gid);
-    const dcs = this.dcByGroup(dcList).get(gid) ?? [];
-    const state = this.coverageOf(members.length, dcs);
+    const dcs = dcByGroup(dcList).get(gid) ?? [];
+    const state = coverageOf(members.length, dcs);
     return {
       id: gid,
       name: g.name,
@@ -1016,7 +934,7 @@ export class BuildingAdminService {
       status: saved.status,
       statusLabel: BUILDING_GROUP_STATUS_LABEL[saved.status] ?? null,
       memberCount: moved,
-      coverageState: this.coverageOf(
+      coverageState: coverageOf(
         moved,
         (await this.dcRepo.find({ where: { deletedAt: IsNull() } })).filter((d) =>
           ((d.serviceGroups ?? []) as number[]).map(Number).includes(gid),
@@ -1105,7 +1023,7 @@ export class BuildingAdminService {
     const dcs = (await this.dcRepo.find({ where: { deletedAt: IsNull() } })).filter((d) =>
       ((d.serviceGroups ?? []) as number[]).map(Number).includes(gid),
     );
-    const state = this.coverageOf(buildings.length, dcs);
+    const state = coverageOf(buildings.length, dcs);
 
     return {
       id: gid,

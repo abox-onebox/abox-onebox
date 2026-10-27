@@ -4,7 +4,7 @@
 > 决策依据见 `docs/decisions/ADR-N1N2W1-楼宇停用与一键停售.md`（已 Accepted）；验收标准见 `docs/qa/AC-N1N2W1-楼宇停用与一键停售.md`。
 > 本规格未授权改任何**未列出**的文件。
 
-> **本批授权新建的文件（白名单，共 6 个）** —— 除这 6 个之外，本规格未授权新建或修改任何未列出的文件：
+> **本批授权新建的文件（白名单，共 7 个）** —— 除这 7 个之外，本规格未授权新建或修改任何未列出的文件：
 >
 > | # | 文件 | 出处 | 行数上限 |
 > |---|---|---|---|
@@ -14,6 +14,7 @@
 > | 4 | `apps/api-server/test/unit/suspend-gate.spec.ts` | §6.0「文件 B」 | ≤150 |
 > | 5 | **`apps/api-server/test/unit/suspend-notify.spec.ts`** | **§6.5**（2026-10-26 Team Lead 派后端补，本规格补登） | **≤180** |
 > | 6 | **`apps/api-server/src/modules/building/building-suspend.service.ts`** | **§5.4.5**（2026-10-27 T5 拆分，从 `building-admin.service.ts` 迁出 N2 停用块） | **≤400** |
+> | 7 | **`apps/api-server/src/modules/building/building-derive.ts`** | **§5.4.6**（2026-10-27 T5 第二步，从 `building-admin.service.ts` 迁出 6 个派生纯函数 + `DC_ACTIVE`） | **≤150** |
 >
 > ⚠️ **第 6 项为什么上限给 `≤400`**（2026-10-27 补登时裁定）：前 5 项都是**纯函数 / 单测**
 >    （单一职责、无 IO），给 ≤150/≤180 是为了逼「一个文件只讲一件事」；第 6 项是
@@ -37,6 +38,7 @@
 > | `test/unit/suspend-notify.spec.ts`（新） | **169** | **7** | ≤180 | ✅ 合规（原始值与 prettier 后**同值**，本就合规） |
 > | `test/unit/suspend-gate.spec.ts`（旧） | **149** | **9**（7 条带 ★） | ≤150 | ✅ 合规 |
 > | `src/common/utils/suspend-gate.ts` | 140 | — | ≤150 | ✅ 合规 |
+> | `src/modules/building/building-derive.ts`（新 · T5 第二步） | **115** | — | ≤150 | ✅ 合规 |
 > | `src/modules/building/building-suspend.service.ts`（新 · T5 拆分） | **375** | — | ≤400 | ✅ 合规 |
 > | `src/modules/building/building-admin.service.ts`（**既有** · T5 拆分后） | **1263**（原 1611） | — | **无上限** | ➖ 不适用（见 §5.4.5 的动因更正） |
 >
@@ -963,6 +965,56 @@ if (!user.buildingId) {
 `check-n1n2-w1-suspend-rules.mjs` 51/51 · **全量门禁 31/31 全绿**。
 `suspend-notify.spec.ts` 改为直接实例化新服务（`notifySuspendAffected` 在新服务是 public，
 **去掉了原先绕过 private 的 `as unknown as` 强转**）。
+
+---
+
+### 5.4.6 T5 第二步：派生层 `building-derive.ts`（2026-10-27 补登 · **新建文件，须进 §0 白名单**）
+
+**新建** `apps/api-server/src/modules/building/building-derive.ts`（**115 行 · prettier 后实测**），迁出
+`DC_ACTIVE` + `dcByGroup` / `gapOf` / `centerPair` / `coverageOf` / `routeNoMap` /
+`canAssignOf` / `countMultiBuilding`。**主文件 1263 → 1181 行**（34 处调用点改为直接调函数）。
+
+**为什么先抽这一层**：主文件四个关切（楼栋读写 / 楼群 CRUD / 成员替换 / 停用闸门）
+**全都**共用这六个派生函数 —— 共享 helper 就是切不开它们的唯一原因。先变成无状态、
+输入显式传参的纯函数，后面按关切拆分才不必再处理共享。**顺序不能倒。**
+
+| 处置 | 内容 | 理由 |
+|---|---|---|
+| 搬走 | 6 个纯函数 + `countMultiBuilding` + `DC_ACTIVE` | 零 IO；`DC_ACTIVE` 真源只能一份 ⇒ 主文件改 import（它仍有 6 处直接用） |
+| **刻意留在主文件** | `loadContext`（:128）/ `groupStatusOf`（:139） | 要查库 ⇒ 进派生层会把它变成「另一个 service」，本模块**必须保持零 IO** |
+| **刻意留在主文件** | `buildingWarnings`（:739） | ⚠️ **不是**因为它不纯，而是因为它被一条判据失明地盯着 —— 见下 |
+
+> ## ⚠️ 判据盲区登记（**待办 · 不在本批修 · 已留痕**）
+>
+> `buildingWarnings`（`building-admin.service.ts:739`）内联了**两处**「楼状态 ∧ 已归群」的合取：
+>
+> ```ts
+> if (b.status !== BuildingStatus.ACTIVE && gid !== null) { ... }   // ①
+> if (b.status === BuildingStatus.ACTIVE && gid === null) { ... }   // ②
+> ```
+>
+> 而 **N1-16**（「内联合取命中数必须为 0，唯一持有者 = `evaluateStructure`」）的正则是
+> `/[A-Za-z]*[Ss]tatus\s*===\s*BuildingStatus\.ACTIVE\s*&&\s*(?:gid\s*!==?\s*null|(?:[\w.]+\.)?buildingGroupId\b...)/g`
+> ⇒ **第一半只认 `===`**（放过 ① 的 `!==`）、**第二半只认 `gid !== null`**（放过 ② 的 `gid === null`）
+> ⇒ **两行都不命中，判据对它完全失明**（判据恒绿，但不是因为它对）。
+>
+> **为什么不顺手修**（三条，都是纪律不是偷懒）：
+> 1. 一修正则就**立即红** ⇒ 必须先裁定「这是第三份判据（要改代码）还是合法形态（要豁免）」，
+>    那是**独立议题**，不该搭在拆分这一刀里；
+> 2. 拆分是**纯搬家**，语义零变更；修判据 + 可能改生产代码 = 一次改动两件事，破坏单步可回滚；
+> 3. 「修了之后仍然不红」比现在更危险 —— 现在至少留了这份记录。
+>
+> ⚠️ **连带硬约束（写给下一个人）**：在盲区裁定之前，
+> **`buildingWarnings` 不得搬出 `building-admin.service.ts`** ——
+> N1-16 是**按路径**扫这一个文件的，搬走就等于从「盲区」升级成「彻底扫不到」。
+> 这正是 §5.4.5 那条「搬家前先查谁在按路径盯我」的反面：**盯不盯得到，也要查。**
+>
+> **下批裁定的提问顺序**：先回答「`buildingWarnings` 的文案分支是否必须与 `canAssign` 同源」——
+> · 若**必须** ⇒ 改为由 `evaluateStructure()` 派生，差异落成文案映射（状态机将来新增态时它会自动跟上）；
+> · 若**不必须** ⇒ 在判据里**显式登记豁免**（长期挂着一个看不见的盲区，等于没有检查）。
+
+**验收**：`tsc --noEmit` 0 · `eslint --max-warnings 0` 0 · jest 15 suites / 129 tests ·
+`check-n1n2-w1-suspend-rules.mjs` 51/51 · 全量门禁 31/31。
 
 ---
 
