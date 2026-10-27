@@ -1,0 +1,51 @@
+# OPEN-DECISIONS · ABox 一盒
+
+> 只追加 + 就地关闭（OPEN → RESOLVED 并补 Resolution）。新 Phase 开始时先复现未决项。
+> 2026-10-27 晚间汇总：本日处理上线前测试报告 v2 引发的一轮事故排查，共登记 10 项，已关 5 项。
+
+## 已关闭（RESOLVED）
+
+| Date | Source | Open Item | Current Leaning | Resolution | Status |
+|---|---|---|---|---|---|
+| 2026-10-27 | 《上线前测试报告 v2》 | `GET /orders/:orderNo` 与 `/pay-result` 间歇 10001 `Unexpected token '"', ""eyJhbGciO"...`；列表正常；15:41 首现、几度自愈、16:31 起持续 | 根因：**传输层，非业务层**。调用方对 GET 发出**顶层 JSON 字符串**请求体 ⇒ body-parser strict 拒顶层非 `{`/`[` 并二次 re-parse 编造英文文案（`body-parser/lib/types/json.js:83-90,156-176`）⇒ Nest `mapExternalException` 把任意 SyntaxError→400（`routes-resolver.js:94-101`）⇒ `all-exceptions.filter.ts:70-71` 转 10001 且**不打日志**。反证 V6：同一坏体打列表同样失败 | 已定根因，真实用户路径不触发；补丁（B 组）排上线后窗口。**溯源仍 OPEN**（见下） | RESOLVED（根因） |
+| 2026-10-27 | 上线前核查 | `getNumber` fallback 死代码（`Number(null)===0`）⇒ 提现无日限额/无日笔数 | ⭐ 即 2026-09-23 挖出的 **D-1**，当时记进「未收口」却从未修，一个月后波及从 2 键扩到 5 键 | 判据抽纯函数 `config-value.ts`（`isMissingConfigValue`/`pickConfigNumber`），区分「键缺失」与「值为 0」，`19d2f9e` 已交付并部署 | RESOLVED |
+| 2026-10-27 | 拍板 | 修完后 5 键生效值：阈值 20、提现 2000/1、`pay_timeout` 30、`supplier_total_default` 14.0 | 取代码 fallback，均不写库（省一次数据变更 + `invalidate()`） | 已确认；`withdraw_daily_*` 与 D3 定稿原文一致 | RESOLVED |
+| 2026-10-27 | 拍板 | 两批改动在 `main.ts` 重叠（`bodyParser:false` vs `isProductionRuntime`） | 精确分 hunk，不可干净拆分则如实回报 | **可干净拆分**，`19d2f9e` 已分离并自证（B 组移出仓库后门禁全绿） | RESOLVED |
+| 2026-10-27 | 拍板 | 最低提现额：`minWithdraw` 0 还是 10 | 四处文档写 10、门禁脚本钉住 0、而 **10-26 用户拍板的 D3 定稿（工作区根，仓库之外）要求 0** | 裁定：**不限起提 = 0**，`d156515` 回退 + `e5d00f7` 更正依据（注明接口规范 v1.0(09-14) 已被 D3(10-26) 取代）；DTO `@Min(0.01)` 地板已存在无需补 | RESOLVED |
+
+## 仍 OPEN
+
+| Date | Source | Open Item | Related Constraints | Current Leaning | Blocked By | Resolves When | Status |
+|---|---|---|---|---|---|---|---|
+| 2026-10-27 | P0 根因 | **哪个调用方对 GET 发了请求体**（溯源未闭环） | 形态判别已收窄：带 `Content-Type: application/json` + 体为被引号包裹的字符串 + 体长 ≈ token+2（243 字节）⇒ 头号嫌疑 python `requests.get(..., json=token)` | 请测试人员用原工具重跑取证；nginx `$request_length`（字段 `reqLen`）已上、保留 7 天 | 对方配合重放 + 提供调用片段原文 | 拿到那一行访问日志或调用代码 | OPEN |
+| 2026-10-27 | 上线前核查 | 现网 `commission.min_withdraw = 10.00` ≠ 定稿 0（**代码回退 ≠ 线上生效**） | 配置优先级高于 fallback；不改数据则停在「看代码以为改了、看行为没变」的半生效态 | 已授权运维：备份单表 → UPDATE → 用 `check-biz-config-parity` 从「漂移 1」验到「对齐」 | 运维执行（依赖 `7d52af6` 部署完成） | 对账门禁转绿 | OPEN |
+| 2026-10-27 | 上线前核查 | 切 `PROVIDER_MODE=real`：微信支付 7 项前置全缺、证书目录为空；`real-wx-pay.provider.ts:105-110` 缺参数**只 WARN 不抛** | 切完服务照常起、`/health/ready` 照常绿、直到有人下单才炸 | 商户资质到位前不切 real，也不宣布「支付可用」 | 商户号 / APIv3 密钥 / 证书序列号 / 私钥 / **公网 HTTPS** 回调地址 | 资质齐备且回调验通 | OPEN |
+| 2026-10-27 | 上线前核查 | 回滚链路需**每次部署前重跑** `rollback-anchor.sh` | 原链路是「假装能回滚」（dry-run 报 OK 退出 0 但目标镜像不存在）；已修脚本 + 已建锚点 | 现有锚点录的是「改 nginx 之前」，后续改动后即刻过期 | 每次部署前的纪律 | 每次部署前有新鲜锚点 | OPEN |
+| 2026-10-27 | 拍板 | **上线延期 1-2 天**；请求体补丁（入口级 `bodyParser:false`）不随本次上线包投产 | blast radius 大：漏一种 Content-Type 会让所有写接口拿不到 body | 先在测试机部署跑完六步清单取绿证，单独窗口再投产 | 六步清单全绿 + 单独窗口 | 验证通过 | OPEN |
+| 2026-10-27 | QA 评分卡 | H5（8081）`--mode development` 构建，`?devCode=<任意>` 可切任意身份，**端口对外开放** | 备案/HTTPS 就绪前异地测试还要靠它 | 保留，但加访问控制（不用发版、易撤）：换端口 / 基本认证 / 限制来源，由运维定 | 运维方案与实测（未授权未授权被拦 + 授权可用） | 加固落地且不影响异地测试 | OPEN |
+| 2026-10-27 | 结构性陷阱 | 决策类文档在**工作区根**（仓库之外），仓内搜不到 ⇒ 易误判「无处可回源」 | 本次误判「D3 定稿不存在」即由此而来；仓内 D3 是配餐接口编号 | 决策文档索引登记进 `docs/decisions/`，或在 `docs/README` 写明另一处真源 | 补登记 | 下次排查不重蹈 | OPEN |
+| 2026-10-27 | 流程 | 配置类决策「写在文档里等人执行、无机器校验」 | 同日两次发作：D-1 挂记忆没人修；D3 改了默认值没改现网配置 | 已交付 `seed-biz-config.mjs` + `check-biz-config-parity.mjs`（默认 dry-run、幂等缺省插） | 现网数据变更后对账转绿，且门禁接入日常巡检 | 对账绿 + 纳入例行检查 | OPEN |
+| 2026-10-27 | 预案排查 | Redis 真不可用时，三条 fail-closed 路径的**用户可见文案**没把「系统繁忙」与「你被限制」分开：① 限流 `429/10005`「请求过于频繁，请稍后再试」与**真被限流同码同文案**（用户没错却被指责 ⇒ 反复重试 ⇒ **放大故障**）；③ 下单幂等 `setNx` 抛**裸 Error** ⇒ 落 `500/90001`，而 `90002 服务暂不可用` **有码无实现**（全仓唯一产生点 `health.controller.ts:206-211` 健康检查）。② 后台登录 `20005`「登录校验暂不可用，请稍后重试」是**唯一做对**的一条 | ① **不能**改状态码：`rate-limit.middleware.ts:63-69` 要求 BizException 与 HttpException 两路 HTTP 码一致，改了会打破 `e2e-m3.mjs §33` 的 429 断言 ⇒ ① **只换文案**；③ 用 `catchError` 包 `BizException(SERVICE_UNAVAILABLE, …, HttpStatus.SERVICE_UNAVAILABLE)`，⛔ **必须显式传 503**（`HTTP_STATUS_OVERRIDE` 里没有 90002，不传会退化成 200 —— 同 `health.controller.ts:206` 那条注释） | ① 只换文案；③ 补 `catchError` + `90002`/503；③ 另配单测（模拟 `setNx` 抛错 ⇒ 断言收到 90002 + HTTP 503） | 下一窗口第一批（本轮与回滚演练抢窗口；且 ③ 动的是**写钱路径**，须独立验证窗口） | ① §33 的 429 断言仍绿；③ 单测 + 独立验证窗口 | OPEN |
+
+## 追加（2026-10-27 深夜轮次 · 负责人裁定）
+
+### 新关闭
+
+| Item | 裁定 | 依据 |
+|---|---|---|
+| 现网 `commission.min_withdraw` 数据变更 | **值已改 0.00 并生效**，对账「漂移 1 → 偏差 0」 | 运维执行 + `check-biz-config-parity.mjs` EXIT=0 |
+| H5(8081) 对外开放加固 | **RESOLVED**：Cookie 闸门 `abox_gate` 落地 + `scripts/check-h5-gate.sh` 五条巡检（含「Cookie + Bearer 拿订单 200 + code 0」专盯基本认证退化） | `5b14a59`；撤除条件写在 `apps/miniprogram/nginx.conf` 末尾「闸门运维」段，三处一起删 |
+| KV「连接握手窗口被 fail-closed 误判」 | **RESOLVED**：`6eb2a26`。且**触发面被实证订正** —— 不是「启动后头几秒」，是「**上线后第一个真实请求**」（`lazyConnect` ⇒ 进程起来时根本没有连接）。实证判据：两个容器命中间隔 **5 分 02 秒 / 3 分 57 秒**，idle 断连必须是**常量**间隔，出现两个值即否掉 idle 假设；且各容器**只命中一次** | 运维实测；订正须写回 `kv.service.ts` 注释（旧注释「启动后头几秒」是错的，会让后人以为熬过启动期就安全） |
+| `ab_config.description` 里写「为什么是 0」 | **撤回，改回 `最低提现金额`**（与 `seed.ts:127` 逐字段一致） | ① 该列**零读取点**（`BizConfigService` 只读 key/value，后台页读 `CONFIG_SPECS`）② 该列**只有 seed 会写** ⇒ 自定义文案会被**静默覆盖**、不报错 ③ 口径说明已在真正被消费的四处：`config.specs.ts:261-267` / `biz-config.service.ts:232` / `withdraw.service.ts:70` / seed 注释 ⇒ 留在库里 = 无人消费且会被覆盖的**死副本** |
+
+### 新登记
+
+| Item | 性质 | 说明 |
+|---|---|---|
+| 让后台配置页（D57）改读库里 `description` 列 | 独立待办，**不靠改一行数据悄悄实现** | 若真要「口径落在数据行里」，正确做法是这个；属明确行为改动，单独立项 |
+| 生产主动破坏性动作须先报备窗口 | 纪律 | 本次运维为取证在生产停 Redis（约 11 秒恢复）。结论确实只有这么拿得到，但「登录全 429」对不知情者与真故障长得一样 ⇒ 须先声明「X 时刻做 Y，影响面 Z，持续 N 秒」 |
+| 下单「限流 fail-open + 幂等键 fail-closed」的组合 | 易漏的组合，**单独登记**（负责人要求） | `order:create` 的限流规则**没有** `failClosed`（`rate-limit.middleware.ts:132-137`）⇒ Redis 不可用时它**放行**、只留一条 WARN；但下单幂等键走 `KvService.setNx`（fail-closed）⇒ **下单照样失败**。⇒ 别因为「限流没拦」就以为下单不受影响 |
+| 起提门槛为 0 时端上不许渲染「最低提现 ¥0.00」 | 已改（`withdraw.vue`）；按负责人指示**保留在工作区未提交**，并入下次小程序构建 | `min_withdraw=0`（不限起提）时原模板恒显示「最低提现 ¥0.00」，与「不限」语义打架。改为 `minWithdrawFen > 0` 才渲染金额、否则显示「不设起提门槛」（措辞与《接口规范》§4.4 L12 一致）。反向确认：`balance-log.vue:116` 的「满 ¥0.00 起可提现」**不会**出现 —— 后端 `commission.service.ts:427` `canWithdraw = balanceFen >= minFen`，minFen=0 时恒真 ⇒ 那条分支不可达 |
+| 投递纪律**无机制兜底** | 风险 | `scripts/deploy.sh` 里 grep `archive\|tar\|scp\|rsync` **零命中** ⇒ 投递是人工命令。「只带已提交内容」全靠人守；工作区躺着未提交的 B 组，`tar` 工作树会把它偷偷带上生产 |
+
+| ⚠️ 曾误判「日期写成 7 月 32 日」 | **已机械复核否定** | 把日期按数值解析（正则取年/月/日后转 Number）并与本机 getDate() 比对 ⇒ 文件里就是 **10 月 27 日**，与系统一致，无此缺陷。教训：**文本形态上「看起来不对」必须转成数值再比；肉眼比对形近串会自己骗自己**（本次差点据此去改一批其实正确的日期） |
