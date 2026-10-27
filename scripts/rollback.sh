@@ -16,12 +16,22 @@
 #   只有明确知道某次迁移与旧代码不兼容时，才用 --with-migrate-revert ——
 #   且它同样**不能找回被 drop 的数据**，只能让结构回到旧形状。
 #
+# ---- ⛔ 生产变更纪律（2026-10-27 立 · 见《部署运维手册》§4.4）--------
+#   回滚本身就会**重启容器、中断服务** ⇒ 执行前先报一句
+#   「我要在 X 时刻做 Y，影响面 Z，预计持续 N 秒」并经确认。
+#   出故障时这条容易被当成「先救火再说」，但正因如此才更要说清楚：
+#   不知情的人会把回滚期间的报错当成**新的故障**去查。
+#
 # ---- 回滚的前提 ----
 #   旧版镜像必须**还在本机**（回滚是一次「用旧 tag 重新起容器」，不重新构建）。
 #   ⚠️ 因此：**不要**在生产机上跑 `docker image prune -a`，那会把回滚能力一起删掉。
 #   本脚本会先检查镜像是否存在，不存在则明确报错而不是让你等一个 pull 失败。
 #
-# ⚠️ 本脚本未在真机执行过（开发机无 Docker，见《部署运维手册》§9）。
+# ⚠️ 真机执行情况（2026-10-27 更新）：`--dry-run` 已在生产机实跑过
+#   （target tag 镜像存在 → readiness ready → EXIT=0）。
+#   **尚未做过真实回滚演练**（那会中断服务，按 §4.4 需先报备再动）。
+#   区别要说清：dry-run 验的是「目标镜像在不在、能不能起到 ready」，
+#   **不等于**验过「真实回滚后业务还正常」—— 后者需要一次有报备的演练。
 # ============================================================
 set -euo pipefail
 
@@ -87,17 +97,26 @@ ok "当前 tag = ${CURRENT_TAG:-未知} → 回滚目标 = $TARGET_TAG"
 # 2. 确认镜像在本地（回滚不重新构建）
 # ------------------------------------------------------------
 log "2/5" "检查目标镜像是否在本地"
+#
+# ⚠️ 这一层**必须在 dry-run 下也真跑**：
+#    原实现在 dry-run 时只打印 `docker image inspect` 而**不做判断** ⇒
+#    `--dry-run` 会一路报 OK 到「已回滚」，而真跑时第 2 步就 die。
+#    后果是运维拿 dry-run 当预检，得到的却是一张假通行证（2026-10-27 实测）。
+#    ⇒ 检查在两种模式下都执行；dry-run 只额外把命令打出来。
 for svc in api admin; do
   img="${REGISTRY:-abox}/${svc}:${TARGET_TAG}"
-  if [ "$DRY_RUN" = 1 ]; then
-    printf '     (dry-run) docker image inspect %s\n' "$img"
-  elif docker image inspect "$img" >/dev/null 2>&1; then
+  if docker image inspect "$img" >/dev/null 2>&1; then
     ok "镜像存在：$img"
   else
-    die "本地没有镜像 $img —— 回滚依赖旧镜像仍在机器上。
-      · 若刚清理过镜像：只能重新构建该版本（git checkout <旧提交> && ./scripts/deploy.sh --tag $TARGET_TAG）
-      · 以后请勿在生产机执行 docker image prune -a"
+    printf '\n[FAIL] 本地没有镜像 %s\n' "$img" >&2
+    printf '       · 旧镜像已被覆盖/清理 ⇒ **本次无法回滚**，不要继续\n' >&2
+    printf '       · 生产机无 .git 时，"git checkout <旧提交> 重新构建" 这条也走不通\n' >&2
+    printf '       · 正确姿势：部署**前**先 ./scripts/rollback-anchor.sh 建锚，\n' >&2
+    printf '         回滚改用锚点里那份 ROLLBACK.md（镜像 + 源码 + 数据三件套）\n' >&2
+    printf '       · 平时勿在生产机执行 docker image prune -a\n' >&2
+    exit 1
   fi
+  [ "$DRY_RUN" = 1 ] && printf '     (dry-run) docker image inspect %s\n' "$img"
 done
 
 # ------------------------------------------------------------

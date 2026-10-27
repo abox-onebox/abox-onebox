@@ -12,6 +12,16 @@
 #
 # 回滚：./scripts/rollback.sh
 #
+# ---- ⛔ 生产变更纪律（2026-10-27 立 · 见《部署运维手册》§4.4）--------
+#   任何会打断服务的主动动作（停依赖 / 删数据 / 切配置 / 重启容器）
+#   **动之前先报一句**「我要在 X 时刻做 Y，影响面 Z，预计持续 N 秒」，
+#   经主理人或项目负责人确认后再执行 —— 哪怕它只要 11 秒。
+#   理由：这类动作造成的现象（如「登录全 429」）与真故障**长得一模一样**，
+#   不知情的人会顺着错误方向去查一个根本不存在的原因。
+#   本脚本在服务器上是**原地执行**的：投递那一步在外面，请确保投递物
+#   **只含已提交内容**（`git show <commit>:<path>` / `git archive <commit>`），
+#   绝不打包当前工作树 —— 树上可能躺着「本轮不发布」的改动。
+#
 # ---- 本脚本相对上一版骨架的修正（2026-09-17）--------------------
 #   上一版是占位实现：只 `docker build` 一个 api 镜像，然后 `kubectl set image`
 #   打到一个占位 registry（registry.example.com）。三个真问题：
@@ -134,8 +144,30 @@ fi
 # 4. 构建镜像
 # ------------------------------------------------------------
 log "4/7" "构建镜像（api + admin）"
+
+# ⚠️ `.env.prod` 里若钉了 `TAG=latest`，compose 的 `${TAG:-latest}` 就**恒为 latest** ——
+#    那么无论本脚本 `--tag` 传什么，产物都只会覆盖 `abox/api:latest`，
+#    而 `.deploy-state` 里记的 `manual-<时间戳>` **从来不会成为任何真实镜像的 tag**。
+#    后果：`./scripts/rollback.sh` 在第 2 步必死在 `本地没有镜像`，且生产机无 .git，
+#    它给的 `git checkout <旧提交>` 也走不通 ⇒ 回滚链路整体失效（2026-10-27 实测）。
+#    这里显式补打 $TAG，让 `.deploy-state` 记的那个 tag 真的指向一个本机镜像。
+if grep -qE '^TAG=latest\s*$' "$ENV_FILE" 2>/dev/null; then
+  warn "$ENV_FILE 里钉了 TAG=latest：产物只会落到 :latest，本脚本已额外补打 $TAG 供回滚"
+fi
+BUILT_TAG="$(
+  grep -E '^TAG=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]'
+)"
+BUILT_TAG="${BUILT_TAG:-latest}"
+
 compose build --build-arg "APP_VERSION=$TAG" api admin
-ok "镜像构建完成：tag=$TAG"
+
+# 补打可回滚的 tag（h5 不在本脚本构建范围，但它在跑就一并锚上 —— 见回滚卡）
+for svc in api admin; do
+  if docker image inspect "${REGISTRY:-abox}/${svc}:${BUILT_TAG}" >/dev/null 2>&1; then
+    docker tag "${REGISTRY:-abox}/${svc}:${BUILT_TAG}" "${REGISTRY:-abox}/${svc}:${TAG}" 2>/dev/null || true
+  fi
+done
+ok "镜像构建完成：tag=$TAG（另锚 ${REGISTRY:-abox}/{api,admin}:$TAG 供 rollback.sh 使用）"
 
 if [ "$BUILD_ONLY" = 1 ]; then
   log "完成" "--build-only：已停在构建阶段，未部署"
