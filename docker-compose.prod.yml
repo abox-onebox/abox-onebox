@@ -156,6 +156,21 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    volumes:
+      # ⚠️ nginx 站点配置**必须走宿主机挂载**（2026-10-27 定）
+      #   镜像里也有 `COPY nginx.conf`（见 Dockerfile），那是给「整镜像重新构建」路径兜底；
+      #   这里额外挂宿主机文件，是为了让**改一条 404 规则不必重编整个前端** ——
+      #   否则运维改 nginx 的最短路径是「跑一遍 vue-tsc + vite build」，
+      #   而那一步会被任何类型错误卡住 ⇒ 安全止血被前端类型错误阻塞。
+      #   ⚠️ 本容器 `read_only: true`，容器内文件**不可写** ⇒ 没有「docker cp 进去热改」这条路。
+      #   ⚠️ 回滚 = 换回宿主机那份 nginx.conf + `docker exec <容器> nginx -s reload`，
+      #      不需要重建镜像，这个性质在上线当天很值钱。
+      - ./apps/admin-web/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # ⚠️ 访问日志**必须落到宿主机**：容器 `read_only: true` 且 rootfs 不可写，
+      #    而溯源要看 7 天前的请求体大小 ⇒ 不能只靠 `docker logs`（那是按份数轮转的，
+      #    不是按时间保留的，事故复盘时早被挤掉了）。
+      #    保留 7 天由 `deploy/cron/abox-ops.cron` 里的清理行负责（唯一真相在那儿）。
+      - ${ABOX_NGINX_LOG_DIR:-./logs}/nginx-admin:/var/log/nginx
     # nginx 只需写缓存/临时目录，根文件系统可挂只读（最小权限）
     read_only: true
     tmpfs:
@@ -196,6 +211,23 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    volumes:
+      # 同 admin：nginx 站点配置走宿主机挂载，理由见 admin 那段注释。
+      # 本站点与后台是两条独立通路（都能反代到 api:3000），
+      # ⇒ 两边 nginx.conf 的 mock 拦截段**必须同时生效**，只挂一处等于没止血。
+      - ./apps/miniprogram/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # ⚠️ H5 临时访问控制（Cookie 闸门）的凭据目录（2026-10-27 加 · 备案 + HTTPS 就绪后可撤）
+      #    为什么挂目录而不是拷进镜像：容器是 `read_only: true`，拷不进去；
+      #    而挂载的好处是**换凭据不用重建镜像**，改完 `nginx -s reload` 即可。
+      #    ⚠️ 撤除时必须**同时**删掉本行、nginx.conf 里的 4 个 map 与 2 个 if —— 只删一半
+      #       要么闸门还在（站点没人能进），要么 map 引用了不存在的目录。
+      #    为什么用目录 + 通配 include：目录为空时 nginx **照常启动**，只是无人能过闸
+      #       （fail-closed）；若挂单个文件，文件一丢 nginx 直接起不来，站点全挂。
+      #    凭据怎么生成 / 怎么发给同事 / 怎么撤：见 `apps/miniprogram/nginx.conf` 末尾
+      #       「闸门运维」一段。
+      - ./deploy/h5/gate.d:/etc/nginx/conf.d/gate.d:ro
+      # 同 admin：访问日志落宿主机供 7 天溯源（理由见 admin 那段的注释）
+      - ${ABOX_NGINX_LOG_DIR:-./logs}/nginx-h5:/var/log/nginx
     read_only: true
     tmpfs:
       - /var/cache/nginx

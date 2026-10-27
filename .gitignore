@@ -33,6 +33,11 @@ apps/*/components.d.ts
 deploy/certs/
 *.pem
 
+# H5（8081）临时访问控制（Cookie 闸门）的凭据目录（2026-10-27 加 · 备案+HTTPS 就绪后撤）
+#   里面是 `Cookie 值` 的明文，拿到它 = 拿到访问权，不能进仓库。
+#   生成 / 换凭据 / 撤除的命令见 apps/miniprogram/nginx.conf 末尾「闸门运维」一段。
+deploy/h5/gate.d/
+
 
 # 本地数据卷
 data/
@@ -42,6 +47,8 @@ data/
 #   backups/ 是 mysqldump 产物，可能含全量业务数据，绝不入库
 .deploy-state
 backups/
+# 运行期访问日志（nginx 溯源留证，含 UA / URI 等真实请求信息，保留 7 天由 cron 清理）
+logs/
 
 # 构建暂存（沙箱 bulk-delete 守卫的对策目录，见《协作规范》）
 _stale-build/
