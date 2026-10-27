@@ -8,6 +8,15 @@
  * 本门禁把定稿值（`lib/biz-config-baseline.mjs`，与建库脚本**同一份**）与现网
  * `ab_config` 做逐键比对，有偏差就**红**。
  *
+ * ── ⛔ 它**不守什么**（别把「半验」当「全验」）─────────────────────────────────
+ * 本门禁**只比 `config_value`**：`loadRowsFromDb()` 只 `SELECT config_key, config_value`，
+ * `loadRowsFromFile()` 每行也只取前两列 ⇒ **`description` 不在比对范围内**。
+ * 后果**真实发生过**：2026-10-27 生产库被旧备份覆盖后，`config_value` 是对的、
+ * `description` 被冲回旧文案，而本门禁 **EXIT=0 全绿**。
+ * ⇒ 谁拿本门禁的 EXIT=0 当 `description` 的验收，谁就拿到一个**假绿**；
+ *   `description` 的验收只能是 `SELECT ... HEX(description)` 比字节。
+ *（与 `--selftest` 同一条纪律：恒绿的检查等于没有检查，半验被当全验同样等于。）
+ *
  * ── 为什么「缺失」未必是偏差 ────────────────────────────────────────────────
  * 2026-10-27 拍板（`docs/decisions/OPEN-DECISIONS.md:13`）明确：阈值 / 超时 / 供价 /
  * 提现两条**都不写库**，让代码 fallback 生效。所以：
@@ -42,6 +51,7 @@ function loadRowsFromFile(path) {
       configValue: r.configValue ?? r.config_value ?? r.value,
     }));
   }
+  // ⛔ 只取前两列：description 不在本门禁比对范围内（见文件头「它不守什么」）
   return raw
     .split('\n')
     .filter((l) => l.trim())
@@ -61,6 +71,7 @@ async function loadRowsFromDb() {
     database: process.env.DB_DATABASE ?? 'abox_onebox',
   });
   try {
+    // ⛔ 只 SELECT 两列：description 不比（见文件头「它不守什么」）
     const [rows] = await conn.query(
       'SELECT config_key AS configKey, config_value AS configValue FROM ab_config',
     );
