@@ -68,7 +68,7 @@ export class WithdrawService {
    *
    * 校验顺序（错误码即端上分支依据）：
    *   1. 金额 ≥ 最低提现额（`commission.min_withdraw`，缺省 **0 = 不限起提** ·
-   *      项目负责人 2026-10-27 裁定；配正数即起门槛）                        → 40003
+   *      D3 定稿 2026-10-26 用户拍板；地板 ¥0.01 由 DTO `@Min(0.01)` 兜）   → 40003
    *   2. 收款方式已绑定（本次入参 或 团长资料已存）                         → 40007
    *   3. 当日笔数未超 `commission.withdraw_daily_count`（默认 1）           → 40025
    *   4. 当日累计额未超 `commission.withdraw_daily_limit`（默认 ¥2000）     → 40024

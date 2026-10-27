@@ -120,9 +120,10 @@ async function main(): Promise<void> {
       ['commission.rate.chief', '0.1200', '首席团长佣金（C2 锁定）'],
       ['commission.auto_confirm_time', '14:00', '自动确认收货（T 日 14:00）'],
       ['commission.settle_hour', '02:00', '佣金结算时点（T+1）'],
-      // 0.00 = **不限起提**（项目负责人 2026-10-27 裁定；docs 三处与 e2e 断言已同步为 0）。
-      // ⚠️ 曾于 2026-10-27 上午按 `docs/ABox一盒接口规范v1.0.md` 旧文案（≥ ¥10.00）
-      //    改成 10.00，负责人复核后要「不限起提」，故改回 0.00 —— 不要再按旧文档改回 10。
+      // 0.00 = **不限起提** —— 真源是 D3 定稿（2026-10-26 用户拍板，在工作区根：
+      // `ABox_D3提现规则定稿_2026-10-26.html` 第三节 1）），非《接口规范 v1.0》（09-14，
+      // 已被 D3 取代）。地板 ¥0.01 由 DTO `@Min(0.01)` 兜（finance.dto.ts:169）。
+      // ⚠️ 2026-10-27 曾按《接口规范》旧文案改成 10.00（属回退，非修复），已撤销。
       ['commission.min_withdraw', '0.00', '最低提现金额'],
       ['commission.withdraw_daily_limit', '2000.00', '单日提现上限（元）'],
       ['commission.withdraw_daily_count', '1', '单日提现笔数上限'],
