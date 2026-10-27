@@ -5,7 +5,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Balance, BalanceLog, Commission } from '../database/entities/finance.entity';
 import { TeamLeader } from '../database/entities/leader.entity';
 import { MealAssignment } from '../database/entities/meal.entity';
-import { OperationLog, OpBlocklist } from '../database/entities/system.entity';
+import { OperationLog, OpBlocklist, SalesPause } from '../database/entities/system.entity';
 import { User } from '../database/entities/user.entity';
 import { Withdraw } from '../database/entities/withdraw.entity';
 import { Building, BuildingGroup } from '../database/entities/building.entity';
@@ -81,10 +81,19 @@ import { UserPayeeService } from './services/user-payee.service';
        * ⚠️ 按本仓既有做法**只登记实体、不 import 业务模块** —— 实体级 forFeature
        *    不构成模块循环（服务级 import 才会），`CommonModule` 是 `@Global()`，
        *    故 `meal` / `order` / `team-leader` / `building` 四模块无需任何改写即可注入。
+       *
+       * ⭐⭐ **W1 全局停售（P3-6）**：`OrderAvailabilityService` 还要读 `ab_sales_pause`
+       *    （第 5 个构造参数 `@InjectRepository(SalesPause)`）。此处漏登记 ⇒ 编译与单测
+       *    **都过得去**（tsc 只看类型，单测用 `getRepositoryToken` 手工 provider），
+       *    唯独**真实启动**时 Nest 抛 `can't resolve dependencies ... SalesPauseRepository`
+       *    ⇒ 2026-10-27 首次部署即 502。教训：`@InjectRepository(X)` 与 `forFeature`
+       *    的配对**只能靠启动验证或静态对账**，不能靠 tsc。
        */
       Building,
       BuildingGroup,
       MealAssignment,
+      /** W1：全局停售表（同上，漏了就启动即崩） */
+      SalesPause,
     ]),
   ],
   providers: [
