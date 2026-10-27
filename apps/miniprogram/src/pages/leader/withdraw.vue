@@ -50,7 +50,17 @@
         <text class="amount__all" @tap="fillAll">全部提现</text>
         <text class="amount__hint">平台代发 · 预计 1–2 个工作日到账（个税已代扣）</text>
       </view>
-      <text class="amount__min">最低提现 {{ fenToYuanText(balance?.minWithdrawFen ?? 0) }}</text>
+      <!--
+        ⚠️ 起提门槛为 0（**不限起提**）时**不渲染**「最低提现 ¥0.00」——
+        它与「不限」语义打架：用户会读成「要满 ¥0.00」，或以为页面出 bug。
+        ⇒ 0 时正面陈述「不设起提门槛」（措辞与《接口规范》§4.4 L12 一致）；
+          运营把 `commission.min_withdraw` 配成正数时，这一行**自动**变回「最低提现 ¥X」，
+          端上不需要为「有没有门槛」再写第二处判断。
+      -->
+      <text v-if="minWithdrawFen > 0" class="amount__min">
+        最低提现 {{ fenToYuanText(minWithdrawFen) }}
+      </text>
+      <text v-else class="amount__min">不设起提门槛</text>
     </view>
 
     <!-- ④ 提现记录 -->
@@ -149,6 +159,18 @@ const amountYuan = computed(() => {
   return Number.isFinite(n) ? n : 0;
 });
 
+/**
+ * 起提门槛（**整数分**）—— **0 = 不限起提**
+ *
+ * ⚠️ 真源是 D3 定稿（2026-10-26 用户拍板）：终版规则表「起提金额｜不限」，
+ *    不是《接口规范 v1.0》（09-14）的旧口径「≥ ¥10.00」（已被 D3 取代）。
+ *    「不限」不等于「¥0 也能提」：地板 ¥0.01 由后端 DTO `@Min(0.01)` 兜住。
+ *
+ * ⚠️ 端上**不许**把 0 渲染成「最低提现 ¥0.00」—— 那与「不限」语义打架，
+ *    用户会读成「要满 ¥0.00」。见模板里那一处 `v-if` 的注释。
+ */
+const minWithdrawFen = computed(() => balance.value?.minWithdrawFen ?? 0);
+
 const canSubmit = computed(() => bound.value && amountYuan.value > 0);
 
 /** 记录行只显示日期（原型「09-12 · 平台代发」） */
@@ -191,7 +213,9 @@ function fillAll(): void {
 async function submit(): Promise<void> {
   if (submitting.value || !canSubmit.value) return;
 
-  const minYuan = (balance.value?.minWithdrawFen ?? 0) / 100;
+  // 门槛为 0 时本分支恒不成立（`amountYuan < 0` 不可能）⇒ 交由后端 DTO `@Min(0.01)` 兜；
+  // 配成正数后这里照常拦，且文案带具体金额（与模板那一行同源，都读 `minWithdrawFen`）。
+  const minYuan = minWithdrawFen.value / 100;
   if (amountYuan.value < minYuan) {
     uni.showToast({ title: `最低提现 ¥${minYuan.toFixed(2)}`, icon: 'none' });
     return;

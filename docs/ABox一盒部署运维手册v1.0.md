@@ -138,6 +138,87 @@ cp .env.example .env.prod     # .env.prod 已在 .gitignore 中，绝不入库
 > 取证类动作请另外遵守：做之前留锚点（§5.5）、做完立刻复核（冒烟重回原状），
 > 并在回报里写明**影响面与持续时间**。
 
+### 4.5 禁止手工 `docker restart`（2026-10-27 立 · 一次真事故的复盘）
+
+> **规矩**：生产上**不许**手工 `docker restart <容器>`，也**不许** `docker stop` + `docker start` 代替。
+> 一律用：
+>
+> ```bash
+> docker compose -f docker-compose.prod.yml --env-file .env.prod up -d <service>
+> ```
+>
+> **为什么（这不是风格问题，是门禁被绕过）**：`docker-compose.prod.yml` 里
+> `api` 对 `redis` 的依赖写的是 `condition: service_healthy`（见该文件 `api.depends_on` 段）。
+> 手工 `docker restart` **完全不看 compose 的依赖声明** —— 它只重启那一个容器，
+> 于是 `api` 可以在 `redis` 还没 healthy 时就起来。
+>
+> 2026-10-27 实测就是这个形状：`api` 12:01:04 起来、`redis` 12:01:35 才起来，
+> 中间 31 秒里 api 解析不到 `redis` 主机名（`EAI_AGAIN`），
+> 表现是「登录全 429 + `RATE_LIMIT_UNAVAILABLE`」。
+> **现场看起来像限流配置错了，真因是启动顺序。** 查错方向会整整偏一轮。
+>
+> ⇒ 判据一句话：凡是要让容器「重新起来」，走 compose（它守依赖），不走 docker（它不守）。
+
+### 4.6 投递边界：产物只含已提交内容（自检脚本 `scripts/assert-deploy-boundary.sh`）
+
+> **规矩**：投递物只能来自 **commit 的 blob**（`git show <commit>:<path>` / `git archive <commit>`），
+> **绝不打包当前工作树** —— 树上可能躺着「本轮不发布」的改动。
+>
+> 出过的事：后端把 `main.ts`（`bodyParser: false`）与
+> `common/middleware/request-body.middleware.ts` 作为**本轮不发布**的改动留在工作树里。
+> 这类东西一旦被打包，等于**悄悄发布了未提交代码**，且它在编译产物里**毫无特征可查**
+> （编译后两边长得一样）⇒ 只能在**投递那一刻**证明，事后在服务器上怎么查都补不回来。
+>
+> 六特征自检（每条都必须能红，脚本自带 `--selftest`：必绿 1 个 + 必红 7 个）：
+>
+> | 代号 | 断言 | 红了说明什么 |
+> | --- | --- | --- |
+> | A1 | commit 可解析 | 拼错 / 本地没这个对象 |
+> | A2 | commit 已推送到远端（相等或是其祖先） | 只在本地，远端没有 |
+> | A3 | 清单文件都能从 commit 取到 blob | 路径错 / 未提交 |
+> | A4 | 投递物字节 == commit blob | **递的是工作树版本**（未给 `--artifacts-dir` 也算红，fail-closed） |
+> | A5 | 清单路径在工作树里干净 | 有未提交改动可能混进包 |
+> | A6 | 「本轮不发布」特征不在 commit 里 | B 组混进发布包 |
+>
+> ```bash
+> # 投递侧（有 .git 的机器）必跑
+> ./scripts/assert-deploy-boundary.sh --selftest
+> ./scripts/assert-deploy-boundary.sh --commit <sha> --manifest <清单> --artifacts-dir <投递目录>
+> ```
+>
+> ⚠️ 生产机**没有** `.git`，这一层在生产上跑不了 ⇒ `verify-deploy.sh` 的 `[3]` 段
+> 在缺前置条件时打 **SKIP 并声明「未经证明」**，**不打 PASS** —— 没验就算验过，比没有这一层更糟。
+
+### 4.7 改 `ab_config` 前，先分清动的是哪一列（2026-10-27 立）
+
+> **判据**：`BizConfigService` 的缓存存的是 **`configKey → configValue`**
+> （`ensureLoaded()` 里 `next.set(r.configKey, r.configValue)`，TTL 60s），
+> `description` **这一列连缓存都进不去**。
+>
+> ⇒ 只有改 **`config_value`** 才需要关心缓存（要不要 `invalidate()`）；
+> 改 **`description`** 不需要做任何缓存动作 —— 省掉以后每一次无意义的 invalidate。
+>
+> 附带一条写入纪律：`ab_config` 的写入**执行人只有主理人指定的那一个**，
+> 其余人只做只读核对。两个人各写一次同一个值只是**恰好幂等**；
+> 换个值就是互相覆盖，且谁也不知道自己被顶掉了。
+
+### 4.8 H5 临时闸门（8081）· 轮换 / 审计 / 撤除期限（2026-10-27 立）
+
+> 8081 这道 Cookie 闸门是**临时措施**，不是访问控制方案。它只挡「互联网上随便谁」，
+> **挡不住过了闸门的人**（见 §11 关于 `PROVIDER_MODE=mock` 的那条）。
+>
+> | 项 | 规则 | 责任人 |
+> | --- | --- | --- |
+> | **凭据轮换** | **每周一**轮换一次 `deploy/h5/gate.d/gate-allow.conf` 里的 gate 值，轮换后重发链接给在测同事（旧链接当场失效） | 运维 |
+> | **访问审计** | 8081 access log 单列一条告警：出现 **大量 401**（撞门）或**同一 Cookie 高频访问** ⇒ 人工看一眼 | 运维 |
+> | **撤除期限** | **备案通过 + HTTPS 就绪后 7 天内必须撤除**（撤闸门配置 / 撤凭据文件 / 撤端口放行，三处一起删），逾期未撤由运维负责 | 运维 |
+>
+> 未授权访问的表现是 **HTTP 401**（`nginx.conf` 里 `if ($abox_gate_pass = 0) { return 401; }`）；
+> 巡检用 `./scripts/check-h5-gate.sh`。
+>
+> ⚠️ 撤除判据别写错：**不是「H5 改成 production 构建」** —— 换构建模式只掐掉端上 `?devCode=` 入口，
+> 服务端的 `dev:<任意>` 登录口仍在。真正的开关是 `PROVIDER_MODE=real`（§11）。
+
 ---
 
 ## 五、部署流程
@@ -336,6 +417,21 @@ docker compose -f docker-compose.prod.yml logs -f --tail=200 admin
 | 队列死信 | `module='queue' AND action='任务重试耗尽'` | P1 |
 | 跑批未执行 | 时刻表某任务在应触发后 10 分钟无日志 | P1 |
 | 容器重启次数 | `docker inspect` 重启计数增长 | P1 |
+
+#### 7.5.1 三条**独立**的限流 / Redis 告警规则（2026-10-27 订正）
+
+> ⚠️ 这三条**不许合并成一条「限流异常」**：它们指向**完全不同的根因**，
+> 合并之后只会看到「限流又报警了」，然后每次都从零开始查。
+
+| # | 匹配串（日志原文） | 含义 | 严重度 | 第一动作 |
+| --- | --- | --- | --- | --- |
+| 1 | `[RATE_LIMIT_HIT]` | **真的有人在限流窗口内打多了** | P2·观察 | 看是谁 / 哪个端点；确认不是压测或脚本打挂 |
+| 2 | `Stream isn't writeable and enableOfflineQueue options is false` | **跑的还是旧 dist**（ioredis `enableOfflineQueue:false` 那条老配置）⇒ 该查**投递与构建**，**别去查 Redis** | P1 | 核 `verify-deploy.sh` 的 dist 符号、核镜像 id |
+| 3 | `Command timed out`（通常伴 `[RATE_LIMIT_UNAVAILABLE]`） | **新配置 + Redis 真的不可达**（1s 安全阀到点）⇒ 该查 **Redis 与启动顺序** | P0 | 查 redis 容器状态 / 谁手工 `docker restart` 过（§4.5） |
+| 3b | 8081 access log 大量 401 / 同 Cookie 高频 | 有人在撞 H5 闸门，或凭据泄露 | P1 | 看来源 IP；必要时提前轮换（§4.8） |
+
+> 判据来源见 `apps/api-server/src/common/cache/kv.service.ts` 的注释（新旧报错形态各一份），
+> 与 2026-10-27 在生产上实测的三组证据（旧 dist 两次 / 重启后立刻登录 201 / 停 redis 后 429@1.005257s）。
 
 ### 7.6 服务器周期性运维动作（cron · M5-12）
 
@@ -538,6 +634,8 @@ docker compose -f docker-compose.prod.yml restart redis
 - [ ] 提现审批积压（后台 P34）
 - [ ] 备份文件可用性抽查（随机取一份，`gunzip -t` 验完整性）
 - [ ] 容器重启次数与镜像版本（`/health/ready` 回显的 `version` 是否等于预期发布版本）
+- [ ] **8081 闸门凭据轮换**（每周一，`deploy/h5/gate.d/gate-allow.conf`），并复查 8081 access log 有无异常 401（§4.8）
+- [ ] 复查 `PROVIDER_MODE` 是否仍为 `mock` ⇒ 是则列在本周上线阻塞项里（§11）
 
 **每月**：
 
@@ -564,6 +662,8 @@ docker compose -f docker-compose.prod.yml restart redis
 | R9 | **食品经营许可证（热食类制售）未下** | 合规风险，正式经营前必须解除 | 见《资质与合规》 |
 | R10 | ⭐ **一期只允许「一个 API 实例」承载** —— `currentTimeline()`（生效业务时刻）是**进程级单例**，配置变更只在**当前实例**内热重载 | 多实例下会出现「A 实例已按新截单时刻拒单、B 实例还按旧时刻放行」：**两边都不报错**，表现为「同一分钟下单，一台过一台不过」——比配置没生效更难查（配置页显示已生效） | **本期不要横向扩容 API**。若必须多实例：先改成「配置变更经 Redis 发布订阅广播」（`order-timeline.ts` 已预留 `onTimelineChange()` 订阅点，接上即可），**并写一条黑盒断言**证明第二个实例也刷新了（`GET /admin/schedule` 的 `effectiveAt` 在两实例上一致）—— 在此之前多实例属于**未验证形态** |
 | R11 | **运维脚本与 cron 从未真机执行**（同 R1）：`ops-daily.sh` / `install-cron.sh` / `deploy/cron/abox-ops.cron` | 巡检可能因宿主差异（`df` / `find` / `curl` 版本、权限）行为不同 | 按 §7.6：先 `--dry-run` → 再手工跑一次 `ops-daily.sh` 核对输出 → 才交给 cron |
+| R12 | ⭐⭐ **生产当前是 `NODE_ENV=production` + `PROVIDER_MODE=mock` + `ALLOW_MOCK_IN_PROD=1`**（2026-10-27 在 `abox-api-prod` 里 `printenv` 实测）。这不是「功能降级」，是**安全模型整体失效**：① `POST /api/v1/auth/login` 带 `code=dev:<任意>` 可**免密登录任意身份**（`mock-wx-mini.provider.ts` 的 `/^dev:(.+)$/`，不发任何网络请求）；② 手机号恒 `+86 13800138000`；③ 免鉴权端点 `POST /pay/mock/paid` 的唯一防线 `!isMock` 在 mock 下恒不成立（**该端点已在 nginx 层 404 挡掉**，这道有效） | **任何人只要能访问到 API，就能成为任意用户** —— 8081 的 Cookie 闸门只挡「互联网上随便谁」（未带 cookie 实测 401），**挡不住过了闸门的人**：实测带 cookie 后 `dev:1001` → 用户 1001 李明、`dev:1002` → 用户 1002 王芳，均 200。⚠️ **把 H5 改成 production 构建挡不住这个**（那只掐掉端上 `?devCode=` 入口） | **上线前必须**：`.env.prod` 写 `PROVIDER_MODE=real` 并配齐微信 AppID/Secret + 微信支付商户号/证书，**同时删掉 `ALLOW_MOCK_IN_PROD`**（留 `0` / `false` 也算没开，但显式删掉最不容易误会）→ 重启 → 用 `/health/ready` 回显的 `providerMode` / `mockEscaped` 复核。详见 `apps/api-server/src/common/utils/prod-mock-gate.ts` |
+| R13 | **回滚只做过 `--dry-run`，未做过真实演练**（截至 2026-10-27） | 「可回滚」目前是**推导**（镜像在、锚点齐），不是**实测** | 按 §5.5 做一次完整演练：停服务 → 用锚点镜像回滚 → 双端口 STRICT 冒烟 → 回到当前态 → 再冒烟 → 闸门巡检；**且动之前按 §4.4 报备** |
 
 ### 关于「优雅关闭」的一条运维常识
 

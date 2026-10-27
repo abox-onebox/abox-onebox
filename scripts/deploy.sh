@@ -21,6 +21,15 @@
 #   本脚本在服务器上是**原地执行**的：投递那一步在外面，请确保投递物
 #   **只含已提交内容**（`git show <commit>:<path>` / `git archive <commit>`），
 #   绝不打包当前工作树 —— 树上可能躺着「本轮不发布」的改动。
+#   投递侧**必跑**：`./scripts/assert-deploy-boundary.sh --commit <sha> \
+#       --manifest <清单> --artifacts-dir <投递目录>`（六特征 A1–A6，见手册 §4.6）。
+#
+# ---- ⛔ 禁止手工 `docker restart`（2026-10-27 立 · 见《部署运维手册》§4.5）----
+#   生产上**不许** `docker restart <容器>`，也不许 `docker stop` + `docker start` 代替。
+#   一律 `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d <service>`。
+#   理由：手工 restart **不看 compose 的依赖声明**，`api` 会在 `redis` 还没 healthy
+#   时就起来（实测差 31 秒）⇒ 那半分钟里登录全 429 + `RATE_LIMIT_UNAVAILABLE`，
+#   现场看起来像限流配错了，真因是启动顺序。
 #
 # ---- 本脚本相对上一版骨架的修正（2026-09-17）--------------------
 #   上一版是占位实现：只 `docker build` 一个 api 镜像，然后 `kubectl set image`
