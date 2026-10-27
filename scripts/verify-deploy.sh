@@ -9,8 +9,15 @@
 #   ./scripts/verify-deploy.sh --old-marker '旧的写法'       额外验「旧写法已消失」（默认不开，见 [2] 段注释）
 #   ./scripts/verify-deploy.sh --container abox-api-prod     指定容器（默认就是它）
 #   ./scripts/verify-deploy.sh --dist /app/apps/api-server/dist
-#   ./scripts/verify-deploy.sh --commit <sha> --manifest <file> [--artifacts-dir <dir>]
+#   ./scripts/verify-deploy.sh --commit <sha> --manifest <f> [--artifacts-dir <d>]
 #                                                            追加验「投递边界」（见 [3] 段）
+#   ./scripts/verify-deploy.sh --boundary-only --commit <sha> --manifest <f> [--artifacts-dir <d>]
+#                                                            **只**验投递边界（在**投递侧**跑：
+#                                                            那台机器有 .git，通常没有 docker）
+#
+# ⚠️ [0]–[2] 要 docker（生产机有 docker、没有 .git）；[3] 要 .git（投递侧两者相反）。
+#    两边前置条件**互斥** ⇒ 没有 `--boundary-only` 时缺 docker 直接退出 2，
+#    否则「边界那一层」会在任何一台机器上都跑不到，等于空跑。
 #
 # 退出码：0 = 标记全在（新代码真在跑）· 1 = 有标记缺失 · 2 = 用法/环境错误
 #
@@ -45,9 +52,11 @@ OLD_MARKERS=()
 COMMIT=""
 MANIFEST=""
 ARTIFACTS_DIR=""
+BOUNDARY_ONLY=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --boundary-only) BOUNDARY_ONLY=1; shift ;;
     --commit) COMMIT="${2:-}"; shift 2 ;;
     --manifest) MANIFEST="${2:-}"; shift 2 ;;
     --artifacts-dir) ARTIFACTS_DIR="${2:-}"; shift 2 ;;
@@ -76,10 +85,18 @@ printf '部署生效确认 · 容器 %s · dist %s\n\n' "$CONTAINER" "$DIST"
 # 0. 容器在不在、跑的是哪个镜像
 # ------------------------------------------------------------
 printf '[0] 容器与镜像\n'
-command -v docker >/dev/null 2>&1 || { printf '  FAIL  本机没有 docker\n' >&2; exit 2; }
-if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
-  printf '  FAIL  容器不存在：%s\n' "$CONTAINER" >&2; exit 2
+if [ "$BOUNDARY_ONLY" = 1 ]; then
+  SKIP_CORE=1
+  printf '  SKIP  --boundary-only：本段只在生产机跑（要 docker + 容器），投递侧跳过\n'
+else
+  SKIP_CORE=0
+  command -v docker >/dev/null 2>&1 || { printf '  FAIL  本机没有 docker\n' >&2; exit 2; }
+  if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    printf '  FAIL  容器不存在：%s\n' "$CONTAINER" >&2; exit 2
+  fi
 fi
+
+if [ "$SKIP_CORE" = 0 ]; then
 STATE="$(docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null)"
 IMAGE_ID="$(docker inspect -f '{{.Image}}' "$CONTAINER" 2>/dev/null)"
 STARTED="$(docker inspect -f '{{.State.StartedAt}}' "$CONTAINER" 2>/dev/null)"
@@ -127,6 +144,10 @@ else
     fi
   done
 fi
+else
+  printf '\n[1] 运行中的编译产物是否含预期符号\n  SKIP  --boundary-only：跳过\n'
+  printf '\n[2] 旧写法是否已消失（防半新半旧）\n  SKIP  --boundary-only：跳过\n'
+fi
 
 # ------------------------------------------------------------
 # 3. 投递边界（「装进去的是不是那个 commit 的内容」）
@@ -167,5 +188,11 @@ if [ "$FAILED" -gt 0 ]; then
   printf '       排查：docker compose -f docker-compose.prod.yml --env-file .env.prod build --no-cache api\n'
   printf '       再：  docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --force-recreate api\n'
   exit 1
+fi
+if [ "${SKIP_CORE:-0}" = 1 ]; then
+  # ⚠️ 不许在这里打 PASS：核心段没跑，说「一致」是撒谎。
+  printf '[结果] **部分验证** —— 只跑了投递边界 [3]，[0]–[2]（容器 / dist 符号）**未跑**。\n'
+  printf '       这不算「部署生效确认」，生产机那边还要再跑一次不带 --boundary-only 的本脚本。\n'
+  exit 0
 fi
 printf '[结果] PASS —— 运行中的产物与本次上线包一致\n'
