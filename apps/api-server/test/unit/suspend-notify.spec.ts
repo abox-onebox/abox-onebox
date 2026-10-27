@@ -1,7 +1,7 @@
 import { OrderStatus } from '@abox/shared-types';
 
 import { MESSAGE_TEMPLATE_SPEC_MAP } from '../../src/modules/admin/template/message-template.specs';
-import { BuildingAdminService } from '../../src/modules/building/building-admin.service';
+import { BuildingSuspendService } from '../../src/modules/building/building-suspend.service';
 import type { NotifyInput, NotifyResult } from '../../src/modules/message/message.service';
 
 /**
@@ -65,25 +65,14 @@ function makeSvc(rows: Row[]) {
       return { delivered: true, ok: true };
     }),
   };
-  const stub = {};
-  const svc = new BuildingAdminService(
-    stub as never,
-    stub as never,
-    stub as never,
-    stub as never,
-    stub as never,
-    stub as never,
-    orderRepo as never,
-    stub as never,
-    message as never,
-  );
-  /** `notifySuspendAffected()` 是 private —— 测试按契约名调用，不改生产可见性 */
-  const run = () =>
-    (
-      svc as unknown as {
-        notifySuspendAffected(scope: 'building', id: number): Promise<number>;
-      }
-    ).notifySuspendAffected('building', 7);
+  /**
+   * ⚠️ 直接实例化 `BuildingSuspendService`（N2 停用闸门/通知已拆出 `BuildingAdminService`，
+   *    见 T5）：`notifySuspendAffected()` 在那里是 **public**，不必再靠
+   *    `as unknown as {...}` 绕过 private —— 少一处强转就少一处「测试与生产可见性不一致」。
+   *    `bizConfig` 只有闸门路径用（本文件不测闸门），给个空桩即可。
+   */
+  const svc = new BuildingSuspendService(orderRepo as never, {} as never, message as never);
+  const run = () => svc.notifySuspendAffected('building', 7);
   return { run, calls, orderRepo, message };
 }
 

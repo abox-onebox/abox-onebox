@@ -9,6 +9,7 @@ import { Order } from '../../database/entities/order.entity';
 import { MessageModule } from '../message/message.module';
 import { BuildingAdminController, BuildingGroupAdminController } from './building-admin.controller';
 import { BuildingAdminService } from './building-admin.service';
+import { BuildingSuspendService } from './building-suspend.service';
 import { BuildingController } from './building.controller';
 import { BuildingService } from './building.service';
 
@@ -56,7 +57,14 @@ import { BuildingService } from './building.service';
     MessageModule,
   ],
   controllers: [BuildingController, BuildingAdminController, BuildingGroupAdminController],
-  providers: [BuildingService, BuildingAdminService],
+  /**
+   * ⚠️ `BuildingSuspendService` **必须**登记为 provider —— 它是 `BuildingAdminService`
+   *    的构造依赖（N2 停用闸门 + 强制停用后的存量通知）。不登记 ⇒ 启动时
+   *    `Nest can't resolve dependencies`，且是**启动期**才炸、编译期看不出来。
+   *    ⚠️ 不必 export：停用能力只对楼栋/楼群编辑路径服务，没有第二个消费方
+   *    （多 export 一个就是多开一条入口）。
+   */
+  providers: [BuildingService, BuildingAdminService, BuildingSuspendService],
   exports: [BuildingService, BuildingAdminService],
 })
 export class BuildingModule {}

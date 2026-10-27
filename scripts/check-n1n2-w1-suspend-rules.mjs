@@ -88,6 +88,9 @@ const F = {
   order: join(SRC, 'modules', 'order', 'order.service.ts'),
   workbench: join(SRC, 'modules', 'team-leader', 'workbench.service.ts'),
   buildingAdmin: join(SRC, 'modules', 'building', 'building-admin.service.ts'),
+  // T5（2026-10-27）：N2 停用闸门与存量通知从 `building-admin.service.ts` 拆出，
+  //   判据**跟着真源走**（钉在原文件会因「产物变好」而假红 —— 本批第 5 次同类）
+  buildingSuspend: join(SRC, 'modules', 'building', 'building-suspend.service.ts'),
   // ⚠️ **本条路径是「按语义扫」扫出来的第三份**（Team Lead 2026-10-26 指出）：
   //    发现时 `meal.service` / `order.service` 已在 P3-4 改为 60011，唯独这里仍是 10004，
   //    而我们的判据只盯了前两个文件 —— 因为我们**按「已知文件清单」扫**，
@@ -1109,7 +1112,9 @@ export function decideSuspend(i: SuspendGateInput): SuspendDecision {
   {
     id: 'N2-10',
     desc: '阈值必须读 building.suspend_force_max_count，不得硬编码',
-    file: 'buildingAdmin',
+    // T5（2026-10-27）：阈值的唯一读取点随停用闸门迁入 `building-suspend.service.ts`，
+    //   判据跟着真源改指 —— 不改就会因「代码搬走了」而假红。
+    file: 'buildingSuspend',
     pred: (t) => /suspendForceMaxCount|building\.suspend_force_max_count/.test(t),
     sample: `
     const threshold = await this.bizConfig.suspendForceMaxCount();
@@ -2166,7 +2171,8 @@ export class SalesPause {
   {
     id: 'N2-TPL-2',
     desc: '★ 停用通知的**接线方向**：三元真支必须是 refund 场景、假支必须是 fulfill，且条件认退款态',
-    file: 'buildingAdmin',
+    // T5（2026-10-27）：`notifySuspendAffected()` 已迁入 `building-suspend.service.ts`
+    file: 'buildingSuspend',
     pred: (t) => {
       const fn = methodOf(stripComments(t), 'notifySuspendAffected');
       if (!fn) return false;
