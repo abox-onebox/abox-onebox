@@ -138,7 +138,7 @@ cp .env.example .env.prod     # .env.prod 已在 .gitignore 中，绝不入库
 > 取证类动作请另外遵守：做之前留锚点（§5.5）、做完立刻复核（冒烟重回原状），
 > 并在回报里写明**影响面与持续时间**。
 
-### 4.5 禁止手工 `docker restart`（2026-10-27 立 · 一次真事故的复盘）
+### 4.5 禁止手工 `docker restart`（2026-10-27 立）
 
 > **规矩**：生产上**不许**手工 `docker restart <容器>`，也**不许** `docker stop` + `docker start` 代替。
 > 一律用：
@@ -147,17 +147,39 @@ cp .env.example .env.prod     # .env.prod 已在 .gitignore 中，绝不入库
 > docker compose -f docker-compose.prod.yml --env-file .env.prod up -d <service>
 > ```
 >
-> **为什么（这不是风格问题，是门禁被绕过）**：`docker-compose.prod.yml` 里
+> **为什么（一般性风险，不是风格问题）**：`docker-compose.prod.yml` 里
 > `api` 对 `redis` 的依赖写的是 `condition: service_healthy`（见该文件 `api.depends_on` 段）。
 > 手工 `docker restart` **完全不看 compose 的依赖声明** —— 它只重启那一个容器，
-> 于是 `api` 可以在 `redis` 还没 healthy 时就起来。
->
-> 2026-10-27 实测就是这个形状：`api` 12:01:04 起来、`redis` 12:01:35 才起来，
-> 中间 31 秒里 api 解析不到 `redis` 主机名（`EAI_AGAIN`），
-> 表现是「登录全 429 + `RATE_LIMIT_UNAVAILABLE`」。
-> **现场看起来像限流配置错了，真因是启动顺序。** 查错方向会整整偏一轮。
->
+> ⇒ 确实存在「把 `api` 起在 `redis` 就绪之前」的风险。
 > ⇒ 判据一句话：凡是要让容器「重新起来」，走 compose（它守依赖），不走 docker（它不守）。
+>
+> ---
+>
+> ### ⚠️ 2026-10-27 那次 429 **不是**由此造成 —— 是人为故障注入
+>
+> 当时一度被判成「启动顺序问题」，依据是「`api` StartedAt=12:01:04、`redis` StartedAt=12:01:35，差 31 秒」。
+> **该依据无效**，三条理由：
+>
+> 1. **12:01:06 那次登录拿到的是 `201 / 0.031s`**，而 `auth:login` 的限流是 **fail-closed**
+>    ⇒ 拿到 201 就意味着 KV 的 `incr` **成功了** ⇒ 那一刻 **Redis 健康且已就绪**。
+>    这条从代码语义直接推出运行期状态，**不依赖任何时间戳解释**。
+> 2. `redis StartedAt=12:01:35` 是**故障注入后 `docker start`** 的时间戳，不是「redis 那时才第一次起来」。
+> 3. 那次 429（`Command timed out` / 1.005257s）来自**人为停 Redis 做取证**，是注入的正常结果。
+>
+> ⇒ **规矩照立（一般性风险真实存在），因果不许写。** 写成「本次事故由此造成」会把假因果钉进文档，
+> 下次排障会被它带偏整整一轮。
+>
+> ---
+>
+> ### ⛔ 通用教训：拿容器时间戳做证据前，先问它记的是**事件**还是**状态**
+>
+> `docker inspect` 的 `StartedAt` 记的是「**当前这次**启动」这个**事件**，
+> **不是**「容器首次启动 / 已运行多久」这个**状态**。
+> 注入后 `docker start` 会把它**刷新成注入时刻** ⇒ 拿它去和别的容器的 `StartedAt` 比先后，
+> **必然读反**（会得出「先起的那个容器反而等了 31 秒」这类结论）。
+>
+> 排障时要判「谁先起来」，该看**日志里的事件顺序**，或像上面第 1 条那样**从代码语义反推运行期状态**，
+> 不要把两个 `StartedAt` 相减当事实用。
 
 ### 4.6 投递边界：产物只含已提交内容（自检脚本 `scripts/assert-deploy-boundary.sh`）
 
@@ -427,7 +449,7 @@ docker compose -f docker-compose.prod.yml logs -f --tail=200 admin
 | --- | --- | --- | --- | --- |
 | 1 | `[RATE_LIMIT_HIT]` | **真的有人在限流窗口内打多了** | P2·观察 | 看是谁 / 哪个端点；确认不是压测或脚本打挂 |
 | 2 | `Stream isn't writeable and enableOfflineQueue options is false` | **跑的还是旧 dist**（ioredis `enableOfflineQueue:false` 那条老配置）⇒ 该查**投递与构建**，**别去查 Redis** | P1 | 核 `verify-deploy.sh` 的 dist 符号、核镜像 id |
-| 3 | `Command timed out`（通常伴 `[RATE_LIMIT_UNAVAILABLE]`） | **新配置 + Redis 真的不可达**（1s 安全阀到点）⇒ 该查 **Redis 与启动顺序** | P0 | 查 redis 容器状态 / 谁手工 `docker restart` 过（§4.5） |
+| 3 | `Command timed out`（通常伴 `[RATE_LIMIT_UNAVAILABLE]`） | **新配置 + Redis 真的不可达**（1s 安全阀到点）⇒ 该查 **Redis 本身** | P0 | 先查 **Redis 容器是否真的不可达**（`docker ps` 状态 / 谁动过它 / 是否有人在跑故障注入），**再**回头查投递与构建。⚠️ 别一上来就钉「手工 `docker restart` 造成的启动顺序问题」—— 2026-10-27 那次不是，见 §4.5 |
 | 3b | 8081 access log 大量 401 / 同 Cookie 高频 | 有人在撞 H5 闸门，或凭据泄露 | P1 | 看来源 IP；必要时提前轮换（§4.8） |
 
 > 判据来源见 `apps/api-server/src/common/cache/kv.service.ts` 的注释（新旧报错形态各一份），

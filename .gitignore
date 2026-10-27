@@ -85,3 +85,7 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# 10-26 的历史编译产物快照（**勿删勿用**）：它不是真源、不参与构建，
+# 但里面存着 seed.js 的 10.00 旧口径 ⇒ 会污染所有人的 grep（后端被它刷过一屏）。
+apps/api-server/dist_bak_20261026_1805/
