@@ -21,6 +21,7 @@ import { BizConfigService } from '../../common/services/biz-config.service';
 import { LeaderLookupService } from '../../common/services/leader-lookup.service';
 import { OrderAvailabilityService } from '../../common/services/order-availability.service';
 import { UserPayeeService } from '../../common/services/user-payee.service';
+import { blindBoxView } from '../../common/utils/blind-box';
 import { maskPhone } from '../../common/utils/crypto';
 // ⚠️ M4-3：`genRefundNo` 已随「退款单建单下沉到 `RefundService.buildRefundRow`」一并移除
 //    —— 本模块不再自己造退款单号（第二份实现必然漂移）
@@ -526,6 +527,12 @@ export class OrderService {
       ? { name: leader.realName ?? null, phone: maskPhone(leader.phone) }
       : null;
 
+    /**
+     * X 盲盒「这一刻该给用户看什么」—— 判据在 `common/utils/blind-box.ts`
+     * （纯函数 + 单测钉死），本处**只消费结果、不复制判据**。
+     */
+    const blindBox = blindBoxView(order.status, order.blindBoxName);
+
     return {
       orderNo: order.orderNo,
       status: order.status,
@@ -558,16 +565,11 @@ export class OrderService {
        *   **不含内容**，可以安全下发。
        */
       /**
-       * ⚠️ 用 `Boolean()` 而不是 `!== null`：实体列的类型是
-       *    `string | null | undefined`（列未加载时是 `undefined`），
-       *    而 `undefined !== null` 为 **true** —— 会把「没查这个字段」
-       *    误判成「有盲盒待揭晓」，凭空多出一个惊喜位。
+       * ⚠️ 判据不在本文件：`blind-box.ts` 的 `blindBoxView()`。
+       *    这里只做「取值」，不复制任何状态判断（复制就成了第二份判据）。
        */
-      blindBoxPending: Boolean(order.blindBoxName),
-      blindBoxName:
-        order.status === OrderStatus.DELIVERED || order.status === OrderStatus.COMPLETED
-          ? (order.blindBoxName ?? null)
-          : null,
+      blindBoxPending: blindBox.pending,
+      blindBoxName: blindBox.name,
       items: items.map((i) => ({
         /**
          * ⭐ `itemId`（P1-U2 新增）：评价提交按 id 定位商品 ——
