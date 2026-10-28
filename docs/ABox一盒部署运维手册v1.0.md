@@ -95,7 +95,7 @@ cp .env.example .env.prod     # .env.prod 已在 .gitignore 中，绝不入库
 | `JWT_SECRET` | 32+ 位随机串 | ⚠️ 改掉 `change_me_before_go_live`；泄漏 = 可伪造任意用户 |
 | `WX_MINI_APPID` / `WX_MINI_SECRET` | 微信后台 | |
 | `WXPAY_MCH_ID` / `WXPAY_API_V3_KEY` / `WXPAY_SERIAL_NO` / `WXPAY_PRIVATE_KEY_PATH` | 商户平台 | 四件套缺一不可 |
-| `WXPAY_NOTIFY_URL` | `https://<域名>/api/v1/payments/wxpay/notify` | ⚠️ 必须是**公网 HTTPS** |
+| `WXPAY_NOTIFY_URL` | `https://<域名>/api/v1/pay/notify` | ⚠️ 必须是**公网 HTTPS**；⛔ **路径只能是 `/api/v1/pay/notify`** —— 真源 `payment.controller.ts:57` `@Controller('pay')` + `:62` `@Post('notify')` + 全局前缀 `api/v1`。⚠️ 本表此前写的是 `/api/v1/payments/wxpay/notify`，**该路由不存在**（2026-10-28 订正）：照抄的后果是「微信回调打不到 ⇒ 用户已付款但订单永远停在待支付」，且**服务端无任何报错**，属静默失败 |
 | `FLEX_PLATFORM_*` | 灵活用工平台 | 佣金代发 + 个税代扣（C11） |
 | `PROVIDER_MODE` | `real` | 切成真实微信/灵活用工；⚠️ 生产**漏配即起不来**，见下 |
 | `ALLOW_MOCK_IN_PROD` | 留空（=不开） | 生产**确实要跑 mock** 时才显式设 `1`，见下 |
@@ -720,7 +720,8 @@ docker compose -f docker-compose.prod.yml restart redis
 | R10 | ⭐ **一期只允许「一个 API 实例」承载** —— `currentTimeline()`（生效业务时刻）是**进程级单例**，配置变更只在**当前实例**内热重载 | 多实例下会出现「A 实例已按新截单时刻拒单、B 实例还按旧时刻放行」：**两边都不报错**，表现为「同一分钟下单，一台过一台不过」——比配置没生效更难查（配置页显示已生效） | **本期不要横向扩容 API**。若必须多实例：先改成「配置变更经 Redis 发布订阅广播」（`order-timeline.ts` 已预留 `onTimelineChange()` 订阅点，接上即可），**并写一条黑盒断言**证明第二个实例也刷新了（`GET /admin/schedule` 的 `effectiveAt` 在两实例上一致）—— 在此之前多实例属于**未验证形态** |
 | R11 | **运维脚本与 cron 从未真机执行**（同 R1）：`ops-daily.sh` / `install-cron.sh` / `deploy/cron/abox-ops.cron` | 巡检可能因宿主差异（`df` / `find` / `curl` 版本、权限）行为不同 | 按 §7.6：先 `--dry-run` → 再手工跑一次 `ops-daily.sh` 核对输出 → 才交给 cron |
 | R12 | ⭐⭐ **生产当前是 `NODE_ENV=production` + `PROVIDER_MODE=mock` + `ALLOW_MOCK_IN_PROD=1`**（2026-10-27 在 `abox-api-prod` 里 `printenv` 实测）。这不是「功能降级」，是**安全模型整体失效**：① `POST /api/v1/auth/login` 带 `code=dev:<任意>` 可**免密登录任意身份**（`mock-wx-mini.provider.ts` 的 `/^dev:(.+)$/`，不发任何网络请求）；② 手机号恒 `+86 13800138000`；③ 免鉴权端点 `POST /pay/mock/paid` 的唯一防线 `!isMock` 在 mock 下恒不成立（**该端点已在 nginx 层 404 挡掉**，这道有效） | **任何人只要能访问到 API，就能成为任意用户** —— 8081 的 Cookie 闸门只挡「互联网上随便谁」（未带 cookie 实测 401），**挡不住过了闸门的人**：实测带 cookie 后 `dev:1001` → 用户 1001 李明、`dev:1002` → 用户 1002 王芳，均 200。⚠️ **把 H5 改成 production 构建挡不住这个**（那只掐掉端上 `?devCode=` 入口） | **上线前必须**：`.env.prod` 写 `PROVIDER_MODE=real` 并配齐微信 AppID/Secret + 微信支付商户号/证书，**同时删掉 `ALLOW_MOCK_IN_PROD`**（留 `0` / `false` 也算没开，但显式删掉最不容易误会）→ 重启 → 用 `/health/ready` 回显的 `providerMode` / `mockEscaped` 复核。详见 `apps/api-server/src/common/utils/prod-mock-gate.ts` |
-| R13 | **回滚只做过 `--dry-run`，未做过真实演练**（截至 2026-10-27） | 「可回滚」目前是**推导**（镜像在、锚点齐），不是**实测** | 按 §5.5 做一次完整演练：停服务 → 用锚点镜像回滚 → 双端口 STRICT 冒烟 → 回到当前态 → 再冒烟 → 闸门巡检；**且动之前按 §4.4 报备** |
+| R13 | **回滚演练已于 2026-10-27 真机做过**（此前是「只做过 `--dry-run`」）⇒ **api / admin 已升级为实测**（镜像 id 真实回退到 `7d52af6` 时代 + `depends_on` 生效下起服成功 + 业务冒烟通过 + 闸门仍生效；且拿到同条件 A/B：Redis 全程 healthy 时旧 dist 起服首请求 `429/10005`、新 dist `201/0` ⇒ 回滚后**行为也跟着变了**，不只是 id 变了）。⚠️ **h5 仍是未验**：h5 镜像自 11:19 未重建（三个锚点 id 相同），闸门是 compose bind mount（`deploy/h5/gate.d`）不打进镜像 ⇒ 只验到「挂载还在、闸门还拦」 | h5 的镜像可回退**无证据** | ⛔ **不为「证明能回滚」先做一次 h5 部署**（收益不抵风险）。⇒ **下次 h5 有真实构建需求（production 构建）时，先打锚点再部署，顺手验掉**；在此之前该项登记为**未验** |
+| R14 | ⭐⭐ **支付回调的前置链目前整条不通**（2026-10-28 服务器实测）：`ss -tlnp` 无 `:443` 监听、`/etc/letsencrypt` 与 `certs/` 均不存在、`.env.prod` 的 `APP_BASE_URL` 是**裸 IP + HTTP（`http://154.8.164.180:8081`）**。而 `WXPAY_NOTIFY_URL` 要求**公网 HTTPS** ⇒ **没有域名 + ICP 备案 + 证书，就算商户号拿到了也配不上回调** | 支付回调永远打不到 ⇒ 用户已付款但订单停在待支付，**服务端零报错** | 顺序不可颠倒：**① 注册域名 → ② ICP 备案（腾讯云，通常需 10–20 个工作日，这是整条链的时间瓶颈）→ ③ 签发证书并配 443 → ④ 配 `WXPAY_NOTIFY_URL=https://<域名>/api/v1/pay/notify` → ⑤ 小程序后台把该域名加进 request 合法域名**。备案没下来之前，商户号可以先申请（二者可并行） |
 
 ### 关于「优雅关闭」的一条运维常识
 
