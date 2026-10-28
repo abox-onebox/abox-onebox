@@ -135,7 +135,12 @@
  */
 import { computed, ref } from 'vue';
 import { onLoad, onShow } from '@dcloudio/uni-app';
-import { LEADER_AGREEMENT_VERSION, LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
+import {
+  LEADER_AGREEMENT_SUMMARY,
+  LEADER_AGREEMENT_VERSION,
+  LEADER_LEVEL_META,
+  LeaderLevel,
+} from '@abox/shared-types';
 
 import { fetchMe } from '@/api/auth';
 import { applyLeader } from '@/api/leader';
@@ -221,14 +226,12 @@ function toggleAgree(): void {
 }
 
 function openAgreement(): void {
-  // 协议文本尚未由法务定稿（见《合规资质与协议清单》），先用弹窗摘要，避免放死链
+  // 协议已于 2026-10-28 经法务定稿（v1.0）。端上签署前弹**摘要**，摘要文本引真源
+  // `LEADER_AGREEMENT_SUMMARY`（不再在本页另写一份）—— 它是团长签署时真正读到的内容，
+  // 与协议全文 / 系统结算口径各写一份就会漂移（见该常量头注的已知口径差异说明）。
   uni.showModal({
     title: '团长合作协议（摘要）',
-    content:
-      '1) 佣金按等级费率结算，由灵活用工平台代发代扣个税；\n' +
-      '2) 见习团长 30 天内未促成订单自动取消资格；\n' +
-      '3) 佣金以「实发件数」为基数计算；\n' +
-      '4) 退出团长身份不影响已结算佣金。',
+    content: LEADER_AGREEMENT_SUMMARY.join('\n'),
     showCancel: false,
     confirmText: '我知道了',
   });
