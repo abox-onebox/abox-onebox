@@ -243,7 +243,7 @@ node abox-onebox\scripts\gate.mjs design          # 设计线：design:spec + de
 > 📌 **门禁条数全文只在此处声明一次**（下面这行是**机器可读标记**，由 `gate:parity` 门禁校验；
 > 加/删门禁后必须同步它，否则门禁会红并点名指出差多少）：
 >
-> `<!-- gate-count: all=31 verify=6 -->`
+> `<!-- gate-count: all=31 verify=4 -->`
 >
 > （2026-10-09 κ 批次：新增 `lock:frozen-sync` —— `syncFrozenBalance` 调用点必须交出
 > `versionBeforeCas`。它是 `lock:version` 扫不到的那一半：那条只认 SET 里的装饰性自增，

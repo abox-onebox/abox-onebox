@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ABox 一盒 · 上线前待办清单 v1.0</title>
+<style>
+  :root{
+    --paper:#F6F0E5;
+    --ink:#6E5435;
+    --ink-soft:#8A7355;
+    --line:#DCD1BE;
+    --card:#FDFAF4;
+    --red:#9E3B32;
+    --green:#4F6B45;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:48px 20px 72px;
+    background:var(--paper); color:var(--ink);
+    font-family:"KaiTi","STKaiti","楷体",simkai,"Songti SC",serif;
+    line-height:1.85; font-size:16px;
+  }
+  .wrap{max-width:920px;margin:0 auto;}
+  header{border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:36px;}
+  h1{font-size:30px;margin:0 0 10px;letter-spacing:2px;font-weight:normal;}
+  .meta{font-size:14px;color:var(--ink-soft);letter-spacing:1px;}
+  h2{
+    font-size:20px;font-weight:normal;margin:44px 0 16px;
+    padding-left:12px;border-left:3px solid var(--ink);letter-spacing:1px;
+  }
+  .lead{
+    background:var(--card);border:1px solid var(--line);border-radius:2px;
+    padding:20px 24px;margin-bottom:8px;
+  }
+  .lead strong{color:var(--red);font-weight:normal;border-bottom:1px solid var(--red);}
+  table{width:100%;border-collapse:collapse;margin:14px 0 6px;background:var(--card);font-size:15px;}
+  th,td{border:1px solid var(--line);padding:11px 13px;text-align:left;vertical-align:top;}
+  th{background:#EFE7D8;font-weight:normal;letter-spacing:1px;white-space:nowrap;}
+  td.n{width:38px;text-align:center;color:var(--ink-soft);}
+  .tag{display:inline-block;padding:1px 8px;border:1px solid var(--ink);font-size:13px;border-radius:2px;}
+  .tag.you{border-color:var(--red);color:var(--red);}
+  .tag.me{border-color:var(--green);color:var(--green);}
+  .note{font-size:14px;color:var(--ink-soft);margin:6px 0 0;}
+  ul{margin:8px 0;padding-left:22px;}
+  li{margin:5px 0;}
+  code{
+    font-family:"Courier New",monospace;font-size:13px;
+    background:#EFE7D8;padding:1px 5px;border-radius:2px;
+  }
+  .warn{border-left:3px solid var(--red);padding-left:14px;margin:14px 0;}
+  .ok{border-left:3px solid var(--green);padding-left:14px;margin:14px 0;}
+  footer{margin-top:52px;padding-top:20px;border-top:1px solid var(--line);font-size:13px;color:var(--ink-soft);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>ABox 一盒 · 上线前待办清单</h1>
+  <div class="meta">v1.0 · 2026-10-28 · 面向项目负责人祝总 · 依据：生产服务器实测 + 部署运维手册 R1–R14</div>
+</header>
+
+<div class="lead">
+  技术侧已经全绿：数据干净、业务链路通、闸门有效、后台不可被冒充、回滚已实测。<br>
+  <strong>卡的不是技术，是「域名 + ICP 备案 + 微信支付资质」</strong> —— 其中 ICP 备案通常需 10–20 个工作日，是整条链唯一的时间瓶颈，建议今天就启动，其余事项可与它并行。
+</div>
+
+<h2>一、只有你能办（卡死项，缺一不能上线）</h2>
+
+<table>
+  <tr><th>序</th><th>事项</th><th>为什么卡</th><th>可并行？</th></tr>
+  <tr>
+    <td class="n">1</td>
+    <td><span class="tag you">你办</span> 注册域名</td>
+    <td>微信支付回调地址必须是公网 HTTPS 域名；小程序后台也要配 request 合法域名。实测：当前 <code>APP_BASE_URL</code> 是裸 IP + HTTP</td>
+    <td>最先做</td>
+  </tr>
+  <tr>
+    <td class="n">2</td>
+    <td><span class="tag you">你办</span> <strong>ICP 备案</strong>（腾讯云）</td>
+    <td>中国大陆服务器绑定域名对外服务必须备案。<strong>时间瓶颈：10–20 个工作日</strong>，备案没下来就没有 HTTPS 回调</td>
+    <td><strong>今天启动</strong></td>
+  </tr>
+  <tr>
+    <td class="n">3</td>
+    <td><span class="tag you">你办</span> 申请微信支付商户号</td>
+    <td>需拿到 4 样：商户号 <code>WXPAY_MCH_ID</code>、APIv3 密钥 <code>WXPAY_API_V3_KEY</code>、API 证书序列号 <code>WXPAY_SERIAL_NO</code>、商户私钥文件 <code>apiclient_key.pem</code>。实测这 4 项目前<strong>全部为空</strong></td>
+    <td>与备案并行</td>
+  </tr>
+  <tr>
+    <td class="n">4</td>
+    <td><span class="tag you">你办</span> 签发证书 + 开 443</td>
+    <td>实测：<code>ss -tlnp</code> 无 <code>:443</code> 监听，<code>/etc/letsencrypt</code> 与 <code>certs/</code> 均不存在 ⇒ 现在整站只有 HTTP</td>
+    <td>备案 + 解析后</td>
+  </tr>
+  <tr>
+    <td class="n">5</td>
+    <td><span class="tag you">你定</span> 资质口径确认（一句话即可）</td>
+    <td>手册 R9 写「食品经营许可证（热食类制售）未下」，而 2026-10-21 决策记录的是「改为预包装快消品 ⇒ 不需要」。<strong>两处口径不一致</strong>，涉及小程序类目与支付商户类目，需要你确认当前实际经营形态是哪一种</td>
+    <td>随时</td>
+  </tr>
+  <tr>
+    <td class="n">6</td>
+    <td><span class="tag you">你核</span> 税务非正常户是否已同步解除</td>
+    <td>工商经营异常已解除；税务是否同步解除<strong>未确认</strong>。若未解除，会影响对公账户与支付商户号审批</td>
+    <td>与 3 同步</td>
+  </tr>
+</table>
+
+<div class="warn">
+  <strong>第 3 项的前置提醒：</strong>微信支付商户号审批会看主体资质与经营类目。第 5、6 两项没定清楚就提交申请，被驳回会白白再走一轮周期。
+</div>
+
+<h2>二、需要你本机操作（微信开发者工具）</h2>
+
+<table>
+  <tr><th>序</th><th>事项</th><th>说明</th></tr>
+  <tr>
+    <td class="n">7</td>
+    <td>小程序 <strong>production 构建</strong> + 上传 + 提交审核</td>
+    <td>必须是 <code>--mode production</code>（测试期用的 <code>development</code> 构建不能上线）。这一版会一并带上「起提门槛为 0 时显示『不设起提门槛』」的文案修复 —— 代码已入库，等你这次构建一起发</td>
+  </tr>
+  <tr>
+    <td class="n">8</td>
+    <td>小程序备案（微信侧）</td>
+    <td>与 ICP 备案是两套，上架前必须完成</td>
+  </tr>
+  <tr>
+    <td class="n">9</td>
+    <td>小程序后台配置合法域名</td>
+    <td>request / socket / uploadFile 三类都要填备案后的 HTTPS 域名，否则真机请求被微信拦截</td>
+  </tr>
+</table>
+
+<h2>三、我这边已排好队（不用你动手）</h2>
+
+<table>
+  <tr><th>序</th><th>事项</th><th>排在哪个窗口</th></tr>
+  <tr>
+    <td class="n">10</td>
+    <td><span class="tag me">我做</span> B 组请求体补丁（GET/HEAD/OPTIONS 不再被严格解析请求体）</td>
+    <td><strong>上线后单独窗口</strong>。窗口第一件事：先核它 7 项没被误提交（目前唯一没有机制兜底的风险 —— 有 3 个已跟踪文件仍是未提交修改，同分支上任何人一次 <code>git add -A</code> 就会带进远端）</td>
+  </tr>
+  <tr>
+    <td class="n">11</td>
+    <td><span class="tag me">我做</span> 三条 fail-closed 用户文案（限流误导文案、下单幂等 500/90001）</td>
+    <td>下一窗口，带单测。不改判据，只把「为什么被拒」说清楚</td>
+  </tr>
+  <tr>
+    <td class="n">12</td>
+    <td><span class="tag me">我做</span> h5 镜像可回退补验</td>
+    <td>下次 h5 有真实构建需求时，<strong>先打锚点再部署</strong>，顺手验掉。在此之前如实记为「未验」</td>
+  </tr>
+  <tr>
+    <td class="n">13</td>
+    <td><span class="tag me">我做</span> 8081 闸门凭据每周轮换 + 备案通过后 7 天内撤除</td>
+    <td>已写进运维手册 §4.8 与 nginx.conf，责任人运维</td>
+  </tr>
+</table>
+
+<h2>四、资质齐了之后，切 real 的六步（我执行）</h2>
+<ol>
+  <li>改 <code>.env.prod</code>：<code>PROVIDER_MODE=real</code>，补齐 7 项微信支付与小程序配置</li>
+  <li><strong>删掉 <code>ALLOW_MOCK_IN_PROD</code> 这一行</strong>（不是置 0 —— 整行删掉最不容易误会）</li>
+  <li>商户私钥以文件挂载进容器，不打进镜像层</li>
+  <li><code>docker compose up -d</code> 重启（禁止手工 <code>docker restart</code>）</li>
+  <li>跑 <code>verify-deploy.sh</code> 确认运行中的产物与本次上线包一致</li>
+  <li>双端口 STRICT 冒烟 —— 那两条红（mock 形态 / 逃生开关有值）<strong>应当转绿</strong>，转绿才允许宣布上线</li>
+</ol>
+
+<div class="ok">
+  <strong>顺带已核完的安全项（不用你操心）：</strong><code>JWT_SECRET</code>（64 位随机串）、<code>MYSQL_ROOT_PASSWORD</code> 与 <code>DB_PASSWORD</code> 均已换掉占位值；小程序 <code>WX_MINI_APPID</code> / <code>WX_MINI_SECRET</code> <strong>已经配好</strong> —— 缺的只是支付那 4 项。
+</div>
+
+<h2>五、本次回源发现、已订正的两处文档缺陷</h2>
+<ul>
+  <li><strong>支付回调路径写错了</strong>：运维手册 §4.2 原写 <code>/api/v1/payments/wxpay/notify</code>，该路由<strong>不存在</strong>；真源是 <code>/api/v1/pay/notify</code>（<code>payment.controller.ts:57,62</code>）。照抄的后果是「用户已付款但订单永远停在待支付」，且服务端零报错。已订正，错路径以反例形式留在说明里并标注「不存在」。</li>
+  <li><strong>新增 R14</strong>：把「域名 → 备案 → 证书 → 回调地址 → 小程序合法域名」这条<strong>不可颠倒</strong>的前置链写进手册，附今天的实测证据（无 443、无证书、裸 IP HTTP）。</li>
+</ul>
+
+<h2>六、上线前需要知道的三个已知敞口</h2>
+<ul>
+  <li><strong>小额提现</strong>：起提不限，金额下限只剩后端 <code>@Min(0.01)</code> ⇒ ¥0.01 也能进审批队列。你已裁定保持现状、运营人工驳回。</li>
+  <li><strong>一期只允许单 API 实例</strong>（R10）：生效业务时刻是进程级单例，多实例会造成「同一分钟下单、一台过一台不过」且两边都不报错。别横向扩容。</li>
+  <li><strong>未做压测</strong>（R5）：500 单/日的性能只在设计里，灰度期观察真实峰值，别用「多开楼」代替压测。</li>
+</ul>
+
+<footer>
+  本清单依据 2026-10-28 生产服务器只读实测与仓库真源生成。对应提交：<code>2489fc4</code>（部署运维手册订正）。<br>
+  决策真源：<code>abox-onebox/docs/decisions/OPEN-DECISIONS.md</code>；上线前必验项：<code>部署运维手册 §十一 R1–R14</code>。
+</footer>
+
+</div>
+</body>
+</html>

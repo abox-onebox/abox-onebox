@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABox 一盒 · 本次变更测试说明 v1.5</title>
+<style>
+  :root{
+    --paper:#F6F0E5;
+    --ink:#6E5435;
+    --ink-soft:#8a7050;
+    --line:#e0d5c2;
+    --card:#fffdf8;
+    --warn-bg:#fdf3e3;
+    --warn-line:#d9b382;
+    --ok-bg:#eef5ea;
+    --ok-line:#8fa97e;
+    --gap-bg:#fbe9e9;
+    --gap-line:#b23b3b;
+    --new-bg:#eaf1f7;
+    --new-line:#5b7f9e;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;padding:32px 20px 64px;
+    background:var(--paper);color:var(--ink);
+    font-family:"KaiTi","STKaiti","simkai","楷体",serif;
+    font-size:16px;line-height:1.85;
+  }
+  .wrap{max-width:940px;margin:0 auto;}
+  header{border-bottom:2px solid var(--ink);padding-bottom:18px;margin-bottom:28px;}
+  h1{font-size:28px;margin:0 0 6px;letter-spacing:1px;}
+  .sub{color:var(--ink-soft);font-size:15px;}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 24px;margin-top:12px;font-size:14px;color:var(--ink-soft);}
+  .meta b{color:var(--ink);font-weight:normal;}
+  h2{font-size:21px;margin:38px 0 14px;padding-left:12px;border-left:5px solid var(--ink);}
+  h3{font-size:17px;margin:24px 0 8px;color:var(--ink);}
+  p{margin:8px 0;}
+  ul,ol{margin:8px 0;padding-left:24px;}
+  li{margin:5px 0;}
+  code{background:#efe7d8;padding:1px 6px;border-radius:3px;font-family:Consolas,"Courier New",monospace;font-size:14px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:16px 20px;margin:14px 0;}
+  .warn{background:var(--warn-bg);border:1px solid var(--warn-line);border-left:5px solid var(--warn-line);border-radius:4px;padding:14px 18px;margin:16px 0;}
+  .gap{background:var(--gap-bg);border:1px solid var(--gap-line);border-left:5px solid var(--gap-line);border-radius:4px;padding:14px 18px;margin:16px 0;}
+  .box-new{background:var(--new-bg);border:1px solid var(--new-line);border-left:5px solid var(--new-line);border-radius:4px;padding:14px 18px;margin:16px 0;}
+  .t{font-weight:bold;margin-bottom:6px;}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:15px;background:var(--card);}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#efe7d8;font-weight:normal;}
+  td.num{white-space:nowrap;}
+  .tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:13px;border:1px solid var(--ink-soft);color:var(--ink-soft);}
+  .tag.new{border-color:var(--ok-line);color:#4f6440;background:var(--ok-bg);}
+  .tag.inner{border-color:#b9a98d;color:#7a6a4f;background:#f3ede1;}
+  .tag.fix{border-color:var(--gap-line);color:#8f3b3b;background:var(--gap-bg);}
+  .steps{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 20px 14px;margin:10px 0;}
+  .steps ol{padding-left:22px;}
+  .expect{background:var(--ok-bg);border:1px solid var(--ok-line);border-left:5px solid var(--ok-line);border-radius:4px;padding:10px 16px;margin:10px 0;}
+  pre{background:#efe7d8;border:1px solid var(--line);border-radius:6px;padding:10px 14px;font-family:Consolas,"Courier New",monospace;font-size:13px;overflow-x:auto;line-height:1.6;white-space:pre-wrap;}
+  footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--line);color:var(--ink-soft);font-size:14px;}
+  .src{font-size:13px;color:var(--ink-soft);}
+  @media print{body{background:#fff;padding:0;}.card,.steps,table,pre{break-inside:avoid;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>ABox 一盒 · 本次变更测试说明</h1>
+  <div class="sub">面向测试人员 · v1.5（已部署到测试环境，可直接开测）</div>
+  <div class="meta">
+    <span><b>版本</b> v1.5</span>
+    <span><b>日期</b> 2026-10-27</span>
+    <span><b>代码基线</b> main @ <code>fad970d</code></span>
+    <span><b>部署标记</b> <code>manual-20261027135540</code></span>
+    <span><b>规模</b> 16 提交 / 141 文件</span>
+  </div>
+</header>
+
+<div class="box-new">
+  <div class="t">v1.5 相对 v1.4：三处改动，两处关系到「别误报」</div>
+  已部署到测试服务器（2026-10-27 13:57，代码基线 <code>fad970d</code>，
+  部署标记 <code>manual-20261027135540</code>）。代码<b>没有再动</b>，改的都是测试组织与判据措辞：<br>
+  ① <b>每人必须用一个自己的编号</b>（第二节）：同一个链接 = 同一个人，
+     多人共用一个会互相踩踏订单、并触发登录限流；<br>
+  ② <b>盲盒第 6 步拆成 6a / 6b</b>（3.3）：退款停在「退款中」时占位行仍在，
+     这是<b>有意设计</b>，必须走到<b>「已退款」</b>整行才消失；<br>
+  ③ <b>停测判据换成抓包</b>（下方）：原来那条界面判据分辨不出新旧版本，已作废。<br>
+  <b>请以本版为准</b>（v1.4 未发出）。
+</div>
+
+<div class="warn">
+  <div class="t">开测前请确认你测到的是这一版（唯一一条停测判据）</div>
+  打开 <code>http://154.8.164.180:8081/api/v1/health/ready</code>，
+  看到 <code>"status":"ready"</code> 即服务在跑。<br>
+  然后<b>下一单，在它送达之前</b>，抓一次订单详情接口（<code>GET /api/v1/orders/{订单号}</code>）的<b>响应体</b>：<br>
+  &nbsp;&nbsp;① <code>blindBoxPending</code> 这个字段<b>存在</b>且值为 <code>true</code><br>
+  &nbsp;&nbsp;② <code>blindBoxName</code> 为 <code>null</code><br>
+  <b>两条都对上，才继续往下测。</b>对不上请截图反馈后停测——测到旧代码会冒出大量假缺陷。<br>
+  <b>H5 上的抓法</b>：按 F12 → Network（网络）→ 勾选「保留日志」→ 打开该订单的详情页 →
+  在列表里点 <code>orders/</code> 开头那条 → 右侧 Response（响应）里搜 <code>blindBox</code> 即可。
+</div>
+<div class="card">
+  <b>为什么这条不能用「界面上看不见内容」来代替：</b>
+  服务端是旧代码时，前端压根收不到 <code>blindBoxPending</code> 字段，
+  盲盒那一行<b>整个不显示</b> —— 界面上同样「看不见内容」，看起来像通过。
+  ⇒ 界面那条<b>验不出版本</b>，只有响应体能。第 2、3 步的界面表现照旧要验，
+  但它验的是功能，不承担「判断版本」的职责。<br>
+  <b>另一条也只能在响应体里看（不是停测条件）</b>：订单详情返回的 <code>pickup.point</code> 应为
+  <code>{楼名} · 由团长送到工位</code>（旧版是「{楼名} 1 楼大堂」）。
+  该字段<b>用户端目前不做展示</b>（页面只取 <code>pickup.leaderName</code> 与 <code>pickup.expectAt</code>，
+  文案本就是「由团长统一派送，直接送到你的工位」），
+  <b>所以界面上找不到「由团长送到工位」这几个字是正常的，不用报缺陷、不用停测</b>。
+</div>
+
+<h2>零、先看这三条（避免把设计当缺陷）</h2>
+<div class="card">
+  <ol>
+    <li><b>报错一律是 HTTP 200</b>，靠响应体里的 <code>code</code> 判断成败，
+        <b>不要看 HTTP 状态码</b>。校验失败是 <code>code:10001</code>，不是 400。</li>
+    <li><b>只卖一个套餐，用户不点菜</b>：下单表单<b>只有「份数」一项</b>，
+        没有口味、没有备注、没有选券控件。今天的菜是<b>只读展示</b>，不是让你选。</li>
+    <li><b>团长点「送达」不会立刻到账</b>：佣金是三段式——送达 → 当日 14:00 生成待结算 →
+        次日 02:00 入账。当天查不到佣金是正常的。</li>
+  </ol>
+</div>
+
+<h2>一、变更总览</h2>
+<table>
+  <tr><th style="width:20%">主题</th><th style="width:14%">性质</th><th>说明</th></tr>
+  <tr><td>一键停售</td><td><span class="tag new">新增</span></td><td>后台新增「系统 → 一键停售」，按<b>出餐日区间</b>拦新单，可恢复</td></tr>
+  <tr><td>楼宇停用闸门</td><td><span class="tag new">新增</span></td><td>停用办公楼 / 楼群时校验未完结订单；超阈值需审批；可强制停用</td></tr>
+  <tr><td>停用后不能下单</td><td><span class="tag fix">修复</span></td><td><b>本次修复本体</b>：停用楼 / 未归群楼现在能正确拦住下单（见 3.7）</td></tr>
+  <tr><td>X 盲盒</td><td><span class="tag new">新增</span></td><td>下单随机落一个盲盒，送达后揭晓；仅首页一格 + 订单详情一行</td></tr>
+  <tr><td>代金券</td><td><span class="tag new">新增</span></td><td>独立券系统；下单自动抵扣最多的一张，用户不手动选券</td></tr>
+  <tr><td>去餐化</td><td><span class="tag">改版</span></td><td>移除供应商列表 / 溯源页；新增后台门店实拍照片、首页今日菜品展示</td></tr>
+  <tr><td>首页 · 招募页 · 推荐中心</td><td><span class="tag">改版</span></td><td>首页与招募页大改；新增非团长也能用的推荐中心</td></tr>
+  <tr><td>下单报错文案</td><td><span class="tag">修复</span></td><td>停售时的下单报错，现在会带上运营填的具体原因</td></tr>
+  <tr><td>后台楼宇模块重构</td><td><span class="tag inner">内部</span></td><td>纯代码拆分，<b>无用户可见变化</b>，但需回归（见第四节）</td></tr>
+</table>
+
+<h2>二、测试环境</h2>
+<table>
+  <tr><th style="width:24%">入口</th><th>地址 / 方式</th></tr>
+  <tr><td>管理后台</td><td><code>http://154.8.164.180:8080</code></td></tr>
+  <tr><td>H5（可直接发同事）</td><td><code>http://154.8.164.180:8081/?devCode=<b>你的编号</b></code><br>
+    <span class="src">示例：<code>?devCode=tom1</code>、<code>?devCode=lily2</code>。编号只允许<b>字母 / 数字 / 下划线 / 连字符</b>（≤32 位），例如 <code>tom1</code>、<code>wang_02</code></span></td></tr>
+  <tr><td>小程序</td><td>体验版二维码。<b>扫码后务必开启调试态</b>，否则会出现「网络异常 / 本楼今日未开团」，极易误判为缺陷</td></tr>
+</table>
+<div class="gap">
+  <div class="t">每人请务必用一个自己的编号 —— 同一个 devCode 就是同一个人</div>
+  地址里的 <code>devCode</code> 就是你的身份：<b>编号相同 = 同一个用户</b>，
+  共用同一份<b>订单列表、代金券、余额、佣金</b>。多人同时用同一个号，会出现
+  「我的订单里多了别人下的单」「刚做的操作被别人改掉」——那是账号撞了，<b>不是缺陷</b>。<br>
+  ⇒ 拿到本文档后，<b>先把链接里的编号改成自己的</b>（在自己名字后面加个数字即可），再开始测。<br>
+  <b>顺带说明：</b>若登录时报 <code>code:10005 请求过于频繁</code>，是<b>按出口 IP 的限流</b>
+  （登录接口 <b>60 次 / 分钟</b>）——同一间办公室共用一个公网 IP，多人集中登录容易碰到。
+  <b>等一分钟自动恢复</b>，不是账号坏了，也不是服务挂了。
+</div>
+<div class="card">
+  <b>后台账号</b>：请联系项目负责人获取。<br>
+  <b>角色说明</b>：<code>super_admin</code> / <code>admin</code> 可停售与恢复；
+  <code>operator</code> <b>只能看</b>停售列表，不能操作——这是有意设计的权限收窄，不是 bug。<br>
+  ⚠️ <b>本文档含管理后台地址，且测试环境是免鉴权登录形态，请勿转发到外部群组。</b>
+</div>
+
+<h2>三、必测项</h2>
+
+<h3>3.1 一键停售（新增 · 重点）</h3>
+<p>后台新增「<b>系统 → 一键停售</b>」页。运营填写停售原因后全局拦新单，落独立表 <code>ab_sales_pause</code>。</p>
+
+<div class="gap">
+  <div class="t">v1.0 的坑：停售不是「即时开关」，是「按出餐日的区间」</div>
+  创建时必须填 <code>mealDateFrom</code> / <code>mealDateTo</code>（<b>两端含首尾，同一天＝只停一天</b>）。<br>
+  <b>若停的是未来某天，当天仍然可以下单——这是正常的，别判成「停售无效」。</b>
+  <span class="src">（真身：<code>sales-pause.dto.ts:38-46</code>）</span>
+</div>
+
+<div class="steps">
+  <ol>
+    <li>后台 系统 → 一键停售，填<b>起止日期（建议就填今天）+ 原因</b>（例如「今日备货不足」）并提交</li>
+    <li>打开小程序首页：应看到停售提示，且带有刚填的那句原因</li>
+    <li>尝试下单：应被拦下，提示语里同样带原因</li>
+    <li>后台对这条记录执行「恢复接单」</li>
+    <li>小程序首页与下单应恢复正常</li>
+    <li><b>反向 A</b>：起始日晚于截止日 → 应报错 <code>10001</code>，提示「停售起始日不能晚于截止日」，后台不应显示成功</li>
+    <li><b>反向 B</b>：对<b>已恢复</b>的区间再点一次「恢复」→ 应提示「该停售区间已恢复，无需重复操作」，<b>不应静默成功</b></li>
+    <li><b>权限</b>：用 <code>operator</code> 账号调「创建停售」→ 应被拒（有意收窄，正向用例）</li>
+  </ol>
+</div>
+<div class="expect">
+  <div class="t">预期</div>
+  停售期间下单报 <code>60009</code>，提示形如「今日暂停接单：备货不足」。
+  运营<b>没填</b>原因时回落「当前已暂停接单」——两种都算正确。<br>
+  停售<b>立即生效</b>（该服务刻意零缓存）；<b>不影响存量订单</b>，见第六节。<br>
+  <span class="src">（反向 B 真身：<code>sales-pause.service.ts:96-98</code>）</span>
+</div>
+
+<h3>3.2 楼宇停用闸门（新增 · 本节四步已全部重写）</h3>
+
+<div class="gap">
+  <div class="t">最重要的一条：判据不是「楼里有没有订单」，而是「订单处在哪个阶段」</div>
+  闸门按<b>固定优先级全序</b>求值，顺序不能调换。把订单分成两组：
+  <ul>
+    <li><b>B 组（未截单，运营可撤回）</b>：待支付、已支付、退款申请中、退款中</li>
+    <li><b>A 组（已履约，不可撤回）</b>：已截单、已出餐、配送中、已送达</li>
+  </ul>
+  <b>只要有一笔进了 A 组，就一票否决报 60013，勾「强制停用」也没用。</b>
+  <span class="src">（真身：<code>suspend-gate.ts:18-31</code> 分组清单、<code>:111-117</code> 全序）</span>
+</div>
+
+<div class="steps">
+  <b>按此顺序做，每步先看清订单处于哪个组：</b>
+  <ol>
+    <li><b>造 1~2 笔 B 组订单</b>（待支付 / 已支付 / 退款中，<b>都还没截单</b>）→ 停用该楼 → 应报 <code>60006</code>（楼群则 <code>60007</code>）</li>
+    <li><b>造 1 笔 A 组订单</b>（已截单及之后）→ 停用 → 应报 <code>60013</code>（<b>最高优先，force 也无效</b>）</li>
+    <li>后台把 <code>building.suspend_force_max_count</code> <b>临时调成 2</b>（默认 20，后台配置页可改），再造 <b>3 笔全部是 B 组</b>的订单 → 停用 → 应报 <code>60012</code>（需走审批）</li>
+    <li>同第 1 步（1~2 笔 B 组订单）时<b>勾选「强制停用」</b> → 应<b>放行成功</b>，且操作日志有记录</li>
+  </ol>
+</div>
+<div class="expect">
+  <div class="t">预期 · 四条各对应一种结果，别串</div>
+  ① → <code>60006</code>　　② → <code>60013</code>　　③ → <code>60012</code>　　④ → <b>成功</b><br>
+  <b>第 3 步最容易做错</b>：混进一笔 A 组订单就会被 60013 截走，拿不到 60012。
+  造数据前先确认每笔订单的状态。<br>
+  <span class="src">（阈值默认 20 真身：<code>biz-config.service.ts:183</code>；<code>forceSuspend</code> 入参：<code>building-admin.dto.ts:289 / :444</code>）</span>
+</div>
+
+<h3>3.3 X 盲盒（新增）</h3>
+<div class="steps">
+  <ol>
+    <li>正常下一单</li>
+    <li>打开订单详情：应看到盲盒一行，状态为「待揭晓」，<b>看不到内容</b></li>
+    <li>团长点「送达」后再看：应显示具体盲盒名，状态变「已揭晓」</li>
+    <li>首页对应位置也应显示该盲盒格位</li>
+    <li><b>抓包验证（★也是开测前的版本判据）</b>：看订单详情的<b>响应体</b>——
+        送达前应有 <code>"blindBoxPending": true</code> 且 <code>"blindBoxName": null</code>
+        <span class="src">（H5 抓法见开头「开测前请确认」一节）</span></li>
+    <li><b>6a · 取消后（即时生效）</b>：把这一单<b>取消</b>，再看订单详情 ——
+        <b>盲盒那一行应整个消失</b>（既不显示内容，也不该挂着「待揭晓 · 送达后揭晓」）</li>
+    <li><b>6b · 送达后退款（要走到终点才算）</b>：先让团长点「送达」，再申请退款，
+        然后<b>到管理后台把这条退款审批通过</b>，
+        等订单状态真的变成<b>「已退款」</b>后看订单详情 —— <b>盲盒那一行应整个消失</b></li>
+  </ol>
+</div>
+<div class="expect">
+  <div class="t">预期</div>
+  送达前<b>不得泄露</b>盲盒内容——这是它全部的意义所在。<br>
+  同时：没有集盒、勋章、弹层这些额外东西，只出现在首页一格和订单详情一行，别处出现即为异常。
+</div>
+<div class="expect">
+  <div class="t">第 5 步的判据（服务端已修，本步是回归验证）</div>
+  首轮审阅发现：该字段此前<b>无条件下发</b>，「送达前不泄露」完全依赖小程序端不显示，抓包即得。<br>
+  <b>现已改为服务端遮蔽</b>：送达（<code>delivered</code> / <code>completed</code>）之前
+  <code>blindBoxName</code> 一律为 <code>null</code>；是否含盲盒改由
+  <code>blindBoxPending</code> 下发（只有 true/false，<b>不含内容</b>）。<br>
+  ⇒ 第 5 步<b>应看到 <code>blindBoxName: null</code></b>。若送达前就抓到内容，即为缺陷，请照实报——
+  不要因为「界面上确实没显示」就判通过。<br>
+  <b>同时请留意 <code>blindBoxPending</code></b>：这个字段是新版才有、且只回 true/false（不含内容）。
+  它<b>不存在</b>（响应体里搜不到）＝服务端还是旧代码 ⇒ 按开头那节<b>停测并反馈</b>。
+</div>
+<div class="expect">
+  <div class="t">第 6 步的判据（v1.4 修复 · 复核时发现）</div>
+  遮蔽判据原先只看「有没有落库值」、不看订单状态 ⇒ 两个后果：<br>
+  ① 下单后<b>取消</b> ⇒ 详情挂着「待揭晓」，而这单<b>永远等不到送达</b>；<br>
+  ② 已送达<b>再退款成功</b> ⇒ 内容从「已揭晓」<b>倒退回</b>「待揭晓」。<br>
+  <b>现改为：终态（已取消 / 已退款）一律不展示盲盒，整行消失。</b>
+  判据已抽为纯函数并有单测钉死（<code>common/utils/blind-box.ts</code>，作废态由订单终态真源派生）。<br>
+  ⇒ <b>6a 应看到占位行消失</b>；若取消单上仍挂着「待揭晓」，请照实报。
+</div>
+<div class="warn">
+  <div class="t">6b 最容易误报：停在「退款中」时占位行仍在，这是有意设计</div>
+  只有<b>订单真的走到「已退款」</b>，这一行才消失。<b>「退款申请已提交」「退款中」「审批中」都不算</b>——
+  此刻订单尚未终态，盲盒仍显示「待揭晓」是<b>正确的</b>（单测专门钉死过这条）。<br>
+  ⇒ 走完退款流程后如果占位行还在，<b>先把后台审批做完、等订单状态变成「已退款」再回来验</b>，
+  不要急着判「没修好」。
+</div>
+
+<h3>3.4 代金券（新增 · 重点）</h3>
+<p>独立的券系统。券有三个来源：推荐返券、客服补偿、后台手动发放。</p>
+<div class="steps">
+  <ol>
+    <li>后台 财务 → 代金券：建一个券种，并<b>手动发一张</b>给某个测试用户</li>
+    <li>该用户登录小程序，我的 → 我的券：应能看到这张券</li>
+    <li>用该用户下单：应<b>自动抵扣</b>，订单详情里能看到优惠金额</li>
+    <li>取消这笔订单：券应<b>退回</b>，回到「我的券」里可用</li>
+    <li>再走一次退款流程，且退款<b>被驳回</b>：券<b>不应</b>退回</li>
+  </ol>
+</div>
+<div class="expect">
+  <div class="t">预期</div>
+  下单时<b>系统自动选抵扣最多的那张</b>，用户端不做选券控件（守「表单只有份数」的规矩）。<br>
+  三种取消路径都必须退券：用户自助取消、截单兜底自动取消、<b>退款审批通过</b>。<br>
+  第 5 步是关键的反向用例：退款<b>驳回</b>时券不能退——退了就是白送钱。
+  <span class="src">（三处退券真身：<code>order.service.ts:680</code> / <code>:863</code> / <code>refund.service.ts:798</code>，最后一处的宿主是审批通过而非建单）</span>
+</div>
+
+<h3>3.5 去餐化（改版）</h3>
+<div class="steps">
+  <ol>
+    <li>确认小程序内<b>已不存在</b>「供应商列表」「溯源」入口</li>
+    <li>后台 供应商 → 门店实拍照片：上传照片、整组替换</li>
+    <li>首页查看今日菜品：能打开看到今天吃什么</li>
+  </ol>
+</div>
+<div class="expect">
+  <div class="t">预期</div>
+  菜品是<b>只读信息展示</b>，让用户知道今天吃什么，<b>不是点菜、不能选</b>。
+  若出现口味选择、备注输入框，即为缺陷。
+</div>
+
+<h3>3.6 首页 / 招募页 / 推荐中心（改版）</h3>
+<div class="steps">
+  <ol>
+    <li>逐屏检查首页布局与文案</li>
+    <li>进入招募页：CTA「成为团长」<b>一屏内只出现一次</b></li>
+    <li>从招募页进入推荐中心：<b>非团长</b>身份也应能推荐并看到记录</li>
+  </ol>
+</div>
+<div class="expect">
+  <div class="t">预期（文案红线）</div>
+  招募与分享文案中<b>不得出现</b>：「自提」「自行领取」「躺赚」「轻松赚」「零花钱」
+  「管一栋楼」「全楼」「先到先得」。<br>
+  这些是提审红线或已纠正过的错误设定，命中即为缺陷。交付口径统一是「<b>团长送到你工位</b>」。
+</div>
+
+<h3>3.7 停用后能否下单（本次修复本体 · v1.0 遗漏，v1.1 补齐）</h3>
+<div class="gap">
+  <div class="t">这是本次提交 6b37218 修的那个 bug，必须验</div>
+  原缺陷：<b>楼已经停用了，用户还是能下单</b>。修复后按楼宇状态与楼群状态全序判定，
+  不再是「只看有没有排菜」。<span class="src">（真身：<code>orderability.ts:82-92</code>）</span>
+</div>
+<div class="steps">
+  <ol>
+    <li>后台停用办公楼 A</li>
+    <li>用 A 楼的用户账号下单 → 应被拦，报 <code>60010</code>「该办公楼已停用时不可下单」</li>
+    <li>恢复 A 楼 → 同用户可正常下单</li>
+    <li>造一栋<b>未配置楼群</b>的楼，用其用户下单 → 应报 <code>60011</code>「该办公楼暂未开通服务，请联系运营」</li>
+  </ol>
+</div>
+<div class="expect">
+  <div class="t">预期</div>
+  第 2 步报 <code>60010</code>、第 4 步报 <code>60011</code>，两者文案不同，别记混。
+  <span class="src">（抛点：<code>order.service.ts:299</code> / <code>:305</code>；另有 <code>meal.service.ts:277</code> 等处也会抛 60011）</span>
+</div>
+
+<h2>四、回归项（三步重构，无功能变化）</h2>
+<p>后台楼宇模块被拆成了三个文件（停用块、派生计算层、读侧服务），主文件从 1611 行降到 726 行。
+<b>纯代码搬家、行为不应有任何变化</b>，但涉及面广，以下必须回归：</p>
+<div class="card">
+  <ul>
+    <li>后台楼宇：列表、详情、总览、配送图（这四个视图被整体搬到新文件）</li>
+    <li>后台楼群：增删改查、成员替换</li>
+    <li>停用流程：停用、恢复、停用通知</li>
+    <li>下单全链路：下单 → 支付 → 送达 → 佣金入账</li>
+  </ul>
+</div>
+<div class="expect">
+  <div class="t">判据</div>
+  与改动前<b>表现完全一致</b>即为通过。若发现任何差异——哪怕是文案多一个字——都要报，
+  因为重构的契约就是「零行为变化」。
+</div>
+
+<h2>五、错误码速查</h2>
+<table>
+  <tr><th style="width:14%">code</th><th style="width:34%">含义</th><th>面向用户的提示</th></tr>
+  <tr><td class="num">10001</td><td>参数校验失败</td><td>停售起始日不能晚于截止日 / 该停售区间已恢复，无需重复操作</td></tr>
+  <tr><td class="num">60001</td><td>办公楼不存在</td><td>—</td></tr>
+  <tr><td class="num">60002</td><td>楼群不存在</td><td>—</td></tr>
+  <tr><td class="num">60003</td><td>楼群非空</td><td>—</td></tr>
+  <tr><td class="num">60004</td><td>楼群名已占用</td><td>—</td></tr>
+  <tr><td class="num">60005</td><td>办公楼名已占用</td><td>—</td></tr>
+  <tr><td class="num">60006</td><td>楼有 B 组订单（未截单），不能直接停用</td><td>该办公楼仍有未完结订单，不能直接停用</td></tr>
+  <tr><td class="num">60007</td><td>楼群有 B 组订单，不能直接停用</td><td>该楼群仍有未完结订单，不能直接停用</td></tr>
+  <tr><td class="num">60008</td><td>目标楼群已停用，不能挂进去</td><td>目标楼群已停用，不能把办公楼挂进去</td></tr>
+  <tr><td class="num">60009</td><td>已暂停接单（一键停售）</td><td>当前已暂停接单 / 今日暂停接单：{运营填的原因}</td></tr>
+  <tr><td class="num">60010</td><td><b>办公楼已停用，不可下单</b></td><td>该办公楼已停用时不可下单</td></tr>
+  <tr><td class="num">60011</td><td><b>办公楼未归群，未开通服务</b></td><td>该办公楼暂未开通服务，请联系运营</td></tr>
+  <tr><td class="num">60012</td><td>未完结订单超阈值，需审批</td><td>未完结订单超过阈值，强制停用不可用，请提交运营审批</td></tr>
+  <tr><td class="num">60013</td><td>有订单已进履约阶段，无法撤回</td><td>已有订单进入履约阶段，无法通过停用撤回</td></tr>
+</table>
+<p style="font-size:14px;color:var(--ink-soft)">
+  再次提醒：以上全部是 <b>HTTP 200</b> 响应，看响应体里的 <code>code</code> 字段。
+</p>
+
+<h2>六、已知口径与另案事项（不用报，但请知悉）</h2>
+<div class="card">
+  <b>与本次变更无关的既有口径，遇到不用报：</b>
+  <ul>
+    <li><b>一人一日可下多单</b>：这是支持的，不是漏洞</li>
+    <li><b>日累计份数没有上限</b>：业务上尚未设定，不是漏做</li>
+    <li><b>用户与团长是同一套身份</b>：一个人可以既是下单用户又是团长</li>
+    <li><b>佣金不是即时到账</b>：见第零节第 3 条</li>
+  </ul>
+</div>
+<div class="expect">
+  <div class="t">已修复 · 订单详情的「1 楼大堂」取餐点</div>
+  首轮审阅发现 <code>pickup.point</code> 出参是「{楼名} 1 楼大堂」，与「团长送到你工位」冲突
+  （<code>git blame</code> 确认是 2026-09-15 的 M1 提交 <code>130db8d</code> 引入，非本次改动）。<br>
+  <b>本版已一并修掉</b>：改为「{楼名} · 由团长送到工位」。<br>
+  ⚠️ 顺带说明，避免你白测：该字段<b>用户端目前并未展示</b>（订单详情只取
+  <code>pickup.leaderName</code> 与 <code>pickup.expectAt</code>，界面文案本就是
+  「由团长统一派送，直接送到你的工位」）。改它是数据卫生与防红线，<b>界面上看不出变化</b>。<br>
+  ⚠️ <b>团长端不在此列</b>：团长工作台的「取货点」是另一个接口，团长确实要取餐，那里保留原样是对的。
+</div>
+<div class="expect">
+  <div class="t">已确认 · 一键停售本期就只做「拦新单」</div>
+  实现明确<b>刻意不做</b>批量取消 / 退款 / 冻结状态机——存量订单的状态与佣金<b>不受影响</b>。<br>
+  <b>项目负责人已确认：这是有意的一期范围，不是漏做</b>。
+  若测出「停售后老订单没被自动退款」，<b>属预期行为，不要报缺陷</b>。
+  <span class="src">（真身：<code>sales-pause.controller.ts</code> 类注释，依据 spec §7.6 第 5 条）</span>
+</div>
+
+<h2>七、反馈缺陷时请附上</h2>
+<div class="card">
+  <ol>
+    <li><b>复现步骤</b>（从哪个入口进、点了什么、填了什么）</li>
+    <li><b>涉及订单的状态</b>（尤其闸门相关：待支付 / 已支付 / 已截单 / 已送达，这一条决定该报哪个码）</li>
+    <li><b>实际结果 与 预期结果</b></li>
+    <li><b>响应体里的 <code>code</code></b>（若有报错，不要只截提示语）</li>
+    <li>环境：小程序体验版 / H5 / 后台；账号角色</li>
+    <li>时间（服务端时间，方便查日志）</li>
+  </ol>
+</div>
+
+<footer>
+  ABox 一盒 · 本次变更测试说明 <b>v1.5</b> · 2026-10-27 · 代码基线 main @ fad970d · 已部署 manual-20261027135540<br>
+  本版吸收两轮复核意见；所有「文件:行」证据均已回源码核实，线上响应为实测。
+</footer>
+
+</div>
+</body>
+</html>

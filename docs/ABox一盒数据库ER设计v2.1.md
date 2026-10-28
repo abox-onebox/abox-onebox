@@ -905,7 +905,7 @@ ALTER TABLE `ab_building`
 | --- | --- | --- |
 | `population` | `INT NULL`，**运营录入的估算值** | 真实就餐人数看订单量；混用会让「覆盖率」类指标失去意义。可空 = 兼容历史行、允许「还没估」 |
 | `status` 三态 | `1` 营业中 / `2` 待开通 / `3` 已暂停，`tinyint` **值域扩展** | 只扩值域、不动类型；`1` 的语义**不变**（旧数据无需迁移）。旧值 `2` 归「待开通」—— 保守处理：合作状态未确认的按未开通算 |
-| `status` 唯一可开团值 | **只有 `1`** | 套餐编排的楼栋多选把 2/3 一律禁选；后台 `canAssign` 亦要求 `1` |
+| `status` 唯一可开团值 | **只有 `1`** | 套餐编排的楼栋多选把 2/3 一律禁选；`canOrder` 亦要求 `1` |
 | `idx_building_status` | 新增单列索引 | D13 列表按状态筛选、P37 总览统计各状态楼栋数是高频路径 |
 
 ⚠️ **`ab_building_group` 零 DDL 变更**：`status`（1 启用 / 2 停用）**刻意保持二态**，不沿用楼栋三态 —— 楼群是纯组织维度，没有「待开通」这个中间态；多一个值只会让筛选器多一个永远为 0 的选项。
@@ -986,15 +986,6 @@ e2e 全绿，而生产（MySQL，结构**只由迁移决定**）首迁会建出�
 
 ## 七、初始数据 Seed
 
-> ⚠️ 本节的 `ab_config` 三元组与 `apps/api-server/src/database/seeds/seed.ts` **逐行对应**，
-> 改一处必须同步另一处。
->
-> `commission.min_withdraw` 的出厂值 **0.00 = 不限起提**，真源是 D3 定稿（2026-10-26 用户拍板）
-> 与项目负责人 2026-10-27 裁定；《接口规范 v1.0》（09-14）的「≥ ¥10.00」**已被取代**，勿据此改回。
->「不限」不等于「¥0 也能提」：地板 ¥0.01 由后端 DTO `@Min(0.01)` 兜住。
-> 口径说明的**唯一真源**在后台配置清单 `config.specs.ts`（运营在配置页看得到），
-> **不写在 `description` 列里** —— 那一列运行期无读取点，且跑 seed 会被静默覆盖。
-
 ```sql
 -- 楼群
 INSERT INTO ab_building_group (name, city, district) VALUES
@@ -1021,7 +1012,7 @@ INSERT INTO ab_config (config_key, config_value, description) VALUES
 ('commission.rate.chief', '0.1200', '首席团长佣金比例（C2）'),
 ('commission.auto_confirm_time', '14:00', '自动确认收货时间'),
 ('commission.settle_hour', '02:00', '佣金自动结算时点'),
-('commission.min_withdraw', '0.00', '最低提现金额'),
+('commission.min_withdraw', '10.00', '最低提现金额'),
 ('order.cutoff_window_minutes', '10', '截单前 10 分钟禁止下单'),
 ('distribution_center.default_count', '4', '集散中心默认数量（表驱动，可增删 · C4）'),
 ('distribution_center.rice_fee', '0.00', '集散/场地费（复用供应商场地 → 默认 0 · C9 修订）'),
