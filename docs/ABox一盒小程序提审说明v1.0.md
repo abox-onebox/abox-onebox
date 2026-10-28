@@ -152,12 +152,13 @@
 | 21 | `pages/leader/share` | 分享中心 |
 | 22 | `pages/leader/profile` | 团长资料 |
 
-### 5.4 合规页（2 页）
+### 5.4 合规页（3 页）
 
 | # | 路径 | 标题 |
 | --- | --- | --- |
 | 23 | `pages/agreement/agreement` | 用户协议（本页同时承载**隐私政策**） |
-| 24 | `pages/account-cancel/account-cancel` | 账号注销 |
+| 24 | `pages/agreement/leader` | 团长合作协议**全文**（v1.1 · 免登录可读；入口：申请页协议名 / 团长资料） |
+| 25 | `pages/account-cancel/account-cancel` | 账号注销 |
 
 ---
 
