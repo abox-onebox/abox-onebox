@@ -13,8 +13,10 @@
  *
  * ## ⚠️ 三件必须知道的事
  *
- * 1. **本批次（M5-18）落的是草案** —— `AGREEMENT_DRAFT = true`，页面会显示「草案」提示条。
- *    法务定稿后：把本标志置 `false`、升 `version`（去掉 `-draft`）、改 `updatedAt`，提示条自动消失。
+ * 1. **草案状态已于 2026-10-28 结束** —— 两份文本经法务审定（**内容不变，仅去草案标记**），
+ *    `AGREEMENT_DRAFT` 置 `false`、`version` 升到 `1.0`、`updatedAt` 改为审定日，
+ *    页面顶部的「草案」提示条随之消失，至此可作为正式文本随小程序提审。
+ *    ⚠️ 后续**再改正文**必须同步升版本号 —— 版本号是用户判断「这版是哪版」的唯一凭证。
  * 2. **通信方式不写进正文** —— 正文里只说「我的 → 联系客服」，**不硬编码微信号 / 电话**。
  *    这是既有口径（`pages/support/contact.vue` 注释：端上不硬编码任何联系方式，换号只需运营改配置）。
  *    ⚠️ 2026-10-07 裁定：此处原写「我的 → 客服微信号」。切到微信客服档（`csMode = wechat_kf` / `contact`）后，
@@ -93,14 +95,18 @@ export const AGREEMENT_OPERATOR = '北京巡礼之年科技有限公司';
  * 草案标志
  * ⚠️ `true` ⇒ 页面顶部显示「本文为草案，法务审定后生效」提示条。
  *    这不是装饰 —— 是**显式声明未定稿**，避免把草案当成可提审的正式文本。
+ *
+ * ✅ **2026-10-28 起为 `false`**：《用户协议》《隐私政策》两份文本经法务审定，
+ *    **审定结论为内容不变**，故本次仅去草案标记、升版本、改更新日期，**正文一个字未改**。
+ *    ⚠️ 若日后要改正文，请把本标志**先置回 `true`** 并在改完再定稿 —— 半途的形态不该对外。
  */
-export const AGREEMENT_DRAFT = true;
+export const AGREEMENT_DRAFT = false;
 
 const USER_AGREEMENT: AgreementDoc = {
   type: 'user',
   title: '用户协议',
-  version: '1.0-draft',
-  updatedAt: '2026-10-07',
+  version: '1.0',
+  updatedAt: '2026-10-28',
   preamble: [
     `本协议是你与 ${AGREEMENT_OPERATOR}（以下简称「我们」）就使用「ABox 一盒」小程序（以下简称「本服务」）所订立的约定。`,
     '开始使用本服务前，请完整阅读本协议。你下单、支付或继续使用本服务，即表示你已阅读并同意本协议全部内容。',
@@ -178,8 +184,8 @@ const USER_AGREEMENT: AgreementDoc = {
 const PRIVACY_POLICY: AgreementDoc = {
   type: 'privacy',
   title: '隐私政策',
-  version: '1.0-draft',
-  updatedAt: '2026-10-20',
+  version: '1.0',
+  updatedAt: '2026-10-28',
   preamble: [
     `${AGREEMENT_OPERATOR}（以下简称「我们」）深知个人信息对你的重要性。本政策说明我们在「ABox 一盒」小程序中如何收集、使用、共享、存储和保护你的个人信息，以及你享有的权利。`,
     '请在使用本服务前仔细阅读本政策。',
