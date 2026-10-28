@@ -94,11 +94,7 @@ export const LEADER_AGREEMENT_VERSIONS_TEXT: string = LEADER_AGREEMENT_VERSIONS.
 /* eslint-disable no-irregular-whitespace -- 协议正文含全角空格 U+3000（原文排版），逐字保真不可替换 */
 export const LEADER_AGREEMENT_FULL_TEXT: string = `# ABox 一盒 · 团长合作协议
 
-> **版本**：v1.1（正式）　**拟稿日期**：2026-10-28　**运营主体**：北京巡礼之年科技有限公司
->
-> 基于 v1.0（已审定）按「预包装食品快消品」口径重拟：「出餐日」改为「发货日/交付日」，商品措辞改为预包装食品，交付仍由团长送至工位；佣金阶梯、结算与提现结构不变。
->
-> **2026-10-28 补齐（用户拍板）**：① 佣金基数按系统真源校准为「**实际交付（实发）份数 × 商品单价**」（原写「实付金额」，与 \`commission.service.ts\` 实际结算口径不符）；② 区域口径统一回「**办公楼**」（与系统楼宇模型 \`ab_building\` 一致）。
+> **版本**：v1.1（正式）　**发布日期**：2026-10-28　**运营主体**：北京巡礼之年科技有限公司
 
 ## 引言
 
