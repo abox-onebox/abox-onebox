@@ -111,6 +111,10 @@
       "style": { "navigationBarTitleText": "用户协议" }
     },
     {
+      "path": "pages/agreement/leader",
+      "style": { "navigationBarTitleText": "团长合作协议" }
+    },
+    {
       "path": "pages/account-cancel/account-cancel",
       "style": { "navigationBarTitleText": "账号注销" }
     },

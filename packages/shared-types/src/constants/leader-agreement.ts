@@ -29,6 +29,8 @@
  *   ③ `scripts/e2e-m2.mjs` / `scripts/e2e-m3.mjs` 里有镜像的字面量 —— `.mjs` 不能
  *      import TS 真源，改值时必须同步，那两处已就地写了提示注释。
  */
+import { parseAgreementMarkdown } from '../utils/agreement-markdown';
+
 /** 当前生效的版本号 —— UI 默认值、客户端签署时用 */
 export const LEADER_AGREEMENT_VERSION = 'v1.1';
 
@@ -79,6 +81,8 @@ export const LEADER_AGREEMENT_VERSIONS_TEXT: string = LEADER_AGREEMENT_VERSIONS.
  * ## 使用约定
  * - 本常量是**搬运**，不是创作：改它必须同步改工作区根同名 md / html 公示文件，三者逐字一致。
  * - 端上签署前展示 `LEADER_AGREEMENT_SUMMARY`（摘要），全文由本常量承载。
+ * - ⭐ 端上全文页渲染的是 `LEADER_AGREEMENT_BLOCKS`（**由本常量派生**，不是另写一份）——
+ *    改了本常量，块随之重算，不存在「正文与端上显示两份真相」的可能。
  *
  * ## ✅ 口径差异已消除（2026-10-28 去餐化订正）
  * - 订正前：协议 §三 写「佣金 = 该订单实际支付金额 × 费率」「以订单实付金额为基数」，
@@ -195,3 +199,24 @@ export const LEADER_AGREEMENT_SUMMARY: readonly string[] = [
   '3) 佣金以实际交付（实发）份数对应的金额为基数计算，取消 / 退款订单不计佣；',
   '4) 退出团长身份不影响已结算佣金，已入账余额可正常提现。',
 ];
+
+/**
+ * 本协议**定稿日期**（端上全文页「更新于」用）
+ *
+ * ⚠️ 与 `LEADER_AGREEMENT_FULL_TEXT` 引言里的「拟稿日期」**必须同一天**，
+ *    改版时两处一起改 —— 用户判断「我看到的是不是最新一版」就靠这两个字段。
+ */
+export const LEADER_AGREEMENT_UPDATED_AT = '2026-10-28';
+
+/**
+ * 全文 → **渲染块**（端上全文页唯一消费对象）
+ *
+ * ⭐ **它是派生的，不是另写一份**：`parseAgreementMarkdown(LEADER_AGREEMENT_FULL_TEXT)`。
+ *    端上 `<text>` 不解析 Markdown，而正文必须是 Markdown（与公示 md 逐字同源），
+ *    故在此**编译期结构化** —— 协议改版只改 `LEADER_AGREEMENT_FULL_TEXT` 一处，
+ *    块随之重算，不存在「全文与端上显示两份真相」的可能。
+ *
+ * ⚠️ 判据由 `test/unit/leader-agreement-blocks.spec.ts` 拦（两条独立覆盖率自证）：
+ *    解析器一旦悄悄少一段，端上就少一条条款，而 typecheck / lint / e2e 全绿。
+ */
+export const LEADER_AGREEMENT_BLOCKS = parseAgreementMarkdown(LEADER_AGREEMENT_FULL_TEXT);

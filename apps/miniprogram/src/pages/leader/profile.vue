@@ -230,6 +230,12 @@
         </view>
         <view v-if="open === 'agree'" class="panel">
           <text class="field__note"> 签署时间：{{ formatDateTime(profile.agreedAt) }} </text>
+          <!-- ⭐ 2026-10-28：已签的团长也能回看**全文**（此前只有版本号与签署时间，
+               签了什么在端上查不到）—— 与申请页同一页 `pages/agreement/leader`，
+               正文派生自真源 `LEADER_AGREEMENT_FULL_TEXT`，不会与签署的那一版对不上。 -->
+          <button class="btn btn--ghost btn--block" hover-class="btn--hover" @tap="viewAgreement">
+            查看协议全文（{{ LEADER_AGREEMENT_VERSION }}）
+          </button>
           <!-- ⚠️ 版本号**只能引 `@abox/shared-types` 的真源常量**，不能直接写在模板里：
                它既决定写入 `agree_version` 的值（留痕可举证的凭据），又会打印在用户眼前；
                写死一份就可能与应用页/服务端任命写入的值不一致 ⇒ 同一份签署自相矛盾。 -->
@@ -494,6 +500,11 @@ async function resign(): Promise<void> {
   } catch (e) {
     toastApiError(e, '签署失败');
   }
+}
+
+/** 团长协议**全文**页（免登录可读，正文派生自真源，与签署的那一版同源） */
+function viewAgreement(): void {
+  navigateTo('/pages/agreement/leader');
 }
 
 /** 去客服页（U17 · 客服微信号）—— 退出/资金争议/换楼栋的人工通道 */

@@ -12,6 +12,7 @@ export * from './enums/withdraw-status';
 export * from './enums/delivery-status';
 export * from './api/common';
 export * from './constants/leader-agreement';
+export * from './utils/agreement-markdown';
 export * from './dto/create-order.dto';
 export * from './dto/order.dto';
 export * from './dto/coupon.dto';

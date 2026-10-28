@@ -135,12 +135,7 @@
  */
 import { computed, ref } from 'vue';
 import { onLoad, onShow } from '@dcloudio/uni-app';
-import {
-  LEADER_AGREEMENT_SUMMARY,
-  LEADER_AGREEMENT_VERSION,
-  LEADER_LEVEL_META,
-  LeaderLevel,
-} from '@abox/shared-types';
+import { LEADER_AGREEMENT_VERSION, LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
 
 import { fetchMe } from '@/api/auth';
 import { applyLeader } from '@/api/leader';
@@ -226,15 +221,11 @@ function toggleAgree(): void {
 }
 
 function openAgreement(): void {
-  // 协议已于 2026-10-28 经法务定稿（v1.0）。端上签署前弹**摘要**，摘要文本引真源
-  // `LEADER_AGREEMENT_SUMMARY`（不再在本页另写一份）—— 它是团长签署时真正读到的内容，
-  // 与协议全文 / 系统结算口径各写一份就会漂移（见该常量头注的已知口径差异说明）。
-  uni.showModal({
-    title: '团长合作协议（摘要）',
-    content: LEADER_AGREEMENT_SUMMARY.join('\n'),
-    showCancel: false,
-    confirmText: '我知道了',
-  });
+  // ⭐ 2026-10-28：签署前由「4 行摘要弹窗」升级为**全文页**
+  //    `pages/agreement/leader` —— 团长签的是整份协议，签署留痕
+  //    （`agree_version` + `agreed_at`）能举证「签过哪一版」，此前却举不出
+  //    「那一版他有没有看到」。摘要不再单独弹：全文页顶部同源展示，两者不会各说一套。
+  navigateTo('/pages/agreement/leader');
 }
 
 async function submit(): Promise<void> {
