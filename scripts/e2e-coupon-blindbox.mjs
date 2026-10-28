@@ -201,8 +201,30 @@ async function run() {
 
     // ---------- ⑤ X 盲盒：订单详情 blind_box_name 落在内容池 ----------
     const detail = (await call('GET', `/orders/${ord.orderNo}`, { token: userToken })).body?.data;
-    const bb = detail?.blindBoxName;
-    assert(!!bb && DEFAULT_BLIND_BOX_POOL.includes(bb), 'X盲盒·落库且为内容池成员', `blindBoxName=${bb}`);
+    // ⚠️ 遮蔽口径（真源 `common/utils/blind-box.ts::blindBoxView()`）：
+    //    未送达 ⇒ `{ pending: true, name: null }` —— 名字**存在库里但不可下发**，
+    //    送达后才揭晓。故旧断言「API 回的 blindBoxName 属于内容池」与真源相反，恒红。
+    // ⇒ 拆成两条：**下落库的值**用 fixture DB 直查校验内容池；**接口下发的值**按遮蔽口径校验。
+    assert(
+      detail?.blindBoxPending === true,
+      'X盲盒·未送达挂占位（blindBoxPending=true）',
+      `blindBoxPending=${detail?.blindBoxPending}`,
+    );
+    assert(
+      detail?.blindBoxName === null,
+      'X盲盒·未送达不揭晓（接口下发 blindBoxName=null）',
+      `blindBoxName=${JSON.stringify(detail?.blindBoxName)}`,
+    );
+    {
+      const db = openFixtureDb();
+      const row = db.prepare('SELECT blind_box_name AS bb FROM ab_order WHERE order_no = ?').get(ord.orderNo);
+      db.close();
+      assert(
+        !!row?.bb && DEFAULT_BLIND_BOX_POOL.includes(row.bb),
+        'X盲盒·落库值已在内容池（直查 ab_order.blind_box_name）',
+        `blind_box_name=${row?.bb ?? '(无)'}`,
+      );
+    }
     const notRevealed = detail?.status !== 'DELIVERED' && detail?.status !== 'COMPLETED';
     assert(
       notRevealed,

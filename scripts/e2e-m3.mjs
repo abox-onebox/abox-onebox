@@ -718,10 +718,17 @@ async function main() {
    *    这样既守住「运营不进系统管理」，又能盯住将来有人把别的 /system/* 漏给运营。
    */
   const opMenus = opLogin.account?.menus ?? [];
-  const opSystemMenus = opMenus.filter((m) => m.startsWith('/system/'));
+  const opSystemMenus = (opMenus.filter((m) => m.startsWith('/system/')) ?? []).slice().sort();
+  // ⭐ 期望值必须与真源 `common/constants/admin-role.ts::OPERATOR_EXTRA_MENUS` 同步：
+  //    「/system/ 下运营该看的」目前是 queue（队列状态）与 sales-pause（一键停售），
+  //    两者控制器类级 `@Roles` 都**含 operator**（写端点仍收窄到 super_admin/admin）。
+  //    写死两项而非必须 >0：将来有人把别的 /system/* 漏给运营，这里照样报红。
+  const OPERATOR_EXTRA_MENUS = ['/system/queue', '/system/sales-pause'];
   assert(
-    opMenus.length > 0 && opSystemMenus.length === 1 && opSystemMenus[0] === '/system/queue',
-    'D52 operator 菜单 = 运营菜单去掉 /system/*，仅保留刻意放行的 /system/queue',
+    opMenus.length > 0 &&
+      opSystemMenus.length === OPERATOR_EXTRA_MENUS.length &&
+      opSystemMenus.join(',') === OPERATOR_EXTRA_MENUS.join(','),
+    'D52 operator 菜单 = 运营菜单去掉 /system/*，仅保留刻意放行的 /system/queue 与 /system/sales-pause',
     `menus=${opMenus.length} 项 · /system/ 命中=${JSON.stringify(opSystemMenus)}`,
   );
   const opToken = opLogin.token;
