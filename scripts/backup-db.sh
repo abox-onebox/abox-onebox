@@ -53,9 +53,12 @@ esac
 [ -f "$COMPOSE_FILE" ] || die "缺少 $COMPOSE_FILE"
 [ -f "$ENV_FILE" ] || die "缺少 $ENV_FILE"
 
+# 库名取值与 restore-db.sh 共用同一份口径（真源 = mysql 容器的 MYSQL_DATABASE），
+# 详见 scripts/lib/db-name.sh 头注 —— **不要**在这里另写一份 grep。
+. "$ROOT/scripts/lib/db-name.sh"
+
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-DB_NAME="$(grep -E '^DB_DATABASE=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-DB_NAME="${DB_NAME:-abox_onebox}"
+DB_NAME="$(abox_db_name "$COMPOSE_FILE" "$ENV_FILE")"
 OUT_FILE="${OUT_DIR%/}/abox-${DB_NAME}-${STAMP}.sql"
 
 log "1/3" "导出数据库"
@@ -89,6 +92,21 @@ if [ "$SIZE" -lt 1024 ]; then
   rm -f "$OUT_FILE"
   die "导出文件仅 ${SIZE} 字节，判定为无效备份（库可能尚未初始化）"
 fi
+
+# ⚠️ 断言「文件名里写的库」≡「文件里真正装的库」。
+#    `mysqldump --databases` 会在产物里写 `CREATE DATABASE \`x\`` 与 `USE \`x\``，
+#    拿它反查即可。两者不一致 ⇒ 文件名在谎报内容，而**谎报的后果是恢复时按名字找、
+#    恢复错库且不报错** —— 属于「要到需要恢复那天才发现」的那类静默错。
+#    （这正是原来读错键 `DB_OODJXNLK` 时会踩的形状，故断言必须留在脚本里，
+#     不能只改对键名就收工。）
+#   ⚠️ `-a` 不能省：mysqldump 产物里若含二进制字段，grep 会把整个文件按二进制处理，
+#      部分实现（BSD grep）会跳过内容行 —— 那样这条断言就"哑"了：假装看过了。
+if ! grep -a -q -E "(^|[^A-Za-z0-9_])(CREATE DATABASE|USE)[^;]*\`${DB_NAME}\`" "$OUT_FILE"; then
+  rm -f "$OUT_FILE"
+  die "导出产物里找不到库 \`${DB_NAME}\` 的定义 —— 文件名会谎报内容，已作废本次产物。
+       核对：mysql 容器的 MYSQL_DATABASE 与 $ENV_FILE 的 DB_DATABASE（库名口径见 scripts/lib/db-name.sh）"
+fi
+ok "库名自证通过：产物内含 \`${DB_NAME}\`，与文件名一致"
 
 gzip -9 "$OUT_FILE"
 ok "备份完成：${OUT_FILE}.gz（$(wc -c <"${OUT_FILE}.gz" | tr -d ' ') 字节）"

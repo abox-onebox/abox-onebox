@@ -38,4 +38,14 @@
 #    故它可直接被监控系统按退出码消费，不需要解析日志文本。
 30 8 * * * {{ABOX_REPO}}/scripts/ops-daily.sh >> {{ABOX_LOG_DIR}}/ops-daily.log 2>&1
 
+# ── nginx 访问日志保留 7 天（溯源用）────────────────────────────────────────
+# ⚠️ 为什么不靠 docker 的日志轮转：json-file 驱动按**份数 / 大小**轮转
+#    （max-file / max-size），**不是按时间保留** —— 业务高峰一天就能把 7 天前那份
+#    挤掉，而那正是复盘时要找的那一份。要「7 天前还在」，就必须落文件 + 按 mtime 清。
+# ⚠️ `-mtime +7` 且只匹配 `logs/nginx-*/**/*.log*`，不做宽泛匹配 ——
+#    与 `backup-db.sh` 的清理同一纪律：宁可多留几天，不可误删。
+# ⚠️ 首次安装时目录可能还不存在 ⇒ 必须 `|| true`：find 找不到目录会非零退出，
+#    那会让 cron 天天报一次失败，把真正的失败淹没在噪音里。
+10 4 * * * find {{ABOX_REPO}}/logs/nginx-admin {{ABOX_REPO}}/logs/nginx-h5 -type f -name '*.log*' -mtime +7 -delete >> {{ABOX_LOG_DIR}}/log-prune.log 2>&1 || true
+
 # <<< ABOX OPS <<<
