@@ -90,7 +90,16 @@ export class ApiError extends Error {
 export interface RequestOptions {
   /** 路径（不含 baseUrl），如 `/orders` */
   url: string;
-  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  /**
+   * HTTP 方法。
+   *
+   * ⚠️ 联合类型**必须**含 `HEAD` / `OPTIONS`：下面 `request()` 里那句
+   *   「GET / HEAD / OPTIONS 不带体」的守卫要按方法判，而 TS 会把**不在联合里**的
+   *   字面量比较判成 `TS2367`（「该比较无意义」）。也就是说——**漏了这两个，
+   *   那句守卫在类型层面就是半残的**：`HEAD`/`OPTIONS` 永远进不来，`GET` 之外的
+   *   分支也拿不到它们的类型。（2026-10-27 修：`vue-tsc` 实跑抓到 2 条 TS2367。）
+   */
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
   data?: Record<string, unknown>;
   /** 是否携带 JWT（默认 true；登录 / 邀请落地等公开接口传 false） */
   auth?: boolean;
@@ -183,7 +192,15 @@ export async function request<T>(options: RequestOptions): Promise<T> {
     res = await uniRequest({
       url: `${ENV.apiBaseUrl}${url}`,
       method,
-      data,
+      // ⭐ GET / HEAD / OPTIONS **不带体**（2026-10-27 事故收口）
+      //    这三个方法按 RFC 9110 §9.3 不定义请求体内容语义，而 `header` 里又固定带了
+      //    `Content-Type: application/json`（上面 line 171）。一旦哪天有人给某个 GET
+      //    传了 `data`，端上就会发出「GET + json 体」—— 服务端那侧会把它当**非法请求体**
+      //    判成 `10001`，而业务代码根本没跑、服务端也不留日志（本次线上事故的确切形态）。
+      //    ⚠️ 这不是「顺手优化」：它掐掉的是我们自己重踩同一条链的可能。
+      //    ⚠️ 查询参数请**拼在 url 里**（本文件的便捷方法注释也是这个口径），
+      //       不要指望 `data` 在 GET 上被自动展开。
+      data: method === 'GET' || method === 'HEAD' || method === 'OPTIONS' ? undefined : data,
       header,
       timeout,
     } as UniApp.RequestOptions);

@@ -159,8 +159,19 @@ async function bootstrap() {
   // rawBody: 微信支付 V3 回调需用**原始报文**验签（/pay/notify）
   // ⚠️ 这里**不再传 `cors` 选项** —— 见 `corsOriginOf`：要在读到配置之后再决定，
   //    故改为下面的 `enableCors()`（顺序上仍早于 `listen`）。
+  //
+  // ⭐ `bodyParser: false`（2026-10-27 事故修复）：关掉 Nest 默认注册的 body-parser，
+  //    改由 `common/middleware/request-body.middleware.ts` 在 `AppModule.configure()`
+  //    里接管 —— 理由写在那个文件的头注释，这里只记结论：
+  //      · Nest 的默认解析器挂在 `configure()` **之前**（nest-application.js:97），
+  //        业务代码在 Nest 内部拿不到比它更靠前的位置，只能从源头接管；
+  //      · 默认解析器会对 **GET / HEAD / OPTIONS 也严格解析请求体**，体一旦不是
+  //        `{`/`[` 开头就把整个只读请求打成 10001，且**不打日志**（健康检查全绿、
+  //        日志 0 条、还能自愈，2026-10-27 就是这样）。
+  //    ⚠️ 关掉之后 `req.rawBody` 由新中间件同样用 `verify` 挂上，`/pay/notify` 不受影响。
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,
+    bodyParser: false,
   });
   app.disable('x-powered-by');
 

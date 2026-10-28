@@ -67,7 +67,12 @@ export class LeaderFinanceController {
     required: true,
     description: '幂等键（**必填**）：提现属资金操作，缺失 → 10001；重复提交 → 10006 + 首次结果',
   })
-  @ApiOperation({ summary: 'L12 提现申请（≥ ¥10.00，走灵活用工代发）' })
+  // ⚠️ 摘要里**不要写起提金额**：D3 已定稿「起提金额不限」，由 `commission.min_withdraw`
+  //    配置决定（线上现为 0.00）。写死 ¥10.00 会误导技术与运营 —— 该项已在 《接口规范 v1.0》
+  //    基础上被 D3 取代，勿据此改回（见 `modules/admin/config/config.specs.ts`）。
+  @ApiOperation({
+    summary: 'L12 提现申请（起提额由 commission.min_withdraw 配置，走灵活用工代发）',
+  })
   withdraw(@CurrentLeader() leader: TeamLeader, @Body() dto: WithdrawApplyReqDto) {
     return this.withdrawService.apply(leader, dto);
   }

@@ -5,6 +5,7 @@ import { AppConfigModule } from './config/config.module';
 import { CommonModule } from './common/common.module';
 import { KvService } from './common/cache/kv.service';
 import { createRateLimitMiddleware } from './common/middleware/rate-limit.middleware';
+import { createRequestBodyMiddleware } from './common/middleware/request-body.middleware';
 import { ProvidersModule } from './providers/providers.module';
 
 import { DatabaseModule } from './database/database.module';
@@ -106,6 +107,9 @@ export class AppModule implements NestModule {
    *     请求已被控制器处理完毕，中间件**一次都不会执行**（比前一种更隐蔽：连日志都没有）。
    * `configure()` 在 ② 被调用，天然夹在 body-parser 与路由之间 —— 两个约束同时满足，
    * 这是 Nest 里唯一既「拿得到请求体」又「挡得住请求」的注册点。
+   * ⚠️ **2026-10-27 起 ① 已不存在**：`main.ts` 传了 `bodyParser:false`，默认解析器被关掉，
+   *    请求体由本方法第一个注册的 `createRequestBodyMiddleware()` 接管（理由见下方注释）。
+   *    故现在的顺序是 ① 请求体中间件 ② 限流 ③ 路由。
    * ⚠️ 对应的验证方式不是看代码，而是跑 `tests/` 下的限流探针断言 429 —— 位置错了不会报错。
    *
    * ## 取 `KvService` 的方式
@@ -119,7 +123,17 @@ export class AppModule implements NestModule {
    * 「跳过 health/docs/static」都在中间件内部做（见 `rate-limit.middleware.ts`
    * 的 `matchRule` / `SKIP_PATH`），故这里不做 `exclude()` —— 一处判断，不分散两处。
    */
+  /**
+   * ⭐ 注册顺序（2026-10-27 事故修复后有变，务必按此理解）：
+   *    （Nest 默认 body-parser 已由 `main.ts` 的 `bodyParser:false` 关掉）
+   *    ① `common/middleware/request-body.middleware.ts` —— 请求体接管
+   *    ② `rate-limit.middleware.ts` —— 限流
+   *    ③ 路由
+   *    ⚠️ ① 必须在 ② 之前：限流要读 `req.body?.username`（账号维度），
+   *       体解析在前才能保证它拿得到 `username`；反过来会静默退化成只有 IP 维度。
+   */
   configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(createRequestBodyMiddleware()).forRoutes('*');
     consumer.apply(createRateLimitMiddleware(this.kv)).forRoutes('*');
   }
 }
