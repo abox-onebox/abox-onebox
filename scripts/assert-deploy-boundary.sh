@@ -33,9 +33,10 @@
 #                              （不给 --artifacts-dir ⇒ **红**，fail-closed，不许恒绿）
 #   A5  清单里没有脏文件      —— 清单路径在 `git status --porcelain` 里必须干净
 #                              （脏 = 你极可能递的是工作树版本）
-#   A6  「本轮不发布」特征不在 commit 里 —— 默认两条：
-#                              · `apps/api-server/src/main.ts` 不含 `bodyParser: false`
-#                              · `common/middleware/request-body.middleware.ts` 不存在
+#   A6  「本轮不发布」特征不在 commit 里 —— **需显式指定**（`--deny-grep` / `--deny-absent`）
+#                              2026-10-29 起**不再内置**默认值（原两条已随发布进入生产，
+#                              内置会恒红）；未指定任何特征时输出 `SKIP`（不算绿）。
+#                              能力不废：`--selftest` 第 7 个必红样本仍用显式特征验证它能红。
 #
 # ---- ⛔ 与《部署运维手册》§4.4 的关系 --------------------
 #   本脚本**只读** git 对象，不停服务、不写库，不属于「主动破坏性动作」，
@@ -74,13 +75,22 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# 「本轮不发布」的 B 组默认特征（后端 request-body 那批）
-if [ ${#DENY_GREP[@]} -eq 0 ]; then
-  DENY_GREP+=("apps/api-server/src/main.ts:bodyParser: *false")
-fi
-if [ ${#DENY_ABSENT[@]} -eq 0 ]; then
-  DENY_ABSENT+=("apps/api-server/src/common/middleware/request-body.middleware.ts")
-fi
+# 「本轮不发布」的 B 组特征 —— **不再内置默认值**（2026-10-29 废止，见下）
+#
+# ⚠️ 这里原本内置两条（后端 request-body 那批）：
+#      DENY_GREP+=("apps/api-server/src/main.ts:bodyParser: *false")
+#      DENY_ABSENT+=("apps/api-server/src/common/middleware/request-body.middleware.ts")
+#   它们的来历是 2026-10-27 那次事故后，这两项被标记为「本轮不发布」留在工作树里。
+#   但**这批代码早已正式发布**：2026-10-29 21:08 的生产部署已带上它们（服务器上
+#   `grep bodyParser apps/api-server/src/main.ts` 命中、`request-body.middleware.ts` 在位），
+#   而 `bodyParser: false` 恰恰是事故修复本体 —— 它**必须**在生产上。
+#   ⇒ 继续内置 = 每次投递恒红。**假红比漏报更快把人训练成忽略告警**（同 doc:tables 的取舍）。
+#
+# ⚠️ 废止的只是「内置」，**不是这条特征**：需要时显式传参即可，能力不变 ——
+#      ./scripts/assert-deploy-boundary.sh --commit <sha> --manifest <f> --artifacts-dir <d> \
+#         --deny-grep "apps/api-server/src/main.ts:bodyParser: *false" \
+#         --deny-absent "apps/api-server/src/common/middleware/request-body.middleware.ts"
+#   且 `--selftest` 的第 7 个必红样本仍在用显式特征验证 A6 **确实能红**（不许变成恒绿）。
 
 # ------------------------------------------------------------
 # 断言执行器：fail-closed，任何一条红 ⇒ 退出码 1
@@ -225,6 +235,13 @@ a6() {
       bad="${bad}[有] ${path} 出现在 ${COMMIT} 里 "
     fi
   done
+  if [ ${#DENY_GREP[@]} -eq 0 ] && [ ${#DENY_ABSENT[@]} -eq 0 ]; then
+    # ⚠️ 刻意**不记成绿**：没有特征可查时 A6 什么都没验，「绿」是假的。
+    #    与 index:parity 那条「恒 N/A 必须当缺陷追」同纪律 —— 这里明确标 SKIP，
+    #    让每次输出都能看出「本轮没有不发布约束」，而不是看起来验过了。
+    record A6 1 "SKIP —— 未指定任何「本轮不发布」特征（无 --deny-grep / --deny-absent），本条未实际校验"
+    return
+  fi
   if [ -z "$bad" ]; then
     record A6 1 "「本轮不发布」特征在 ${COMMIT} 里全部不存在（B 组未混入）"
   else
@@ -343,6 +360,9 @@ selftest() {
   git -C "$r" checkout -q -- scripts/deploy.sh
 
   # 7) A6：commit 里出现 B 组特征（main.ts 带 bodyParser: false + 新中间件文件）
+  #
+  # ⚠️ 自证**显式传**这两条（2026-10-29 起它们不再是内置默认值 —— 那批代码已正式发布，
+  #    内置会让每次投递恒红）。能力没废：**必须由调用方点名**，且这里仍验证 A6 能红。
   printf '  bodyParser: false,\n' >>"$r/apps/api-server/src/main.ts"
   printf 'export class RequestBodyMiddleware {}\n' >"$r/apps/api-server/src/common/middleware/request-body.middleware.ts"
   git -C "$r" add -A >/dev/null
@@ -350,7 +370,9 @@ selftest() {
   git -C "$r" push -q origin main >/dev/null
   local c3; c3="$(git -C "$r" rev-parse HEAD)"
   expect RED A6 "commit 里混入 B 组特征 ⇒ A6 红" \
-    bash "$0" --repo "$r" --commit "$c3" --manifest "$mf" --artifacts-dir "$art" --branch main
+    bash "$0" --repo "$r" --commit "$c3" --manifest "$mf" --artifacts-dir "$art" --branch main \
+    --deny-grep "apps/api-server/src/main.ts:bodyParser: *false" \
+    --deny-absent "apps/api-server/src/common/middleware/request-body.middleware.ts"
 
   printf '\n[selftest] 通过 %s / 失败 %s\n' "$pass" "$fail"
   [ "$fail" -eq 0 ]
