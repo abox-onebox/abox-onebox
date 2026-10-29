@@ -487,6 +487,21 @@ export enum ErrorCode {
    */
   REFUND_BATCH_SCOPE_CHANGED = 40029,
 
+  /**
+   * 扩展（代金券批量发放 · 2026-10-29）：这张券**当前不能被回收**
+   *
+   * 三种落到本码的情形，端上动作各不相同（故 message 里带具体状态）：
+   *   · 券**不存在**（id 错了 / 已被硬删）→ 刷新列表；
+   *   · 券**已核销**（`used`）→ ⚠️ **真拒绝**，不是「再点一次」：该券已被订单用作抵扣，
+   *     撤掉等于让那笔订单白拿优惠（订单金额不回退，券却复活）。要补救只能走退款链路；
+   *   · 券**已回收**（`revoked`）→ 幂等成功，不报错（重复点击无害）。
+   *
+   * ⚠️ 为什么**不复用** `40020 COUPON_NOT_USABLE`：那个码是**用户端**口径
+   *    （「这张券下单用不了」），本码是**后台运营**口径（「这次作废动作做不了」）。
+   *    两者主语不同，混用会让运营看到「这张代金券当前不可用」而以为是券坏了。
+   */
+  COUPON_NOT_REVOCABLE = 40030,
+
   /** ---- 5xxxx 财务 / 结算 / 供应商 ---- */
   SUPPLIER_NOT_QUALIFIED = 50001,
   DISTRIBUTION_CENTER_LOCKED = 50002,
@@ -703,6 +718,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.REFUND_WINDOW_EXPIRED]: '订单已完成且超出可退时限，如需退款请联系客服处理',
   [ErrorCode.REFUND_BATCH_TOO_LARGE]: '单次批量操作笔数超限，请减少勾选数量后分批提交',
   [ErrorCode.REFUND_BATCH_SCOPE_CHANGED]: '批量范围已变化，请重新预览后再执行',
+  [ErrorCode.COUPON_NOT_REVOCABLE]: '这张券不能回收（不存在 / 已使用）；只有未使用的券可撤',
   [ErrorCode.SUPPLIER_NOT_QUALIFIED]: '供应商资质未通过审核',
   [ErrorCode.DISTRIBUTION_CENTER_LOCKED]: '集散中心配置不可删除（存在历史结算）',
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',

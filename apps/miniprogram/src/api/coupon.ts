@@ -16,8 +16,14 @@
  */
 import { http, query } from './request';
 
-/** 券状态（与后端 `ab_user_coupon.status` 一致） */
-export type CouponStatus = 'unused' | 'used';
+/**
+ * 券状态（与后端 `ab_user_coupon.status` 一致）
+ *
+ * ⚠️ `revoked`（已回收 · 2026-10-29）：运营在后台把券作废了。端上**不展示状态本身** ——
+ *    是否可用取服务端 `available`、不可用的原因取 `unavailableReason`（会给出「已回收」）。
+ *    这里只把类型补全，避免将来有人拿 `status` 做穷举判断时漏掉它。
+ */
+export type CouponStatus = 'unused' | 'used' | 'revoked';
 
 /** 券来源（与后端 `obtained_from` 一致） */
 export type CouponObtainedFrom = 'referral' | 'compensation' | 'manual';

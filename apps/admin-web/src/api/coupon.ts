@@ -57,6 +57,10 @@ export interface UserCouponRow {
   obtainedFrom: CouponObtainedFrom;
   usedAt: string | null;
   orderNo: string | null;
+  /** 批量发放批次号；单人发券为 null */
+  grantBatchNo: string | null;
+  /** 回收时刻；未回收为 null */
+  revokedAt: string | null;
   createdAt: string;
 }
 
@@ -134,4 +138,73 @@ export function grantCoupon(payload: GrantCouponPayload): Promise<UserCouponRow>
 
 export function fetchCouponGrants(params: GrantQuery = {}): Promise<UserCouponRow[]> {
   return http.get<UserCouponRow[]>('/admin/coupon/grants', params);
+}
+
+// ------------------------------------------------------------------ 批量发放 / 回收
+
+/** 批量发放的人群选择方式 */
+export type CouponGrantScope = 'all' | 'building' | 'phones' | 'userIds';
+
+export interface GrantCouponBatchPayload {
+  scope: CouponGrantScope;
+  buildingId?: number | null;
+  phones?: string[];
+  userIds?: number[];
+  couponDefId?: number | null;
+  name?: string;
+  faceValueFen: number;
+  thresholdFen?: number;
+  validityType: CouponValidityType;
+  validDays?: number | null;
+  validFrom?: string | null;
+  validTo?: string | null;
+  obtainedFrom?: CouponObtainedFrom;
+  /** 发放原因（必填，≥2 字） */
+  remark: string;
+  /** `true` = 只试算不写库 */
+  dryRun?: boolean;
+  /** 幂等键；同键 = 同批，已发过的用户自动跳过 */
+  idempotencyKey?: string | null;
+  excludeBlacklist?: boolean;
+}
+
+export interface CouponGrantBatchResult {
+  dryRun: boolean;
+  batchNo: string;
+  /** 本次实际（或预计）发放张数 */
+  grantedCount: number;
+  /** 同一批次已发过而跳过的张数 */
+  skippedCount: number;
+  totalFaceValueFen: number;
+  /** 黑名单 / 已注销被排除的人数 */
+  excludedCount: number;
+  /** 手机号清单里查无此人的号码 */
+  unmatchedPhones: string[];
+  /** 命中用户样例（脱敏手机号） */
+  samplePhones: string[];
+  codes: string[];
+}
+
+export const GRANT_SCOPE_OPTIONS = [
+  { value: 'all', label: '全平台用户' },
+  { value: 'building', label: '按楼宇' },
+  { value: 'phones', label: '手机号清单' },
+  { value: 'userIds', label: '用户 ID 清单' },
+] as const;
+
+/**
+ * 批量发放（试算与实发同一端点，靠 `dryRun` 区分）
+ *
+ * ⚠️ 端上**不许**自己估算命中人数：试算与实发在服务端是同一条路径
+ *    （见 `CouponService.grantBatch` 头注），自己估就会出现「试算 73、实发 80」。
+ */
+export function grantCouponBatch(
+  payload: GrantCouponBatchPayload,
+): Promise<CouponGrantBatchResult> {
+  return http.post<CouponGrantBatchResult>('/admin/coupon/grant-batch', payload);
+}
+
+/** 回收一张券（仅未使用可撤；原因进操作日志） */
+export function revokeCoupon(id: number, reason: string): Promise<UserCouponRow> {
+  return http.post<UserCouponRow>(`/admin/coupon/grants/${id}/revoke`, { reason });
 }

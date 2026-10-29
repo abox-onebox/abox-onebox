@@ -2,9 +2,12 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsNumber,
+  MinLength,
   IsOptional,
   IsString,
   MaxLength,
@@ -12,13 +15,17 @@ import {
 } from 'class-validator';
 
 import type {
+  CouponGrantScope,
   CouponObtainedFrom,
   CouponValidityType,
+  GrantCouponBatchBodyDto,
   GrantCouponBodyDto,
+  RevokeCouponBodyDto,
   UpsertCouponDefBodyDto,
 } from '@abox/shared-types';
 
 const VALIDITY_TYPES: CouponValidityType[] = ['days', 'period'];
+const GRANT_SCOPES: CouponGrantScope[] = ['all', 'building', 'phones', 'userIds'];
 const OBTAINED_FROM: CouponObtainedFrom[] = [
   'referral',
   'compensation',
@@ -176,6 +183,135 @@ export class GrantCouponReqDto implements GrantCouponBodyDto {
   remark?: string | null;
 }
 
+/**
+ * 后台批量发放（2026-10-29）
+ *
+ * ⚠️ `dryRun: true` 与实发走**同一条路径**（见 service 头注）：端上先试算、
+ *    把命中人数摆给运营看、再让他按确认 —— 而不是端上自己估一个数。
+ *
+ * ⚠️ `phones` / `userIds` 上限 500：不是技术上限，是**误操作上限** ——
+ *    一次动作影响上千人时，「试算」这一步的意义会被稀释。
+ */
+export class GrantCouponBatchReqDto implements GrantCouponBatchBodyDto {
+  @ApiProperty({
+    description: '人群：all=全平台 / building=某栋楼 / phones=手机号清单 / userIds=用户 id 清单',
+    enum: GRANT_SCOPES,
+  })
+  @IsIn(GRANT_SCOPES)
+  scope!: CouponGrantScope;
+
+  @ApiPropertyOptional({ description: 'scope=building 时必填' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  buildingId?: number | null;
+
+  @ApiPropertyOptional({ description: 'scope=phones 时必填（最多 500 个）' })
+  @IsOptional()
+  @IsArray({ message: 'phones 需为手机号数组' })
+  @ArrayMaxSize(500, { message: '单次最多 500 个手机号' })
+  @IsString({ each: true, message: 'phones 中每一项都需为字符串' })
+  phones?: string[];
+
+  @ApiPropertyOptional({ description: 'scope=userIds 时必填（最多 500 个）' })
+  @IsOptional()
+  @IsArray({ message: 'userIds 需为用户 id 数组' })
+  @ArrayMaxSize(500, { message: '单次最多 500 个用户 id' })
+  @IsInt({ each: true, message: 'userIds 中每一项都需为整数' })
+  @Min(1, { each: true, message: 'userIds 中每一项都需为正整数' })
+  userIds?: number[];
+
+  @ApiPropertyOptional({ description: '关联券种定义 id（回写 issuedCount / 限量校验）' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  couponDefId?: number | null;
+
+  @ApiPropertyOptional({ description: '券名称（省略时取券种定义名）' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  name?: string;
+
+  @ApiProperty({ description: '面额（整数分，必填）', example: 500 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  faceValueFen!: number;
+
+  @ApiPropertyOptional({ description: '使用门槛（整数分）；0 = 无门槛', example: 0 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  thresholdFen?: number;
+
+  @ApiProperty({ description: '有效期类型：days / period', example: 'days' })
+  @IsIn(VALIDITY_TYPES)
+  validityType!: CouponValidityType;
+
+  @ApiPropertyOptional({ description: 'validity_type=days 时有效' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  validDays?: number | null;
+
+  @ApiPropertyOptional({ description: 'validity_type=period 时生效日 YYYY-MM-DD' })
+  @IsOptional()
+  @IsString()
+  validFrom?: string | null;
+
+  @ApiPropertyOptional({ description: 'validity_type=period 时失效日 YYYY-MM-DD' })
+  @IsOptional()
+  @IsString()
+  validTo?: string | null;
+
+  @ApiPropertyOptional({ description: '来源：referral/compensation/manual/system/activity' })
+  @IsOptional()
+  @IsIn(OBTAINED_FROM)
+  obtainedFrom?: CouponObtainedFrom;
+
+  @ApiProperty({
+    description: '发放原因（必填：进券备注与操作日志）',
+    example: '10-29 出餐延误补偿',
+  })
+  @IsString()
+  // ⚠️ 同单人发券：这是日后唯一能回答「为什么给这些人发钱」的信息，不允许一个字
+  @MinLength(2, { message: '发放原因至少 2 个字（日后要靠它回答为什么发这笔券）' })
+  @MaxLength(256)
+  remark!: string;
+
+  @ApiPropertyOptional({ description: 'true = 只试算不写库（返回预计命中人数等）' })
+  @IsOptional()
+  @IsBoolean()
+  dryRun?: boolean;
+
+  @ApiPropertyOptional({ description: '幂等键；同键 = 同批，已发过的用户自动跳过' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  idempotencyKey?: string | null;
+
+  @ApiPropertyOptional({ description: '是否排除黑名单用户（默认 true）' })
+  @IsOptional()
+  @IsBoolean()
+  excludeBlacklist?: boolean;
+}
+
+/** 后台回收代金券 */
+export class RevokeCouponReqDto implements RevokeCouponBodyDto {
+  @ApiProperty({
+    description: '回收原因（必填；进操作日志，不占业务表列）',
+    example: '误发，金额填错',
+  })
+  @IsString()
+  @MaxLength(256)
+  reason!: string;
+}
+
 /** 订单可用券查询（totalFen 由端上按单价×份数算出） */
 export class AvailableCouponsQueryDto {
   @ApiPropertyOptional({ description: '订单总额（整数分），用于判定门槛是否满足' })
@@ -201,6 +337,6 @@ export class GrantQueryDto {
   userId?: number;
 }
 
-// 仅用于避免某些 lint 误报未使用导入；数组上限校验留给业务层
-void ArrayMaxSize;
+// 数组上限校验已在 `GrantCouponBatchReqDto` 用 `ArrayMaxSize` 落实（此前这里只写
+// `void ArrayMaxSize` 是为了压 lint 未使用告警 —— 现在真的用上了，不再需要压）。
 void IsNumber;

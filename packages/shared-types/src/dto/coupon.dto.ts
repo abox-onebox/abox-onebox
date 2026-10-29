@@ -16,8 +16,15 @@
 /** 券有效期类型 */
 export type CouponValidityType = 'days' | 'period';
 
-/** 用户持有券状态 */
-export type UserCouponStatus = 'unused' | 'used' | 'expired';
+/**
+ * 用户持有券状态
+ *
+ * - `unused`  未使用（**过期不落库**：`valid_to` 已过仍存 `unused`，由查询期判定，见 service 头注）
+ * - `used`    已核销（下单时与建单同事务置位，取消/退款时由 `releaseForOrder` 还原）
+ * - `revoked` 已回收（2026-10-29 批量发券配套：**只有 `unused` 可撤**；已核销的券撤了
+ *              等于让订单白拿抵扣，故拒绝）
+ */
+export type UserCouponStatus = 'unused' | 'used' | 'revoked' | 'expired';
 
 /** 券来源（发放通道） */
 export type CouponObtainedFrom = 'referral' | 'compensation' | 'manual' | 'system' | 'activity';
@@ -67,6 +74,10 @@ export interface UserCouponResult {
   usedAt: string | null;
   /** 核销订单号；未核销为 null */
   orderNo: string | null;
+  /** 批量发放批次号；单人发券为 null（幂等锚，见 `GrantCouponBatchBodyDto`） */
+  grantBatchNo: string | null;
+  /** 回收时刻；未回收为 null */
+  revokedAt: string | null;
   createdAt: string;
 }
 
@@ -125,4 +136,86 @@ export interface AvailableCouponResult extends UserCouponResult {
   applicable: boolean;
   /** 作用于当前订单的实际抵扣额（分）= min(面额, 订单额)；不满足门槛时为 0 */
   discountFen: number;
+}
+
+/** 批量发放的人群选择方式 */
+export type CouponGrantScope =
+  /** 全平台用户（排除黑名单 / 已注销） */
+  | 'all'
+  /** 某栋楼的用户（`buildingId` 必填） */
+  | 'building'
+  /** 指定手机号清单（`phones` 必填；查无此人的号码在 `unmatchedPhones` 里回传） */
+  | 'phones'
+  /** 指定用户 id 清单（`userIds` 必填） */
+  | 'userIds';
+
+/**
+ * 后台批量发放（2026-10-29）
+ *
+ * ## 为什么必须先「试算」再「实发」
+ * 批量发券是**一次操作、几十张券**的动作，且券**发出即承诺**（用户端立刻看得见）。
+ * 误发的代价远大于单人发券：金额填错一个零、人群选错一栋楼，都是几十份既成事实。
+ * 故把「试算」做成**同一个端点的 `dryRun: true`** —— 前后端共用同一套人群解析与
+ * 幂等判据，不会出现「试算说 73 人、实发 80 人」这种两套算法各自漂移的问题。
+ *
+ * ## 幂等
+ * `idempotencyKey` 相同 = 同一批。后端据此派生批次号，重放时「这一批已发过谁」
+ * 会被跳过并在 `skippedCount` 里如实回传 —— 双击提交不会发出两批。
+ */
+export interface GrantCouponBatchBodyDto {
+  scope: CouponGrantScope;
+  /** scope=building 时必填 */
+  buildingId?: number | null;
+  /** scope=phones 时必填（最多 500 个） */
+  phones?: string[];
+  /** scope=userIds 时必填（最多 500 个） */
+  userIds?: number[];
+  /** 关联券种定义 id（回写 issuedCount / 限量校验）；纯补偿券可省略 */
+  couponDefId?: number | null;
+  /** 券名称（省略时取券种定义名） */
+  name?: string;
+  /** 面额（分，必填） */
+  faceValueFen: number;
+  /** 使用门槛（分）；0 = 无门槛 */
+  thresholdFen?: number;
+  validityType: CouponValidityType;
+  validDays?: number | null;
+  validFrom?: string | null;
+  validTo?: string | null;
+  obtainedFrom?: CouponObtainedFrom;
+  /** 发放原因（必填，进券的 remark 与操作日志） */
+  remark?: string | null;
+  /** `true` = 只试算、不写库（返回预计命中数等，供端上二次确认） */
+  dryRun?: boolean;
+  /** 幂等键；同一键重复提交视为同一批，已发过的用户自动跳过 */
+  idempotencyKey?: string | null;
+  /** 是否排除黑名单用户（默认 `true`） */
+  excludeBlacklist?: boolean;
+}
+
+/** 批量发放结果（试算与实发同构，端上只按 `dryRun` 区分展示文案） */
+export interface CouponGrantBatchResult {
+  dryRun: boolean;
+  /** 批次号（试算时为「即将使用的」批次号，实发后可用它追溯这一批） */
+  batchNo: string;
+  /** 本次实际（或预计）发放张数 */
+  grantedCount: number;
+  /** 因「同一批次已发过」而跳过的张数（幂等命中） */
+  skippedCount: number;
+  /** 本次发放面额合计（分） */
+  totalFaceValueFen: number;
+  /** 被排除的人数（黑名单 / 已注销），试算也回传 —— 让运营知道口径 */
+  excludedCount: number;
+  /** `phones` 人群里查无此人的号码（不静默丢弃，如实回传） */
+  unmatchedPhones: string[];
+  /** 命中用户样例（脱敏手机号，最多 5 个），供运营肉眼核对人群有没有选错 */
+  samplePhones: string[];
+  /** 实发时回传的券码（最多 20 个，避免响应过大） */
+  codes: string[];
+}
+
+/** 后台回收代金券 */
+export interface RevokeCouponBodyDto {
+  /** 回收原因（必填，进操作日志；不占业务表列） */
+  reason: string;
 }

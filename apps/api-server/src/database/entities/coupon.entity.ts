@@ -101,6 +101,11 @@ export class CouponDef {
  */
 @Entity('ab_user_coupon')
 @Index('idx_user_coupon_user_status', ['userId', 'status'])
+// ⭐ `uk_user_coupon_batch_user` 是**批量发放的幂等锚**：同一批次同一用户只允许一张券。
+//    MySQL 唯一索引允许多个 NULL ⇒ 单人发券（grantBatchNo 为 NULL）不受此约束。
+//    索引名 / 列 / 列顺序须与迁移 `1700000000021-coupon-batch.ts` 逐项一致（`index:parity`）。
+@Index('idx_user_coupon_batch', ['grantBatchNo'])
+@Index('uk_user_coupon_batch_user', ['grantBatchNo', 'userId'], { unique: true })
 export class UserCoupon {
   @PkColumn()
   id!: number;
@@ -150,7 +155,7 @@ export class UserCoupon {
     type: 'varchar',
     length: 16,
     default: 'unused',
-    comment: 'unused/used/expired（expired 为查询期判定，落库仍 unused）',
+    comment: 'unused/used/revoked（expired 为查询期判定，落库仍 unused；revoked=已回收）',
   })
   status!: string;
 
@@ -171,6 +176,28 @@ export class UserCoupon {
 
   @Column({ type: 'varchar', length: 256, nullable: true, comment: '发放备注（补偿原因等）' })
   remark?: string | null;
+
+  /**
+   * 批量发放批次号（同一批共用；单人发券为 `NULL`）
+   *
+   * 两个用途：① **幂等** —— 重复提交同一批次时按它查出「已发过谁」并跳过；
+   * ② **追溯** —— 「10-29 那批补偿券发给谁了」。
+   */
+  @Column({ name: 'grant_batch_no', type: 'varchar', length: 32, nullable: true })
+  grantBatchNo?: string | null;
+
+  /** 回收时刻（`NULL` = 未回收）；行保留，只打标记（审计口径同 `deleted_at`） */
+  @Column({ name: 'revoked_at', type: 'datetime', precision: 3, nullable: true })
+  revokedAt?: Date | null;
+
+  /**
+   * 回收操作人 `ab_admin_user.id`
+   *
+   * ⚠️ 回收**原因**不占列 —— 由 `@OperationLog` 的 `request_data` 落操作日志，
+   *    不在这里冗余第二份审计信息。
+   */
+  @Column({ name: 'revoked_by', type: 'bigint', transformer: bigintTransformer, nullable: true })
+  revokedBy?: number | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
   createdAt!: Date;

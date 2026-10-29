@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 
-import { Roles } from '../../common/decorators/auth.decorator';
+import { CurrentAdmin, Roles } from '../../common/decorators/auth.decorator';
 import { OperationLog } from '../../common/decorators/operation-log.decorator';
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { CouponService } from './coupon.service';
@@ -21,6 +21,8 @@ import {
   UpsertCouponDefReqDto,
   UpdateCouponDefReqDto,
   GrantCouponReqDto,
+  GrantCouponBatchReqDto,
+  RevokeCouponReqDto,
   GrantQueryDto,
 } from './dto/coupon.dto';
 
@@ -114,5 +116,68 @@ export class CouponAdminController {
       obtainedFrom: q.obtainedFrom,
       userId: q.userId,
     });
+  }
+
+  // ------------------------------------------------------------ 批量发放 / 回收
+
+  /**
+   * 批量发放（2026-10-29）
+   *
+   * ⭐ **先试算、后实发**：`dryRun: true` 走与实发完全相同的路径（人群解析 / 幂等 /
+   *    限量校验都跑），只差最后写库一步。端上把「命中多少人、跳过多少、未匹配哪些号码」
+   *    摆出来给运营看，**看完再按确认** —— 批量发券是「一次几十张、发出即承诺」的动作，
+   *    没有这一步，金额填错一个零就是几十份既成事实。
+   *
+   * ⚠️ 幂等：带同一个 `idempotencyKey` 重复提交 = 同一批，已发过的用户自动跳过
+   *    （真正的最后一道闸是数据库唯一索引 `uk_user_coupon_batch_user`）。
+   */
+  @Post('grant-batch')
+  @OperationLog({ module: 'coupon', action: '批量发放代金券' })
+  @ApiOperation({
+    summary: '批量发放（dryRun=true 仅试算；带 idempotencyKey 可重复提交而不重发）',
+    description:
+      '人群：all / building / phones / userIds。试算与实发同路径，结果含命中数、跳过数、未匹配号码、脱敏样例。',
+  })
+  grantBatch(@Body() dto: GrantCouponBatchReqDto) {
+    return this.couponService.grantBatch({
+      scope: dto.scope,
+      buildingId: dto.buildingId ?? null,
+      phones: dto.phones,
+      userIds: dto.userIds,
+      couponDefId: dto.couponDefId ?? null,
+      name: dto.name,
+      faceValueFen: dto.faceValueFen,
+      thresholdFen: dto.thresholdFen ?? 0,
+      validityType: dto.validityType,
+      validDays: dto.validDays ?? null,
+      validFrom: dto.validFrom ?? null,
+      validTo: dto.validTo ?? null,
+      obtainedFrom: dto.obtainedFrom ?? 'manual',
+      remark: dto.remark,
+      dryRun: dto.dryRun === true,
+      idempotencyKey: dto.idempotencyKey ?? null,
+      excludeBlacklist: dto.excludeBlacklist !== false,
+    });
+  }
+
+  /**
+   * 回收一张券（批量发券的兜底 · 2026-10-29）
+   *
+   * ⭐ 只有**未使用**的券可撤（判据纯函数 `canRevoke`）：已核销的券已被订单用作抵扣，
+   *    撤掉等于让那笔订单白拿优惠。已回收的券重复点击 → 幂等返回成功。
+   */
+  @Post('grants/:id/revoke')
+  @OperationLog({ module: 'coupon', action: '回收代金券' })
+  @ApiOperation({
+    summary: '回收代金券（仅未使用的可撤，不可撤销已核销的券）',
+    description:
+      '回收原因进操作日志（不占业务表列）；券行保留并置 revoked，用户端显示为「已回收」。',
+  })
+  revoke(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RevokeCouponReqDto,
+    @CurrentAdmin('sub') operatorId: number,
+  ) {
+    return this.couponService.revokeCoupon(id, operatorId);
   }
 }
