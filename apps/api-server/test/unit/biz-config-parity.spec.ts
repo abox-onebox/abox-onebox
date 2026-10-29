@@ -54,6 +54,9 @@ const ALIGNED = [
   { configKey: 'building.suspend_force_max_count', configValue: '20' },
   { configKey: 'order.pay_timeout_minutes', configValue: '30' },
   { configKey: 'settlement.supplier_total_default', configValue: '14.0' },
+  // SEED 键（缺了要补、对账要报红）—— ⚠️ baseline 每新增一个键都必须同步加到本夹具，
+  // 否则「定稿已落地」这一条就名不副实（各 client — 2026-10-29 加 refund.* 时踩到）
+  { configKey: 'refund.completed_window_hours', configValue: '24' },
 ];
 
 describe('ab_config 定稿值对账门禁', () => {
@@ -75,7 +78,12 @@ describe('ab_config 定稿值对账门禁', () => {
   });
 
   it('【必不报】拍板「不写库」的键缺失 → 不算偏差', () => {
-    const rows = [{ configKey: 'commission.min_withdraw', configValue: '0.00' }];
+    // ⚠️ 这里必须放**全部 SEED 键**（缺一個就会真的报红）—— fallback-only 那三个刻意不给。
+    //    新增 SEED 键时同样要同步到这里（与上方 ALIGNED 同理）。
+    const rows = [
+      { configKey: 'commission.min_withdraw', configValue: '0.00' },
+      { configKey: 'refund.completed_window_hours', configValue: '24' },
+    ];
     expect(run(PARITY, ['--rows', rowsFile('fallback.json', rows)]).code).toBe(0);
   });
 
@@ -101,7 +109,10 @@ describe('ab_config 定稿值建库脚本（幂等 · 默认 dry-run）', () => 
     const r = run(SEED, ['--rows', rowsFile('empty.json', [])]);
     expect(r.out).toContain('[dry-run] 未写库');
     // ⭐ 缺失的 seed 键会被列出，但**没有**任何写库动作（本次不连库，写了也无从写）
-    expect(r.out).toContain('INSERT 缺失键 1 个');
+    // ⚠️ 这个数字 = `BIZ_CONFIG_BASELINE` 里 `policy === 'seed'` 的键数（当前 2：
+    //    commission.min_withdraw + refund.completed_window_hours）。
+    //    新增 SEED 键时必须同步改这里 —— 否则「默认是 dry-run」这条保障会以静默方式失效。
+    expect(r.out).toContain('INSERT 缺失键 2 个');
   });
 
   it('--emit-sql 产出的 SQL 是「只补缺失」形态，不含覆盖式 UPSERT', () => {

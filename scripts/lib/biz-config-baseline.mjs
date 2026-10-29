@@ -106,6 +106,28 @@ export const BIZ_CONFIG_BASELINE = Object.freeze([
       '＋ docs/decisions/OPEN-DECISIONS.md:13（2026-10-27 拍板：取 14.0、不写库）',
     note: '供价缺省（元）。履约成本计算**不含**这一项（见《接口规范》§6.6）。',
   },
+
+  // ── H9 · 2026-10-29 补登记（此前**唯一**一条建了 feature 却没進 baseline 的配置键）──
+  {
+    key: 'refund.completed_window_hours',
+    value: '24',
+    policy: POLICY.SEED,
+    source:
+      '2026-10-29 用户拍板「完成后 24 小时内可退」（本轮决策，出处＝当日留痕 §二十）' +
+      '＋ 《ABox_提审前最后一公里复核_2026-10-29.html》§二指出该键生产未落库、baseline 未登记',
+    // 长论证留在**注释**里：它会进 `ab_config.description`（varchar(256)），
+    // 2026-10-29 首次登记写成 300+ 字 ⇒ `--apply` 直接 `Data too long`，
+    // 而 dry-run 当时还不报错（已补预检，见 seed-biz-config.mjs 的 checkNoteFits）。
+    //
+    // 为什么必须是 `SEED` 而不是 `FALLBACK_ONLY`：
+    //   缺键时代码兜底 = **0 = 不限**（biz-config.service.ts:267），H9 要防的
+    //   「几个月后突然冒出一笔欠款把团长余额扣成负数」**依然敞开**；
+    //   且「不限」与上一版行为一致 ⇒ 没配就上线，等于 H9 白做。
+    //   故以拍板值 24 为定稿，让「没落地」直接报红。
+    // 消费点：refund.service.ts:200 读 → :208 抛 REFUND_WINDOW_EXPIRED
+    //   （真源判据 common/utils/refund-window.ts；口径登记 config.specs.ts:290）。
+    note: '订单完成后可退时限（小时）。超时后自助/代退入口拒（40027），改走 D11 强制退款。',
+  },
 ]);
 
 /**
@@ -194,7 +216,5 @@ export function diffBizConfig(baseline = BIZ_CONFIG_BASELINE, rows = []) {
 
 /** 是否存在需要报警的偏差（**纯函数**） */
 export function hasViolation(diff) {
-  return (
-    diff.drifting.some((d) => d.violation) || diff.missing.some((m) => m.violation)
-  );
+  return diff.drifting.some((d) => d.violation) || diff.missing.some((m) => m.violation);
 }

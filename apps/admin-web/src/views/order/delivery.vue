@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 
+import DeliveryProofDialog from './components/delivery-proof-dialog.vue';
+
 import {
   advanceDeliveryStatus,
   fetchDeliveries,
@@ -157,6 +159,21 @@ async function submit() {
 
 // -------------------------------------------------------- 推进履约（D63）
 const advVisible = ref(false);
+
+// -------------------------------------------------------- Q3 送达凭证
+const proofVisible = ref(false);
+const proofTarget = ref<DeliveryRow | null>(null);
+/** 弹窗副标题（楼群 + 发货日）—— 点错单时能立刻看出来 */
+const proofSubtitle = computed(() => {
+  const r = proofTarget.value;
+  if (!r) return '';
+  return `${r.buildingGroupName ?? `楼群 #${r.buildingGroupId}`} · 发货日 ${r.mealDate}`;
+});
+
+function openProof(row: DeliveryRow) {
+  proofTarget.value = row;
+  proofVisible.value = true;
+}
 const advancing = ref(false);
 const advRow = ref<DeliveryRow | null>(null);
 const advTo = ref('');
@@ -367,6 +384,7 @@ onMounted(load);
         </el-table-column>
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
+            <el-button link type="info" @click="openProof(row as DeliveryRow)">凭证</el-button>
             <el-button link type="primary" @click="openEdit(row as DeliveryRow)">修正</el-button>
             <el-tooltip
               :disabled="!!nextOf((row as DeliveryRow).status)"
@@ -509,6 +527,13 @@ onMounted(load);
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- Q3 送达凭证：后台代传 / 查看 / 撤销（团长端未接入，见 utils 说明） -->
+    <DeliveryProofDialog
+      v-model="proofVisible"
+      :delivery-id="proofTarget?.id ?? null"
+      :subtitle="proofSubtitle"
+    />
   </div>
 </template>
 

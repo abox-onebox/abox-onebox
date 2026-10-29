@@ -165,3 +165,75 @@ export interface DeliveryAdvanceResult {
 
 export const advanceDeliveryStatus = (id: number, body: DeliveryAdvanceBody) =>
   http.patch<DeliveryAdvanceResult>(`/admin/deliveries/${id}/status`, body);
+
+// ============================================================
+// Q3 送达凭证（2026-10-29 补 —— 此前表与接口已上线、两端零引用）
+// ============================================================
+//
+// ⚠️ 为什么这时才补：此前 `ab_delivery_proof` 有表有接口有单测，但没有一处 UI 调用它
+//    ⇒ 凭证永远不会产生，举证目的落空（《提审前最后一公里复核》把它钉了出来）。
+//
+// ⛔ 端上**不维护** `kind` 的中文映射 —— 服务端下发 `kindText`
+//    （与 `statusText` 同纪律：两套映射迟早会说不一样的话）。
+//
+// ⛔ scope 是三态**字符串**（`alive`/`deleted`/`all`），不是布尔 ——
+//    query 里的布尔串经转型会把 `false` 变成 `true`，是「传了 false 却筛出全部」的经典陷阱。
+
+/** 一张凭证（字段与服务端 `toProofItem()` 逐项对齐） */
+export interface DeliveryProofItem {
+  id: number;
+  deliveryRecordId: number;
+  url: string;
+  kind: string;
+  /** 类型中文（服务端下发） */
+  kindText: string;
+  remark: string | null;
+  uploadedBy: number | null;
+  createdAt: string | null;
+  /** 已撤销时刻（`null` = 有效） */
+  revokedAt: string | null;
+}
+
+export interface DeliveryProofListResult {
+  deliveryRecordId: number;
+  scope: string;
+  list: DeliveryProofItem[];
+  count: number;
+  /** 该单名下**有效**凭证张数（即使 `scope` 不是 alive 也真实回查） */
+  aliveCount: number;
+  note: string;
+}
+
+/** `kind` 三选一；非法值服务端静默取缺省 `photo`（不嘲讽拼错的枚举值） */
+export interface DeliveryProofCreateBody {
+  url: string;
+  kind?: 'photo' | 'sign' | 'other';
+  remark?: string;
+}
+
+export const fetchDeliveryProofs = (
+  deliveryId: number,
+  scope: 'alive' | 'deleted' | 'all' = 'alive',
+) => http.get<DeliveryProofListResult>(`/admin/deliveries/${deliveryId}/proofs`, { scope });
+
+/**
+ * 先走通用上传拿到 url —— 上传是**通用能力**（商品图 / 证照都走它），
+ * 「这张图属于哪张配送单」才是配送域的事（详见 media.controller.ts 的设计说明）。
+ *
+ * 注意：**不需要**手动设 Content-Type —— axios 遇到 FormData 会自动走 multipart，
+ * 且 `request.ts` 的幂等键生成器对 FormData 返回 null（天然可重放）。
+ */
+export const uploadDeliveryMedia = (file: File) => {
+  const form = new FormData();
+  form.append('file', file);
+  return http.post<{ url: string }>('/admin/uploads', form);
+};
+
+export const addDeliveryProof = (deliveryId: number, body: DeliveryProofCreateBody) =>
+  http.post<DeliveryProofItem>(`/admin/deliveries/${deliveryId}/proofs`, body);
+
+/** 软删 —— 行仍保留（「曾经存在、被谁撤了」本身是审计事实） */
+export const revokeDeliveryProof = (deliveryId: number, proofId: number) =>
+  http.delete<{ id: number; deliveryRecordId: number }>(
+    `/admin/deliveries/${deliveryId}/proofs/${proofId}`,
+  );
