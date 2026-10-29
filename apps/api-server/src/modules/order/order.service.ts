@@ -446,6 +446,41 @@ export class OrderService {
     return toFen(order.payAmount);
   }
 
+  /**
+   * P3 · 列出**滞留**的待支付订单（供支付查单补齐扫描）
+   *
+   * 「滞留」= 仍是 `pending_pay` 且创建时间**早于** `deadline`。
+   * 之所以由调用方传 `deadline` 而不是在本服务里算「几分钟前」：
+   * 宽限期是**支付侧**的口径（回调一般秒级到，超过宽限才值得查微信），
+   * 放在订单域就等于让订单服务替支付策略做决定。
+   *
+   * ⚠️ 只返回补齐所需的最小字段（**不含**任何金额写入能力）——
+   *    补齐动作仍走 `markPaid()`，本方法**只读**。
+   *
+   * @param deadline 创建时间早于该时刻的才算滞留
+   * @param limit    单次最多扫多少单（防止一次捞爆；跑批每轮只会推进一小批）
+   */
+  async listStalePendingPay(
+    deadline: Date,
+    limit = 200,
+  ): Promise<Array<{ id: number; orderNo: string; payAmountFen: number; createdAt: Date | null }>> {
+    const rows = await this.orderRepo
+      .createQueryBuilder('o')
+      .select(['o.id', 'o.orderNo', 'o.payAmount', 'o.createdAt'])
+      .where('o.status = :st', { st: OrderStatus.PENDING_PAY })
+      .andWhere('o.createdAt <= :deadline', { deadline })
+      .orderBy('o.id', 'ASC')
+      .take(limit)
+      .getMany();
+
+    return rows.map((o) => ({
+      id: Number(o.id),
+      orderNo: o.orderNo,
+      payAmountFen: toFen(o.payAmount),
+      createdAt: o.createdAt ?? null,
+    }));
+  }
+
   // ==========================================================================
   // U9 · 订单列表
   // ==========================================================================

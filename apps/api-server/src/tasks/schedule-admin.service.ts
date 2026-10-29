@@ -11,6 +11,7 @@ import { CommissionSettleTask } from './commission-settle.task';
 import { CutoffTask } from './cutoff.task';
 import { DeliveryGenerateTask } from './delivery-generate.task';
 import { LeaderExpireTask } from './leader-expire.task';
+import { PayReconcileTask } from './pay-reconcile.task';
 import { MealPublishTask } from './meal-publish.task';
 import { ReconciliationTask } from './reconciliation.task';
 import {
@@ -56,8 +57,15 @@ export interface ScheduleRow {
    *    发现不了）。有了本字段，`e2e` 可以直接断言「8 个任务全部注册且时刻正确」。
    */
   registeredCron: string | null;
-  /** 生效时刻（`HH:mm`；由生效时间轴给出，与 `registeredCron` 同源） */
-  effectiveAt: string;
+  /**
+   * 生效时刻（`HH:mm`；由生效时间轴给出，与 `registeredCron` 同源）
+   *
+   * ⚠️ 高频任务（`pay-reconcile`）**没有**生效时刻 —— 它不挂在时间轴上
+   *    （每 30 分钟一次，不是「每天某时刻」）。故为 `string | null`：
+   *    **不要**给它编一个假时刻（如 `00:00`）—— 那会让后台页面显示一个
+   *    与实际触发规律不符的时间，比显示「—」更误导。
+   */
+  effectiveAt: string | null;
 }
 
 export interface ScheduleRunResult {
@@ -104,6 +112,7 @@ export class ScheduleAdminService {
     supplierShare: SupplierShareTask,
     reconciliation: ReconciliationTask,
     leaderExpire: LeaderExpireTask,
+    payReconcile: PayReconcileTask,
   ) {
     this.runners = new Map<TaskName, (date: string) => Promise<unknown>>([
       ['meal-publish', (d) => mealPublish.runOnce(d)],
@@ -115,6 +124,8 @@ export class ScheduleAdminService {
       ['supplier-share', (d) => supplierShare.runOnce(d)],
       ['reconciliation', (d) => reconciliation.runOnce(d)],
       ['leader-expire', (d) => leaderExpire.runOnce(d)],
+      // P3（2026-10-29）：`pay-reconcile` 与出餐日无关，`d` 会被 `runOnce` 显式忽略
+      ['pay-reconcile', (d) => payReconcile.runOnce(d)],
     ]);
   }
 
@@ -148,7 +159,7 @@ export class ScheduleAdminService {
         task,
         cron: s.cron,
         registeredCron,
-        effectiveAt: formatTimeOfDay(timeline[s.timelineKey]),
+        effectiveAt: s.timelineKey ? formatTimeOfDay(timeline[s.timelineKey]) : null,
         timeZone: s.timeZone,
         dateKind: kind,
         dateKindLabel: DATE_KIND_LABEL[kind ?? 'none'],

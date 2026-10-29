@@ -12,9 +12,12 @@ import {
   PayNotifyResult,
   PrepayInput,
   PrepayResult,
+  QueryOrderInput,
+  QueryOrderResult,
   RefundInput,
   RefundResult,
   WxPayProvider,
+  WxTradeState,
 } from './wx-pay.provider';
 
 /**
@@ -223,7 +226,90 @@ export class RealWxPayProvider extends WxPayProvider {
   }
 
   // ==========================================================================
-  // ③ 回调验签与解析
+  // ③ 查单（P3 · 回调丢失时的补齐手段）
+  // ==========================================================================
+
+  /**
+   * 按商户订单号查微信侧真实状态
+   *
+   * ## 三种结果，三种处理（**不可合并**）
+   * | HTTP / 响应 | 返回 | 调用方该做什么 |
+   * |---|---|---|
+   * | 200 且 `trade_state` 有值 | `found:true` + 真实状态 | 按 `paid` 决定是否补入账 |
+   * | 404（微信明确「订单不存在」） | `found:false` | 记一笔「订单号可能没送到微信」，交人工 |
+   * | 其他非 2xx / 网络异常 | **抛 `PAY_QUERY_FAILED`** | **不动单**，等下次任务重试 |
+   *
+   * ⚠️ 第三行是本方法的**命门**：把「通道挂了」返回成 `found:false`，
+   *    上层若据此关单，就是「钱已收、单被关」—— 那是资金差错，不是可用性问题。
+   *
+   * ⚠️ `paid` **只认 `SUCCESS`**：`REFUND` 表示付过又退了，此时本地还是
+   *    `pending_pay`，补入账会凭空造出一笔已支付订单（且已退的钱没有对应退款单）。
+   */
+  async queryOrder(input: QueryOrderInput): Promise<QueryOrderResult> {
+    let client: Pay;
+    try {
+      client = this.ensureClient();
+    } catch (e) {
+      throw new BizException(ErrorCode.PAY_QUERY_FAILED, (e as Error).message);
+    }
+
+    let res;
+    try {
+      res = await client.query({ out_trade_no: input.orderNo });
+    } catch (e) {
+      // SDK 对网络层异常直接抛 —— 必须翻译成 BizException，且**不能**当成「没这笔单」
+      this.logger.error(
+        `[real] 查单网络/SDK 异常 orderNo=${input.orderNo}：${(e as Error).message}`,
+      );
+      throw new BizException(ErrorCode.PAY_QUERY_FAILED);
+    }
+
+    if (res.status === 404) {
+      this.logger.warn(
+        `[real] 查单：微信侧无此订单 orderNo=${input.orderNo}（订单号可能未送达微信）`,
+      );
+      return { found: false, tradeState: 'UNKNOWN', paid: false, raw: res.data };
+    }
+
+    if (res.status < 200 || res.status >= 300) {
+      const detail = res.errRaw ?? res.error ?? res.data;
+      this.logger.error(
+        `[real] 查单失败 orderNo=${input.orderNo} HTTP=${res.status} detail=${JSON.stringify(detail)?.slice(0, 300)}`,
+      );
+      throw new BizException(ErrorCode.PAY_QUERY_FAILED);
+    }
+
+    const d = (res.data ?? {}) as {
+      trade_state?: string;
+      transaction_id?: string;
+      amount?: { total?: number; payer_total?: number };
+    };
+
+    if (!d.trade_state) {
+      // 2xx 却没有 trade_state：形同「拿到了回执但看不懂」，按 UNKNOWN 处理而非 paid
+      this.logger.error(
+        `[real] 查单响应缺少 trade_state orderNo=${input.orderNo} data=${JSON.stringify(res.data)?.slice(0, 200)}`,
+      );
+      return { found: false, tradeState: 'UNKNOWN', paid: false, raw: res.data };
+    }
+
+    const tradeState = String(d.trade_state).toUpperCase() as WxTradeState;
+    this.logger.log(
+      `[real] 查单 orderNo=${input.orderNo} trade_state=${tradeState} transactionId=${d.transaction_id ?? '-'}`,
+    );
+
+    return {
+      found: true,
+      tradeState,
+      paid: tradeState === 'SUCCESS',
+      transactionId: d.transaction_id,
+      amountFen: d.amount?.total,
+      raw: res.data,
+    };
+  }
+
+  // ==========================================================================
+  // ④ 回调验签与解析
   // ==========================================================================
 
   async parseNotify(headers: Record<string, unknown>, rawBody: string): Promise<PayNotifyResult> {

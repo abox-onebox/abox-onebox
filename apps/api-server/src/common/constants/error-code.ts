@@ -429,6 +429,18 @@ export enum ErrorCode {
    * 故 `daily_count=1` 时永远先看到本码 —— 验收 `40024` 需临时把 `daily_count` 调大。
    */
   WITHDRAW_DAILY_DUPLICATED = 40025,
+  /**
+   * 扩展（P3 · 2026-10-29）：向微信「查单」失败（通道不可用 / 验签 / 网络 / 超时）
+   *
+   * ⚠️ 刻意**不复用** `40001 PAY_CREATE_FAILED`：后者是「下单没下出去」，
+   *    本码是「**已经下过单、现在查不到它的真实状态**」—— 前者用户重试即可，
+   *    后者意味着这笔钱**可能已经收了而本地还挂着未支付**，是**资金差错**信号，
+   *    必须让运维一眼看出「该去查单补齐，不是让用户重试」。
+   *
+   * ⚠️ 与 `40009 PAY_NOT_FOUND` 的区别：40009 = 微信**明确回答**「没有这笔单」
+   *    （是确定结论）；本码 = **根本没拿到回答**（是不确定，必须重试）。
+   */
+  PAY_QUERY_FAILED = 40026,
 
   /** ---- 5xxxx 财务 / 结算 / 供应商 ---- */
   SUPPLIER_NOT_QUALIFIED = 50001,
@@ -641,6 +653,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.COUPON_GRANT_PARAM_INVALID]: '发券参数不完整，本次未发放（请联系技术核对）',
   [ErrorCode.WITHDRAW_DAILY_LIMIT_EXCEEDED]: '今日提现额度已用完，请明日再试（单日上限见运营配置）',
   [ErrorCode.WITHDRAW_DAILY_DUPLICATED]: '今日已有一笔提现在处理中，请等这笔完成后再申请',
+  [ErrorCode.PAY_QUERY_FAILED]: '支付状态查询失败，请稍后重试或联系客服',
   [ErrorCode.SUPPLIER_NOT_QUALIFIED]: '供应商资质未通过审核',
   [ErrorCode.DISTRIBUTION_CENTER_LOCKED]: '集散中心配置不可删除（存在历史结算）',
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',

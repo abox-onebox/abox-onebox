@@ -6,6 +6,7 @@ import { DeliveryModule } from '../modules/delivery/delivery.module';
 import { FinanceModule } from '../modules/finance/finance.module';
 import { MealModule } from '../modules/meal/meal.module';
 import { OrderModule } from '../modules/order/order.module';
+import { PaymentModule } from '../modules/payment/payment.module';
 import { SupplierModule } from '../modules/supplier/supplier.module';
 import { TeamLeaderModule } from '../modules/team-leader/team-leader.module';
 import { ScheduleService } from './schedule.service';
@@ -20,6 +21,7 @@ import { CommissionSettleTask } from './commission-settle.task';
 import { SupplierShareTask } from './supplier-share.task';
 import { ReconciliationTask } from './reconciliation.task';
 import { LeaderExpireTask } from './leader-expire.task';
+import { PayReconcileTask } from './pay-reconcile.task';
 
 /**
  * 定时任务模块（时间点与目标日期以 `schedule.service.ts` 的 `TASK_SCHEDULES` 为准）
@@ -31,7 +33,7 @@ import { LeaderExpireTask } from './leader-expire.task';
  *    它从 `TASK_SCHEDULES` 推导。这是对 M4 头号陷阱「同刻不同日」的防御
  *    （`meal-publish` 与 `auto-confirm` 同刻触发，却分属明日 / 今日）。
  *
- * ## 委托关系（M4-2 后 8 个任务全部实装）
+ * ## 委托关系（M4-2 后 8 个任务全部实装；P3 于 2026-10-29 增第 9 个高频任务）
  * | 任务 | 委托目标 |
  * | --- | --- |
  * | `meal-publish` | `MealModule.MealAdminService.publishByDate()` |
@@ -42,6 +44,7 @@ import { LeaderExpireTask } from './leader-expire.task';
  * | `supplier-share` | `FinanceModule.SupplierShareService.runDaily()` |
  * | `reconciliation` | `FinanceModule.ReconciliationService.reconcile()`（不入账，只读 + 不平告警） |
  * | `leader-expire` | `TeamLeaderModule.LeaderPromotionService.expireTrainees()` |
+ * | `pay-reconcile` | `PaymentModule.PayReconcileService.reconcile()`（每 30 分钟 · 高频） |
  *
  * ⚠️ 依赖方向全部**单向**（`TasksModule → 各业务模块`），业务模块不反向依赖本模块，
  *    因此不存在循环。
@@ -69,6 +72,9 @@ import { LeaderExpireTask } from './leader-expire.task';
     OrderModule,
     SupplierModule,
     DeliveryModule,
+    // P3（2026-10-29）：`pay-reconcile` 跑批要用 `PayReconcileService`
+    // （PaymentModule 已导出它）。依赖方向仍单向：Tasks → Payment → Order，无环。
+    PaymentModule,
   ],
   controllers: [ScheduleAdminController],
   providers: [
@@ -83,6 +89,7 @@ import { LeaderExpireTask } from './leader-expire.task';
     SupplierShareTask,
     ReconciliationTask,
     LeaderExpireTask,
+    PayReconcileTask,
   ],
 })
 export class TasksModule {}

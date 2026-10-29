@@ -26,12 +26,12 @@ import { TZ } from '../common/utils/tz';
  * 「套餐提前一天上架」或「订单被提前确认」。
  *
  * ## 所以本文件提供两件东西
- * 1. **`TASK_SCHEDULES` 声明表** —— 8 个任务一张表写清「几点触发」+「动哪一天」，
+ * 1. **`TASK_SCHEDULES` 声明表** —— 9 个任务一张表写清「几点触发」+「动哪一天」，
  *    是调度口径的**唯一真相**。任务从表里读，不各自硬编码。
  * 2. **`targetDate(kind)` 语义单点** —— 把 `today` / `tomorrow` / `yesterday`
  *    三种语义收在一处，杜绝各任务自写 `addDays(todayBj(), ±1)` 时正负号写错。
  *
- * ## 8 个任务的目标日期一览（改代码前先看这张表）
+ * ## 9 个任务的目标日期一览（改代码前先看这张表）
  * | 任务 | 触发 | 目标日期 | 理由 |
  * | --- | --- | --- | --- |
  * | `meal-publish` | T-1 14:00 | **明日** | D 日 14:00 开的是 D+1 的团（D+1 的开团时刻正是 D 日 14:00） |
@@ -42,6 +42,7 @@ import { TZ } from '../common/utils/tz';
  * | `supplier-share` | T+1 02:10 | **昨日** | 应付对象是**已发生**的交付 |
  * | `reconciliation` | 04:00 | **昨日** | 核**完整自然日**；04:00 对「今日」只能核 4 小时切片 |
  * | `leader-expire` | 03:00 | `null` | 全量扫描，与出餐日无关 |
+ * | `pay-reconcile` | 每 30 分钟 | `null` | **高频**：扫的是「此刻」滞留的待支付订单，与出餐日无关 |
  *
  * ⚠️ `cutoff` / `delivery-generate` / `auto-confirm` 三个任务的 cron 落在**同一个
  *    自然日内**（00:00 / 00:30 / 14:00），但它们的「今日」指的都是该出餐日 T ——
@@ -180,7 +181,9 @@ export type TaskName =
   | 'commission-settle'
   | 'supplier-share'
   | 'reconciliation'
-  | 'leader-expire';
+  | 'leader-expire'
+  /** P3（2026-10-29）：支付查单补齐 —— **高频**任务，不走时间轴（见 `TASK_SCHEDULES` 该条注释） */
+  | 'pay-reconcile';
 
 export interface TaskSchedule {
   /**
@@ -194,10 +197,15 @@ export interface TaskSchedule {
   /**
    * 该任务的触发时刻来自时间轴的哪一项（**唯一真相的挂钩点**）。
    *
-   * 8 个任务全部有值 —— 即「跑批几点触发」全部由 `order-timeline.ts` 决定，
+   * 8 个「每日型」任务全部有值 —— 即「跑批几点触发」全部由 `order-timeline.ts` 决定，
    * 本文件不再出现任何硬编码时刻（缺陷 #49 的修法）。
+   *
+   * ⚠️ **`null` = 高频任务，不走时间轴**（目前仅 `pay-reconcile`）：
+   *    `cronOf()` 只能把「时刻」翻译成「每天这个时刻」，表达不了「每 30 分钟」；
+   *    而支付回调是**秒级事件**，补齐按天跑毫无意义（订单早被截单取消了）。
+   *    此类任务直接读 `cron` 字段。
    */
-  timelineKey: keyof BusinessTimeline;
+  timelineKey: keyof BusinessTimeline | null;
   timeZone: string;
   /** 操作的目标日期；`null` = 与出餐日无关（全量扫描型任务） */
   dateKind: TaskDateKind | null;
@@ -205,8 +213,14 @@ export interface TaskSchedule {
   what: string;
 }
 
-/** 按**指定**时间轴生成某任务的 cron（配置覆写后用这个，而不是读 `spec.cron`） */
+/**
+ * 按**指定**时间轴生成某任务的 cron（配置覆写后用这个，而不是读 `spec.cron`）
+ *
+ * ⚠️ `timelineKey === null` 的高频任务（`pay-reconcile`）**直接返回 `spec.cron`** ——
+ *    它们不属于「每天某个时刻」这一族，没有对应的时间轴项可派生。
+ */
 export function cronFor(spec: TaskSchedule, tl: BusinessTimeline = DEFAULT_TIMELINE): string {
+  if (!spec.timelineKey) return spec.cron;
   return cronOf(tl[spec.timelineKey]);
 }
 
@@ -237,7 +251,8 @@ export function dateKindFor(
 }
 
 /**
- * 8 个任务的调度声明 —— **口径唯一真相**（时刻部分委托给 `order-timeline.ts`）
+ * 9 个任务的调度声明 —— **口径唯一真相**（时刻部分委托给 `order-timeline.ts`，
+ * 高频任务 `pay-reconcile` 例外，见该条注释）
  *
  * ⚠️ 任务的 `@Cron()` 与 `targetDate()` 均**从本表读取**，不在任务里写第二遍。
  *    改触发时刻 → 改 `DEFAULT_TIMELINE`（或后台配置）；**不要**在这里写死 cron 字符串。
@@ -310,6 +325,25 @@ export const TASK_SCHEDULES: Record<TaskName, TaskSchedule> = {
     timeZone: TZ,
     dateKind: null,
     what: '每日见习团长 30 天未促单失效（C2）',
+  },
+  /**
+   * P3（2026-10-29）· 支付查单补齐 —— **9 个任务里唯一的高频任务**
+   *
+   * ⚠️ `timelineKey: null` 是**刻意**的：补齐的对象是「**此刻**滞留的待支付订单」，
+   *    不是「某一天的数据」；`cronOf()` 只能表达「每天某时刻」，
+   *    而支付回调丢失需要**分钟级**发现（等到次日，订单已被截单取消，补齐无意义）。
+   *
+   * 频率定为 **每 30 分钟**：
+   *   · 与 `run()` 的锁 TTL（30 分钟）同频 —— 锁是「成功保留、失败即放」，
+   *     失败时下一次触发（30 分钟后）即可重放，不会卡死；
+   *   · 再快（如每 5 分钟）多数触发会被锁挡掉，只换来一堆 `skipped=locked` 日志。
+   */
+  'pay-reconcile': {
+    timelineKey: null,
+    cron: '0 */30 * * * *',
+    timeZone: TZ,
+    dateKind: null,
+    what: '每 30 分钟扫描滞留待支付订单，向微信查单补齐（回调丢失的兜底）',
   },
 };
 

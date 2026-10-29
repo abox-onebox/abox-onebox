@@ -5,6 +5,7 @@ import { BizException } from '../../common/exceptions/biz.exception';
 import {
   PayNotifyResult,
   PrepayResult,
+  QueryOrderResult,
   WX_PAY_PROVIDER,
   WxPayProvider,
 } from '../../providers/wx-pay/wx-pay.provider';
@@ -48,6 +49,19 @@ export class WxpayService {
   /** 解析并验签支付结果通知 */
   parseNotify(headers: Record<string, unknown>, rawBody: string): Promise<PayNotifyResult> {
     return this.provider.parseNotify(headers, rawBody);
+  }
+
+  /**
+   * P3 · 查单（回调丢失时的补齐手段）
+   *
+   * ⚠️ 契约（与 provider 一致，**不得**在这里「善心兜底」）：
+   *    查询**失败**必须抛 `BizException(PAY_QUERY_FAILED)`，
+   *    绝不能吞掉异常、返回 `found:false` 之类 —— 那会让上层把
+   *    「通道挂了」当成「用户没付」，进而关掉一张真已付款的单。
+   *    上层（PayReconcileService）会接住它并计 failed + 不动单。
+   */
+  queryOrder(orderNo: string): Promise<QueryOrderResult> {
+    return this.provider.queryOrder({ orderNo });
   }
 
   /** 订阅支付成功事件（mock 自动回调依赖此通道） */

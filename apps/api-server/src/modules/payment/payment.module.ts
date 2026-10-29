@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { OrderModule } from '../order/order.module';
 import { PayNotifyController, OrdersPayController } from './payment.controller';
+import { PayReconcileService } from './pay-reconcile.service';
 import { PaymentService } from './payment.service';
 import { WxpayConfigService } from './wxpay-config';
 import { WxpayService } from './wxpay.service';
@@ -19,7 +20,10 @@ import { WxpayService } from './wxpay.service';
 @Module({
   imports: [OrderModule],
   controllers: [OrdersPayController, PayNotifyController],
-  providers: [PaymentService, WxpayService, WxpayConfigService],
-  exports: [PaymentService],
+  providers: [PaymentService, WxpayService, WxpayConfigService, PayReconcileService],
+  // ⭐ `PayReconcileService` 必须导出：`TasksModule` 的 `pay-reconcile` 跑批要用它。
+  //    跑批与后台补跑共用**同一个**执行口（纪律见 tasks.module.ts 头注），
+  //    不允许任务里再写一份扫描逻辑。
+  exports: [PaymentService, PayReconcileService],
 })
 export class PaymentModule {}

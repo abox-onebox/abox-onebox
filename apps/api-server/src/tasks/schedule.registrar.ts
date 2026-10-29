@@ -17,6 +17,7 @@ import { CutoffTask } from './cutoff.task';
 import { DeliveryGenerateTask } from './delivery-generate.task';
 import { LeaderExpireTask } from './leader-expire.task';
 import { MealPublishTask } from './meal-publish.task';
+import { PayReconcileTask } from './pay-reconcile.task';
 import { ReconciliationTask } from './reconciliation.task';
 import { TASK_SCHEDULES, TaskName, cronFor } from './schedule.service';
 import { SupplierShareTask } from './supplier-share.task';
@@ -67,7 +68,11 @@ export class ScheduleRegistrar implements OnModuleInit, OnModuleDestroy {
    * 但那是成本单价、与跑批时刻无关，不该白重载 8 个 cron。
    */
   private readonly watchedFields: ReadonlySet<string> = new Set(
-    (Object.values(TASK_SCHEDULES) as Array<{ timelineKey: string }>).map((s) => s.timelineKey),
+    (Object.values(TASK_SCHEDULES) as Array<{ timelineKey: string | null }>)
+      .map((s) => s.timelineKey)
+      // ⚠️ 高频任务（`pay-reconcile`）的 `timelineKey` 为 null：它不挂在时间轴上，
+      //    改任何「时刻类」配置都与它无关，不能进监听集合（否则会白白重载它的 cron）
+      .filter((k): k is string => Boolean(k)),
   );
 
   /** 取消订阅（`OnModuleDestroy` 时回收；e2e 反复建/停服务时避免监听器累积） */
@@ -95,6 +100,7 @@ export class ScheduleRegistrar implements OnModuleInit, OnModuleDestroy {
     supplierShare: SupplierShareTask,
     reconciliation: ReconciliationTask,
     leaderExpire: LeaderExpireTask,
+    payReconcile: PayReconcileTask,
   ) {
     this.handlers = new Map<TaskName, () => Promise<void>>([
       ['meal-publish', () => mealPublish.handle()],
@@ -105,6 +111,7 @@ export class ScheduleRegistrar implements OnModuleInit, OnModuleDestroy {
       ['supplier-share', () => supplierShare.handle()],
       ['reconciliation', () => reconciliation.handle()],
       ['leader-expire', () => leaderExpire.handle()],
+      ['pay-reconcile', () => payReconcile.handle()],
     ]);
   }
 
@@ -200,14 +207,20 @@ export class ScheduleRegistrar implements OnModuleInit, OnModuleDestroy {
       this.registry.addCronJob(name, job);
       job.start();
 
-      const overridden =
-        formatTimeOfDay(timeline[spec.timelineKey]) !==
-        formatTimeOfDay(DEFAULT_TIMELINE[spec.timelineKey]);
-      lines.push(
-        `${name.padEnd(19)} ${cron}  (${TIMELINE_LABEL[spec.timelineKey]} ${formatTimeOfDay(
-          timeline[spec.timelineKey],
-        )}${overridden ? ' · 配置覆写' : ''})`,
-      );
+      // ⚠️ 高频任务没有 `timelineKey`（不挂在时间轴上）⇒ 横幅走另一支，
+      //    否则会拿 `null` 去索引时间轴（TS 会拦，但运行时形态是 undefined 文案）
+      if (!spec.timelineKey) {
+        lines.push(`${name.padEnd(19)} ${cron}  (高频任务 · 与时间轴配置无关)`);
+      } else {
+        const overridden =
+          formatTimeOfDay(timeline[spec.timelineKey]) !==
+          formatTimeOfDay(DEFAULT_TIMELINE[spec.timelineKey]);
+        lines.push(
+          `${name.padEnd(19)} ${cron}  (${TIMELINE_LABEL[spec.timelineKey]} ${formatTimeOfDay(
+            timeline[spec.timelineKey],
+          )}${overridden ? ' · 配置覆写' : ''})`,
+        );
+      }
     }
 
     // 自证：注册结果必须与声明表逐条对齐（防「静默不跑」）
