@@ -463,6 +463,18 @@ export enum ErrorCode {
    *    超期又确需退款时必须走 D11，且全程写操作日志（本就是 D11 的既有要求）。
    */
   REFUND_WINDOW_EXPIRED = 40027,
+  /**
+   * 扩展（E5 · 2026-10-29）：批量退款审批的 id 数超过单次上限
+   *
+   * ⚠️ 刻意**不复用** `10001 PARAM_INVALID`：那是「参数不合法，改改再提」的通用校验；
+   *    本码是**操作规模**超限 —— 参数全都合法，只是这一批太大，必须拆开点。
+   *    两者对运营的动作不同：前者改参数，后者分批次。
+   *
+   * ⚠️ 为什么要有上限（而不是来多少处理多少）：批量**串行**执行，且每笔都是资金动作。
+   *    一次退几百笔、返回里夹着 3 笔失败，运营**不会**去看那 3 笔是谁 ——
+   *    「看不完的结果」等于没有结果。与其事后对账，不如在入口就把批次切到人能核对的规模。
+   */
+  REFUND_BATCH_TOO_LARGE = 40028,
 
   /** ---- 5xxxx 财务 / 结算 / 供应商 ---- */
   SUPPLIER_NOT_QUALIFIED = 50001,
@@ -678,6 +690,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.WITHDRAW_DAILY_DUPLICATED]: '今日已有一笔提现在处理中，请等这笔完成后再申请',
   [ErrorCode.PAY_QUERY_FAILED]: '支付状态查询失败，请稍后重试或联系客服',
   [ErrorCode.REFUND_WINDOW_EXPIRED]: '订单已完成且超出可退时限，如需退款请联系客服处理',
+  [ErrorCode.REFUND_BATCH_TOO_LARGE]: '单次批量操作笔数超限，请减少勾选数量后分批提交',
   [ErrorCode.SUPPLIER_NOT_QUALIFIED]: '供应商资质未通过审核',
   [ErrorCode.DISTRIBUTION_CENTER_LOCKED]: '集散中心配置不可删除（存在历史结算）',
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',

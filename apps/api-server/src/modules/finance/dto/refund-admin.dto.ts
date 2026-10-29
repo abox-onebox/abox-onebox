@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
+  IsArray,
   IsIn,
   IsInt,
   IsOptional,
@@ -13,6 +15,8 @@ import {
 } from 'class-validator';
 
 import { REFUND_STATUS_LABEL } from '@abox/shared-types';
+
+import { REFUND_BATCH_MAX_IDS } from '../../../common/utils/refund-batch';
 
 /** 与 `REFUND_STATUS_LABEL` 同源（端上不维护第二份映射） */
 const REFUND_STATUSES: string[] = Object.keys(REFUND_STATUS_LABEL);
@@ -111,6 +115,72 @@ export class ApproveRefundDto {
  * `reason` **必填**且至少 2 字：驳回是有后果的动作（订单状态回退），
  * 且团长/用户后续一定会问「为什么不同意」，没有理由的驳回等于没有审计。
  */
+/**
+ * E5 · 批量审批通过（D41 的批量形态）
+ *
+ * ## 只收**显式 id 列表**，不收「按条件批量」
+ * 刻意不提供 `mealDate` / `buildingId` / `status` 之类的条件入参：
+ * 「把这个出餐日所有待审批的全退了」是最危险的形状 —— 运营看不到自己到底选了谁，
+ * 一旦条件写宽，钱就在无人核对的情况下批量出门（与 `ADR-N1N2W1` §D-N2-3 同一取舍）。
+ * 显式 id 至少保证：运营在列表里**逐个勾过**，且返回能逐条对上号。
+ *
+ * ## 为什么 `ids` 上限由服务端收口
+ * 上限写在 `REFUND_BATCH_MAX_IDS`（`common/utils/refund-batch.ts`）—— 与 `pageSize`
+ * 一样是**服务端口径**，端上不自己定。校验器里这里只做「非空 + 每个是正整数」，
+ * 规模超限由服务层报 `40028`（错误信息里带上限与实到数，运营直接知道该拆几批）。
+ */
+export class BatchApproveRefundDto {
+  @ApiProperty({
+    description: `退款单 id 列表（ab_refund.id，非退款单号）；去重后最多 ${REFUND_BATCH_MAX_IDS} 笔`,
+    type: [Number],
+    example: [11, 12, 13],
+  })
+  @IsArray({ message: 'ids 需为退款单 id 数组' })
+  @ArrayMinSize(1, { message: '请至少勾选一笔退款单' })
+  @Type(() => Number)
+  @IsInt({ each: true, message: 'ids 中的每一项都需为整数' })
+  @Min(1, { each: true, message: 'ids 中的每一项都需为正整数' })
+  ids!: number[];
+
+  @ApiPropertyOptional({
+    description: '审批备注（同 D41，逐笔写入 ab_refund.audit_remark）',
+    example: '楼宇临时封控，整批同意退款',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  remark?: string;
+}
+
+/**
+ * E5 · 批量驳回（D42 的批量形态）
+ *
+ * `reason` 与单笔一样**必填 ≥2 字**：驳回会把订单状态回退，团长和用户一定会问为什么，
+ * 批量只是把同一条理由写给 N 笔 —— 不因为「是批量」就降低留痕标准。
+ */
+export class BatchRejectRefundDto {
+  @ApiProperty({
+    description: `退款单 id 列表；去重后最多 ${REFUND_BATCH_MAX_IDS} 笔`,
+    type: [Number],
+    example: [11, 12, 13],
+  })
+  @IsArray({ message: 'ids 需为退款单 id 数组' })
+  @ArrayMinSize(1, { message: '请至少勾选一笔退款单' })
+  @Type(() => Number)
+  @IsInt({ each: true, message: 'ids 中的每一项都需为整数' })
+  @Min(1, { each: true, message: 'ids 中的每一项都需为正整数' })
+  ids!: number[];
+
+  @ApiProperty({
+    description: '驳回理由（必填，≥2 字，逐笔写入 ab_refund.audit_remark）',
+    example: '联系不上用户，暂不退款',
+  })
+  @IsString({ message: '请填写驳回理由' })
+  @MinLength(2, { message: '驳回理由至少 2 个字' })
+  @MaxLength(200)
+  reason!: string;
+}
+
 export class RejectRefundDto {
   @ApiProperty({
     description: '驳回理由（必填，≥2 字，写入 ab_refund.audit_remark）',

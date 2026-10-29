@@ -18,11 +18,14 @@ import { IdempotentInterceptor } from '../../common/interceptors/idempotent.inte
 import {
   AdminRefundsQueryDto,
   ApproveRefundDto,
+  BatchApproveRefundDto,
+  BatchRejectRefundDto,
   RejectRefundDto,
   RefundIdParamDto,
 } from './dto/refund-admin.dto';
 import { FINANCE_READ_ROLES, FUND_ACTION_ROLES } from './finance.constants';
 import { RefundAdminService } from './refund-admin.service';
+import { RefundBatchService } from './refund-batch.service';
 
 /**
  * 后台 · 退款审批（《接口规范 v1.0》§6.5 D40–D42 · 原型 P34）
@@ -47,7 +50,10 @@ import { RefundAdminService } from './refund-admin.service';
 @UseGuards(AdminGuard)
 @Roles(...FINANCE_READ_ROLES)
 export class RefundAdminController {
-  constructor(private readonly refundAdmin: RefundAdminService) {}
+  constructor(
+    private readonly refundAdmin: RefundAdminService,
+    private readonly refundBatch: RefundBatchService,
+  ) {}
 
   // ------------------------------------------------------------ D40 流水
 
@@ -72,6 +78,46 @@ export class RefundAdminController {
   })
   detail(@Param() p: RefundIdParamDto) {
     return this.refundAdmin.detail(p.id);
+  }
+
+  // ------------------------------------------------------------ E5 批量（声明在 `:id/*` 之前）
+
+  @Post('batch-approve')
+  @UseInterceptors(IdempotentInterceptor)
+  // ⭐ 与 D41 同口径：`required: false`。
+  //    批量的**重试安全不靠幂等键** —— 靠两点：① 下游每笔的原子占位
+  //    （`WHERE id=? AND status='applying'`，重复提交撞 40013）；② 结果按
+  //    成功 / 跳过 / 失败三类归并，重试时已成功的归入 `skipped` 而不是报错。
+  //    ⇒ 同一个批次带同一个键重复提交，会拿到**首次结果**（含失败清单），
+  //    这正是运营想要的；但**换一批勾选必须换新键**，否则会拿到上一批的结果。
+  @Idempotent({ scope: 'refund-batch-approve', required: false })
+  @Roles(...FUND_ACTION_ROLES)
+  @OperationLog({ module: 'finance', action: '批量退款审批通过' })
+  @ApiOperation({
+    summary: 'E5 批量审批通过（D41 的批量形态）',
+    description:
+      '逐笔走**既有的单笔审批执行口**（账务口径零分叉），串行提交、每笔独立成败。' +
+      '出参按 succeeded / skipped（已不是待审批，多半上一轮已处理）/ failed 三类分别返回，' +
+      '**绝不把部分成功报成全部成功或全部失败** —— 这两谎报会让运营重复退或漏退。' +
+      'ids 中有任一不存在 → 整批拒绝（40012），资金零变动。单次上限见 40028。',
+  })
+  batchApprove(@Body() dto: BatchApproveRefundDto, @CurrentAdmin('sub') operatorId: number) {
+    return this.refundBatch.batchApprove(dto.ids, operatorId, dto.remark);
+  }
+
+  @Post('batch-reject')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'refund-batch-reject', required: false })
+  @Roles(...FUND_ACTION_ROLES)
+  @OperationLog({ module: 'finance', action: '批量退款审批驳回' })
+  @ApiOperation({
+    summary: 'E5 批量驳回（D42 的批量形态）',
+    description:
+      'reason 必填 ≥2 字，逐笔写入 `ab_refund.audit_remark`（批量不降低留痕标准）。' +
+      '资金零变动：驳回只回退订单状态，不碰余额与佣金。三类结果与批量通过同口径。',
+  })
+  batchReject(@Body() dto: BatchRejectRefundDto, @CurrentAdmin('sub') operatorId: number) {
+    return this.refundBatch.batchReject(dto.ids, operatorId, dto.reason);
   }
 
   // ------------------------------------------------------------ D41 通过

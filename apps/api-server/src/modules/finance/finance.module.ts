@@ -29,6 +29,7 @@ import { LeaderFinanceController } from './leader-finance.controller';
 import { ReconciliationService } from './reconciliation.service';
 import { RefundAdminController } from './refund-admin.controller';
 import { RefundAdminService } from './refund-admin.service';
+import { RefundBatchService } from './refund-batch.service';
 import { RefundService } from './refund.service';
 import { ReversalService } from './reversal.service';
 import { SupplierShareAdminController } from './supplier-share-admin.controller';
@@ -146,6 +147,8 @@ import { WithdrawAdminService } from './withdraw-admin.service';
     RefundService,
     ReversalService,
     RefundAdminService,
+    // E5：批量退款审批（编排层，逐笔复用 RefundService 的同一执行口）
+    RefundBatchService,
     SupplierShareService,
   ],
   exports: [
