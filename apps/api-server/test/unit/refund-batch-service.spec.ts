@@ -20,19 +20,74 @@ interface Row {
   orderNo: string;
   status: string;
   amount: string;
+  /** 所属订单的配送日（条件批量用） */
+  mealDate: string;
+  /** 所属订单的楼宇（条件批量用） */
+  buildingId: number;
 }
 
-function row(id: number, status: string = RefundStatus.APPLYING): Row {
-  return { id, refundNo: `RF${id}`, orderNo: `AB${id}`, status, amount: '25.80' };
-}
-
-/** 假仓储：`In(ids)` 的命中集合由 `rows` 决定（查不到的就是「不存在」） */
-function fakeRepo(rows: Row[]) {
+function row(
+  id: number,
+  status: string = RefundStatus.APPLYING,
+  opt: { mealDate?: string; buildingId?: number } = {},
+): Row {
   return {
+    id,
+    refundNo: `RF${id}`,
+    orderNo: `AB${id}`,
+    status,
+    amount: '25.80',
+    mealDate: opt.mealDate ?? '2026-10-30',
+    buildingId: opt.buildingId ?? 1,
+  };
+}
+
+/**
+ * 假仓储
+ *
+ * · `find` 走 `In(ids)`（查不到的就是「不存在」）
+ * · `createQueryBuilder` 只认**条件批量**那一种链式写法：
+ *   `select → where(status) → andWhere(order_id IN (... meal_date ... [building_id])) → orderBy → getMany`
+ *   —— 假实现按 `params` 里的 `mealDate` / `bid` 过滤，测的是**编排**不是 SQL 方言。
+ */
+function fakeRepo(rows: Row[]) {
+  const state: { st?: string; mealDate?: string; bid?: number } = {};
+
+  const qb = {
+    select: () => qb,
+    where: (_sql: string, p?: { st?: string }) => {
+      state.st = p?.st;
+      return qb;
+    },
+    andWhere: (_sql: string, p?: { mealDate?: string; bid?: number }) => {
+      if (p?.mealDate !== undefined) state.mealDate = p.mealDate;
+      if (p?.bid !== undefined) state.bid = p.bid;
+      return qb;
+    },
+    orderBy: () => qb,
+    getMany: async () =>
+      rows.filter(
+        (r) =>
+          r.status === state.st &&
+          r.mealDate === state.mealDate &&
+          (state.bid === undefined || r.buildingId === state.bid),
+      ),
+  };
+
+  return {
+    createQueryBuilder: () => qb,
     find: async (opts: { where?: { id?: { value?: number[] } } }) => {
       const wanted = opts?.where?.id?.value ?? [];
       return rows.filter((r) => wanted.includes(r.id));
     },
+  };
+}
+
+/** 假楼宇仓储：`id=1` 存在，其余不存在（测「条件写错不能在钱上试出来」） */
+function fakeBuildingRepo() {
+  return {
+    findOne: async (opts: { where?: { id?: number } }) =>
+      opts?.where?.id === 1 ? { id: 1, name: '望京 SOHO' } : null,
   };
 }
 
@@ -88,7 +143,11 @@ function fakeRefundService(
 }
 
 function build(rows: Row[], svc: ReturnType<typeof fakeRefundService>) {
-  const batch = new RefundBatchService(fakeRepo(rows) as never, svc as never);
+  const batch = new RefundBatchService(
+    fakeRepo(rows) as never,
+    fakeBuildingRepo() as never,
+    svc as never,
+  );
   return { batch, svc };
 }
 
@@ -255,5 +314,166 @@ describe('E5 · batchReject', () => {
     expect(r.failed[0]).toMatchObject({ id: 1, code: ErrorCode.REFUND_ORIGIN_UNKNOWN });
     expect(r.counts.succeeded).toBe(1);
     expect(r.outcome).toBe('partial');
+  });
+});
+
+describe('E5 · 按配送日 / 楼宇批量（台账原始口径）', () => {
+  const scope = { mealDate: '2026-10-30', buildingId: 1 };
+
+  it('预览：只算不执行 —— 命中数、金额、楼宇名，**零资金动作**', async () => {
+    const svc = fakeRefundService();
+    const { batch } = build([row(1), row(2)], svc);
+
+    const p = await batch.previewScope(scope);
+
+    expect(p.count).toBe(2);
+    expect(p.amountFen).toBe(2580 * 2);
+    expect(p.scopeLabel).toContain('望京 SOHO'); // 确认弹窗里不出现「楼宇#1」
+    expect(p.sample).toHaveLength(2);
+    expect(p.warnings.join('')).toContain('不可撤销');
+    expect(svc.calls).toHaveLength(0); // ⭐ 预览绝不碰下游
+  });
+
+  it('只命中「待审批」—— 已处理过的单不进命中集（断点续退的前提）', async () => {
+    const svc = fakeRefundService();
+    const { batch } = build(
+      [row(1), row(2, RefundStatus.REFUNDED), row(3, RefundStatus.REJECTED)],
+      svc,
+    );
+
+    const p = await batch.previewScope(scope);
+
+    expect(p.count).toBe(1);
+    expect(p.sample[0].id).toBe(1);
+  });
+
+  it('⭐ 预览数字与执行时不一致 → 40029（看到的 ≠ 要退的）', async () => {
+    const svc = fakeRefundService();
+    const { batch } = build([row(1), row(2)], svc);
+
+    await expectRejected(
+      batch.approveByScope(scope, { count: 5, amountFen: 2580 * 2 }, 9, undefined, 50),
+      ErrorCode.REFUND_BATCH_SCOPE_CHANGED,
+    );
+    expect(svc.calls).toHaveLength(0);
+  });
+
+  it('⭐ 笔数相同但金额变了也要拒（一笔被驳回 + 一笔新提交）', async () => {
+    const svc = fakeRefundService();
+    const { batch } = build([row(1), row(2)], svc);
+
+    await expectRejected(
+      batch.approveByScope(scope, { count: 2, amountFen: 1 }, 9, undefined, 50),
+      ErrorCode.REFUND_BATCH_SCOPE_CHANGED,
+    );
+    expect(svc.calls).toHaveLength(0);
+  });
+
+  it('⭐ 断点续退：命中 60 笔 → 本次只处理 50，remaining=10', async () => {
+    const rows = Array.from({ length: 60 }, (_, i) => row(i + 1));
+    const svc = fakeRefundService();
+    const { batch } = build(rows, svc);
+
+    const p = await batch.previewScope(scope);
+    expect(p.warnings.join('')).toContain('一次最多处理 50 笔');
+
+    const r = await batch.approveByScope(
+      scope,
+      { count: p.count, amountFen: p.amountFen },
+      9,
+      undefined,
+      50,
+    );
+
+    expect(svc.calls).toHaveLength(50);
+    expect(r.remaining).toBe(10);
+    expect(r.nextTip).toContain('还剩 10 笔');
+  });
+
+  it('⭐ 再点一次只处理剩下的（已处理的不重复退）', async () => {
+    const rows = Array.from({ length: 60 }, (_, i) => row(i + 1));
+    const svc = fakeRefundService();
+    const { batch } = build(rows, svc);
+
+    const p1 = await batch.previewScope(scope);
+    await batch.approveByScope(
+      scope,
+      { count: p1.count, amountFen: p1.amountFen },
+      9,
+      undefined,
+      50,
+    );
+    // 模拟数据库真实变化：处理过的单已不是待审批
+    rows.slice(0, 50).forEach((r) => {
+      r.status = RefundStatus.REFUNDED;
+    });
+
+    const p2 = await batch.previewScope(scope);
+    const r2 = await batch.approveByScope(
+      scope,
+      { count: p2.count, amountFen: p2.amountFen },
+      9,
+      undefined,
+      50,
+    );
+
+    expect(p2.count).toBe(10);
+    expect(r2.counts.succeeded).toBe(10);
+    expect(r2.remaining).toBe(0);
+    expect(r2.nextTip).toBeNull();
+    expect(svc.calls).toHaveLength(60); // 50 + 10，**没有一笔被退两次**
+  });
+
+  it('楼宇不存在 → 拒绝（条件写错不能在钱上试出来）', async () => {
+    const svc = fakeRefundService();
+    const { batch } = build([row(1)], svc);
+
+    await expectRejected(
+      batch.previewScope({ mealDate: '2026-10-30', buildingId: 9 }),
+      ErrorCode.BUILDING_NOT_FOUND,
+    );
+    await expectRejected(
+      batch.approveByScope(
+        { mealDate: '2026-10-30', buildingId: 9 },
+        { count: 1, amountFen: 2580 },
+        9,
+        undefined,
+        50,
+      ),
+      ErrorCode.BUILDING_NOT_FOUND,
+    );
+    expect(svc.calls).toHaveLength(0);
+  });
+
+  it('命中为空 → 拒绝执行（而不是「成功退了 0 笔」）', async () => {
+    const svc = fakeRefundService();
+    const { batch } = build([], svc);
+
+    const p = await batch.previewScope(scope);
+    expect(p.count).toBe(0);
+    expect(p.warnings.join('')).toContain('没有');
+
+    await expectRejected(
+      batch.approveByScope(scope, { count: 0, amountFen: 0 }, 9, undefined, 50),
+      ErrorCode.PARAM_INVALID,
+    );
+  });
+
+  it('按条件驳回同理：逐笔透传 reason，其余口径与通过一致', async () => {
+    const svc = fakeRefundService();
+    const { batch } = build([row(1), row(2)], svc);
+
+    const p = await batch.previewScope(scope);
+    const r = await batch.rejectByScope(
+      scope,
+      { count: p.count, amountFen: p.amountFen },
+      9,
+      '整栋楼停配送',
+      50,
+    );
+
+    expect(r.action).toBe('reject');
+    expect(svc.calls.map((c) => c.reason)).toEqual(['整栋楼停配送', '整栋楼停配送']);
+    expect(r.remaining).toBe(0);
   });
 });

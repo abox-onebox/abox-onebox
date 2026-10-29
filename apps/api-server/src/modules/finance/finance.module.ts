@@ -8,6 +8,8 @@ import {
   DistributionCenter,
   SupplierShare,
 } from '../../database/entities/finance.entity';
+// E5 台账口径：按「配送日 / 楼宇」批量退款要读楼宇名（确认弹窗里不能出现「楼宇#3」）
+import { Building } from '../../database/entities/building.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { Order, PaymentLog, Refund } from '../../database/entities/order.entity';
 import { Item, Supplier, SupplierItemDaily } from '../../database/entities/supplier.entity';
@@ -102,6 +104,7 @@ import { WithdrawAdminService } from './withdraw-admin.service';
       TeamLeader,
       Order,
       Refund,
+      Building,
       // M3-15：D43 对账要读**支付流水**（本地微信支付落痕）—— 与订单/退款三头核对
       PaymentLog,
       User,

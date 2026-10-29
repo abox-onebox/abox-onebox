@@ -67,11 +67,28 @@
       <p v-if="result.input.dupCount || result.input.invalidCount" class="batch__hint">
         入参已收口：重复 {{ result.input.dupCount }} 个、无效 {{ result.input.invalidCount }} 个。
       </p>
+
+      <!-- 断点续退：条件批量一次只处理一批，剩下的要能接着点 -->
+      <el-alert
+        v-if="scopeResult && scopeResult.remaining > 0"
+        type="warning"
+        :closable="false"
+        class="batch__tips"
+      >
+        <template #title>{{ scopeResult.nextTip }}</template>
+      </el-alert>
     </div>
 
     <template #footer>
       <el-button @click="emit('update:modelValue', false)">关闭</el-button>
       <el-button type="primary" @click="emit('refresh')">刷新列表</el-button>
+      <el-button
+        v-if="scopeResult && scopeResult.remaining > 0"
+        type="warning"
+        @click="emit('continue')"
+      >
+        继续处理剩余 {{ scopeResult.remaining }} 笔
+      </el-button>
     </template>
   </el-dialog>
 </template>
@@ -79,7 +96,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import type { BatchRefundResult } from '@/api/finance';
+import type { BatchRefundResult, BatchScopeResult } from '@/api/finance';
 import { fenToCny } from '@/utils/format';
 
 /**
@@ -102,7 +119,15 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void;
   (e: 'refresh'): void;
+  /** 断点续退：条件批量还剩下一批没处理 */
+  (e: 'continue'): void;
 }>();
+
+/** 条件批量（带范围与剩余）才有「继续」；勾选批量没有这个概念 */
+const scopeResult = computed(() => {
+  const r = props.result as BatchScopeResult | null;
+  return r && typeof r.remaining === 'number' ? r : null;
+});
 
 const title = computed(() => (props.result?.action === 'reject' ? '批量驳回结果' : '批量退款结果'));
 

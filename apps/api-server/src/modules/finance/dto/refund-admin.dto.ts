@@ -181,6 +181,103 @@ export class BatchRejectRefundDto {
   reason!: string;
 }
 
+/**
+ * E5（台账原始口径）· **按配送日 / 楼宇**批量
+ *
+ * ## 三步式：预览 →（人看）→ 执行
+ * 条件批量天然比勾选批量危险 —— 运营看不见自己选了谁。故**强制两步**：
+ *   ① `preview` 把「命中几笔 · 多少钱 · 都是哪些」摆出来；
+ *   ② 运营确认；
+ *   ③ `execute` 必须把预览里的 `count` / `amountFen` **原样带回**，
+ *      服务端重算比对，不一致 → 40029（等于给这批数据上了把乐观锁）。
+ *
+ * ## 断点续退
+ * 一次只处理 `limit` 笔（缺省与上限均 50），出参带 `remaining`。
+ * 剩下的再点一次即可 —— **不需要游标或断点表**：已处理的单不再处于 `applying`，
+ * 下次命中集里自然没有它们（这也是「再点一次」不会重复退的原因）。
+ */
+
+/** 条件批量的公共入参 */
+export class RefundBatchScopeDto {
+  @ApiProperty({
+    description: '配送日（出餐日 YYYY-MM-DD）—— 批量的**主条件**，必填',
+    example: '2026-10-30',
+  })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'mealDate 需为 YYYY-MM-DD' })
+  mealDate!: string;
+
+  @ApiPropertyOptional({
+    description: '楼宇 id（ab_building.id）；**不传 = 该配送日全部楼宇**',
+    example: 3,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  buildingId?: number;
+}
+
+/** 预览（只算不执行，零资金动作） */
+export class BatchRefundPreviewDto extends RefundBatchScopeDto {}
+
+/** 按条件批量通过 */
+export class BatchApproveByScopeDto extends RefundBatchScopeDto {
+  @ApiProperty({ description: '预览返回的**可退笔数**（用于比对，防止期间集合变化）' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedCount!: number;
+
+  @ApiProperty({ description: '预览返回的**合计金额（分）**' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedAmountFen!: number;
+
+  @ApiPropertyOptional({
+    description: `本次最多处理多少笔（断点续退的批大小，缺省与上限均 ${REFUND_BATCH_MAX_IDS}）`,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  limit?: number;
+
+  @ApiPropertyOptional({ description: '审批备注（逐笔留痕）' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  remark?: string;
+}
+
+/** 按条件批量驳回 */
+export class BatchRejectByScopeDto extends RefundBatchScopeDto {
+  @ApiProperty({ description: '预览返回的可退笔数' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedCount!: number;
+
+  @ApiProperty({ description: '预览返回的合计金额（分）' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedAmountFen!: number;
+
+  @ApiPropertyOptional({ description: '本次最多处理多少笔' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  limit?: number;
+
+  @ApiProperty({ description: '驳回理由（必填，≥2 字，逐笔留痕）' })
+  @IsString({ message: '请填写驳回理由' })
+  @MinLength(2, { message: '驳回理由至少 2 个字' })
+  @MaxLength(200)
+  reason!: string;
+}
+
 export class RejectRefundDto {
   @ApiProperty({
     description: '驳回理由（必填，≥2 字，写入 ab_refund.audit_remark）',

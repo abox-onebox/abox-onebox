@@ -14,6 +14,17 @@ import {
   normalizeBatchIds,
   REFUND_BATCH_MAX_IDS,
 } from '../../common/utils/refund-batch';
+import {
+  checkScopeExpectation,
+  parseScopeLimit,
+  REFUND_SCOPE_LIMIT_DEFAULT,
+  REFUND_SCOPE_LIMIT_MAX,
+  REFUND_SCOPE_SAMPLE_MAX,
+  scopeLabel,
+  type RefundBatchScope,
+  type ScopeExpectation,
+} from '../../common/utils/refund-batch-scope';
+import { Building } from '../../database/entities/building.entity';
 import { Refund } from '../../database/entities/order.entity';
 import { RefundService } from './refund.service';
 
@@ -48,6 +59,8 @@ export class RefundBatchService {
 
   constructor(
     @InjectRepository(Refund) private readonly refundRepo: Repository<Refund>,
+    // E5 台账口径：按条件批量要把「楼宇名」回给运营（「楼宇#3」不该出现在确认弹窗里）
+    @InjectRepository(Building) private readonly buildingRepo: Repository<Building>,
     private readonly refundService: RefundService,
   ) {}
 
@@ -147,8 +160,163 @@ export class RefundBatchService {
   }
 
   // ==========================================================================
+  // E5 台账口径 · 按配送日 / 楼宇（预览 → 执行 两步式）
+  // ==========================================================================
+
+  /**
+   * 预览：**只算不执行**，零资金动作
+   *
+   * 存在的意义是「让运营看见自己到底选了谁」—— 条件批量如果没有这一步，
+   * 就是让人对着一个日期和一个楼名签一张空白支票。
+   */
+  async previewScope(scope: RefundBatchScope): Promise<ScopePreviewResult> {
+    const rows = await this.loadScopeRows(scope);
+    const buildingName = scope.buildingId ? await this.buildingName(scope.buildingId) : null;
+
+    return {
+      scope: { mealDate: scope.mealDate, buildingId: scope.buildingId ?? null },
+      scopeLabel: scopeLabel(scope, buildingName),
+      count: rows.length,
+      amountFen: sumFen(rows),
+      sample: rows.slice(0, REFUND_SCOPE_SAMPLE_MAX).map((r) => ({
+        id: Number(r.id),
+        refundNo: r.refundNo,
+        orderNo: r.orderNo,
+        amountFen: toFen(Number(r.amount)),
+      })),
+      sampleTruncated: rows.length > REFUND_SCOPE_SAMPLE_MAX,
+      limit: REFUND_SCOPE_LIMIT_DEFAULT,
+      limitMax: REFUND_SCOPE_LIMIT_MAX,
+      warnings: scopeWarnings(rows.length, REFUND_SCOPE_LIMIT_DEFAULT),
+    };
+  }
+
+  /**
+   * 按条件批量通过（**断点续退**：一次最多 `limit` 笔，出参带 `remaining`）
+   *
+   * ## 为什么必须先比对预览数字
+   * 预览到执行之间可能有人新提交了申请，或另一路处理掉一笔 —— 那时「运营看到的」
+   * 和「实际要退的」就不是同一批了。数字对不上即拒（40029），运营重新预览即可。
+   *
+   * ## 为什么「再点一次」不会重复退
+   * 已处理的单不再处于 `applying`，下次命中集里**根本没有它们**
+   * ⇒ 不需要游标、不需要断点记录表，剩下的接着退就行。
+   */
+  async approveByScope(
+    scope: RefundBatchScope,
+    expected: ScopeExpectation,
+    adminId: number,
+    remark: string | undefined,
+    limitRaw: unknown,
+  ): Promise<BatchScopeResult> {
+    const limit = parseScopeLimit(limitRaw);
+    const rows = await this.verifyScope(scope, expected);
+    const ids = rows.slice(0, limit).map((r) => Number(r.id));
+
+    const result = await this.batchApprove(ids, adminId, remark);
+    return this.withScope(result, scope, rows.length);
+  }
+
+  /** 按条件批量驳回（同上，断点续退） */
+  async rejectByScope(
+    scope: RefundBatchScope,
+    expected: ScopeExpectation,
+    adminId: number,
+    reason: string,
+    limitRaw: unknown,
+  ): Promise<BatchScopeResult> {
+    const limit = parseScopeLimit(limitRaw);
+    const rows = await this.verifyScope(scope, expected);
+    const ids = rows.slice(0, limit).map((r) => Number(r.id));
+
+    const result = await this.batchReject(ids, adminId, reason);
+    return this.withScope(result, scope, rows.length);
+  }
+
+  // ==========================================================================
   // 内部：入参收口 + 预读
   // ==========================================================================
+
+  /**
+   * 取条件命中的**全部**待审批退款单（只取统计与样例所需列）
+   *
+   * ⚠️ 只取 `applying` —— 这是断点续退能成立的唯一前提：处理过的单不再命中。
+   * ⚠️ 走 `ab_order` 的子查询而不是 JOIN：分页/统计的 count 与明细要分开算，
+   *    JOIN 会把两边的行数互相放大（与 `list()` 同一处教训）。
+   * ⚠️ 索引：带楼宇时命中 `idx_order_building_meal (building_id, meal_date)`；
+   *    不带楼宇时只按 `meal_date`（一期数据量下全表扫可接受，量上来再补索引）。
+   */
+  private async loadScopeRows(scope: RefundBatchScope): Promise<Refund[]> {
+    const qb = this.refundRepo
+      .createQueryBuilder('r')
+      .select(['r.id', 'r.refundNo', 'r.orderNo', 'r.amount'])
+      .where('r.status = :st', { st: RefundStatus.APPLYING });
+
+    if (scope.buildingId) {
+      qb.andWhere(
+        'r.order_id IN (SELECT o.id FROM ab_order o WHERE o.meal_date = :mealDate AND o.building_id = :bid)',
+        { mealDate: scope.mealDate, bid: scope.buildingId },
+      );
+    } else {
+      qb.andWhere('r.order_id IN (SELECT o.id FROM ab_order o WHERE o.meal_date = :mealDate)', {
+        mealDate: scope.mealDate,
+      });
+    }
+
+    return qb.orderBy('r.id', 'ASC').getMany();
+  }
+
+  /** 执行前复核：条件仍成立 + 命中集合与预览一致 */
+  private async verifyScope(
+    scope: RefundBatchScope,
+    expected: ScopeExpectation,
+  ): Promise<Refund[]> {
+    await this.buildingName(scope.buildingId); // 楼宇不存在即拒（条件写错不能在钱上试出来）
+    const rows = await this.loadScopeRows(scope);
+
+    const check = checkScopeExpectation({ count: rows.length, amountFen: sumFen(rows) }, expected);
+    if (!check.ok) {
+      throw new BizException(ErrorCode.REFUND_BATCH_SCOPE_CHANGED, check.message);
+    }
+    if (!rows.length) {
+      throw new BizException(
+        ErrorCode.PARAM_INVALID,
+        '该条件下已没有待审批的退款申请（可能刚被处理完），无需执行',
+      );
+    }
+    return rows;
+  }
+
+  /** 楼宇名（顺带校验楼宇存在）；`null` = 未限定楼宇 */
+  private async buildingName(buildingId?: number | null): Promise<string | null> {
+    if (!buildingId) return null;
+    const b = await this.buildingRepo.findOne({ where: { id: Number(buildingId) } });
+    if (!b) {
+      throw new BizException(ErrorCode.BUILDING_NOT_FOUND, `楼宇 #${buildingId} 不存在`);
+    }
+    return b.name ?? null;
+  }
+
+  /** 给批量结果补上「范围 + 还剩多少」 */
+  private async withScope(
+    result: BatchRefundResult,
+    scope: RefundBatchScope,
+    hitCount: number,
+  ): Promise<BatchScopeResult> {
+    const handled = result.counts.succeeded + result.counts.skipped + result.counts.failed;
+    const remaining = Math.max(0, hitCount - handled);
+
+    return {
+      ...result,
+      scope: { mealDate: scope.mealDate, buildingId: scope.buildingId ?? null },
+      scopeLabel: scopeLabel(scope, await this.buildingName(scope.buildingId)),
+      remaining,
+      nextTip:
+        remaining > 0
+          ? `还剩 ${remaining} 笔未处理 —— 再点一次即可继续（已处理的不会重复退）`
+          : null,
+    };
+  }
 
   /**
    * 归一化 + 上限 + 存在性预检
@@ -321,4 +489,49 @@ export interface BatchRefundResult {
   amounts: { handledFen: number; wxRefundedFen: number; balanceRefundedFen: number };
   retryQueuedCount: number;
   tips: string;
+}
+
+/** 条件批量 · 预览结果（**只算不执行**） */
+export interface ScopePreviewResult {
+  scope: { mealDate: string; buildingId: number | null };
+  /** 条件的人话（含楼宇名） */
+  scopeLabel: string;
+  /** 命中的**待审批**笔数 */
+  count: number;
+  amountFen: number;
+  /** 前若干条样例（明细可能上千行，只给看得完的） */
+  sample: { id: number; refundNo: string; orderNo: string; amountFen: number }[];
+  sampleTruncated: boolean;
+  limit: number;
+  limitMax: number;
+  /** 确认弹窗里要印出来的话（由服务端给，端上不自己编） */
+  warnings: string[];
+}
+
+/** 条件批量 · 执行结果（在三类结果之上补「范围 + 还剩多少」） */
+export interface BatchScopeResult extends BatchRefundResult {
+  scope: { mealDate: string; buildingId: number | null };
+  scopeLabel: string;
+  /** 该条件下**还没处理**的笔数（>0 即断点续退的下一批） */
+  remaining: number;
+  /** 还有剩余时的下一步提示；`null` = 已处理完 */
+  nextTip: string | null;
+}
+
+/** 命中金额合计（分） */
+function sumFen(rows: Refund[]): number {
+  return rows.reduce((s, r) => s + toFen(Number(r.amount)), 0);
+}
+
+/** 预览弹窗里的警示语（命中为空 / 超过批大小 / 不可逆 —— 三种都要说） */
+function scopeWarnings(count: number, limit: number): string[] {
+  const out: string[] = ['本操作会**逐笔真的把钱退出去**，不可撤销；执行前请核对下方的笔数与金额'];
+  if (count === 0) out.push('该条件下当前**没有**待审批的退款申请，无需执行');
+  if (count > limit) {
+    out.push(
+      `命中 ${count} 笔，一次最多处理 ${limit} 笔 —— ` +
+        '执行后按返回的「剩余笔数」继续，已处理的不会重复退',
+    );
+  }
+  return out;
 }

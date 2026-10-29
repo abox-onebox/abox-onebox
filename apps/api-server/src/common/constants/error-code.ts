@@ -475,6 +475,17 @@ export enum ErrorCode {
    *    「看不完的结果」等于没有结果。与其事后对账，不如在入口就把批次切到人能核对的规模。
    */
   REFUND_BATCH_TOO_LARGE = 40028,
+  /**
+   * 扩展（E5 台账口径 · 2026-10-29）：按条件批量的**命中集合在预览之后变了**
+   *
+   * 预览时运营看到「N 笔 / ¥X」，点确认时服务端重算发现不一致 ⇒ 拒。
+   * 这是给批量加的一把**乐观锁**：期间有人新提交了申请、或另一路已处理掉一笔，
+   * 都会让数字对不上，此时执行就会退到「运营没看过的那一批」。
+   *
+   * ⚠️ 刻意**不复用** `40013 REFUND_STATUS_ILLEGAL`：那是**单笔**状态变了（重试无害）；
+   *    本码是**整批的边界**变了 —— 必须重新预览，不能照原样重试。
+   */
+  REFUND_BATCH_SCOPE_CHANGED = 40029,
 
   /** ---- 5xxxx 财务 / 结算 / 供应商 ---- */
   SUPPLIER_NOT_QUALIFIED = 50001,
@@ -691,6 +702,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.PAY_QUERY_FAILED]: '支付状态查询失败，请稍后重试或联系客服',
   [ErrorCode.REFUND_WINDOW_EXPIRED]: '订单已完成且超出可退时限，如需退款请联系客服处理',
   [ErrorCode.REFUND_BATCH_TOO_LARGE]: '单次批量操作笔数超限，请减少勾选数量后分批提交',
+  [ErrorCode.REFUND_BATCH_SCOPE_CHANGED]: '批量范围已变化，请重新预览后再执行',
   [ErrorCode.SUPPLIER_NOT_QUALIFIED]: '供应商资质未通过审核',
   [ErrorCode.DISTRIBUTION_CENTER_LOCKED]: '集散中心配置不可删除（存在历史结算）',
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',

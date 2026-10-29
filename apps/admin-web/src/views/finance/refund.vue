@@ -70,6 +70,7 @@
       </template>
 
       <div class="toolbar__right">
+        <el-button @click="openScope">按配送日批量</el-button>
         <el-button :loading="loading" @click="reload()">查询</el-button>
       </div>
     </div>
@@ -384,8 +385,106 @@
       </template>
     </el-dialog>
 
+    <!-- ─────────────── E5 台账口径 · 按配送日 / 楼宇 ─────────────── -->
+    <el-dialog v-model="scopeVisible" title="按配送日 / 楼宇批量退款" width="700px">
+      <div class="dialog__body">
+        <el-alert type="warning" :closable="false" class="dialog__block">
+          <template #title>
+            条件批量比勾选更危险 —— 你看不见自己选了谁。故<b>必须先预览</b>：
+            下面会给出命中的笔数与金额，执行时原样带回比对（中间若有人新提交申请会被拦下）。
+          </template>
+        </el-alert>
+
+        <div class="scope-form">
+          <el-date-picker
+            v-model="scopeForm.mealDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="配送日（必选）"
+            style="width: 170px"
+            @change="onScopeChange"
+          />
+          <el-select
+            v-model="scopeForm.buildingId"
+            clearable
+            filterable
+            placeholder="全部楼宇（不选即整日）"
+            style="width: 220px"
+            @change="onScopeChange"
+          >
+            <el-option v-for="b in buildingOptions" :key="b.id" :label="b.name" :value="b.id" />
+          </el-select>
+          <el-button :loading="previewing" :disabled="!scopeForm.mealDate" @click="doScopePreview">
+            预览
+          </el-button>
+        </div>
+
+        <div v-if="scopePreview" class="scope-view">
+          <div class="scope-view__head">
+            <span class="muted">{{ scopePreview.scopeLabel }}</span>
+            <span>
+              命中 <b>{{ scopePreview.count }}</b> 笔 · 合计
+              <b class="amount">{{ fenToCny(scopePreview.amountFen) }}</b>
+            </span>
+          </div>
+
+          <ul v-if="scopePreview.sample.length" class="scope-view__list">
+            <li v-for="s in scopePreview.sample" :key="s.id" class="mono">
+              {{ s.refundNo }}（{{ fenToCny(s.amountFen) }}）
+            </li>
+            <li v-if="scopePreview.sampleTruncated" class="muted">
+              …仅显示前 {{ scopePreview.sample.length }} 笔
+            </li>
+          </ul>
+
+          <ul class="scope-view__warn">
+            <li v-for="(w, i) in scopePreview.warnings" :key="i">{{ w }}</li>
+          </ul>
+        </div>
+
+        <el-input
+          v-if="scopePreview && scopePreview.count > 0"
+          v-model="scopeRemarkOrReason"
+          type="textarea"
+          :rows="2"
+          maxlength="200"
+          show-word-limit
+          :placeholder="
+            scopeAction === 'reject'
+              ? '驳回理由（必填，至少 2 个字）'
+              : '审批备注（选填，逐笔留痕）'
+          "
+        />
+      </div>
+
+      <template #footer>
+        <el-button @click="scopeVisible = false">取消</el-button>
+        <el-button
+          v-if="scopePreview && scopePreview.count > 0"
+          type="danger"
+          :loading="submitting"
+          @click="doScopeExecute('reject')"
+        >
+          批量驳回
+        </el-button>
+        <el-button
+          v-if="scopePreview && scopePreview.count > 0"
+          type="primary"
+          :loading="submitting"
+          @click="doScopeExecute('approve')"
+        >
+          批量通过
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- ─────────────── E5 批量结果（三类分列，失败在最上） ─────────────── -->
-    <RefundBatchResult v-model="batchResultVisible" :result="batchResult" @refresh="reload()" />
+    <RefundBatchResult
+      v-model="batchResultVisible"
+      :result="batchResult"
+      @refresh="reload()"
+      @continue="continueScope"
+    />
   </div>
 </template>
 
@@ -398,15 +497,21 @@ import {
   approveRefund,
   batchApproveRefunds,
   batchRejectRefunds,
+  batchApproveByScope,
+  batchRejectByScope,
   fetchAdminRefunds,
+  fetchRefundScopePreview,
   rejectRefund,
   ERR_IDEMPOTENT_HIT,
+  ERR_SCOPE_CHANGED,
   type BatchRefundResult,
   type RefundRow,
+  type RefundScopePreview,
   type RefundsSummary,
   type RefundStatusValue,
   type RefundTabValue,
 } from '@/api/finance';
+import { fetchBuildings } from '@/api/building';
 import { ApiError } from '@/api/request';
 import { displayOr, fenToCny, formatDateTime } from '@/utils/format';
 import RefundBatchResult from './components/refund-batch-result.vue';
@@ -527,6 +632,107 @@ async function doBatchApprove(): Promise<void> {
   } finally {
     submitting.value = false;
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * E5 台账口径 · 按「配送日 / 楼宇」批量（预览 → 执行）
+ * ------------------------------------------------------------------ */
+
+const scopeVisible = ref(false);
+const previewing = ref(false);
+const scopePreview = ref<RefundScopePreview | null>(null);
+const scopeAction = ref<'approve' | 'reject'>('approve');
+const scopeRemarkOrReason = ref('');
+const buildingOptions = ref<Array<{ id: number; name: string }>>([]);
+
+const scopeForm = reactive({
+  mealDate: '' as string,
+  buildingId: undefined as number | undefined,
+});
+
+/** 条件变更即作废预览结果 —— 不能拿着旧条件的数字去执行新条件 */
+function onScopeChange(): void {
+  scopePreview.value = null;
+}
+
+async function openScope(): Promise<void> {
+  scopeVisible.value = true;
+  scopePreview.value = null;
+  scopeRemarkOrReason.value = '';
+  scopeAction.value = 'approve';
+  if (!buildingOptions.value.length) {
+    try {
+      const res = await fetchBuildings({ page: 1, pageSize: 200 });
+      buildingOptions.value = (res.list ?? []).map((b) => ({ id: b.id, name: b.name }));
+    } catch {
+      // 楼宇拉不到**不阻断**：不选楼宇照样能按配送日批量（此时不过是一次空下拉）
+      buildingOptions.value = [];
+    }
+  }
+}
+
+async function doScopePreview(): Promise<void> {
+  if (!scopeForm.mealDate) {
+    ElMessage.warning('请先选择配送日');
+    return;
+  }
+  previewing.value = true;
+  try {
+    scopePreview.value = await fetchRefundScopePreview({
+      mealDate: scopeForm.mealDate,
+      buildingId: scopeForm.buildingId ?? null,
+    });
+  } catch (e) {
+    ElMessage.error(e instanceof ApiError ? e.message : '预览失败');
+  } finally {
+    previewing.value = false;
+  }
+}
+
+/**
+ * 按条件执行
+ *
+ * ⭐ 把预览里的 `count` / `amountFen` **原样带回**：服务端重算比对，对不上报 40029
+ *    —— 这是「运营看到的」与「实际要退的」之间的唯一一道锁。
+ */
+async function doScopeExecute(action: 'approve' | 'reject'): Promise<void> {
+  const p = scopePreview.value;
+  if (!p || p.count === 0) return;
+  if (action === 'reject' && scopeRemarkOrReason.value.trim().length < 2) {
+    ElMessage.warning('请填写驳回理由（至少 2 个字）');
+    return;
+  }
+  scopeAction.value = action;
+  submitting.value = true;
+  const scope = { mealDate: p.scope.mealDate, buildingId: p.scope.buildingId };
+  const expected = { count: p.count, amountFen: p.amountFen };
+  try {
+    const res =
+      action === 'approve'
+        ? await batchApproveByScope(scope, expected, {
+            remark: scopeRemarkOrReason.value.trim() || undefined,
+          })
+        : await batchRejectByScope(scope, expected, scopeRemarkOrReason.value.trim());
+    showBatchResult(res);
+  } catch (e) {
+    const hit = unwrapBatchResult(e);
+    if (hit) {
+      showBatchResult(hit);
+      return;
+    }
+    // ⚠️ 条件变了（40029）时**必须**让运营重新预览，故清掉旧预览
+    if (e instanceof ApiError && e.code === ERR_SCOPE_CHANGED) scopePreview.value = null;
+    ElMessage.error(e instanceof ApiError ? e.message : '批量执行失败');
+  } finally {
+    submitting.value = false;
+  }
+}
+
+/** 断点续退：结果弹窗里点「继续」—— 重新预览后接着退剩下那批 */
+async function continueScope(): Promise<void> {
+  batchResultVisible.value = false;
+  await doScopePreview();
+  if ((scopePreview.value?.count ?? 0) > 0) await doScopeExecute(scopeAction.value);
 }
 
 async function doBatchReject(): Promise<void> {
@@ -681,6 +887,46 @@ onMounted(() => {
       font-weight: 700;
       color: $c-warn-fg;
     }
+  }
+}
+
+.scope-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $space-2;
+  align-items: center;
+}
+
+.scope-view {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  padding: $space-2 $space-3;
+  background: $c-bg;
+  border-radius: $radius-sm;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: $fs-caption;
+  }
+
+  &__list {
+    max-height: 120px;
+    margin: 0;
+    padding-left: 18px;
+    overflow-y: auto;
+    font-size: $fs-caption;
+    line-height: 1.8;
+  }
+
+  &__warn {
+    margin: 0;
+    padding-left: 18px;
+    font-size: $fs-caption;
+    line-height: 1.8;
+    color: $c-warn-fg;
   }
 }
 

@@ -20,6 +20,9 @@ import {
   ApproveRefundDto,
   BatchApproveRefundDto,
   BatchRejectRefundDto,
+  BatchApproveByScopeDto,
+  BatchRejectByScopeDto,
+  BatchRefundPreviewDto,
   RejectRefundDto,
   RefundIdParamDto,
 } from './dto/refund-admin.dto';
@@ -118,6 +121,66 @@ export class RefundAdminController {
   })
   batchReject(@Body() dto: BatchRejectRefundDto, @CurrentAdmin('sub') operatorId: number) {
     return this.refundBatch.batchReject(dto.ids, operatorId, dto.reason);
+  }
+
+  // ------------------------------------------------------------ E5 台账口径 · 按配送日 / 楼宇
+
+  @Post('scope-preview')
+  @Roles(...FUND_ACTION_ROLES)
+  @ApiOperation({
+    summary: 'E5 按配送日 / 楼宇批量 —— 预览（**只算不执行**）',
+    description:
+      '条件批量必须先看这一步：把「命中几笔 · 多少钱 · 都是哪些」摆出来。' +
+      '返回的 `count` / `amountFen` 要在执行时**原样带回**（服务端重算比对，' +
+      '不一致 → 40029）—— 等于给这批数据上一把乐观锁，杜绝「看到的」与「退的」不是同一批。',
+  })
+  scopePreview(@Body() dto: BatchRefundPreviewDto) {
+    return this.refundBatch.previewScope({
+      mealDate: dto.mealDate,
+      buildingId: dto.buildingId ?? null,
+    });
+  }
+
+  @Post('scope-approve')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'refund-scope-approve', required: false })
+  @Roles(...FUND_ACTION_ROLES)
+  @OperationLog({ module: 'finance', action: '按配送日批量退款' })
+  @ApiOperation({
+    summary: 'E5 按配送日 / 楼宇批量 —— 审批通过',
+    description:
+      '**断点续退**：一次最多处理 `limit` 笔（缺省与上限均 50），出参 `remaining` = 还剩几笔。' +
+      '再点一次即可继续 —— 已处理的不再处于 `applying`，下次命中集里根本没有它们，' +
+      '故不需要游标或断点表，也不会重复退。' +
+      '必带 `expectedCount` / `expectedAmountFen`（预览给的数字），对不上 → 40029。',
+  })
+  scopeApprove(@Body() dto: BatchApproveByScopeDto, @CurrentAdmin('sub') operatorId: number) {
+    return this.refundBatch.approveByScope(
+      { mealDate: dto.mealDate, buildingId: dto.buildingId ?? null },
+      { count: dto.expectedCount, amountFen: dto.expectedAmountFen },
+      operatorId,
+      dto.remark,
+      dto.limit,
+    );
+  }
+
+  @Post('scope-reject')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'refund-scope-reject', required: false })
+  @Roles(...FUND_ACTION_ROLES)
+  @OperationLog({ module: 'finance', action: '按配送日批量驳回' })
+  @ApiOperation({
+    summary: 'E5 按配送日 / 楼宇批量 —— 驳回',
+    description: 'reason 必填 ≥2 字；断点续退与乐观锁比对口径同 `scope-approve`。',
+  })
+  scopeReject(@Body() dto: BatchRejectByScopeDto, @CurrentAdmin('sub') operatorId: number) {
+    return this.refundBatch.rejectByScope(
+      { mealDate: dto.mealDate, buildingId: dto.buildingId ?? null },
+      { count: dto.expectedCount, amountFen: dto.expectedAmountFen },
+      operatorId,
+      dto.reason,
+      dto.limit,
+    );
   }
 
   // ------------------------------------------------------------ D41 通过

@@ -169,6 +169,14 @@ export function rejectRefund(id: number, reason: string): Promise<RejectRefundRe
  */
 export const ERR_IDEMPOTENT_HIT = 10006;
 
+/**
+ * 条件批量的命中集合在预览之后变了（后端 40029）
+ *
+ * 收到它意味着「运营看到的那一批」已经不是库里的那一批 —— 必须**重新预览**，
+ * 不能照原样重试（与幂等命中相反：那边的首次结果可以照用，这边的不行）。
+ */
+export const ERR_SCOPE_CHANGED = 40029;
+
 /* ========================================================================= *
  * E5 批量审批（D41 / D42 的批量形态 · 2026-10-29）
  * ========================================================================= */
@@ -239,6 +247,82 @@ export function batchApproveRefunds(ids: number[], remark?: string): Promise<Bat
 /** E5 批量驳回（reason 必填 ≥2 字，逐笔写入 audit_remark） */
 export function batchRejectRefunds(ids: number[], reason: string): Promise<BatchRefundResult> {
   return http.post<BatchRefundResult>('/admin/finance/refunds/batch-reject', { ids, reason });
+}
+
+/* ========================================================================= *
+ * E5 台账口径 · 按「配送日 / 楼宇」批量（预览 → 执行 两步式）
+ * ========================================================================= */
+
+export interface RefundScope {
+  /** 配送日（出餐日） */
+  mealDate: string;
+  /** 楼宇 id；`null` = 该配送日全部楼宇 */
+  buildingId: number | null;
+}
+
+/** 预览结果（只算不执行） */
+export interface RefundScopePreview {
+  scope: { mealDate: string; buildingId: number | null };
+  /** 条件的人话（含楼宇名） */
+  scopeLabel: string;
+  count: number;
+  amountFen: number;
+  sample: Array<{ id: number; refundNo: string; orderNo: string; amountFen: number }>;
+  sampleTruncated: boolean;
+  limit: number;
+  limitMax: number;
+  /** 确认弹窗要印出来的话（服务端给） */
+  warnings: string[];
+}
+
+/** 条件批量结果 = 三类结果 + 范围 + 剩余（断点续退） */
+export interface BatchScopeResult extends BatchRefundResult {
+  scope: { mealDate: string; buildingId: number | null };
+  scopeLabel: string;
+  /** 该条件下还没处理的笔数；>0 时可继续 */
+  remaining: number;
+  nextTip: string | null;
+}
+
+/** 预览（零资金动作） */
+export function fetchRefundScopePreview(scope: RefundScope): Promise<RefundScopePreview> {
+  return http.post<RefundScopePreview>('/admin/finance/refunds/scope-preview', scope);
+}
+
+/**
+ * 按条件批量通过
+ *
+ * ⚠️ `expectedCount` / `expectedAmountFen` 必须是**预览返回的数字**：
+ *    服务端重算比对，对不上报 40029（防止「看到的」与「退的」不是同一批）。
+ */
+export function batchApproveByScope(
+  scope: RefundScope,
+  expected: { count: number; amountFen: number },
+  opt: { remark?: string; limit?: number } = {},
+): Promise<BatchScopeResult> {
+  return http.post<BatchScopeResult>('/admin/finance/refunds/scope-approve', {
+    ...scope,
+    expectedCount: expected.count,
+    expectedAmountFen: expected.amountFen,
+    remark: opt.remark,
+    limit: opt.limit,
+  });
+}
+
+/** 按条件批量驳回 */
+export function batchRejectByScope(
+  scope: RefundScope,
+  expected: { count: number; amountFen: number },
+  reason: string,
+  opt: { limit?: number } = {},
+): Promise<BatchScopeResult> {
+  return http.post<BatchScopeResult>('/admin/finance/refunds/scope-reject', {
+    ...scope,
+    expectedCount: expected.count,
+    expectedAmountFen: expected.amountFen,
+    reason,
+    limit: opt.limit,
+  });
 }
 
 /* ========================================================================= *
