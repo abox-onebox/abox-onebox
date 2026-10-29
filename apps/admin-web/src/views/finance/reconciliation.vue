@@ -125,6 +125,20 @@ onMounted(() => {
       </span>
     </el-alert>
 
+    <!--
+      当日付当日退的流水剔除说明
+      剔除后 logFen ≠ 当天流水原额 —— 不明说，运营拿 logFen 去对流水总数会以为出了 bug。
+      只在真有剔除时显示（空串不显示）。
+    -->
+    <el-alert
+      v-if="data?.refundDroppedTip"
+      class="lastrun"
+      type="info"
+      :closable="false"
+      show-icon
+      :title="data.refundDroppedTip"
+    />
+
     <el-card shadow="never" class="bar">
       <div class="toolbar">
         <el-date-picker

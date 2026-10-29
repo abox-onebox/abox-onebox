@@ -7,6 +7,10 @@ import { BizException } from '../../common/exceptions/biz.exception';
 import { addDays, bjDateTime, isRealDate, toBjIso, todayBj } from '../../common/utils/time';
 import { toFen } from '../../common/utils/money';
 import {
+  partitionRefundedDayLogs,
+  refundedDroppedTip,
+} from '../../common/utils/reconciliation-refund';
+import {
   RECON_RUN_ACTION,
   RECON_RUN_MODULE,
   reconFreshness,
@@ -129,7 +133,15 @@ export class ReconciliationService {
         .getMany(),
       this.refundRepo
         .createQueryBuilder('r')
-        .select(['r.id', 'r.refundNo', 'r.orderNo', 'r.amount', 'r.status', 'r.refundedAt'])
+        .select([
+          'r.id',
+          'r.orderId',
+          'r.refundNo',
+          'r.orderNo',
+          'r.amount',
+          'r.status',
+          'r.refundedAt',
+        ])
         .where('r.status = :done', { done: REFUND_DONE })
         .andWhere('r.refunded_at >= :start AND r.refunded_at < :end', { start, end })
         .getMany(),
@@ -147,6 +159,23 @@ export class ReconciliationService {
     }
 
     const dayOrderIds = new Set(orders.map((o) => Number(o.id)));
+
+    /**
+     * 「当日付、当日整单退」的流水归位（S5 后续修复）
+     *
+     * 已退款的订单不在 `orders` 里（被 `ORDER_EXCLUDED_STATUSES` 排除），
+     * 但它的成功流水还在 `daySuccessLogs` 里 ⇒ 会被判 `log_success_no_order`
+     * 并抬高 `logFen`，造成**天天误报不平**。
+     *
+     * ⇒ 这类流水从「金额合计 + 流水→订单差异检测」中剔除（钱已退回，不属当日实收）；
+     *   **重复交易号检测仍看全量**（凭证重复是重复入账前兆，与退款无关）。
+     */
+    const { kept: reconLogs, excludedRefunded } = partitionRefundedDayLogs(
+      daySuccessLogs,
+      dayOrderIds,
+      dayRefunds.map((r) => Number(r.orderId)),
+    );
+
     const diffs: ReconDiffRow[] = [];
     let matchedCount = 0;
 
@@ -200,8 +229,8 @@ export class ReconciliationService {
       matchedCount += 1;
     }
 
-    // (b) 流水 → 订单方向（当日成功流水）
-    for (const l of daySuccessLogs) {
+    // (b) 流水 → 订单方向（当日成功流水，**已剔除当日付当日退**）
+    for (const l of reconLogs) {
       if (!l.transactionId) {
         diffs.push(
           this.row('no_transaction_id', {
@@ -253,7 +282,12 @@ export class ReconciliationService {
 
     // ---------------------------------------------------------------- 汇总
     const orderFen = orders.reduce((s, o) => s + toFen(Number(o.payAmount)), 0);
-    const logFen = daySuccessLogs.reduce((s, l) => s + toFen(Number(l.payAmount)), 0);
+    /**
+     * ⚠️ `logFen` / `logCount` 用 **`reconLogs`**（已剔除当日付当日退），不用 `daySuccessLogs` ——
+     *    否则订单侧排除了已退订单、流水侧没排除，`diffFen` 恒差一笔 ⇒ 天天误报不平。
+     *    剔除后 `logFen` 不再等于当天流水原额合计，故出参带 `refundDroppedTip` 明说。
+     */
+    const logFen = reconLogs.reduce((s, l) => s + toFen(Number(l.payAmount)), 0);
     const refundFen = dayRefunds.reduce((s, r) => s + toFen(Number(r.amount)), 0);
     const diffFen = orderFen - logFen;
 
@@ -264,7 +298,7 @@ export class ReconciliationService {
       refundFen,
       netFen: orderFen - refundFen,
       orderCount: orders.length,
-      logCount: daySuccessLogs.length,
+      logCount: reconLogs.length,
       refundCount: dayRefunds.length,
       matchedCount,
       diffCount: diffs.length,
@@ -301,6 +335,8 @@ export class ReconciliationService {
       diffTypeStats,
       ...paginate(sorted.slice(skip, skip + pageSize), sorted.length, page, pageSize),
       note: RECON_NOTE,
+      // 「当日付当日退」剔除说明：剔除后 logFen ≠ 当天流水原额，不明说会被当成 bug
+      refundDroppedTip: refundedDroppedTip(excludedRefunded.length),
       // S5 · 「最近一次自动对账」—— 让这一页能回答「今天到底核过没有」，
       // 而不是让运营把「没有告警」当成「已核过」。
       lastRun: await this.loadLastRun(addDays(todayBj(), -1)),
@@ -518,6 +554,13 @@ export interface ReconciliationView {
   total: number;
   hasMore: boolean;
   note: string;
+  /**
+   * 「当日收款后已整单退款」的流水剔除说明（**空串 = 没有剔除**）
+   *
+   * 剔除后 `summary.logFen` 不再等于当天支付流水的原额合计 —— 端上**必须**在有值时
+   * 把这句话显示出来，否则运营拿 `logFen` 去和流水总数对，会发现对不上。
+   */
+  refundDroppedTip: string;
   /** S5 · 最近一次**自动**对账（`never` = 从未跑过）；端上据此提示，不自己判 */
   lastRun: ReconLastRunView;
 }

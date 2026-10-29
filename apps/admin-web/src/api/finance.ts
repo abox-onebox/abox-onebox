@@ -716,6 +716,13 @@ export interface ReconciliationView extends PageResult<ReconDiffRow> {
   summary: ReconSummary;
   diffTypeStats: Array<{ type: ReconDiffType; label: string; count: number }>;
   note: string;
+  /**
+   * 「当日收款后已整单退款」的流水剔除说明（**空串 = 没有剔除**）
+   *
+   * ⚠️ 剔除后 `summary.logFen` ≠ 当天支付流水原额合计 —— **有值就必须展示**，
+   *    否则运营拿 `logFen` 去和流水总数对会发现对不上，把正常口径当成 bug。
+   */
+  refundDroppedTip: string;
   /** ⭐ 永不为空：`freshness: 'never'` 表示一条留痕都没有（最该被看见的一种） */
   lastRun: ReconLastRun;
 }
