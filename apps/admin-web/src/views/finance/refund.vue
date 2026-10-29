@@ -53,6 +53,22 @@
         @keyup.enter="reload"
         @clear="reload"
       />
+      <!-- ─────────────── E5 批量（仅「待审批」可勾选，故此处不再判状态） ─────────────── -->
+      <template v-if="selected.length">
+        <span class="toolbar__selected" :class="{ 'toolbar__selected--over': tooManySelected }">
+          已选 {{ selected.length }} 笔 · 合计 {{ fenToCny(selectedAmountFen) }}
+          <template v-if="tooManySelected"
+            >（超出单次上限 {{ BATCH_MAX }} 笔，请减少勾选）</template
+          >
+        </span>
+        <el-button type="primary" :disabled="tooManySelected" @click="openBatchApprove">
+          批量通过
+        </el-button>
+        <el-button type="danger" :disabled="tooManySelected" @click="openBatchReject">
+          批量驳回
+        </el-button>
+      </template>
+
       <div class="toolbar__right">
         <el-button :loading="loading" @click="reload()">查询</el-button>
       </div>
@@ -87,7 +103,22 @@
     </div>
 
     <!-- ─────────────── 列表 ─────────────── -->
-    <el-table v-loading="loading" :data="rows" class="table" stripe>
+    <el-table
+      ref="tableRef"
+      v-loading="loading"
+      :data="rows"
+      class="table"
+      stripe
+      row-key="id"
+      @selection-change="onSelectionChange"
+    >
+      <!--
+        只能勾「待审批」：勾一个已退款的单进去，服务端会把它归到 skipped
+        （不是失败，但会让运营以为自己选了 N 笔、实际只办了 N-2 笔）。
+        在**勾选这一步**就收口，比在结果里解释更省事。
+      -->
+      <el-table-column type="selection" width="46" :selectable="isSelectable" />
+
       <el-table-column label="退款单号" min-width="180">
         <template #default="{ row }">
           <div class="stack">
@@ -287,18 +318,90 @@
         <el-button type="danger" :loading="submitting" @click="doReject">确认驳回</el-button>
       </template>
     </el-dialog>
+
+    <!-- ─────────────── E5 批量通过 ─────────────── -->
+    <el-dialog v-model="batchApproveVisible" title="批量审批通过 · 实际退款" width="620px">
+      <div class="dialog__body">
+        <el-alert type="warning" :closable="false" class="dialog__block">
+          <template #title>
+            将对已勾选的 <b>{{ selected.length }}</b> 笔<b>逐笔真的把钱退出去</b>，不可撤销。
+            逐笔独立提交：<b>其中一笔失败不影响其余</b>，结果会按成功 / 跳过 / 失败分别列出。
+          </template>
+        </el-alert>
+
+        <div class="batch-preview">
+          <div class="batch-preview__line">
+            <span>合计金额</span>
+            <b class="amount">{{ fenToCny(selectedAmountFen) }}</b>
+          </div>
+          <div class="batch-preview__ids">
+            <span v-for="row in selected.slice(0, 12)" :key="row.id" class="mono">
+              {{ row.refundNo }}
+            </span>
+            <span v-if="selected.length > 12" class="muted"> …等共 {{ selected.length }} 笔 </span>
+          </div>
+        </div>
+
+        <el-input
+          v-model="batchApproveRemark"
+          type="textarea"
+          :rows="2"
+          maxlength="200"
+          show-word-limit
+          placeholder="审批备注（选填，逐笔留痕）"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="batchApproveVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="doBatchApprove">
+          确认退 {{ selected.length }} 笔
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ─────────────── E5 批量驳回 ─────────────── -->
+    <el-dialog v-model="batchRejectVisible" title="批量驳回" width="560px">
+      <div class="dialog__body">
+        <el-alert type="info" :closable="false" class="dialog__block">
+          <template #title>
+            驳回<b>不动任何资金</b>，订单回到各自<b>申请前</b>的状态。共 {{ selected.length }} 笔。
+          </template>
+        </el-alert>
+        <el-input
+          v-model="batchRejectReason"
+          type="textarea"
+          :rows="3"
+          maxlength="200"
+          show-word-limit
+          placeholder="驳回理由（必填，至少 2 个字 —— 会逐笔写入审批留痕）"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="batchRejectVisible = false">取消</el-button>
+        <el-button type="danger" :loading="submitting" @click="doBatchReject">
+          确认驳回 {{ selected.length }} 笔
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ─────────────── E5 批量结果（三类分列，失败在最上） ─────────────── -->
+    <RefundBatchResult v-model="batchResultVisible" :result="batchResult" @refresh="reload()" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
 
 import {
   approveRefund,
+  batchApproveRefunds,
+  batchRejectRefunds,
   fetchAdminRefunds,
   rejectRefund,
+  ERR_IDEMPOTENT_HIT,
+  type BatchRefundResult,
   type RefundRow,
   type RefundsSummary,
   type RefundStatusValue,
@@ -306,6 +409,7 @@ import {
 } from '@/api/finance';
 import { ApiError } from '@/api/request';
 import { displayOr, fenToCny, formatDateTime } from '@/utils/format';
+import RefundBatchResult from './components/refund-batch-result.vue';
 
 const route = useRoute();
 
@@ -336,6 +440,120 @@ const approveVisible = ref(false);
 const approveRemark = ref('');
 const rejectVisible = ref(false);
 const rejectReason = ref('');
+
+/* ------------------------------------------------------------------ *
+ * E5 批量
+ * ------------------------------------------------------------------ */
+
+/**
+ * 单次批量上限（**仅用于端上禁用按钮**，真源仍是服务端 `REFUND_BATCH_MAX_IDS`，
+ * 超限服务端会报 40028 并把上限写在 message 里 —— 这里提前拦是为了不让运营
+ * 勾满 100 行后才被告知要拆批）
+ */
+const BATCH_MAX = 50;
+
+const tableRef = ref<{ clearSelection: () => void }>();
+const selected = ref<RefundRow[]>([]);
+const batchApproveVisible = ref(false);
+const batchApproveRemark = ref('');
+const batchRejectVisible = ref(false);
+const batchRejectReason = ref('');
+const batchResult = ref<BatchRefundResult | null>(null);
+const batchResultVisible = ref(false);
+
+const selectedAmountFen = computed(() =>
+  selected.value.reduce((s, r) => s + (r.amountFen ?? 0), 0),
+);
+const tooManySelected = computed(() => selected.value.length > BATCH_MAX);
+
+/** 只有「待审批」可勾（理由见模板里的注释） */
+function isSelectable(raw: unknown): boolean {
+  return asRow(raw).canApprove;
+}
+
+function onSelectionChange(rows: unknown[]): void {
+  selected.value = rows.map(asRow);
+}
+
+function openBatchApprove(): void {
+  batchApproveRemark.value = '';
+  batchApproveVisible.value = true;
+}
+
+function openBatchReject(): void {
+  batchRejectReason.value = '';
+  batchRejectVisible.value = true;
+}
+
+/**
+ * ⭐ 幂等命中（10006）时**必须**把首次结果捞出来
+ *
+ * 拦截器对任何非 0 码都抛 `ApiError`，而 10006 的 `data` 里装着首次结果。
+ * 批量跑一半失败、运营必然再点一次 —— 若此时只弹一句「请勿重复提交」，
+ * 「哪几笔成了、哪几笔没成」就丢了，运营只能去数据库对账。
+ */
+function unwrapBatchResult(e: unknown): BatchRefundResult | null {
+  if (!(e instanceof ApiError) || e.code !== ERR_IDEMPOTENT_HIT) return null;
+  const data = e.data as BatchRefundResult | undefined;
+  return data && typeof data.counts === 'object' ? data : null;
+}
+
+function showBatchResult(res: BatchRefundResult): void {
+  batchResult.value = res;
+  batchResultVisible.value = true;
+  batchApproveVisible.value = false;
+  batchRejectVisible.value = false;
+  tableRef.value?.clearSelection();
+  void reload();
+}
+
+async function doBatchApprove(): Promise<void> {
+  if (!selected.value.length) return;
+  submitting.value = true;
+  try {
+    showBatchResult(
+      await batchApproveRefunds(
+        selected.value.map((r) => r.id),
+        batchApproveRemark.value.trim() || undefined,
+      ),
+    );
+  } catch (e) {
+    const hit = unwrapBatchResult(e);
+    if (hit) {
+      showBatchResult(hit);
+      return;
+    }
+    ElMessage.error(e instanceof ApiError ? e.message : '批量退款失败');
+  } finally {
+    submitting.value = false;
+  }
+}
+
+async function doBatchReject(): Promise<void> {
+  if (!selected.value.length) return;
+  if (batchRejectReason.value.trim().length < 2) {
+    ElMessage.warning('请填写驳回理由（至少 2 个字）');
+    return;
+  }
+  submitting.value = true;
+  try {
+    showBatchResult(
+      await batchRejectRefunds(
+        selected.value.map((r) => r.id),
+        batchRejectReason.value.trim(),
+      ),
+    );
+  } catch (e) {
+    const hit = unwrapBatchResult(e);
+    if (hit) {
+      showBatchResult(hit);
+      return;
+    }
+    ElMessage.error(e instanceof ApiError ? e.message : '批量驳回失败');
+  } finally {
+    submitting.value = false;
+  }
+}
 
 /**
  * el-table 插槽的 `row` 是宽松的 `DefaultRow`，直接传给收窄了类型的函数会 TS2345。
@@ -452,6 +670,42 @@ onMounted(() => {
     display: flex;
     gap: $space-2;
     margin-left: auto;
+  }
+
+  &__selected {
+    align-self: center;
+    font-size: $fs-caption;
+    color: $c-text-weak;
+
+    &--over {
+      font-weight: 700;
+      color: $c-warn-fg;
+    }
+  }
+}
+
+.batch-preview {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  padding: $space-2 $space-3;
+  background: $c-bg;
+  border-radius: $radius-sm;
+
+  &__line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: $fs-caption;
+    color: $c-text-weak;
+  }
+
+  &__ids {
+    display: flex;
+    flex-wrap: wrap;
+    gap: $space-1 $space-2;
+    max-height: 96px;
+    overflow-y: auto;
   }
 }
 

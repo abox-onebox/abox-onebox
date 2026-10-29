@@ -160,6 +160,87 @@ export function rejectRefund(id: number, reason: string): Promise<RejectRefundRe
   return http.post<RejectRefundResult>(`/admin/finance/refunds/${id}/reject`, { reason });
 }
 
+/**
+ * 幂等命中（后端 `10006`）
+ *
+ * ⚠️ 拦截器对**任何非 0 码都会抛 `ApiError`**，而 10006 的 `data` 里装着**首次结果**。
+ *    批量这种「跑一半失败、运营必然重试」的操作，丢掉首次结果等于丢掉「哪几笔成了」，
+ *    故调用点必须自己把它捞出来（见 `views/finance/refund.vue` 的 `unwrapBatchResult`）。
+ */
+export const ERR_IDEMPOTENT_HIT = 10006;
+
+/* ========================================================================= *
+ * E5 批量审批（D41 / D42 的批量形态 · 2026-10-29）
+ * ========================================================================= */
+
+/** 单笔成功 */
+export interface BatchRefundSucceededItem {
+  id: number;
+  refundNo: string;
+  orderNo: string;
+  amountFen: number;
+  wxRefundedFen: number;
+  balanceRefundedFen: number;
+  /** 微信通道是否已受理（false = 已排队重试，不是失败） */
+  wxDelivered: boolean;
+  retryQueued: boolean;
+  /** 仅驳回：订单回退后的状态 */
+  orderStatus?: string;
+}
+
+/** 单笔跳过（已不是待审批 —— 多半是上一轮已处理） */
+export interface BatchRefundSkippedItem {
+  id: number;
+  refundNo: string;
+  orderNo: string;
+  amountFen: number;
+  reason: string;
+}
+
+/** 单笔失败（要运营当场看，故带业务码） */
+export interface BatchRefundFailedItem {
+  id: number;
+  refundNo: string | null;
+  orderNo: string | null;
+  code: number | null;
+  message: string;
+}
+
+export interface BatchRefundResult {
+  action: 'approve' | 'reject';
+  /** 入参收口情况（重复 / 非法各多少） */
+  input: { requested: number; invalidCount: number; dupCount: number };
+  counts: { succeeded: number; skipped: number; failed: number };
+  /** ok 无失败 / partial 部分失败 / failed 全失败 / noop 一笔没动 */
+  outcome: 'ok' | 'partial' | 'failed' | 'noop';
+  succeeded: BatchRefundSucceededItem[];
+  skipped: BatchRefundSkippedItem[];
+  failed: BatchRefundFailedItem[];
+  amounts: { handledFen: number; wxRefundedFen: number; balanceRefundedFen: number };
+  retryQueuedCount: number;
+  /** 一句话结论（服务端给，端上不自己拼） */
+  tips: string;
+}
+
+/**
+ * E5 批量通过
+ *
+ * ⚠️ 幂等键**不用手动传**：`api/request.ts` 的兜底按「方法 + 地址 + 请求体」在 60 秒窗口内
+ *    生成同一个键 —— 同一批 ids 重复提交会命中幂等并拿回首次结果；换一批勾选则指纹不同、
+ *    自然是新键。这正好对上批量想要的行为（双击不双退、换批不误用旧结果）。
+ */
+export function batchApproveRefunds(ids: number[], remark?: string): Promise<BatchRefundResult> {
+  return http.post<BatchRefundResult>('/admin/finance/refunds/batch-approve', {
+    ids,
+    remark,
+  });
+}
+
+/** E5 批量驳回（reason 必填 ≥2 字，逐笔写入 audit_remark） */
+export function batchRejectRefunds(ids: number[], reason: string): Promise<BatchRefundResult> {
+  return http.post<BatchRefundResult>('/admin/finance/refunds/batch-reject', { ids, reason });
+}
+
 /* ========================================================================= *
  * D33–D35 资金总览 / 佣金结算（M3-13 · 原型 P34）
  * ========================================================================= */
