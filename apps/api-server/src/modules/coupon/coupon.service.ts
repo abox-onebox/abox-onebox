@@ -555,6 +555,11 @@ export class CouponService {
     if (!uc) throw new BizException(ErrorCode.COUPON_NOT_USABLE, '券码不存在');
     if (uc.userId !== userId)
       throw new BizException(ErrorCode.COUPON_NOT_USABLE, '该券不属于当前用户');
+    // ⚠️ `revoked` 必须单独给文案：这张券**从没被用过**，报「已使用过」是**假的** ——
+    //    用户会以为是自己用掉了（去查订单），而真相是被运营撤回（该去问客服）。
+    //    两个方向的排查入口完全不同，合流一句文案等于给错方向。
+    if (uc.status === 'revoked')
+      throw new BizException(ErrorCode.COUPON_NOT_USABLE, '该券已被回收');
     if (uc.status !== 'unused') throw new BizException(ErrorCode.COUPON_NOT_USABLE, '该券已使用过');
     if (!this.inWindow(uc, now)) {
       throw new BizException(
