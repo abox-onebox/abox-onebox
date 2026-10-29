@@ -15,9 +15,11 @@ import { CANCEL_SOURCE } from '@abox/shared-types';
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { QueueService } from '../../common/queue/queue.service';
+import { BizConfigService } from '../../common/services/biz-config.service';
 import { money, round2, toFen } from '../../common/utils/money';
 import { genRefundNo } from '../../common/utils/order-no';
-import { toBjIso } from '../../common/utils/time';
+import { isRefundWindowExpired } from '../../common/utils/refund-window';
+import { now, toBjIso } from '../../common/utils/time';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { Order, Refund } from '../../database/entities/order.entity';
 import { OperationLog } from '../../database/entities/system.entity';
@@ -135,6 +137,8 @@ export class RefundService {
     private readonly queue: QueueService,
     @InjectRepository(OperationLog) private readonly opLogRepo: Repository<OperationLog>,
     private readonly couponService: CouponService,
+    /** H9：读取「完成后可退时限」（缺省 0 = 不限） */
+    private readonly bizConfig: BizConfigService,
   ) {}
 
   // ==========================================================================
@@ -183,6 +187,25 @@ export class RefundService {
           ? '订单未支付，无需申请退款'
           : '订单已取消，无法申请退款',
       );
+    }
+
+    // 4.5) H9 · **完成后可退时限**（2026-10-29）
+    //       `completed` 之后佣金已结算入账、团长可能已提现；此时退款要把已入账的佣金
+    //       冲销回来，而钱已被提走 ⇒ 余额扣成负数（欠款）。欠款是允许的设计，
+    //       但**无限期**意味着这笔欠款可能在几个月后才突然出现，团长无从预期。
+    //
+    // ⛔ **只拦本入口**（团长代退 / 用户自助）。`forceRefund`（D11）**刻意不校验**：
+    //    它是用户拿回钱的兜底通道，被时限堵死 = 「钱在系统里、谁也退不出来」。
+    // ⚠️ 缺省 0 = 不限 ⇒ 未配置时行为与改动前**完全一致**，不会误关退款口。
+    const windowHours = await this.bizConfig.refundWindowHours();
+    const verdict = isRefundWindowExpired({
+      status: order.status,
+      completedAt: order.completedAt ?? null,
+      windowHours,
+      now: now(),
+    });
+    if (verdict.expired) {
+      throw new BizException(ErrorCode.REFUND_WINDOW_EXPIRED, verdict.note);
     }
 
     // 5) 同订单是否已有未终结的申请（防历史脏数据绕过状态位）

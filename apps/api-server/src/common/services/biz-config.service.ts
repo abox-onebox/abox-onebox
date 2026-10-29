@@ -255,6 +255,19 @@ export class BizConfigService {
   }
 
   /**
+   * H9 · 订单 `completed` 后团长代退的时限（小时）
+   *
+   * **缺省 0 = 不限**（与改动前行为一致）。配正数后：超期的 `completed` 单，
+   * 团长代退入口拒绝（40027），改走 D11 强制退款。
+   *
+   * ⚠️ 这里 0 是**业务上想要的真值**（不限），不是「缺键被当成 0」那个坑 ——
+   *    两者结果相同但语义不同：显式配 0 与缺键都表示不限。
+   */
+  refundWindowHours(): Promise<number> {
+    return this.getNumber('refund.completed_window_hours', 0);
+  }
+
+  /**
    * 单日提现上限（元）—— 每人每自然日（北京时区 00:00–24:00）累计申请额。
    * 含本次申请额；rejected/failed **不计入**（钱已原路解冻）。0 = 不限。
    *

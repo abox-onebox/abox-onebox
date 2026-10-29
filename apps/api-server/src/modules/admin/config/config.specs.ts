@@ -287,6 +287,29 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     consumedBy: '`withdraw.service.apply()` 当日累计校验',
   },
   {
+    key: 'refund.completed_window_hours',
+    group: 'order',
+    label: '完成后可退时限',
+    type: 'int',
+    impact: 'order',
+    wiring: 'live',
+    description:
+      'H9（2026-10-29）：订单进入 `completed`（已确认收货）后，**团长代退**还能发起的小时数。' +
+      '**缺省 0 = 不限**（与本次改动前行为完全一致，上线前夜不引入任何新限制）。' +
+      '⚠️ 为什么要有时限：completed 之后佣金会结算入账、团长可能已提现；' +
+      '此时退款要把已入账的佣金冲销回来，而钱已经被提走 ⇒ 余额被扣成**负数**（欠款）。' +
+      '欠款本身是**允许**的（《reversal.service.ts》口径：形成欠款由后续佣金抵扣），' +
+      '但**无限期**意味着这笔欠款可能在几个月后才产生，团长无从预期、也无从追偿。' +
+      '⛔ **`forceRefund`（D11 后台强制退款）不受本时限约束** —— 它是用户拿回钱的兜底通道，' +
+      '被时限堵死等于「钱在系统里、谁也退不出来」；超期退款一律走 D11 并留操作日志。' +
+      '⛔ 本时限**只**作用于 `completed`：其余可退状态（paid / cut_off / cooked / delivering / delivered）' +
+      '的佣金尚未结算入账，冲销不涉及已提现的钱，不存在欠款风险。',
+    unit: '小时',
+    min: 0,
+    max: 720,
+    consumedBy: '`refund.service.applyByLeader()` 时限校验（真源判据 `refund-window.ts`）',
+  },
+  {
     key: 'commission.withdraw_daily_count',
     group: 'commission',
     label: '单日提现笔数上限',

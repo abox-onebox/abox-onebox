@@ -441,6 +441,18 @@ export enum ErrorCode {
    *    （是确定结论）；本码 = **根本没拿到回答**（是不确定，必须重试）。
    */
   PAY_QUERY_FAILED = 40026,
+  /**
+   * 扩展（H9 · 2026-10-29）：订单完成后已超出**可退时限**（`refund.completed_window_hours`）
+   *
+   * ⚠️ 刻意**不复用** `40004 REFUND_NOT_ALLOWED`：那是「已截单，用户不能自助退」，
+   *    本码是「**团长代退也过期了**」—— 前者走团长代退即可解决，
+   *    后者意味着佣金可能早已结算并提现，再退就会把团长余额扣成负（欠款）。
+   *
+   * ⛔ **兜底通道不受本码限制**：`forceRefund`（D11 后台强制退款）**刻意不校验时限** ——
+   *    它是用户拿回钱的最后一条路，被时限堵死等于「系统收了钱、谁也退不出来」。
+   *    超期又确需退款时必须走 D11，且全程写操作日志（本就是 D11 的既有要求）。
+   */
+  REFUND_WINDOW_EXPIRED = 40027,
 
   /** ---- 5xxxx 财务 / 结算 / 供应商 ---- */
   SUPPLIER_NOT_QUALIFIED = 50001,
@@ -654,6 +666,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.WITHDRAW_DAILY_LIMIT_EXCEEDED]: '今日提现额度已用完，请明日再试（单日上限见运营配置）',
   [ErrorCode.WITHDRAW_DAILY_DUPLICATED]: '今日已有一笔提现在处理中，请等这笔完成后再申请',
   [ErrorCode.PAY_QUERY_FAILED]: '支付状态查询失败，请稍后重试或联系客服',
+  [ErrorCode.REFUND_WINDOW_EXPIRED]: '订单已完成且超出可退时限，如需退款请联系客服处理',
   [ErrorCode.SUPPLIER_NOT_QUALIFIED]: '供应商资质未通过审核',
   [ErrorCode.DISTRIBUTION_CENTER_LOCKED]: '集散中心配置不可删除（存在历史结算）',
   [ErrorCode.SETTLE_AMOUNT_MISMATCH]: '结算金额校验不通过',
