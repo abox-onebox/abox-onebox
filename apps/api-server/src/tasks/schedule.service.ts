@@ -1,6 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
 import { KvService } from '../common/cache/kv.service';
+import {
+  RUN_FAILED_ACTION,
+  RUN_FAILED_MODULE,
+  runFailureTargetId,
+  shouldAlertRunFailure,
+} from '../common/utils/schedule-run-log';
+import { OperationLog } from '../database/entities/system.entity';
 import {
   BusinessTimeline,
   DEFAULT_TIMELINE,
@@ -68,7 +77,25 @@ import { TZ } from '../common/utils/tz';
 export class ScheduleService {
   private readonly logger = new Logger('Schedule');
 
-  constructor(private readonly kv: KvService) {}
+  /**
+   * T1 · 每个任务**最近一次**执行结果（**进程内内存，重启即空**）
+   *
+   * ⚠️ 刻意**不落库**：执行结果是**派生值**，落库就违背项目不变量
+   *    （见本文件头注「派生值不落库」）。它的定位与「跑批锁」完全相同 ——
+   *    **加速器，不是保险丝**：看得见「刚才跑得怎么样」就够了，
+   *    追历史故障靠**失败告警**（那条才落 `ab_operation_log`，见 `run()`）。
+   */
+  private readonly lastRuns = new Map<TaskName, TaskRunRecord>();
+
+  constructor(
+    private readonly kv: KvService,
+    @InjectRepository(OperationLog) private readonly opLogRepo: Repository<OperationLog>,
+  ) {}
+
+  /** T1 · 供 `GET /admin/schedule` 展示「最近一次执行」 */
+  lastRunOf(task: TaskName): TaskRunRecord | null {
+    return this.lastRuns.get(task) ?? null;
+  }
 
   // =====================================================================
   // 目标日期
@@ -144,20 +171,109 @@ export class ScheduleService {
 
     if (!got) {
       this.logger.warn(`⏭ ${task} date=${date} 跳过：该目标日期已有跑批在执行（锁 ${key} 未过期）`);
-      return { task, date, ran: false, skipped: 'locked', durationMs: 0 };
+      const skipped: TaskRunOutcome<T> = {
+        task,
+        date,
+        ran: false,
+        skipped: 'locked',
+        durationMs: 0,
+      };
+      this.rememberRun(skipped);
+      return skipped;
     }
 
     try {
       const result = await fn(date);
       const durationMs = Date.now() - startedAt;
       this.logger.log(`${task} date=${date} 完成 ${durationMs}ms`);
-      return { task, date, ran: true, durationMs, result };
+      const ok: TaskRunOutcome<T> = { task, date, ran: true, durationMs, result };
+      this.rememberRun(ok);
+      return ok;
     } catch (e) {
       const error = (e as Error).message;
       // 失败即释放锁 → 满足 4.11「失败可重放」
       await this.kv.del(key);
       this.logger.error(`${task} date=${date} 失败（锁已释放，可立即重放）：${error}`);
-      return { task, date, ran: true, durationMs: Date.now() - startedAt, error };
+      const failed: TaskRunOutcome<T> = {
+        task,
+        date,
+        ran: true,
+        durationMs: Date.now() - startedAt,
+        error,
+      };
+      this.rememberRun(failed);
+      // T2 · 失败告警落 `ab_operation_log`（**唯一**持久化的一条，见下方注释）
+      await this.persistFailure(failed);
+      return failed;
+    }
+  }
+
+  // =====================================================================
+  // T1 / T2 · 执行可观测
+  // =====================================================================
+
+  /** T1 · 记进内存（派生值**不落库**） */
+  private rememberRun(outcome: TaskRunOutcome<unknown>): void {
+    this.lastRuns.set(outcome.task, {
+      date: outcome.date,
+      ran: outcome.ran,
+      skipped: outcome.skipped ?? null,
+      durationMs: outcome.durationMs,
+      error: outcome.error ?? null,
+      at: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * T2 · 失败才落 `ab_operation_log`
+   *
+   * ⚠️ **只落失败**：`pay-reconcile` 每 30 分钟跑一次，成功也写就是一年
+   *    一万七千条噪音 —— 「每次都告警」等价于「没有告警」（`warnMissingOnce` 的教训）。
+   *    成功与「被锁跳过」只进内存（`lastRunOf()`），供后台看最近一次即可。
+   *
+   * ⚠️ 落库**失败不得影响跑批本身**：这里 catch 掉只记日志 ——
+   *    「写告警失败」不该让定时任务看起来是业务失败，也不该吞掉原始异常。
+   *
+   * 幂等：同（任务 + 目标日期）只写一条 —— 失败后锁已释放、可反复重放，
+   * 每次都写会在操作日志里堆出几十行，与 `reconciliation` 的告警同一范式。
+   */
+  private async persistFailure(outcome: TaskRunOutcome<unknown>): Promise<void> {
+    if (!shouldAlertRunFailure(outcome)) return;
+
+    const targetId = runFailureTargetId(outcome.task, outcome.date);
+    try {
+      const existed = await this.opLogRepo
+        .createQueryBuilder('l')
+        .where('l.module = :m', { m: RUN_FAILED_MODULE })
+        .andWhere('l.action = :a', { a: RUN_FAILED_ACTION })
+        .andWhere('l.targetId = :t', { t: targetId })
+        .getOne();
+
+      if (existed) {
+        this.logger.warn(
+          `T2 告警已存在（操作日志 #${existed.id}，${targetId}）—— 未重复写；` +
+            `最新错误：${outcome.error ?? '-'}`,
+        );
+        return;
+      }
+
+      await this.opLogRepo.insert({
+        adminUserId: null,
+        module: RUN_FAILED_MODULE,
+        action: RUN_FAILED_ACTION,
+        targetId,
+        requestData: { task: outcome.task, date: outcome.date },
+        snapshot: {
+          source: 'system',
+          durationMs: outcome.durationMs,
+          error: outcome.error ?? null,
+          reason: `定时任务 ${outcome.task}（目标日期 ${outcome.date}）执行失败，锁已释放可立即重放`,
+        },
+      });
+      this.logger.warn(`⛔ T2 告警已落操作日志：${targetId} —— ${outcome.error ?? '-'}`);
+    } catch (e) {
+      // 写告警失败只记日志，不改变跑批结果
+      this.logger.error(`T2 告警落库失败（${targetId}）：${(e as Error).message}`);
     }
   }
 }
@@ -350,6 +466,23 @@ export const TASK_SCHEDULES: Record<TaskName, TaskSchedule> = {
 /** 运行时判定某字符串是否为已知任务名（后台补跑口用它挡非法入参） */
 export function isTaskName(v: string): v is TaskName {
   return Object.prototype.hasOwnProperty.call(TASK_SCHEDULES, v);
+}
+
+/**
+ * T1 · 最近一次执行记录（**内存**，派生值不落库）
+ *
+ * ⚠️ 与 `TaskRunOutcome` 刻意**分开**：后者带业务出参 `result`（类型随任务而变），
+ *    本结构只留「可观测字段」，供后台列表原样展示，不携带任何业务数据 ——
+ *    这样它天然不会把业务派生值捎带进持久化（本结构也确实不落库）。
+ */
+export interface TaskRunRecord {
+  date: string;
+  ran: boolean;
+  skipped: 'locked' | null;
+  durationMs: number;
+  error: string | null;
+  /** 记录时刻（ISO，北京时间由上游 `TZ` 决定） */
+  at: string;
 }
 
 /** 跑批出参 —— 让 task 能按结果记一条人话日志 */

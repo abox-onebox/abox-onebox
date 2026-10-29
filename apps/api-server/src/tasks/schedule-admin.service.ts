@@ -18,6 +18,7 @@ import {
   ScheduleService,
   TASK_SCHEDULES,
   TaskName,
+  TaskRunRecord,
   dateKindFor,
   isTaskName,
 } from './schedule.service';
@@ -66,6 +67,14 @@ export interface ScheduleRow {
    *    与实际触发规律不符的时间，比显示「—」更误导。
    */
   effectiveAt: string | null;
+  /**
+   * T1（2026-10-29）· 本进程内**最近一次**执行结果；从未跑过则为 null
+   *
+   * ⚠️ **重启即空**（内存态，不落库 —— 派生值不落库）。要追历史故障看两处：
+   *    `ab_operation_log` 的「定时任务失败」告警（T2，持久）+ 服务日志。
+   *    端上不要把 null 渲染成「从未执行过」，那是「本进程启动以来没跑过」。
+   */
+  lastRun: TaskRunRecord | null;
 }
 
 export interface ScheduleRunResult {
@@ -165,6 +174,7 @@ export class ScheduleAdminService {
         dateKindLabel: DATE_KIND_LABEL[kind ?? 'none'],
         what: s.what,
         implemented,
+        lastRun: this.sched.lastRunOf(task),
         pendingNote: implemented ? null : (PENDING_NOTE[task] ?? '待后续批次实装'),
       };
     });
