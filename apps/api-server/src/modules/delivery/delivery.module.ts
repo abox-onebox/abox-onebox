@@ -3,7 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { BuildingGroup } from '../../database/entities/building.entity';
 import { MealAssignment } from '../../database/entities/meal.entity';
-import { DeliveryRecord, Order } from '../../database/entities/order.entity';
+import { DeliveryProof, DeliveryRecord, Order } from '../../database/entities/order.entity';
 import { DeliveryController } from './delivery.controller';
 import { DeliveryService } from './delivery.service';
 
@@ -18,7 +18,9 @@ import { DeliveryService } from './delivery.service';
  * 收口挂账 **#61**「跑批幂等不覆盖保护了人工录入，也把份数永久固化」的口子。
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([DeliveryRecord, Order, BuildingGroup, MealAssignment])],
+  imports: [
+    TypeOrmModule.forFeature([DeliveryRecord, DeliveryProof, Order, BuildingGroup, MealAssignment]),
+  ],
   controllers: [DeliveryController],
   providers: [DeliveryService],
   exports: [DeliveryService],

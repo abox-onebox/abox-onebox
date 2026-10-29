@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
   Patch,
+  Post,
   Put,
   Query,
   UseGuards,
@@ -21,6 +23,8 @@ import { DeliveryService } from './delivery.service';
 import {
   DeliveryListQueryDto,
   DeliveryPatchDto,
+  DeliveryProofCreateDto,
+  DeliveryProofListQueryDto,
   DeliveryStatusAdvanceDto,
 } from './dto/delivery.dto';
 
@@ -53,6 +57,11 @@ import {
  *   截单定格的份数口径，造出一张与订单脱钩的单）。
  * · 不提供 `DELETE`（删单一会让当日配送链缺一个楼群且**无任何痕迹**；
  *   份数改成 0 才是「这个楼群今天不送」的正确表达）。
+ *
+ * ⚠️ 上面两条针对的是**配送单本身**。Q3（2026-10-29）之后多出
+ *   `POST/DELETE :id/proofs` 一对**凭证子资源**端点 —— 凭证不是配送单，
+ *   它是附着其上的举证材料，有自己的生命周期（可撤销、且撤销要留痕）。
+ *   两者混为一谈会让「不提供 DELETE」这条纪律被误读成「凭证也不能撤」。
  * · ⭐ **改数字（PUT `:id`）与推进履约（PATCH `:id/status`）刻意分成两个动作**
  *   —— M5-1 刻意把 `status` 挡在 D62 之外，M5-8 才补上 D63。合成一个端点会让
  *   「份数 5→3 顺便把状态也推了」变成一条记录两件事，审计上分不清责任。
@@ -140,5 +149,70 @@ export class DeliveryController {
     @CurrentAdmin('sub') operatorId: number,
   ) {
     return this.delivery.advanceStatus(id, dto, operatorId);
+  }
+
+  // ------------------------------------------------- Q3 送达凭证（子资源）
+
+  @Get(':id/proofs')
+  @ApiOperation({
+    summary: 'Q3 送达凭证列表',
+    description:
+      '列出某张配送单名下的送达凭证。\n\n' +
+      '`scope`：`alive` 仅有效（缺省）/ `deleted` 仅已撤销 / `all` 全部。\n' +
+      '⚠️ 刻意**不是** `withDeleted` 布尔开关 —— query 里的布尔串经 `@Type(() => Boolean)` ' +
+      '会把 `false` 转成 `true`（非空字符串一律为真），是「传了 false 却筛出全部」的经典陷阱' +
+      '（`finance.dto.ts` 对账查询已因此不收布尔）。\n\n' +
+      '`aliveCount`（该单有效凭证数）**始终真实回查**，不会因 `scope=deleted` 而变成 0 —— ' +
+      '那会是个「看着算过、实际恒为 0」的数。\n\n' +
+      '目标配送单不存在 → `30017`。',
+  })
+  listProofs(@Param('id', ParseIntPipe) id: number, @Query() q: DeliveryProofListQueryDto) {
+    return this.delivery.listProofs(id, q);
+  }
+
+  @Post(':id/proofs')
+  @UseInterceptors(IdempotentInterceptor)
+  @Idempotent({ scope: 'delivery-proof', required: false })
+  @OperationLog({ module: 'delivery', action: '新增送达凭证', targetParam: 'id' })
+  @ApiOperation({
+    summary: 'Q3 挂一张送达凭证到配送单',
+    description:
+      '`url` 由 `POST /admin/uploads` 先上传拿到 —— 上传是**通用能力**（商品图 / 证照都走它），' +
+      '而「这张图属于哪张配送单」才是配送域的事；合成一个 multipart 端点会把上传模块' +
+      '绑死在配送语义上。\n\n' +
+      '`kind`：`photo` 现场照 / `sign` 签收单 / `other` 其它（缺省 `photo`）。' +
+      '**非法值不报错**，静默取缺省 —— 类型只是分类标签，为拼错一个枚举把整次上传拒掉是本末倒置。\n\n' +
+      '⚠️ **刻意不校验配送单是否已送达**：司机常在装车时先拍照留证，' +
+      '把上传卡死在 `arrived` 之后，会逼人为了传照片先点送达 —— 而点送达**联动订单**（T9）。\n\n' +
+      '`url` 形态非法 → `40001`（附具体原因）；配送单不存在 → `30017`。',
+  })
+  addProof(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: DeliveryProofCreateDto,
+    @CurrentAdmin('sub') operatorId: number,
+  ) {
+    return this.delivery.addProof(id, dto, operatorId);
+  }
+
+  @Delete(':id/proofs/:proofId')
+  @OperationLog({ module: 'delivery', action: '撤销送达凭证', targetParam: 'id' })
+  @ApiOperation({
+    summary: 'Q3 撤销一张送达凭证（软删）',
+    description:
+      '撤销**只打标记，行仍保留** —— 「这张凭证曾经存在、被谁撤了」本身就是审计事实，' +
+      '真到举证那天被追问的往往正是这一条。硬删会让「传了又撤」彻底蒸发。\n\n' +
+      '按 `(proofId, deliveryId)` **双条件**定位：只按 id 查会让「拿 A 单的凭证 id 去撤 B 单」' +
+      '这种越界操作成功，而它本该是 404 —— 凭证的归属是它身份的一部分。\n\n' +
+      '凭证不存在 / 不属于该单 / 已被撤销 → 统一 `30025`。\n\n' +
+      '⚠️ 本端点是**撤销凭证**，不是「删除配送单」—— 控制器头注里那句' +
+      '「不提供 DELETE」针对的是配送单本身（删单会让当日配送链缺一个楼群且无痕迹），' +
+      '与凭证无关。',
+  })
+  revokeProof(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('proofId', ParseIntPipe) proofId: number,
+    @CurrentAdmin('sub') operatorId: number,
+  ) {
+    return this.delivery.revokeProof(id, proofId, operatorId);
   }
 }

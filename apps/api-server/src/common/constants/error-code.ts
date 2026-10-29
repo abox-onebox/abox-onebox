@@ -296,6 +296,16 @@ export enum ErrorCode {
   ORDER_FROZEN_SYNC_CAS_VIOLATION = 30023,
   OP_BLOCKED = 30024,
 
+  /**
+   * 凭证不存在（或不属于该配送单）
+   *
+   * ⚠️ 刻意**不复用 `DELIVERY_NOT_FOUND`（30017）**：那是「配送单没有」，
+   *    本码是「配送单有、这张凭证不在它名下」—— 端上动作完全不同
+   *    （前者整页刷新，后者只重拉凭证列表）。混用一个码会让端上无法分辨，
+   *    只能一律整页刷 —— 而「软删一张凭证导致整页重来」是明显的体验倒退。
+   */
+  DELIVERY_PROOF_NOT_FOUND = 30025,
+
   /** ---- 4xxxx 支付 / 退款 / 出款 ---- */
   PAY_CREATE_FAILED = 40001,
   BALANCE_NOT_ENOUGH = 40002,
@@ -610,6 +620,7 @@ export const ERROR_MESSAGE: Record<number, string> = {
   [ErrorCode.DUPLICATE_ORDER]: '请勿重复下单',
   [ErrorCode.MEAL_NOT_PUBLISHED]: '该办公楼今日未开团',
   [ErrorCode.DELIVERY_STATUS_ILLEGAL]: '配送单当前状态不支持该推进（履约流只能向前）',
+  [ErrorCode.DELIVERY_PROOF_NOT_FOUND]: '这张送达凭证不存在或不属于该配送单，请刷新后重试',
   [ErrorCode.MEAL_TEMPLATE_IN_USE]:
     '该套餐已排进某天的出餐计划，商品与售价不能再改（可改名称，或另存为新模板）',
   [ErrorCode.BALANCE_AMOUNT_INVALID]: '余额抵扣金额不合法',

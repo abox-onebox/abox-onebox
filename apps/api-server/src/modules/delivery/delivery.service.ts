@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { QueryDeepPartialEntity } from 'typeorm';
-import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import type { FindOptionsWhere, QueryDeepPartialEntity } from 'typeorm';
+import { DataSource, EntityManager, In, IsNull, Not, Repository } from 'typeorm';
 
 import {
   DELIVERY_STATUS_LABEL,
@@ -12,15 +12,23 @@ import {
 } from '@abox/shared-types';
 
 import { ErrorCode } from '../../common/constants/error-code';
+import {
+  checkProofUrl,
+  normalizeProofKind,
+  normalizeProofScope,
+  proofKindText,
+} from '../../common/constants/delivery-proof';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { arrivalAtOf, toBjIso } from '../../common/utils/time';
 import { BuildingGroup } from '../../database/entities/building.entity';
 import { MealAssignment } from '../../database/entities/meal.entity';
-import { DeliveryRecord, Order } from '../../database/entities/order.entity';
+import { DeliveryProof, DeliveryRecord, Order } from '../../database/entities/order.entity';
 import { OperationLog } from '../../database/entities/system.entity';
 import {
   DeliveryListQueryDto,
   DeliveryPatchDto,
+  DeliveryProofCreateDto,
+  DeliveryProofListQueryDto,
   DeliveryStatusAdvanceDto,
 } from './dto/delivery.dto';
 
@@ -141,6 +149,14 @@ export interface DeliveryRow extends DeliverySnapshot {
   /** 乐观锁版本（D62 提交时原样回传） */
   version: number;
   /**
+   * Q3 · 该配送单名下的**有效**送达凭证张数（`deleted_at IS NULL`）
+   *
+   * ⭐ 只在出参里现算、**不落库**（项目不变量：派生值不落库）。
+   *    若把它做成 `ab_delivery_record` 上的一列，就会出现「凭证软删了、计数没跟着降」
+   *    这类两份真源的经典毛病 —— 而它的代价只是「列表多查一次 count」。
+   */
+  proofCount: number;
+  /**
    * ⭐ 该楼群当日订单的**状态分布**（M5-8 新增 · 履约链可见性）
    *
    * ## 为什么配送单页必须带上它
@@ -168,6 +184,14 @@ export interface DeliveryListResult {
     mismatchCount: number;
     /** 已录司机 / 车牌等人工信息的张数 */
     manualInputCount: number;
+    /**
+     * Q3 · **一张凭证都还没有**的配送单张数（`proofCount === 0`）
+     *
+     * 摆在 summary 里的理由：「今天还有几个楼群没传凭证」是一个**要被追着做的数**，
+     * 若只给每行的 `proofCount`，运营得自己数一遍 —— 而人不会去数，最后就是
+     * 「有的传了有的没传、且没人知道缺几个」。
+     */
+    proofMissingCount: number;
     byStatus: Array<{ status: string; statusText: string; count: number }>;
   };
   /** 空态说明（无任何配送单时给 —— 「还没有单」是正常状态，不是错误） */
@@ -250,6 +274,62 @@ export const DELIVERY_LIST_NOTE =
   '去「系统管理 · 操作日志」按模块 `delivery` 查该单 id；' +
   '② 截单之后订单侧发生了退款 / 取消，而配送单份数不会跟着降。本页不区分这两者。';
 
+// ==========================================================================
+// Q3 送达凭证（`ab_delivery_proof`）· 出参
+// ==========================================================================
+
+/** Q3 · 一张凭证（列表与新增共用同一形状 —— 不写两份表述） */
+export interface DeliveryProofItem {
+  id: number;
+  deliveryRecordId: number;
+  url: string;
+  kind: string;
+  /** 类型中文（服务端下发 · 端上不维护第二份映射） */
+  kindText: string;
+  remark: string | null;
+  /** 上传人 `admin_user_id`（`null` = 早期数据或未知来源） */
+  uploadedBy: number | null;
+  createdAt: string | null;
+  /** 已撤销时刻（`null` = 有效） */
+  revokedAt: string | null;
+}
+
+/** Q3 · 新增凭证出参 */
+export interface DeliveryProofCreateResult {
+  proof: DeliveryProofItem;
+  /** 该配送单名下**有效**凭证的现有张数（含本次新增 —— 端上不用自己 +1） */
+  aliveCount: number;
+  note: string;
+}
+
+/** Q3 · 凭证列表出参 */
+export interface DeliveryProofListResult {
+  deliveryRecordId: number;
+  /** 实际生效的筛选范围（回显，端上不自己推） */
+  scope: string;
+  list: DeliveryProofItem[];
+  count: number;
+  /** 该单名下**有效**凭证张数（`scope` 不是 `alive` 时也有 —— 运营真正关心的数） */
+  aliveCount: number;
+  note: string;
+}
+
+/** Q3 · 撤销凭证出参 */
+export interface DeliveryProofRevokeResult {
+  id: number;
+  deliveryRecordId: number;
+  revokedAt: string;
+  /** 撤销后该单名下**有效**凭证张数 */
+  aliveCount: number;
+  note: string;
+}
+
+/** Q3 口径说明（随出参下发 · 端上不复制第二份文案） */
+export const DELIVERY_PROOF_NOTE =
+  '送达凭证是**举证材料**：撤销只打标记，行仍保留（「曾有一张被撤掉的凭证」本身要可查）。' +
+  '上传走「系统管理 · 媒体上传」拿地址后再挂到本单 —— 上传是通用能力，' +
+  '「这张图属于哪张配送单」才是配送域的事。';
+
 /**
  * 配送服务（M4-1 · 4.3）
  *
@@ -282,6 +362,8 @@ export class DeliveryService {
     @InjectRepository(BuildingGroup) private readonly groupRepo: Repository<BuildingGroup>,
     @InjectRepository(MealAssignment)
     private readonly assignmentRepo: Repository<MealAssignment>,
+    @InjectRepository(DeliveryProof)
+    private readonly proofRepo: Repository<DeliveryProof>,
   ) {}
 
   /**
@@ -449,6 +531,7 @@ export class DeliveryService {
           totalOrderQuantity: 0,
           mismatchCount: 0,
           manualInputCount: 0,
+          proofMissingCount: 0,
           byStatus: [],
         },
         reason:
@@ -470,13 +553,16 @@ export class DeliveryService {
     // ⚠️ 份数对比必须用**全量**订单聚合（不受 `status` / `buildingGroupId` 筛选影响）——
     //    否则筛了 status 之后「订单份数」也跟着只剩那部分，差异会被算成一个
     //    毫无意义的数（同 §28「出参一份口径、落库另一份口径」的教训）。
-    const [orderQty, groups, orderBreak] = await Promise.all([
+    const [orderQty, groups, orderBreak, proofCount] = await Promise.all([
       this.aggregateOrderQuantity(date),
       records.length
         ? this.groupRepo.find({ where: { id: In(records.map((r) => r.buildingGroupId)) } })
         : Promise.resolve([] as BuildingGroup[]),
       // 订单状态分布同样取**全量**（不受筛选影响）—— 理由同上
       this.aggregateOrderBreakdown(date),
+      // Q3：凭证张数**只按本次列出的这些单**聚合（与订单聚合的「取全量」不同：
+      //     凭证挂在配送单上，筛掉的单根本不该来查它的凭证）
+      this.countAliveProofs(records.map((r) => r.id)),
     ]);
     const nameOf = new Map(groups.map((g) => [g.id, g.name ?? null]));
 
@@ -486,6 +572,7 @@ export class DeliveryService {
         orderQty.get(r.buildingGroupId) ?? 0,
         nameOf.get(r.buildingGroupId) ?? null,
         orderBreak.get(r.buildingGroupId) ?? [],
+        proofCount.get(r.id) ?? 0,
       ),
     );
 
@@ -498,6 +585,7 @@ export class DeliveryService {
         totalOrderQuantity: list.reduce((s, r) => s + r.orderQuantity, 0),
         mismatchCount: list.filter((r) => r.quantityMismatch).length,
         manualInputCount: list.filter((r) => r.hasManualInput).length,
+        proofMissingCount: list.filter((r) => r.proofCount === 0).length,
         byStatus: DELIVERY_STATUS_ORDER.map((s) => ({
           status: s as string,
           statusText: DELIVERY_STATUS_LABEL[s] ?? (s as string),
@@ -515,6 +603,7 @@ export class DeliveryService {
     orderQuantity: number,
     groupName: string | null,
     orderStatusBreakdown: OrderStatusBreakdown = [],
+    proofCount = 0,
   ): DeliveryRow {
     const quantityDiff = Number(r.totalQuantity) - orderQuantity;
     return {
@@ -536,6 +625,7 @@ export class DeliveryService {
       status: r.status,
       statusText: DELIVERY_STATUS_LABEL[r.status] ?? r.status,
       version: r.version,
+      proofCount,
       orderStatusBreakdown,
     };
   }
@@ -1087,6 +1177,199 @@ export class DeliveryService {
       version: record.version + 1,
       quantityDiff: after.totalQuantity - orderQuantity,
       orderQuantity,
+    };
+  }
+
+  // =====================================================================
+  // Q3：送达凭证（`ab_delivery_proof` · 2026-10-29）
+  //
+  // 缺口：推进到 `arrived` 之后，「货确实送到了」在系统里没有任何证据 ——
+  //       `deliverProof` / `proofUrl` 全仓零命中。用户投诉没收到时只能翻聊天记录。
+  // =====================================================================
+
+  /**
+   * 按配送单 id **批量**统计有效凭证张数
+   *
+   * ⭐ 一次性 groupBy，而不是在 `toRow` 里逐单查 —— 后者是 N+1：
+   *    一天十几个楼群就是十几次查询，且随楼群数**线性变差**。
+   *
+   * ⚠️ 只算 `deleted_at IS NULL`：已撤销的凭证不算「有凭证」，
+   *    否则列表会显示「3 张」而点进去只有 1 张 —— 运营会以为凭证丢了。
+   */
+  private async countAliveProofs(ids: number[]): Promise<Map<number, number>> {
+    const out = new Map<number, number>();
+    if (!ids.length) return out;
+    const rows = await this.proofRepo
+      .createQueryBuilder('p')
+      .select('p.deliveryRecordId', 'rid')
+      .addSelect('COUNT(*)', 'n')
+      .where('p.deliveryRecordId IN (:...ids)', { ids })
+      .andWhere('p.deletedAt IS NULL')
+      .groupBy('p.deliveryRecordId')
+      .getRawMany<{ rid: number | string; n: number | string }>();
+    // MySQL 的 COUNT / BIGINT 会回字符串 —— 统一转数字，别让「'2'」流进出参
+    for (const r of rows) out.set(Number(r.rid), Number(r.n));
+    return out;
+  }
+
+  /** 单张配送单的有效凭证数 */
+  private async countAliveProofsOf(deliveryId: number): Promise<number> {
+    return this.proofRepo.count({ where: { deliveryRecordId: deliveryId, deletedAt: IsNull() } });
+  }
+
+  /**
+   * Q3 · 挂一张凭证到配送单
+   *
+   * ## 三步校验的顺序（先便宜后贵，且「不存在」要早于「参数不对」之外）
+   * ① url 形态（`checkProofUrl` 纯函数，有单测）—— 最便宜，且错误提示要给人看；
+   * ② 配送单存在（`30017`）—— 不存在的单挂凭证会造出**孤儿行**，
+   *    而孤儿行在任何列表里都看不见（join 时被丢掉），等于白传；
+   * ③ 写库。
+   *
+   * ## ⚠️ 刻意**不校验**「配送单是否已送达」
+   * 司机有时在装车时就拍照（尤其生鲜类要求「出库即留证」），把上传卡死在
+   * `arrived` 之后，会让「想提前留证」的人只能先点送达 —— 而点送达会**联动订单**
+   * （T9），为传张照片去推进一次履约是明显的本末倒置。
+   */
+  async addProof(
+    deliveryId: number,
+    dto: DeliveryProofCreateDto,
+    operatorId?: number | null,
+  ): Promise<DeliveryProofCreateResult> {
+    const checked = checkProofUrl(dto.url);
+    if (!checked.ok) {
+      throw new BizException(ErrorCode.PARAM_INVALID, checked.reason);
+    }
+
+    const record = await this.deliveryRepo.findOne({ where: { id: deliveryId } });
+    if (!record) {
+      throw new BizException(ErrorCode.DELIVERY_NOT_FOUND, `配送单 #${deliveryId} 不存在`);
+    }
+
+    const kind = normalizeProofKind(dto.kind);
+    const remark = dto.remark?.trim() ? dto.remark.trim() : null;
+    const saved = await this.proofRepo.save(
+      this.proofRepo.create({
+        deliveryRecordId: deliveryId,
+        url: checked.url,
+        kind,
+        remark,
+        uploadedBy: operatorId ?? null,
+      }),
+    );
+
+    this.logger.log(
+      `配送单 #${deliveryId}（${record.mealDate} / 楼群 ${record.buildingGroupId}）` +
+        `新增送达凭证 #${saved.id}（${kind}）`,
+    );
+
+    return {
+      proof: this.toProofItem(saved),
+      aliveCount: await this.countAliveProofsOf(deliveryId),
+      note: DELIVERY_PROOF_NOTE,
+    };
+  }
+
+  /**
+   * Q3 · 凭证列表
+   *
+   * ⚠️ `aliveCount` **始终另查一次 count**，而不是从本次结果里 filter：
+   *    `scope=deleted` 时结果里只有已撤销的行，filter 出来的「有效数」必然是 0 ——
+   *    那是个**看起来算过、实际恒为 0** 的数（与「恒绿的检查」同一形状）。
+   */
+  async listProofs(
+    deliveryId: number,
+    q: DeliveryProofListQueryDto,
+  ): Promise<DeliveryProofListResult> {
+    const record = await this.deliveryRepo.findOne({ where: { id: deliveryId } });
+    if (!record) {
+      throw new BizException(ErrorCode.DELIVERY_NOT_FOUND, `配送单 #${deliveryId} 不存在`);
+    }
+
+    const scope = normalizeProofScope(q.scope);
+    const where: FindOptionsWhere<DeliveryProof> = { deliveryRecordId: deliveryId };
+    if (scope === 'alive') where.deletedAt = IsNull();
+    if (scope === 'deleted') where.deletedAt = Not(IsNull());
+
+    const rows = await this.proofRepo.find({ where, order: { id: 'ASC' } });
+
+    return {
+      deliveryRecordId: deliveryId,
+      scope,
+      list: rows.map((r) => this.toProofItem(r)),
+      count: rows.length,
+      aliveCount: await this.countAliveProofsOf(deliveryId),
+      note: DELIVERY_PROOF_NOTE,
+    };
+  }
+
+  /**
+   * Q3 · 撤销一张凭证（**软删**）
+   *
+   * ## 为什么是软删
+   * 撤销的动作本身要留在账上：「这张凭证曾经存在、被谁撤了」——
+   *    真到举证那天，被追问的往往正是这一条。硬删会让「传了又撤」彻底蒸发。
+   *
+   * ## 为什么按 `(id, deliveryRecordId)` 双条件查
+   * 只按 `id` 查会让「A 单的凭证 id 被拿去撤 B 单」这种越界操作**成功**，
+   *    而它本该是 404 —— 凭证的归属是它的身份的一部分。
+   *
+   * ## 已撤销的再撤一次 → `30025`
+   * 与「不存在」同码：对调用方而言两者都是「这张凭证现在撤不了」，
+   *    区别只在库里，不该让端上多分一支。
+   */
+  async revokeProof(
+    deliveryId: number,
+    proofId: number,
+    operatorId?: number | null,
+  ): Promise<DeliveryProofRevokeResult> {
+    const record = await this.deliveryRepo.findOne({ where: { id: deliveryId } });
+    if (!record) {
+      throw new BizException(ErrorCode.DELIVERY_NOT_FOUND, `配送单 #${deliveryId} 不存在`);
+    }
+
+    const proof = await this.proofRepo.findOne({
+      where: { id: proofId, deliveryRecordId: deliveryId, deletedAt: IsNull() },
+    });
+    if (!proof) {
+      throw new BizException(
+        ErrorCode.DELIVERY_PROOF_NOT_FOUND,
+        `凭证 #${proofId} 不存在、不属于配送单 #${deliveryId}，或已被撤销`,
+      );
+    }
+
+    const at = new Date();
+    await this.proofRepo.update({ id: proofId }, { deletedAt: at });
+
+    this.logger.log(
+      `配送单 #${deliveryId} 撤销送达凭证 #${proofId}（操作人 ${operatorId ?? '未知'}）`,
+    );
+
+    // `at` 是刚构造的 Date —— `toBjIso` 必非 null。这里**断言而非兜底成空串**：
+    // 空串会被端上显示成「时间未知」，而撤销时刻永远是已知的（假兜底比没有更糟）。
+    const revokedAt = toBjIso(at) as string;
+
+    return {
+      id: proofId,
+      deliveryRecordId: deliveryId,
+      revokedAt,
+      aliveCount: await this.countAliveProofsOf(deliveryId),
+      note: DELIVERY_PROOF_NOTE,
+    };
+  }
+
+  /** 凭证 → 出参（列表与新增共用同一形状，不写两份表述） */
+  private toProofItem(p: DeliveryProof): DeliveryProofItem {
+    return {
+      id: p.id,
+      deliveryRecordId: p.deliveryRecordId,
+      url: p.url,
+      kind: p.kind,
+      kindText: proofKindText(p.kind),
+      remark: p.remark ?? null,
+      uploadedBy: p.uploadedBy ?? null,
+      createdAt: p.createdAt ? toBjIso(p.createdAt) : null,
+      revokedAt: p.deletedAt ? toBjIso(p.deletedAt) : null,
     };
   }
 }

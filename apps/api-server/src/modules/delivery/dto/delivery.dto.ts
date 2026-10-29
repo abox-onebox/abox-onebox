@@ -14,6 +14,14 @@ import {
 
 import { DELIVERY_STATUS_ORDER, DeliveryStatus } from '@abox/shared-types';
 
+import {
+  DEFAULT_DELIVERY_PROOF_KIND,
+  DEFAULT_DELIVERY_PROOF_SCOPE,
+  DELIVERY_PROOF_KINDS,
+  DELIVERY_PROOF_SCOPES,
+  DELIVERY_PROOF_URL_MAX,
+} from '../../../common/constants/delivery-proof';
+
 /** `YYYY-MM-DD`（出餐日） */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -29,6 +37,9 @@ export const MAX_DELIVERY_QUANTITY = 9999;
 /** 修正原因的最小长度（至少 2 个字符 —— 「改」这种等于没写） */
 const REASON_MIN = 2;
 const REASON_MAX = 64;
+
+/** 凭证备注上限（与 `ab_delivery_proof.remark VARCHAR(255)` **同值** —— 改列先改这里） */
+const PROOF_REMARK_MAX = 255;
 
 /**
  * D61 · 配送单列表查询
@@ -175,4 +186,66 @@ export class DeliveryStatusAdvanceDto {
   @IsString({ message: 'note 必须是字符串' })
   @MaxLength(REASON_MAX, { message: `note 最多 ${REASON_MAX} 字` })
   note?: string;
+}
+
+/**
+ * Q3 · 新增送达凭证（写 `ab_delivery_proof`）
+ *
+ * ## 为什么这里收的是 `url` 而不是文件本身
+ * 文件上传是**通用能力**（`POST /admin/uploads`，供应商证照 / 商品图都走它），
+ * 而「这张图属于哪张配送单、是什么类型」是**配送域的语义**。
+ * 混成一个 multipart 端点，会让上传模块绑死在配送语义上（与 `MediaController`
+ * 头注「与任何业务域无关」正好相反）。故两步走：先拿 url，再挂到配送单上。
+ *
+ * ## ⚠️ `url` 的校验在 `checkProofUrl()`，不在 DTO 装饰器中
+ * 只在这里写 `MaxLength` 是**不够**的：真正要挡的是 `javascript:` / `data:`
+ * 与中间夹杂的换行（理由见 `common/constants/delivery-proof.ts`），
+ * 那些用装饰器表达不清。故 DTO 只做「是字符串」这一层，形态判定交给纯函数
+ * —— 顺带让判据有单测（`DeliveryService` 全仓没有单测）。
+ *
+ * ## `kind` 非法**不报错**，静默取缺省值
+ * 类型只是个分类标签（不是状态、不参与任何流程判断），为它把一次上传整个拒掉
+ * 是**本末倒置**：运营传上来一张「现场照」却因为枚举拼错而传不上去，
+ * 代价远大于「这张被标成默认类型」。
+ */
+export class DeliveryProofCreateDto {
+  @ApiProperty({
+    description:
+      '凭证地址（先调 `POST /admin/uploads` 拿到；站内 `/static/...` 或 http(s) 绝对地址）',
+  })
+  @IsString({ message: 'url 必须是字符串' })
+  @MaxLength(DELIVERY_PROOF_URL_MAX, { message: `url 最多 ${DELIVERY_PROOF_URL_MAX} 个字符` })
+  url!: string;
+
+  @ApiPropertyOptional({
+    description: '凭证类型（缺省 `photo`）',
+    enum: [...DELIVERY_PROOF_KINDS],
+    default: DEFAULT_DELIVERY_PROOF_KIND,
+  })
+  @IsOptional()
+  @IsString({ message: 'kind 必须是字符串' })
+  kind?: string;
+
+  @ApiPropertyOptional({ description: '备注（可选，如「交接点在 B 座前台」）' })
+  @IsOptional()
+  @IsString({ message: 'remark 必须是字符串' })
+  @MaxLength(PROOF_REMARK_MAX, { message: `remark 最多 ${PROOF_REMARK_MAX} 字` })
+  remark?: string;
+}
+
+/**
+ * Q3 · 凭证列表查询
+ *
+ * `scope` 的取值与判据在 `common/constants/delivery-proof.ts` —— 与 DTO **同一份**，
+ * 避免「枚举写在 DTO、判据写在服务」这种两份表述（`normalizeProofScope` 是唯一归一化口）。
+ */
+export class DeliveryProofListQueryDto {
+  @ApiPropertyOptional({
+    description: '范围：`alive` 仅有效（缺省） / `deleted` 仅已撤销 / `all` 全部',
+    enum: [...DELIVERY_PROOF_SCOPES],
+    default: DEFAULT_DELIVERY_PROOF_SCOPE,
+  })
+  @IsOptional()
+  @IsIn([...DELIVERY_PROOF_SCOPES], { message: 'scope 不在允许范围内' })
+  scope?: string;
 }
