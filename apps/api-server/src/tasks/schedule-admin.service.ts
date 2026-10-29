@@ -131,7 +131,8 @@ export class ScheduleAdminService {
       ['auto-confirm', (d) => autoConfirm.runOnce(d)],
       ['commission-settle', (d) => commissionSettle.runOnce(d)],
       ['supplier-share', (d) => supplierShare.runOnce(d)],
-      ['reconciliation', (d) => reconciliation.runOnce(d)],
+      // S5：补跑显式标 `manual`（留痕里要能区分「定时跑的」与「人点的」）
+      ['reconciliation', (d) => reconciliation.runOnce(d, 'manual')],
       ['leader-expire', (d) => leaderExpire.runOnce(d)],
       // P3（2026-10-29）：`pay-reconcile` 与出餐日无关，`d` 会被 `runOnce` 显式忽略
       ['pay-reconcile', (d) => payReconcile.runOnce(d)],

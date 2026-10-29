@@ -606,6 +606,23 @@ export interface ReconChannel {
   note: string;
 }
 
+/** S5 · 最近一次**自动**对账（每天 04:00 跑批写一条留痕，本页据此回答「今天核过没有」） */
+export interface ReconLastRun {
+  /** 被核的支付日；`''` = 从未跑过 */
+  date: string;
+  at: string | null;
+  balanced: boolean;
+  diffCount: number;
+  diffFen: number;
+  channelSource: string;
+  billAvailable: boolean;
+  summary: string;
+  /** fresh 已覆盖应核日 / stale 漏跑 / never 从未跑过 */
+  freshness: 'fresh' | 'stale' | 'never';
+  /** 人话提示（端上原样展示，不自己拼） */
+  tip: string;
+}
+
 export interface ReconciliationView extends PageResult<ReconDiffRow> {
   date: string;
   /** 恒 `'paidAt'` —— 提醒「这里的 date 不是出餐日」 */
@@ -615,6 +632,8 @@ export interface ReconciliationView extends PageResult<ReconDiffRow> {
   summary: ReconSummary;
   diffTypeStats: Array<{ type: ReconDiffType; label: string; count: number }>;
   note: string;
+  /** ⭐ 永不为空：`freshness: 'never'` 表示一条留痕都没有（最该被看见的一种） */
+  lastRun: ReconLastRun;
 }
 
 export interface ReconciliationQuery {

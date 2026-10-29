@@ -6,8 +6,15 @@ import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { addDays, bjDateTime, isRealDate, toBjIso, todayBj } from '../../common/utils/time';
 import { toFen } from '../../common/utils/money';
+import {
+  RECON_RUN_ACTION,
+  RECON_RUN_MODULE,
+  reconFreshness,
+  reconFreshnessTip,
+} from '../../common/utils/reconciliation-run-log';
 import { normalizePage, paginate } from '../../common/utils/response';
 import { Order, PaymentLog, Refund } from '../../database/entities/order.entity';
+import { OperationLog } from '../../database/entities/system.entity';
 import { AdminReconciliationQueryDto, ReconDiffType } from './dto/finance.dto';
 
 /**
@@ -49,6 +56,8 @@ export class ReconciliationService {
     @InjectRepository(Order) private readonly orderRepo: Repository<Order>,
     @InjectRepository(PaymentLog) private readonly payRepo: Repository<PaymentLog>,
     @InjectRepository(Refund) private readonly refundRepo: Repository<Refund>,
+    // S5 · 读「对账执行」留痕（跑批每次执行写一条，见 `reconciliation.task.ts`）
+    @InjectRepository(OperationLog) private readonly opLogRepo: Repository<OperationLog>,
   ) {}
 
   /**
@@ -292,6 +301,54 @@ export class ReconciliationService {
       diffTypeStats,
       ...paginate(sorted.slice(skip, skip + pageSize), sorted.length, page, pageSize),
       note: RECON_NOTE,
+      // S5 · 「最近一次自动对账」—— 让这一页能回答「今天到底核过没有」，
+      // 而不是让运营把「没有告警」当成「已核过」。
+      lastRun: await this.loadLastRun(addDays(todayBj(), -1)),
+    };
+  }
+
+  /**
+   * S5 · 最近一次自动对账（读 `ab_operation_log` 的 `finance/对账执行`）
+   *
+   * @param expectedDate **应核日期** —— 对账是 T+1 核昨日，由调用方算好传进来
+   *   （本服务不自己猜「今天该核哪天」，`dateKind` 的真源在 `TASK_SCHEDULES`）
+   *
+   * ⚠️ **永不返回 null**：「从未跑过」用 `freshness: 'never'` 表达并配一句人话 ——
+   *    返回 null 时端上很容易「有就显示、没有就不显示」，而**恰恰是「没有」最该被看见**。
+   */
+  private async loadLastRun(expectedDate: string): Promise<ReconLastRunView> {
+    const row = await this.opLogRepo
+      .createQueryBuilder('l')
+      .where('l.module = :m', { m: RECON_RUN_MODULE })
+      .andWhere('l.action = :a', { a: RECON_RUN_ACTION })
+      .orderBy('l.id', 'DESC')
+      .getOne();
+
+    const snap = (row?.snapshot ?? null) as
+      | {
+          balanced?: boolean;
+          diffCount?: number;
+          diffFen?: number;
+          channelSource?: string;
+          billAvailable?: boolean;
+          summary?: string;
+        }
+      | null
+      | undefined;
+    const lastDate = row?.targetId ?? null;
+    const freshness = reconFreshness(lastDate, expectedDate);
+
+    return {
+      date: lastDate ?? '',
+      at: row?.createdAt ? toBjIso(row.createdAt) : null,
+      balanced: Boolean(snap?.balanced),
+      diffCount: Number(snap?.diffCount ?? 0),
+      diffFen: Number(snap?.diffFen ?? 0),
+      channelSource: String(snap?.channelSource ?? 'local_only'),
+      billAvailable: Boolean(snap?.billAvailable),
+      summary: String(snap?.summary ?? ''),
+      freshness,
+      tip: reconFreshnessTip(freshness, { lastRunDate: lastDate, expectedDate }),
     };
   }
 
@@ -461,4 +518,28 @@ export interface ReconciliationView {
   total: number;
   hasMore: boolean;
   note: string;
+  /** S5 · 最近一次**自动**对账（`never` = 从未跑过）；端上据此提示，不自己判 */
+  lastRun: ReconLastRunView;
+}
+
+/**
+ * S5 · 最近一次自动对账
+ *
+ * ⚠️ **永不为空对象以外的值**：`freshness: 'never'` 表示「一条留痕都没有」。
+ */
+export interface ReconLastRunView {
+  /** 被核的支付日；`''` = 从未跑过 */
+  date: string;
+  /** 留痕写入时刻（北京时间 ISO） */
+  at: string | null;
+  balanced: boolean;
+  diffCount: number;
+  diffFen: number;
+  channelSource: string;
+  billAvailable: boolean;
+  /** 当时那一句结论（含「不含微信侧」） */
+  summary: string;
+  freshness: 'fresh' | 'stale' | 'never';
+  /** 人话提示（端上原样展示） */
+  tip: string;
 }

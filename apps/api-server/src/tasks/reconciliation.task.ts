@@ -2,6 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import {
+  buildReconRunLog,
+  RECON_RUN_ACTION,
+  RECON_RUN_MODULE,
+  type ReconRunFact,
+  type ReconRunTrigger,
+} from '../common/utils/reconciliation-run-log';
 import { OperationLog } from '../database/entities/system.entity';
 import { ReconciliationService } from '../modules/finance/reconciliation.service';
 import { ScheduleService } from './schedule.service';
@@ -108,8 +115,12 @@ export class ReconciliationTask {
    *
    * · 跑批：`handle()` 经 `sched.run()` 调用（带锁，同一目标日期只跑一次）
    * · 手动补跑：`POST /admin/schedule/reconciliation/run`（**不带锁**）
+   *
+   * @param trigger `cron` 定时 / `manual` 人工补跑 —— 留痕里要能区分
+   *    （排查「这一天为什么有两条记录」时，第一个问题就是这个）
    */
-  async runOnce(date: string): Promise<ReconciliationRunResult> {
+  async runOnce(date: string, trigger: ReconRunTrigger = 'cron'): Promise<ReconciliationRunResult> {
+    const startedAt = Date.now();
     const view = await this.recon.reconcile({ date });
     const s = view.summary;
 
@@ -159,6 +170,24 @@ export class ReconciliationTask {
       }
     }
 
+    // S5 · 无论平与不平都留一条「对账执行」（平了不留 ⇒ 没人分得清「核过了」
+    // 还是「压根没跑」）。**与告警是两件事**：这条是审计信号，上面那条是待办信号。
+    await this.persistRunLog({
+      date,
+      balanced: s.balanced,
+      orderFen: s.orderFen,
+      logFen: s.logFen,
+      refundFen: s.refundFen,
+      netFen: s.netFen,
+      diffFen: s.diffFen,
+      diffCount: s.diffCount,
+      channelSource: view.channel.source,
+      billAvailable: view.channel.billAvailable,
+      diffTypeStats: view.diffTypeStats,
+      durationMs: Date.now() - startedAt,
+      trigger,
+    });
+
     return {
       date,
       balanced: s.balanced,
@@ -173,5 +202,54 @@ export class ReconciliationTask {
       alerted,
       alertSkippedReason,
     };
+  }
+
+  /**
+   * S5 · 落「对账执行」留痕（**平与不平都写**）
+   *
+   * ## 为什么与告警分开两条
+   * `对账不平` 是**待办**（要人跟进，且同日只写一条以免刷屏）；
+   * 本条是**审计**（证明「这一天核过了、核出什么」）。合成一条的后果是：
+   * 平的日子没有记录 ⇒ 页面上的「无告警」永远分不清是「核过且平」还是「没跑」。
+   *
+   * ## 为什么同日期是**覆盖**而不是跳过
+   * 补跑的意义就是拿最新结果替掉旧结果。若照告警那样「已有则不写」，
+   * 凌晨跑出不平、运营补跑后已平，页面却一直挂着「不平」—— 比不写更糟。
+   * ⇒ 覆盖写并把 `runs` 累加，看得出这一天核过几次。
+   *
+   * ⚠️ **写失败不得影响对账本身**：留痕是给人看的，它挂了不该让跑批看起来是业务失败。
+   */
+  private async persistRunLog(fact: ReconRunFact): Promise<void> {
+    try {
+      const existed = await this.opLogRepo
+        .createQueryBuilder('l')
+        .where('l.module = :m', { m: RECON_RUN_MODULE })
+        .andWhere('l.action = :a', { a: RECON_RUN_ACTION })
+        .andWhere('l.targetId = :t', { t: fact.date })
+        .getOne();
+
+      const prevRuns = Number((existed?.snapshot as { runs?: number } | null)?.runs ?? 0);
+      const plan = buildReconRunLog(fact, Number.isFinite(prevRuns) ? prevRuns : 0);
+
+      if (existed) {
+        await this.opLogRepo.update(existed.id, {
+          requestData: plan.requestData,
+          snapshot: plan.snapshot,
+        });
+      } else {
+        await this.opLogRepo.insert({
+          adminUserId: null,
+          module: plan.module,
+          action: plan.action,
+          targetId: plan.targetId,
+          requestData: plan.requestData,
+          snapshot: plan.snapshot,
+        });
+      }
+    } catch (e) {
+      this.logger.error(
+        `S5 对账执行留痕写入失败（date=${fact.date}，不影响本次对账）：${(e as Error).message}`,
+      );
+    }
   }
 }

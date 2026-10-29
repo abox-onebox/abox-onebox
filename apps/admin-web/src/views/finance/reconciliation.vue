@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { fetchReconciliation, type ReconDiffType, type ReconciliationView } from '@/api/finance';
+import { formatDateTime } from '@/utils/format';
 
 /**
  * P34 微信支付对账（D43 · M3-15 · 模块 M35-06）
@@ -26,6 +27,17 @@ const date = ref('');
 const page = ref(1);
 const pageSize = ref(20);
 const data = ref<ReconciliationView | null>(null);
+
+/** S5 · 「最近一次自动对账」提示条的语义色：漏跑与从未跑必须看得出来 */
+const lastRunType = computed<'success' | 'warning' | 'error' | 'info'>(() => {
+  const r = data.value?.lastRun;
+  if (!r) return 'info';
+  if (r.freshness === 'never') return 'error';
+  if (r.freshness === 'stale') return 'warning';
+  return r.balanced ? 'success' : 'warning';
+});
+
+const fmt = (iso: string) => formatDateTime(iso);
 
 const money = (fen?: number | null) => `¥${((fen ?? 0) / 100).toFixed(2)}`;
 const signedMoney = (fen?: number | null) => {
@@ -91,6 +103,26 @@ onMounted(() => {
       :title="`对账口径：${data.channel.label}`"
     >
       <span class="channel__text">{{ data.channel.note }}</span>
+    </el-alert>
+
+    <!--
+      S5 · 最近一次自动对账
+      没有这块，「页面上看不到告警」会被当成「已核过且是平的」——
+      而真实原因可能是任务压根没跑。故**三种状态都显示**，且 never/stale 用告警色。
+    -->
+    <el-alert
+      v-if="data?.lastRun"
+      class="lastrun"
+      :type="lastRunType"
+      :closable="false"
+      show-icon
+      :title="data.lastRun.tip"
+    >
+      <span v-if="data.lastRun.date" class="lastrun__text">
+        {{ data.lastRun.date }} ·
+        {{ data.lastRun.balanced ? '已平' : `${data.lastRun.diffCount} 项差异` }} ·
+        {{ data.lastRun.at ? fmt(data.lastRun.at) : '—' }}
+      </span>
     </el-alert>
 
     <el-card shadow="never" class="bar">
@@ -222,6 +254,15 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .channel {
+  margin-bottom: $space-3;
+
+  &__text {
+    font-size: $fs-caption;
+    line-height: 1.8;
+  }
+}
+
+.lastrun {
   margin-bottom: $space-3;
 
   &__text {
