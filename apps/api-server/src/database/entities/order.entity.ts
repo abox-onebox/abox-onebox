@@ -500,3 +500,79 @@ export class ItemRating {
   @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
   createdAt!: Date;
 }
+
+/**
+ * ab_delivery_proof 配送送达凭证（Q3 · 2026-10-29 新增，第 35 张表）
+ *
+ * 「货确实送到了」的举证材料。挂在**配送单**而非订单上 —— 举证粒度是
+ * 「某个楼群某出餐日送到了没有」，而一个楼群一天恰好一张配送单；挂订单会让
+ * 同一张现场照跟几十笔订单各存一份，还会出现「同楼群同天、A 单有凭证 B 单没有」的荒谬态。
+ *
+ * ⚠️ 刻意**不是** `ab_delivery_record` 上的 JSON 列（尽管 `ab_supplier.store_photos` 是 JSON）：
+ *    凭证要**逐条**可查「什么时候、谁、传了什么」，JSON 整列覆盖写会抹掉前一条的上传痕迹；
+ *    且将来的多端并发上传在 JSON 列上会**静默丢张**（读-改-写），INSERT 不会。
+ *    详见迁移 `1700000000020-delivery-proof.ts` 的头注。
+ */
+@Entity('ab_delivery_proof')
+@Index('idx_delivery_proof_record', ['deliveryRecordId'])
+export class DeliveryProof {
+  @PkColumn()
+  id!: number;
+
+  /** 所属配送单（`ab_delivery_record.id`；外键仅文档约定，不进 DDL） */
+  @Column({ name: 'delivery_record_id', type: 'bigint', transformer: bigintTransformer })
+  deliveryRecordId!: number;
+
+  /** 凭证文件地址（本地 `/static/...` 或生产 CDN） */
+  @Column({ type: 'varchar', length: 512, comment: '凭证文件地址（本地 /static/... 或 CDN）' })
+  url!: string;
+
+  /** photo 现场照 / sign 签收单 / other 其它（**分类标签，不是状态**，无状态机） */
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: 'photo',
+    comment: 'photo 现场照 / sign 签收单 / other 其它',
+  })
+  kind!: string;
+
+  @Column({ type: 'varchar', length: 255, nullable: true, comment: '备注（运营可写一句说明）' })
+  remark?: string | null;
+
+  /**
+   * 上传人 `admin_user_id`
+   *
+   * ⚠️ 一期**只有后台**能传（配送接口全在 `admin/deliveries` 且挂 AdminGuard），
+   *    故这里直接是 admin 语义，**没有** `uploader_role` 那种按 role 解释 id 的多态列 ——
+   *    在第二个调用方出现之前，多态列只会造成误读。团长端真接入时加一列是常规迁移。
+   */
+  @Column({
+    name: 'uploaded_by',
+    type: 'bigint',
+    transformer: bigintTransformer,
+    nullable: true,
+    comment: '上传人 admin_user_id（一期仅后台上传）',
+  })
+  uploadedBy?: number | null;
+
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
+  createdAt!: Date;
+
+  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
+  updatedAt!: Date;
+
+  /**
+   * 软删时刻（误传可撤）
+   *
+   * ⚠️ 行**保留**而不硬删：「这里曾经有一张被撤掉的凭证」本身就是审计事实。
+   *    硬删会让「传了又撤」在系统里彻底蒸发 —— 而这恰恰是争议时最该被问到的一条。
+   */
+  @Column({
+    name: 'deleted_at',
+    type: 'datetime',
+    precision: 3,
+    nullable: true,
+    comment: '软删时刻（误传可撤；行保留以备审计）',
+  })
+  deletedAt?: Date | null;
+}
