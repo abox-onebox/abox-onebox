@@ -21,12 +21,16 @@ WORKDIR /app
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 
-# ⚠️ 编译工具链是给 `better-sqlite3` 兜底的（2026-10-30 补，别删）：
-#    它的 postinstall 是 `prebuild-install || node-gyp rebuild`，前者要从 GitHub
-#    releases 下预编译二进制、国内常下不到，回退源码编译就需要 python3/make/g++。
-#    pnpm 缓存命中时不跑 postinstall ⇒ 清过缓存后的第一次构建必然踩到。
-#    与 `apps/api-server/Dockerfile` 同一条理由（详见那里的头注）。
-RUN apk add --no-cache python3 make g++
+# ⚠️ 这里**刻意不装** `python3 make g++`（2026-10-30 定）：
+#    那套工具链是给 `better-sqlite3` 兜底的 —— 它的 postinstall 是
+#    `prebuild-install || node-gyp rebuild`，前者从 GitHub releases 下预编译二进制、
+#    国内常下不到，回退源码编译就要 python3/make/g++。
+#
+#    但 better-sqlite3 是 **api-server** 的依赖，admin 打包根本用不到它 ——
+#    故本文件改为 `pnpm install --filter`（只装 admin-web 及其依赖的 workspace 包），
+#    从**源头不装**它，比「装了再想办法编译过去」更快也更稳：
+#    apk 装这套工具链在真机上实测 > 20 分钟且会卡在 gcc，纯属白白拖慢发布。
+#    api 侧仍需要它，故 `apps/api-server/Dockerfile` **保留**那行（那里没有省事的路）。
 
 RUN corepack enable
 
@@ -44,7 +48,16 @@ COPY apps/miniprogram/package.json apps/miniprogram/
 COPY scripts ./scripts
 
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile --filter "admin-web..."
+
+# ⚠️ `--filter "admin-web..."` 里的 `...` = 「admin-web **及其依赖的** workspace 包」
+#    （即 packages/shared-*），一个点都不能少：
+#      · 少了 `...` ⇒ shared-types / shared-utils 不装 ⇒ 后面 `vue-tsc` 解析不到
+#        `@abox/shared-*`，构建在类型检查那一步崩；
+#      · 用错包名（如写 `@abox/admin-web`）⇒ filter 命中 0 个项目，pnpm 装了个寂寞。
+#    ⚠️ 它同时带来一个**副作用**（正是我们要的）：api-server 的依赖（含 better-sqlite3）
+#       不在本次安装范围内 ⇒ 不需要编译工具链。若哪天 admin 真的依赖了 api-server 的包，
+#       请把 `apps/api-server/Dockerfile` 那套工具链也搬过来。
 
 # ⚠️ admin-web 的 build = `vue-tsc --noEmit && vite build` —— **类型错误会阻断构建**，
 #    这是刻意的：后台是高权限面，宁可发不出去也不要带类型错误的产物上线。
