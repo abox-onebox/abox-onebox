@@ -20,6 +20,14 @@ WORKDIR /app
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
+
+# ⚠️ 编译工具链是给 `better-sqlite3` 兜底的（2026-10-30 补，别删）：
+#    它的 postinstall 是 `prebuild-install || node-gyp rebuild`，前者要从 GitHub
+#    releases 下预编译二进制、国内常下不到，回退源码编译就需要 python3/make/g++。
+#    pnpm 缓存命中时不跑 postinstall ⇒ 清过缓存后的第一次构建必然踩到。
+#    与 `apps/api-server/Dockerfile` 同一条理由（详见那里的头注）。
+RUN apk add --no-cache python3 make g++
+
 RUN corepack enable
 
 # 先只拷清单文件（同 api-server：让依赖层缓存不被源码变动打掉）

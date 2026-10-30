@@ -38,8 +38,18 @@ WORKDIR /app
 # ⚠️ 必须装 tzdata，不能只设 ENV TZ —— alpine 默认不带 tz 数据库，
 #    只设环境变量时部分路径（Intl / 系统格式化）会静默回退到 UTC。
 RUN sed -i 's|https://dl-cdn.alpinelinux.org/alpine|https://mirrors.aliyun.com/alpine|g' /etc/apk/repositories \
- && apk add --no-cache tzdata \
+ && apk add --no-cache tzdata python3 make g++ \
  && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+
+# ⚠️ `python3 make g++` 是给 `better-sqlite3` 兜底的（2026-10-30 补，别删）：
+#    它的 postinstall 写作 `prebuild-install || node-gyp rebuild` ——
+#    前者要去 GitHub releases 下预编译二进制，国内服务器**经常下不到**；
+#    一旦下不到就回退源码编译，而 alpine 基础镜像不含编译工具链
+#    ⇒ `gyp ERR! find Python`，构建在这一步直接失败。
+#
+#    ⚠️ 为什么以前一直没暴露：pnpm 的 store cache mount 命中时**根本不跑** postinstall。
+#       缓存一旦被清（如 `docker builder prune` 释放磁盘），**第一次**构建就会踩到 ——
+#       即「能构建」其实是靠缓存顶着，不是 Dockerfile 本身完备。
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
