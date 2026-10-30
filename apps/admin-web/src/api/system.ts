@@ -638,15 +638,30 @@ export interface UpsertWecomBindingPayload {
   approverToken?: string;
 }
 
+/**
+ * ⚠️⭐ **这三个端点不走 `/api/v1` 前缀**：后端 `main.ts` 是
+ *    `setGlobalPrefix(prefix, { exclude: ['wecom/(.*)'] })` —— wecom 路由**故意**挂在根下
+ *    （企微回调地址由企微侧配置，加前缀会让回调 URL 对不上，故整段 exclude）。
+ *
+ *    ⇒ 而前端 baseURL 就是 `/api/v1`：照常写相对路径会被拼成 `/api/v1/wecom/kb/bindings`，
+ *      服务端回 `10004 接口不存在或已调整` —— **不报网络错**，页面上只是「点了没反应」，
+ *      这类问题光看控制台很难定位。故逐个显式 `{ baseURL: '' }` 覆盖。
+ *    ⇒ nginx 侧 `location /wecom/` 已反代到 api，路径本身不用改。
+ */
+const WECOM_NO_PREFIX = { baseURL: '' } as const;
+
 export function fetchWecomBindings(): Promise<WecomBindingRow[]> {
-  return http.get<WecomBindingRow[]>('/wecom/kb/bindings');
+  return http.get<WecomBindingRow[]>('/wecom/kb/bindings', undefined, WECOM_NO_PREFIX);
 }
 
 export function upsertWecomBinding(payload: UpsertWecomBindingPayload): Promise<WecomBindingRow> {
-  return http.post<WecomBindingRow>('/wecom/kb/bindings', payload);
+  return http.post<WecomBindingRow>('/wecom/kb/bindings', payload, WECOM_NO_PREFIX);
 }
 
 /** 解绑（物理删除整行，含两个令牌）· userId 是企微 userid，可能含特殊字符 ⇒ 必编码 */
 export function removeWecomBinding(userId: string): Promise<{ ok: boolean }> {
-  return http.delete<{ ok: boolean }>(`/wecom/kb/bindings/${encodeURIComponent(userId)}`);
+  return http.delete<{ ok: boolean }>(
+    `/wecom/kb/bindings/${encodeURIComponent(userId)}`,
+    WECOM_NO_PREFIX,
+  );
 }
