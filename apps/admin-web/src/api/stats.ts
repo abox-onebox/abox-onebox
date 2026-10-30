@@ -190,3 +190,49 @@ export const fetchItemRating = (params: StatsQuery & { date?: string } = {}) =>
 
 export const fetchRetention = (params: StatsQuery = {}) =>
   http.get<StatsRetentionResult>('/admin/stats/retention', params);
+
+/**
+ * D77 · 页面停留分析（2026-10-30 新增 · 看板第五页）
+ *
+ * ⚠️ 与其余看板页的两处不同，**端上必须如实展示**（不自造口径）：
+ *   ① `anchor='visitedAt'` —— 区间按**访问日**，其余四页按发货日/出餐日，两者对不上是预期的；
+ *   ② 匿名埋点 ⇒ 只有 PV 类指标，`pages[].visits` 是**访问次数不是人数**。
+ */
+export interface StatsPageDurationRow {
+  page: string;
+  /** 访问次数（PV）—— 匿名数据没有用户维度，不是独立访客数 */
+  visits: number;
+  totalMs: number;
+  avgMs: number;
+  medianMs: number;
+  maxMs: number;
+  /** 访问次数占比（0–1） */
+  share: number;
+}
+
+export interface StatsPageDurationDailyRow {
+  date: string;
+  visits: number;
+  avgMs: number;
+}
+
+export interface StatsPageDurationResult {
+  range: StatsRangeView;
+  anchor: 'visitedAt';
+  anchorLabel: string;
+  pages: StatsPageDurationRow[];
+  /** 分日趋势（升序；无数据的日子不出行 —— 「没数据」不能被画成 0） */
+  daily: StatsPageDurationDailyRow[];
+  summary: {
+    visits: number;
+    pageCount: number;
+    totalMs: number;
+    avgMs: number;
+  };
+  /** 被剔除的行数（时刻 / 时长非法）；> 0 时页面必须提示，不静默 */
+  droppedRows: number;
+  note: string;
+}
+
+export const fetchPageDuration = (params: StatsQuery = {}) =>
+  http.get<StatsPageDurationResult>('/admin/stats/page-duration', params);

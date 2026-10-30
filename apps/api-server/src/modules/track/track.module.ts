@@ -17,10 +17,13 @@ import { TrackService } from './track.service';
  *   forbidNonWhitelisted 的全局 ValidationPipe 下连「多余字段」都进不来
  *   （详见 `dto/track.dto.ts` 头注与实体 `PageTrack` 头注）。
  *
- * ⚠️ 本模块**不导出** Service：埋点是「只写不读」的单向管道，后台聚合直接用 SQL
- *    （表上有 `idx_page_track_page_created (page, created_at)`），不提供查询端点 ——
- *    查询端点一旦存在就要论角色与脱敏，而匿名数据没有可脱敏的身份维度，
- *    更没有「谁能看」的既有裁决。要做得先立项。
+ * ⚠️ **读侧已于 2026-10-30 立项并落地**（D77 · `GET /admin/stats/page-duration`）：
+ *    本模块仍然**只写不读**（`TrackService` 不导出），聚合端点建在 **`StatsModule`**
+ *    下 —— 理由：它是看板第五页，要复用看板的角色白名单（含 `viewer`，
+ *    见 `stats-admin.controller.ts` 头注）与区间口径，放这里等于把看板权限再抄一份。
+ *    ⛔ 原头注曾写「查询端点一旦存在就要论角色与脱敏…要做得先立项」——
+ *      裁决已由项目负责人给出（匿名 ⇒ 无身份维度可脱敏，故按看板只读角色开放），
+ *      本段按新事实改写，**不留「文档说不做、代码已做」的自相矛盾**。
  */
 @Module({
   imports: [TypeOrmModule.forFeature([PageTrack])],

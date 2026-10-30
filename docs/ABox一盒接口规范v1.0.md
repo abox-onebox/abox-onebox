@@ -1497,7 +1497,7 @@ approve
 
 ### 6.6 数据统计（M36）
 
-> **实现状态**：`D47–D50` **已实装（M3-11 · 零 DDL · 零错误码）**。
+> **实现状态**：`D47–D50` **已实装（M3-11 · 零 DDL · 零错误码）**；**D77 已实装（2026-10-30 · 零 DDL · 零新增错误码）**。
 > 落点：`apps/api-server/src/modules/stats/`（`stats.constants.ts` = **统计口径唯一真相**）· 页面：`apps/admin-web/src/views/stats/`。
 > 验收：`scripts/e2e-m3.mjs` **§23**（61 条断言 · **不依赖下单窗口** · 夹具节末全量还原）。
 
@@ -1508,6 +1508,22 @@ approve
 | D49 | GET | `/admin/stats/dish-heat?range=&topN=` | 菜品热度（M36-03） |
 | D50 | GET | `/admin/stats/retention?range=` | 留存分析（M36-04） |
 | **D69** | GET | **`/admin/stats/dish-rating?range=&date=`** | **口味红黑榜（P1-U2）** —— 按菜聚合 `ab_dish_rating`（好/一般/不好计数 · 差评率 · **本月投诉数** · 红线告警 · 最近差评原因 · `worstThree`「本周最差三道菜」）· 只读 · 与 D49 菜品热度同页第二个 Tab（P35）· 实现口径见下方「U2 实现口径」表 |
+| **D77** | GET | **`/admin/stats/page-duration?range=&date=`** | **页面停留分析（2026-10-30 新增 · 看板第五页）** —— 按页面聚合匿名埋点 `ab_page_track`（访问次数 / 平均停留 / **中位停留** / 最长停留 / 分日趋势）· ⭐ **匿名 ⇒ 只有 PV 类指标** · 实现口径见下方「页面停留（D77）实现口径」表 |
+
+**页面停留（D77）实现口径（2026-10-30 · 零 DDL）**
+
+| 项 | 口径 |
+| --- | --- |
+| ⭐⭐ 区间锚点 = **访问日** | 按 `ab_page_track.created_at`（用户何时打开页面）切区间，**不是**出餐日 `mealDate`。这是继 D43 对账（支付日）之后**第二个**非出餐日锚点 ⇒ 出参显式下发 `anchor='visitedAt'` + `anchorLabel`，端上必须展示 —— 否则运营会拿「本页 7d」去对「D47 7d」，而两者**对不上是预期的** |
+| ⭐⭐ **只有 PV 类指标** | 埋点 DTO 不收任何身份字段（`whitelist + forbidNonWhitelisted` 下带 `openid` 的报文被**整体拒绝**）⇒ `pages[].visits` 是**访问次数不是人数**，**算不出**独立访客数 / 新老客 / 跳出率 / 路径流转。这些需用户维度，属另一个立项（须先过隐私合规）。`note` 由服务端下发，端上原样展示、不自造第二份文案 |
+| ⭐ 路径归一 | 同一页在小程序记作 `pages/index/index`、在 H5 历史版本记作 `/pages/index/index` ⇒ 归一后合并（判据 `normalizePagePath()`，且**放在聚合函数内部**，调用方忘了也漏不了）。不归一的后果：同一页面在榜单出现两次、两边都不报错 |
+| ⭐ 一律**服务端内存**聚合 | `TRIM(LEADING '/' FROM page)` 与 `DAY(created_at)` 都是**驱动相关**语法（SQLite 无），下推 SQL 会破坏「四驱动零改动切换」（同 D44 分月口径） |
+| 中位停留 | 与平均值**并列下发**：后台挂机一次会把平均值拉高，中位数不会 ⇒ 「用户一般看多久」看中位列（页面已注明） |
+| 分日趋势 | 按日期升序；区间内**无数据的日子不补零行** —— 「没数据」被画成 0 会被读成「当天停留 0 秒」 |
+| ⚠️ 剔除行如实上报 | 时刻或时长非法的行进 `droppedRows`（**不静默丢弃**，也**不按 0 计入** —— 后者会把平均值拉偏）；页面在 `droppedRows > 0` 时出警告条 |
+| ⛔ 已知数据缺陷 | 生产库存在 `created_at = '2026-10-27'` 的脏行（MySQL 宽松模式写入的**不存在日期**）。JS 会把它宽松解析成一个**合法**日期，故服务端**识别不出**（`saneTimeMs` 对它返回「有效」）⇒ 会落进某个分日桶。**根治只能靠一次性数据清洗**，不能靠聚合层猜 |
+| 权限 | 复用 `StatsAdminController` 类级白名单（**含 `viewer`**）—— 本页挂「数据」分组下是看板第五页，`viewer` 菜单只有看板类页面，不含它则「菜单能点、点了 `10003`」（与 D47–D50 同一理由） |
+| 采集侧（`POST /track/page-duration`） | 匿名免登录、批量 ≤ 20 条/次、端上本地队列重试（重启不丢）、`durationMs` 端上计算并封顶 24h；写侧见 §3.6 后「U15 埋点」说明 |
 
 **关键指标口径（与原型 P34/P35 一致 · 实现口径见下方 M3-11 表）**
 
@@ -2051,7 +2067,7 @@ approve
 | P32 | 团长管理 | M33 | D19–D22 | `ab_team_leader`、`ab_leader_invite` |
 | P33 | 供应商管理 | M34 | D23–D32 | `ab_supplier`、`ab_distribution_center` |
 | P34 | 财务结算 | M35 | D33–D46（**已实装** D33–D35 资金总览/佣金/佣金入账（M3-13）· D36/D37 应付结算 · **D38–D39 余额账户管理与调整（M3-14）** · D40–D42 退款审批；**D43 微信对账 / D44 发票管理（M3-15）** · **D45 提现审批列表 + D46/D46a/D46b/D46c 四动作（M4-4）**） | `ab_commission`、`ab_supplier_share`、`ab_refund`、**`ab_balance`、`ab_balance_log`、`ab_withdraw`** |
-| P35 | 数据看板 | M36 | D47–D50（**已实装**）+ **D69（P1-U2 · 第二个 Tab「口味评价」红黑榜）** | 聚合查询、`ab_dish_rating` |
+| P35 | 数据看板 | M36 | D47–D50（**已实装**）+ **D69（P1-U2 · 第二个 Tab「口味评价」红黑榜）** + **D77（页面停留 · 第五页）** | 聚合查询、`ab_dish_rating`、**`ab_page_track`（匿名埋点 · 只读聚合）** |
 | P36 | 系统配置 | M37 | D51–D60 · **D67–D68（F5 通知触达矩阵：编排 + 到达率 · 同一页第二个 Tab）**（**已实装**） | `ab_admin_user`、`ab_operation_log`、`ab_config`、`ab_message`、**`ab_message_template`** |
 | P37 | 办公楼管理 | M33 | D13–D18 | `ab_building`、`ab_building_group` |
 | P39 | 加工场所打包 | M21-03 | `GET /admin/packing-tasks`（**M4-0 由 S3 迁入**） | `ab_supplier_dish_center_daily`、`ab_distribution_center` |

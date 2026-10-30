@@ -16,8 +16,12 @@ import { StatsService } from './stats.service';
  *   等于这个角色根本不可用 —— 菜单授权与接口授权必须同源，
  *   否则「菜单能点、点了报无权限」是最容易被当成 bug 的一类不一致。
  *
- * ⚠️ 四个端点**都是 GET**，故一律不加 `@OperationLog()`：
+ * ⚠️ 五个端点**都是 GET**，故一律不加 `@OperationLog()`：
  *   操作日志只标写操作（`GET` 标了会把看板刷成日志垃圾）。
+ *
+ * ⚠️ D77（页面停留）**刻意复用本控制器的角色白名单**（含 `viewer`）：它挂在「数据」
+ *   分组下，属看板第五页。`viewer` 的菜单只有看板类页面，若此处不含它，
+ *   该角色在自己唯一拥有的页面上会拿 10003（与 D47–D50 同一条理由）。
  */
 @ApiTags('后台·数据看板')
 @ApiBearerAuth()
@@ -72,5 +76,17 @@ export class StatsAdminController {
   })
   retention(@Query() q: StatsQueryDto) {
     return this.stats.retention(q);
+  }
+
+  @Get('page-duration')
+  @ApiOperation({
+    summary: 'D77 页面停留分析（P35 第五页 · 匿名埋点 `ab_page_track`）',
+    description:
+      '按访问日区间聚合：单页访问次数 / 平均停留 / 中位停留 / 最长停留 + 分日趋势。' +
+      '⚠️ 两点与其余看板页不同：① 匿名数据**只有 PV 类指标**，没有独立访客数；' +
+      '② 区间按**访问日**（created_at）而非出餐日，两者对不上是预期的（出参带 anchor）。',
+  })
+  pageDuration(@Query() q: StatsQueryDto) {
+    return this.stats.pageDuration(q);
   }
 }

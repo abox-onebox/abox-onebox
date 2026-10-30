@@ -1,16 +1,26 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { Between, DataSource } from 'typeorm';
 
 import { costRegistrationWarning } from '@abox/shared-utils';
 import type { SettlementCostItems, SettlementCostRegistration } from '@abox/shared-utils';
 import { shiftBizDate, weekStartBizDate } from '@abox/shared-utils';
 
 import { BizConfigService } from '../../common/services/biz-config.service';
+import {
+  aggregatePageDuration,
+  saneDurationMs,
+  saneTimeMs,
+  type PageDurationAggRow,
+  type PageDurationDailyRow,
+  type PageDurationRowInput,
+} from '../../common/utils/page-duration-stats';
+import { bjDateTime } from '../../common/utils/time';
 import { Building, BuildingGroup } from '../../database/entities/building.entity';
 import { Commission, SupplierShare } from '../../database/entities/finance.entity';
 import { SetMealItem } from '../../database/entities/meal.entity';
 import { Order } from '../../database/entities/order.entity';
 import { Item, Supplier } from '../../database/entities/supplier.entity';
+import { PageTrack } from '../../database/entities/system.entity';
 
 import {
   COMMISSION_VOID_STATUSES,
@@ -195,6 +205,45 @@ function ratio(numerator: number, denominator: number): number | null {
  *   3. 代价是 O(行数)。MVP 单量（日 200 单 × 30 日）下完全可接受，
  *      单量破万后再把 `isValid` 条件下推 SQL（**届时只改本文件**）。
  */
+/**
+ * D77 · 页面停留分析（2026-10-30 新增 · 原型 P35 第五页）
+ *
+ * ⭐ **为什么此前只有写、没有读**：`TrackModule` 头注原本写明「只写不读」，
+ *    理由是「查询端点一旦存在就要论角色与脱敏，而匿名数据没有可脱敏的身份维度，
+ *    更没有『谁能看』的既有裁决，要做得先立项」。本次由项目负责人立项，
+ *    裁决落地后该头注已同步改写 —— **注释与实现不许说两套**。
+ *
+ * ⚠️ `anchor = 'visitedAt'`：本页按**访问日（`created_at`）**切区间，而看板其余
+ *    四页按**出餐日（`mealDate`）**。两条时间轴不同，故「本页 7d」与「D47 7d」
+ *    **对不上是预期的**，出参显式下发锚点，端上必须展示。
+ *
+ * ⛔ **匿名 ⇒ 只有 PV 类指标**：埋点 DTO 不收任何身份字段（`whitelist +
+ *    forbidNonWhitelisted` 下带 openid 的报文会被整体拒绝），故**算不出**独立访客数 /
+ *    新老客 / 跳出率 / 路径流转 —— 那些都需要用户维度，属另一个立项（需先过隐私合规）。
+ */
+export interface PageDurationStatsView {
+  range: StatsRangeView;
+  /** 日期锚点口径（端上必须展示，避免与出餐日口径混用） */
+  anchor: 'visitedAt';
+  anchorLabel: string;
+  /** 单页聚合（按访问次数降序） */
+  pages: PageDurationAggRow[];
+  /** 分日趋势（升序；区间内无数据的日子**不补零行**） */
+  daily: PageDurationDailyRow[];
+  summary: {
+    /** 访问次数（PV） */
+    visits: number;
+    /** 去重后的页面数 */
+    pageCount: number;
+    totalMs: number;
+    avgMs: number;
+  };
+  /** ⚠️ 被剔除的行数（时刻或时长非法）—— **不静默丢弃** */
+  droppedRows: number;
+  /** 口径说明（端上直接展示，不自造第二份文案） */
+  note: string;
+}
+
 @Injectable()
 export class StatsService {
   private readonly logger = new Logger('Stats');
@@ -754,6 +803,70 @@ export class StatsService {
         '「新客」= 首单出餐日落在本区间内的用户（首单按**有效订单**判定，' +
         '未支付/已取消/已退款不算首单）；留存按「首单所在自然周」分群，' +
         '观察窗口未走完的群、以及当周无新客的群，留存率与留存人数均为 null（页面显示「—」，**不等于 0**）。',
+    };
+  }
+
+  /* ------------------------------------------------------------------ *
+   * D77 · 页面停留分析（`ab_page_track` · 2026-10-30）
+   * ------------------------------------------------------------------ */
+
+  /**
+   * 页面停留聚合。
+   *
+   * ⭐ **区间按访问日（`created_at`）而非出餐日**：埋点记的是「用户何时打开页面」，
+   *    与订单的 `mealDate` 是两条时间轴。看板其余四页都是出餐日口径，本页是
+   *    **唯一例外**（继 D43 对账的「支付日」之后第二个），故出参显式下发 `anchor`。
+   *
+   * ⭐ **归一与过滤一律在服务端内存完成**：`TRIM(LEADING '/' FROM page)` 与
+   *    `DAY(created_at)` 都是驱动相关语法（SQLite 无），下推 SQL 会破坏
+   *    「四驱动零改动切换」（同 D44 分月口径）。
+   *
+   * ⛔ **已知数据缺陷（不在本函数修补）**：生产库里有 `created_at = '2026-10-27'` 的
+   *    脏行（MySQL 宽松模式写入的**不存在日期**）。JS 会把它宽松解析成一个合法日期，
+   *    故此处**识别不出**（`saneTimeMs` 对它是「有效」）⇒ 它会落进某个分日桶。
+   *    根治只能靠**一次性清洗**（删掉那几行），不能靠聚合层猜。
+   */
+  async pageDuration(q: StatsQueryDto): Promise<PageDurationStatsView> {
+    const range = this.resolveRange(q.range, q.date);
+    // ⚠️ 区间端点一律走 `bjDateTime`（唯一时区换算实现）：`hour = 24` 进位成次日 0 点，
+    //    正好是「含尾」的精确上界 —— 与 D43 对账、D44 分月同一套写法。
+    const from = bjDateTime(range.startDate, 0);
+    const to = bjDateTime(range.endDate, 24);
+
+    const rows = await this.dataSource.getRepository(PageTrack).find({
+      where: { createdAt: Between(from, to) },
+      select: ['page', 'durationMs', 'createdAt'],
+      order: { createdAt: 'ASC' },
+    });
+
+    const clean: PageDurationRowInput[] = [];
+    let droppedRows = 0;
+    for (const r of rows) {
+      const atMs = saneTimeMs(r.createdAt);
+      const durationMs = saneDurationMs(r.durationMs);
+      if (atMs == null || durationMs == null) {
+        droppedRows += 1;
+        continue;
+      }
+      // 归一在 `aggregatePageDuration` 内部完成 —— 判据只允许一处，调用方忘了也漏不了。
+      clean.push({ page: String(r.page ?? ''), durationMs, atMs });
+    }
+
+    const agg = aggregatePageDuration(clean);
+
+    return {
+      range,
+      anchor: 'visitedAt',
+      anchorLabel: '访问日',
+      pages: agg.pages,
+      daily: agg.daily,
+      summary: agg.summary,
+      droppedRows,
+      note:
+        '本页为匿名统计：埋点不含任何身份字段，故只有访问次数（PV）与停留时长，' +
+        '没有独立访客数 / 新老客 / 跳出率（需用户维度，属另一个立项）。' +
+        '时长由端上计算，弱网时进本地队列重试，上报成功才入库 —— 统计的是成功上报的那部分。' +
+        '小程序与 H5 的同一页面已按路径归一合并。',
     };
   }
 }

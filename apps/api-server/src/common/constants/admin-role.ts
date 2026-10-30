@@ -100,6 +100,8 @@ export const ADMIN_MENU_KEYS = [
   '/stats/building-rank',
   '/stats/dish-heat',
   '/stats/retention',
+  // D77 页面停留（2026-10-30）：匿名埋点的读侧，与看板同类 —— 授权了就必须有入口
+  '/stats/page-duration',
   '/system/config',
   '/system/admin-user',
   '/system/role',
@@ -214,6 +216,7 @@ export const ROLE_MENUS: Record<string, readonly string[]> = {
     '/stats/building-rank',
     '/stats/dish-heat',
     '/stats/retention',
+    '/stats/page-duration',
   ],
   /** 只读观察者：仅看板 */
   viewer: [
@@ -222,6 +225,7 @@ export const ROLE_MENUS: Record<string, readonly string[]> = {
     '/stats/building-rank',
     '/stats/dish-heat',
     '/stats/retention',
+    '/stats/page-duration',
   ],
   /** 供应商：仅自己的 P21–P26 */
   supplier: SUPPLIER_MENU_KEYS,

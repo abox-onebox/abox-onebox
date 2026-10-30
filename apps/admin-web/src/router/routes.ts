@@ -265,6 +265,12 @@ export const routes: RouteRecordRaw[] = [
         name: 'StatsRetention',
         component: () => import('@/views/stats/retention.vue'),
       },
+      // D77 · 页面停留（2026-10-30 新增 · 匿名埋点 ab_page_track）
+      {
+        path: 'stats/page-duration',
+        name: 'StatsPageDuration',
+        component: () => import('@/views/stats/page-duration.vue'),
+      },
 
       // 系统管理 M37 · P36
       {

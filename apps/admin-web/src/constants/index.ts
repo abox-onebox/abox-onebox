@@ -373,6 +373,15 @@ export const ADMIN_NAV = [
         module: 'M36-04',
         icon: 'history',
       },
+      // D77（2026-10-30 新增）：匿名埋点 `ab_page_track` 的读侧。
+      // ⚠️ 区间按**访问日**，与上面四页的发货日口径不同 —— 页面内已明示。
+      {
+        path: '/stats/page-duration',
+        title: '页面停留',
+        page: 'P35',
+        module: 'M36-05',
+        icon: 'clock',
+      },
     ],
   },
   {
