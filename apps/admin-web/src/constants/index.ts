@@ -468,6 +468,13 @@ export const ADMIN_NAV = [
         module: 'P1-c',
         icon: 'lock',
       },
+      {
+        path: '/system/wecom-binding',
+        title: '企微令牌绑定',
+        page: '—',
+        module: 'P1-c',
+        icon: 'key',
+      },
     ],
   },
 ] as const;

@@ -500,6 +500,7 @@ import {
   batchApproveByScope,
   batchRejectByScope,
   fetchAdminRefunds,
+  fetchRefundDetail,
   fetchRefundScopePreview,
   rejectRefund,
   ERR_IDEMPOTENT_HIT,
@@ -807,8 +808,23 @@ async function reload(): Promise<void> {
   }
 }
 
-function openApprove(row: RefundRow): void {
-  current.value = row;
+/**
+ * 审批通过前**先向服务端取单条**（`fetchRefundDetail`）
+ *
+ * ⭐ 为什么不能直接用列表里那一行：列表是**快照**。从列表加载完到点「通过」之间，
+ *    这笔退款可能已被别人处理、被通道回执改过状态或金额（`finance.ts` 头注即写明
+ *    「金额必须来自服务端」）。让运营对着一个可能已变的数字点头，是审批动作最不该有的样子。
+ *
+ * ⚠️ 取数失败就**不开弹窗**：宁可让运营多点一次，也不能拿不确定金额去审批。
+ *    （此前这个封装一直无人调用 —— admin:coverage #45 扫出来的孤儿。）
+ */
+async function openApprove(row: RefundRow): Promise<void> {
+  try {
+    current.value = await fetchRefundDetail(row.id);
+  } catch (e) {
+    ElMessage.error(e instanceof ApiError ? e.message : '未能取到这笔退款的最新金额，请刷新后重试');
+    return;
+  }
   approveRemark.value = '';
   approveVisible.value = true;
 }

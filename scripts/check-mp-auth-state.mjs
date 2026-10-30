@@ -440,16 +440,22 @@ const PAGES = [
         expect: 1,
       },
       {
-        from: 'fetchLevelRules({ keepAuthState: true })',
-        to: `((globalThis.${S_ALL_COMMISSION} = true), fetchLevelRules({}))`,
+        // ⚠️ 2026-10-30 窄化：`commission.vue` 现在有**两处** `fetchLevelRules({ keepAuthState: true })`
+        //    —— 并发旁路（本针，位于 `Promise.allSettled([...])` 内）与 `doAudit()` 里的顺序补刀
+        //    （审计完后重拉规则，排在 `await auditMyLevel()` 之后，不与任何东西并发）。
+        //    只匹配函数名会让本针命中 2 处 ⇒ 变异撞进注释以外的第二个调用、门禁报
+        //    「命中数异常」。故把前导 `,\n    ` 一并写进探针，**只**命中并发那一处。
+        from: ',\n    fetchLevelRules({ keepAuthState: true }),',
+        to: `,\n    ((globalThis.${S_ALL_COMMISSION} = true), fetchLevelRules({})),`,
         expect: 1,
       },
     ],
     dropOne: {
-      label: 'commission.vue:364 fetchLevelRules',
+      label: 'commission.vue 并发旁路（Promise.allSettled 内）的 fetchLevelRules',
       needle: {
-        from: 'fetchLevelRules({ keepAuthState: true })',
-        to: `((globalThis.${S_ONE_COMMISSION} = true), fetchLevelRules({}))`,
+        // 同上：带前导 `,\n    ` 以避开 `doAudit()` 里那处顺序调用
+        from: ',\n    fetchLevelRules({ keepAuthState: true }),',
+        to: `,\n    ((globalThis.${S_ONE_COMMISSION} = true), fetchLevelRules({})),`,
         expect: 1,
       },
     },

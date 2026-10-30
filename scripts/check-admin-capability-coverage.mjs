@@ -124,110 +124,26 @@ const EXEMPT = [
  * 每条必须带 `todo`（待办编号）与 `since`（发现日期）。
  */
 const KNOWN_GAPS = [
-  // ✅ 2026-10-30 已修并已从本表删除（删条目的正是这段自收紧检查，见下方 C-0）：
-  //    · 待办#40 `/admin/op-blocklist` GET/POST/DELETE —— 新增 `views/system/op-blocklist.vue`
-  //    · 待办#42 `POST /auth/change-password` —— 顶栏「修改口令」（挂外壳，不进菜单）
-  //    · 待办#46 导出方法 `setSettleAccount` —— 名录页「结算账户」弹窗
-  //    （同时修掉 form.vue 里三个「能填但不提交」的银行输入框）
-  {
-    method: 'POST',
-    path: '/admin/operation-requests/:p/recall',
-    reason: '运营申请「撤回」无入口：列表/审批页面有，撤回按钮没有',
-    todo: '待办#41',
-    since: '2026-10-30',
-  },
-  {
-    method: 'GET',
-    path: '/admin/buildings/filter-options',
-    reason: '筛选选项端点未被使用（页面未做筛选或另取来源）',
-    todo: '待办#43',
-    since: '2026-10-30',
-  },
-  {
-    method: 'GET',
-    path: '/admin/building-groups/filter-options',
-    reason: '同上',
-    todo: '待办#43',
-    since: '2026-10-30',
-  },
-  {
-    method: 'GET',
-    path: '/admin/suppliers/filter-options',
-    reason: '同上',
-    todo: '待办#43',
-    since: '2026-10-30',
-  },
-  {
-    method: 'POST',
-    path: '/wecom/kb/bindings',
-    reason: '企微知识库绑定无后台页面（待裁决：是否要有运营入口）',
-    todo: '待办#44',
-    since: '2026-10-30',
-  },
-  {
-    method: 'GET',
-    path: '/wecom/kb/bindings',
-    reason: '同上',
-    todo: '待办#44',
-    since: '2026-10-30',
-  },
-  {
-    method: 'DELETE',
-    path: '/wecom/kb/bindings/:p',
-    reason: '同上',
-    todo: '待办#44',
-    since: '2026-10-30',
-  },
-  // ---- 「接口已接未落地」类：方法写好了，页面没用它 ----
-  {
-    target: 'admin',
-    export: 'refreshAdminToken',
-    reason: 'api/auth.ts 导出但无人调用（疑似预留）：要么接进 request 拦截器，要么删掉',
-    todo: '待办#45',
-    since: '2026-10-30',
-  },
-  {
-    target: 'admin',
-    export: 'fetchBuildingDetail',
-    reason: '楼宇详情接口已封装，无页面使用（页面可能走了 overview）',
-    todo: '待办#45',
-    since: '2026-10-30',
-  },
-  {
-    target: 'admin',
-    export: 'fetchGroupDetail',
-    reason: '同上（楼宇组详情）',
-    todo: '待办#45',
-    since: '2026-10-30',
-  },
-  {
-    target: 'admin',
-    export: 'fetchRefundDetail',
-    reason: '退款详情接口已封装，无页面使用',
-    todo: '待办#45',
-    since: '2026-10-30',
-  },
-  {
-    target: 'mp',
-    export: 'auditMyLevel',
-    reason: '端上导出未使用',
-    todo: '待办#45',
-    since: '2026-10-30',
-  },
-  {
-    target: 'mp',
-    export: 'fetchTraceabilityToday',
-    reason: '溯源接口已封装，端上无页面使用',
-    todo: '待办#45',
-    since: '2026-10-30',
-  },
-  {
-    method: 'GET',
-    path: '/home/history',
-    reason: '历史菜单端点端上无引用（小程序「历史订单/往期菜单」未落地）',
-    todo: '待办#47',
-    since: '2026-10-30',
-  },
+  // ----------------------------------------------------------------------------
+  // 2026-10-30：本表已**清零**。
+  //
+  // 首轮（commit d0e3f42）扫出 11 条真缺口，随后分两批补齐，累计 14 条全部出表：
+  //   · #40 `/admin/op-blocklist` GET/POST/DELETE   → 新增 `views/system/op-blocklist.vue`
+  //   · #42 `POST /auth/change-password`            → 顶栏「修改口令」（挂外壳，不进菜单）
+  //   · #46 导出 `setSettleAccount`                 → 名录页「结算账户」弹窗
+  //       （同时修掉 form.vue 三个「能填但不提交」的银行输入框）
+  //   · #41 `POST /admin/operation-requests/:id/recall` → 详情页撤回按钮（放审批区**之外**）
+  //   · #43 三个 `filter-options`                   → 三个列表页改走独立端点（枚举不再每页重传）
+  //   · #44 `/wecom/kb/bindings` 三条               → 新增 `views/system/wecom-binding.vue`
+  //   · #45 六个孤儿方法                             → refreshAdminToken 接进请求层静默刷新；
+  //       fetchBuildingDetail / fetchGroupDetail 进详情抽屉；
+  //       fetchRefundDetail 用于审批前取服务端最新金额；
+  //       mp `auditMyLevel` 进团长佣金页；mp `fetchTraceabilityToday` 进新增溯源页
+  //   · #47 `GET /home/history`                     → 新增 `pages/meal-history`（我的 → 往期菜单）
+  //
+  // ⚠️ 表为空**不等于**门禁没在干活：新缺口会报 `[新增缺口]`；
+  //    补好了却忘了删条目会报 `[缺口已修·请删条目]` —— 两头都盯着，空表才是正常态。
+  // ----------------------------------------------------------------------------
 ];
 
 // ---------------------------------------------------------------- 通用：遍历

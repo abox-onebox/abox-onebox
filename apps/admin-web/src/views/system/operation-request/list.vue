@@ -165,15 +165,26 @@ function goDetail(row: OperationRequestRow): void {
 type TagType = 'success' | 'info' | 'warning' | 'danger' | 'primary';
 
 function statusText(s: OperationRequestStatus): string {
-  return { pending: '待审', approved: '已通过', rejected: '已驳回', executed: '已执行' }[s] ?? s;
+  return (
+    {
+      pending: '待审',
+      approved: '已通过',
+      rejected: '已驳回',
+      executed: '已执行',
+      recalled: '已撤回',
+    }[s] ?? s
+  );
 }
 function statusType(s: OperationRequestStatus): TagType {
   return (
     (
-      { pending: 'warning', approved: 'info', rejected: 'danger', executed: 'success' } as Record<
-        string,
-        TagType
-      >
+      {
+        pending: 'warning',
+        approved: 'info',
+        rejected: 'danger',
+        executed: 'success',
+        recalled: 'info',
+      } as Record<string, TagType>
     )[s] ?? 'info'
   );
 }

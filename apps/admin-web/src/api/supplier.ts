@@ -103,6 +103,22 @@ export interface SuppliersPage extends PageResult<SupplierRow> {
 export const fetchAdminSuppliers = (params: SuppliersQuery) =>
   http.get<SuppliersPage>('/admin/suppliers', params);
 
+/**
+ * D23 附属 · 筛选器下拉（审核状态 / 合作状态 / 付款方式）
+ *
+ * ⭐ 与楼宇同理：静态枚举不该跟着每次翻页重传。
+ * ⚠️ `payeeTypeOptions` 页面暂未用到（结算账户弹窗里是另一个来源），
+ *    仍一并声明 —— 端点发的是三份，类型只写两份会让「少一份」变成隐性的。
+ */
+export interface SupplierFilterOptions {
+  auditStatusOptions: Option[];
+  statusOptions: Option[];
+  payeeTypeOptions: Option[];
+}
+
+export const fetchSupplierFilterOptions = () =>
+  http.get<SupplierFilterOptions>('/admin/suppliers/filter-options');
+
 export interface SupplierDetail {
   supplier: SupplierRow;
   contactPhone: string | null;

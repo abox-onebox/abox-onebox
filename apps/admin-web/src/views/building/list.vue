@@ -180,8 +180,10 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="操作" width="90" fixed="right">
+      <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
+          <!-- 详情是**只读**的，故不挂 :disabled="!canManage" —— viewer 也要能查为什么未覆盖 -->
+          <el-button link @click="openDetail(asRow(row))">详情</el-button>
           <el-button link type="primary" :disabled="!canManage" @click="openEdit(asRow(row))">
             编辑
           </el-button>
@@ -206,6 +208,77 @@
     </p>
 
     <!-- ─────────────── 新建 / 编辑弹窗 ─────────────── -->
+    <!--
+      办公楼详情（只读）
+      ⭐ 为什么要有它：列表那一行的「未覆盖」只是一句标签，运营真正要的是
+         **这栋楼为什么没覆盖**（主/备集散中心是谁、有没有候选可改挂、楼群挂没挂）。
+         这些都在详情接口的 `distribution` 里 —— 端点一直在，页面零引用
+         （admin:coverage #45），等于运营只能靠猜。
+    -->
+    <el-drawer v-model="detailVisible" :title="detailTitle" size="560px">
+      <div v-loading="detailLoading">
+        <template v-if="detail">
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="楼群">
+              {{ detail.group?.name ?? '未归群' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="团长">
+              <template v-if="detail.leader">
+                {{ detail.leader.realName }}（{{ detail.leader.levelLabel }}）
+              </template>
+              <template v-else>待分配</template>
+            </el-descriptions-item>
+            <el-descriptions-item label="覆盖状态">
+              {{ detail.distribution.gapLabel }}
+              <div v-if="detail.distribution.gap !== 'none'" class="warn-line">
+                {{ gapHint(detail.distribution.gap) }}
+              </div>
+            </el-descriptions-item>
+            <el-descriptions-item label="主集散中心">
+              {{ detail.distribution.mainDcName ?? '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="备集散中心">
+              {{ detail.distribution.backupDcName ?? '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="路线号">
+              {{ detail.distribution.routeNo ?? '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="可分配套餐">
+              {{ detail.building.canAssign ? '是' : '否' }}
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <h4 class="detail__h">候选集散中心（含停用 · 供改挂时挑）</h4>
+          <el-table
+            v-if="detail.distribution.candidates.length"
+            :data="detail.distribution.candidates"
+            border
+            size="small"
+          >
+            <el-table-column label="名称" prop="name" min-width="160" />
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">{{ asCandidate(row).statusLabel }}</template>
+            </el-table-column>
+          </el-table>
+          <p v-else class="dialog__tip">该楼群没有可服务的集散中心 —— 这正是「未覆盖」的根因。</p>
+
+          <h4 class="detail__h">近期套餐分配</h4>
+          <el-table
+            v-if="detail.recentAssignments.length"
+            :data="detail.recentAssignments"
+            border
+            size="small"
+          >
+            <el-table-column label="出餐日" prop="mealDate" width="120" />
+            <el-table-column label="套餐" min-width="160">
+              <template #default="{ row }">{{ asAssignment(row).setMealName ?? '—' }}</template>
+            </el-table-column>
+          </el-table>
+          <p v-else class="dialog__tip">近期没有套餐分配（这栋楼群今天/明天不会出现在用户端）。</p>
+        </template>
+      </div>
+    </el-drawer>
+
     <el-dialog
       v-model="dialog.visible"
       :title="dialog.isEdit ? `编辑办公楼 · ${dialog.origin?.name ?? ''}` : '新建办公楼'"
@@ -307,13 +380,16 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus';
 
 import {
   createBuilding,
   fetchBuildings,
+  fetchBuildingFilterOptions,
+  fetchBuildingDetail,
   updateBuilding,
+  type BuildingDetail,
   type BuildingRow,
   type BuildingsPage,
   type BuildingWritePayload,
@@ -346,6 +422,14 @@ const options = reactive<{
   leaderStates: Option[];
 }>({ groups: [], statuses: [], gaps: [], leaderStates: [] });
 const canManage = ref(false);
+
+/** 详情抽屉（只读 · 列表行的权威来源） */
+const detailVisible = ref(false);
+const detailLoading = ref(false);
+const detail = ref<BuildingDetail | null>(null);
+const detailTitle = computed(() =>
+  detail.value ? `办公楼详情 · ${detail.value.building.name}` : '办公楼详情',
+);
 
 const query = reactive({
   groupId: undefined as number | undefined,
@@ -399,6 +483,31 @@ const statusTag = (s: number) => (s === 1 ? 'success' : s === 2 ? 'warning' : 'i
  * 的 `asRow()` 同一做法，不在模板里散落 `as` 断言。
  */
 const asRow = (raw: unknown) => raw as BuildingRow;
+
+/** 抽屉里两张小表的 row 断言（同 asRow：入口断言一次，不让 `as` 扩散进模板） */
+function asCandidate(raw: unknown): BuildingDetail['distribution']['candidates'][number] {
+  return raw as BuildingDetail['distribution']['candidates'][number];
+}
+function asAssignment(raw: unknown): BuildingDetail['recentAssignments'][number] {
+  return raw as BuildingDetail['recentAssignments'][number];
+}
+
+/**
+ * 打开详情抽屉
+ *
+ * ⚠️ 每次都**重新拉**，不用列表行顶上：抽屉里全是派生信息（集散中心 / 覆盖 / 近期分配），
+ *    给它看缓存等于让它看上一秒的世界 —— 而运营点开它恰恰是为了查「现在为什么没覆盖」。
+ */
+async function openDetail(row: BuildingRow): Promise<void> {
+  detail.value = null;
+  detailVisible.value = true;
+  detailLoading.value = true;
+  try {
+    detail.value = await fetchBuildingDetail(row.id);
+  } finally {
+    detailLoading.value = false;
+  }
+}
 
 const gapHint = (gap: string) =>
   ({
@@ -533,7 +642,29 @@ async function submit() {
   }
 }
 
-onMounted(load);
+/**
+ * 下拉枚举：改用独立端点拉**一次**（静态枚举不该每翻一页、每改一次筛选都重传一遍）
+ *
+ * ⚠️ 失败**既不弹错也不阻断**：`load()` 里列表响应内联的同名 options 会把这四组照原样
+ *    填回来，最坏只是退回旧行为；弹错反而会让人误以为楼栋数据没加载。
+ *    ⇒ 这是刻意的「静默兜底」，不是忘了处理异常。
+ */
+async function loadOptions(): Promise<void> {
+  try {
+    const res = await fetchBuildingFilterOptions();
+    options.groups = res.groupOptions ?? [];
+    options.statuses = res.statusOptions ?? [];
+    options.gaps = res.gapOptions ?? [];
+    options.leaderStates = res.leaderStateOptions ?? [];
+  } catch {
+    // 兜底在 load() —— 见上方注释
+  }
+}
+
+onMounted(() => {
+  void loadOptions();
+  void load();
+});
 </script>
 
 <style lang="scss" scoped>
@@ -646,6 +777,12 @@ onMounted(load);
 
 .warn-line {
   line-height: 1.7;
+}
+
+.detail__h {
+  margin: $space-4 0 $space-2;
+  font-size: $fs-body;
+  color: $c-text;
 }
 
 .footnote {

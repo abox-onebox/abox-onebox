@@ -95,7 +95,10 @@
             <view class="dish-card__body">
               <text class="dish-card__name">{{ d.name }}</text>
               <!-- ⭐ 2026-10-24 整改（用户要求）：不再写「查看资质」，与餐饮套餐口径一致写「来自：X」 -->
-              <text v-if="d.supplierName" class="dish-card__supplier"
+              <text
+                v-if="d.supplierName"
+                class="dish-card__supplier"
+                @tap.stop="goTrace(d.supplierId)"
                 >来自：{{ d.supplierName }}</text
               >
             </view>
@@ -347,6 +350,23 @@ const gridItems = computed<GridItem[]>(() => {
   if (!isFmcg.value) return items;
   return items.slice(0, 3).map((d, i) => ({ ...d, mark: SLOT_MARKS[i] ?? '' }));
 });
+
+/**
+ * 「来自：X」→ 今日这盒 · 商家溯源
+ *
+ * ⭐ 这条跳转**本来就在设计里**：`TraceabilitySupplierView.id` 的注释写着
+ *    「首页『来自：X』跳本页时带 supplierId」—— 但那个页面此前根本不存在，
+ *    于是这句注释只是一句愿望。现在页面补上了，这条注释才算兑现（admin:coverage #45）。
+ *
+ * ⚠️ 必须带 `supplierId`：溯源页按 **id** 高亮、不按 name —— 供应商名无唯一约束，
+ *    同名两家会让用户认错店。
+ * ⚠️ 模板上写了 `.stop`：菜品卡整卡点击是「打开菜品弹窗」，
+ *    不阻止冒泡会让「点供应商名」顺带把弹窗也带起来。
+ */
+function goTrace(supplierId?: number | null): void {
+  if (!supplierId) return;
+  navigateTo(`/pages/traceability/index?supplierId=${supplierId}`);
+}
 
 /** x 盲盒卡点击：仅提示「下单即含、送达揭晓」，不跳转（内容下单时未定，无详情可看） */
 function openBlind(): void {

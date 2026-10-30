@@ -61,6 +61,15 @@
         <text v-if="levelNote" class="mine__note"
           ><text class="abi abi-16">{{ I['warn-tri'] }}</text> {{ levelNote }}</text
         >
+
+        <!-- L22 重新核算：进度是**后台审计任务**写进去的，不是实时算的 ⇒ 给团长一个主动触发的口子 -->
+        <view class="mine__audit" hover-class="mine__audit--hover" @tap="doAudit">
+          <text class="abi abi-16">{{ I.refresh }}</text>
+          <text class="mine__audit-text">{{ auditing ? '核算中…' : '重新核算晋级进度' }}</text>
+        </view>
+        <text class="mine__audit-note"
+          >核算按当前月单量与已转正的推荐人数重算，只升不降：不满足条件不会回落等级。</text
+        >
       </view>
 
       <button class="btn btn--gold btn--block" hover-class="btn--hover" @tap="goShare">
@@ -228,7 +237,7 @@ import { onShow } from '@dcloudio/uni-app';
 import { LEADER_LEVEL_META } from '@abox/shared-types';
 import type { LeaderLevel } from '@abox/shared-types';
 
-import { fetchLevelRules } from '@/api/leader';
+import { auditMyLevel, fetchLevelRules } from '@/api/leader';
 import type { LevelRulesResult } from '@/api/leader';
 import { fetchCommissions, fetchLeaderBalance } from '@/api/leader-finance';
 import type {
@@ -256,6 +265,8 @@ const page = ref(1);
 const hasMore = ref(false);
 const balance = ref<LeaderBalanceData | null>(null);
 const rules = ref<LevelRulesResult | null>(null);
+/** L22 重新核算进行中（防连点 —— 核算是写操作，连点会打出一串审计） */
+const auditing = ref(false);
 
 const rangeLabel = computed(() => (range.value === 'day' ? '今日' : '本月'));
 
@@ -365,6 +376,35 @@ async function reload(): Promise<void> {
   ]);
   if (b.status === 'fulfilled') balance.value = b.value;
   if (r.status === 'fulfilled') rules.value = r.value;
+}
+
+/**
+ * L22 · 重新核算我的晋级进度
+ *
+ * ⭐ 为什么必须有这个入口：页面上的进度来自**后台审计任务写入的结果**，不是实时算出来的。
+ *    团长刚推荐的同事转正了、或本月单量刚跨过阈值，这里可能还停在上一轮 ——
+ *    而 `auditMyLevel` 此前封装好却无人调用（admin:coverage #45），团长除了干等没有别的办法。
+ *
+ * ⚠️ 服务端**只升不降**（不满足条件不回落）—— 这句话必须写在按钮旁边：
+ *    不写，团长会以为点了可能把等级「算没」，于是不敢点，入口等于白做。
+ * ⚠️ 核算完要**重拉规则**：审计只回写服务端，不返回新的规则视图，
+ *    只拿 `auditMyLevel` 的返回值更新页面会漏掉 `levels` 里的进度条。
+ */
+async function doAudit(): Promise<void> {
+  if (auditing.value) return;
+  auditing.value = true;
+  try {
+    // ⚠️ 审计是**写操作**且要带 token：必须用 run() 包裹（走登录保障），
+    //    裸调会被 `mp:no-bare-call` 拦下 —— 那条门禁管的就是「调了却不管登录态」。
+    const res = await run(() => auditMyLevel());
+    // 重拉规则带 keepAuthState：它排在 run() 之后，是顺序补刀，不与任何东西并发
+    rules.value = await fetchLevelRules({ keepAuthState: true });
+    uni.showToast({ title: res.formalFlipped ? '核算完成 · 已晋升' : '核算完成', icon: 'none' });
+  } catch (e) {
+    toastApiError(e);
+  } finally {
+    auditing.value = false;
+  }
 }
 
 async function loadMore(): Promise<void> {
@@ -580,6 +620,33 @@ onShow(() => {
   &__note {
     display: block;
     margin-top: $space-2;
+    font-size: $fs-caption;
+    line-height: 1.6;
+    color: $c-text-weak;
+  }
+
+  /** L22 重新核算入口（一行文字按钮，不抢「邀请同事拼团」的主按钮） */
+  &__audit {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin-top: $space-3;
+
+    &--hover {
+      opacity: 0.6;
+    }
+  }
+
+  &__audit-text {
+    margin-left: $space-1;
+    font-size: $fs-caption;
+    line-height: 1.6;
+    color: $c-gold-deep;
+  }
+
+  &__audit-note {
+    display: block;
+    margin-top: $space-1;
     font-size: $fs-caption;
     line-height: 1.6;
     color: $c-text-weak;

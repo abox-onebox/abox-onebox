@@ -1,7 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import type { AxiosInstance, AxiosRequestConfig } from 'axios';
 
-import { clearTokens, getToken } from '@/utils/auth';
+import { clearTokens, getRefreshToken, getToken, setTokens } from '@/utils/auth';
 
 /** 统一响应信封（《接口规范》§1.2） */
 export interface ApiEnvelope<T> {
@@ -120,6 +120,51 @@ function redirectToLogin(): void {
   }
 }
 
+/** A3 刷新令牌的端点路径 —— 认它用：刷新请求自身不得再走刷新（否则无限递归） */
+const REFRESH_URL = '/auth/refresh';
+
+/**
+ * A3 静默刷新访问令牌
+ *
+ * ⭐ 为什么现在才接：`api/auth.ts::refreshAdminToken` 早就封装好，却无人调用
+ *    （admin:coverage #45 扫出来的孤儿）。后果不是报错，而是**体验缺陷**：
+ *    refreshToken 安安静静躺在 localStorage 里，用户却在填一半的表单上被踢去登录页。
+ *
+ * ⚠️ 三条防死循环 / 防风暴的设计，动这里时别拆掉任何一条：
+ *    ① **单例 promise**：并发十几个 401 只刷新**一次**，其余排队复用同一结果。
+ *       没有它，一个页面首屏并发 12 个请求就会打出 12 次刷新调用。
+ *    ② **刷新请求自身不再刷新**：靠 `REFRESH_URL` 认（见错误拦截器）——
+ *       刷新令牌也过期时，递归下去就是死循环。
+ *    ③ **这里裸调 `instance`**，不 import `api/auth.ts`：
+ *       后者 import 本文件，反过来就是环（与 `utils/auth.ts` 头注同一条纪律）。
+ *
+ * ⚠️ 失败即 `redirectToLogin()`：与**不接刷新时**的行为完全一致 —— 最坏也就是回到原样，
+ *    绝不会出现「刷新失败后卡在中间态、既不登录也不报错」。
+ */
+let refreshPromise: Promise<string> | null = null;
+
+function refreshAccessToken(): Promise<string> {
+  if (refreshPromise) return refreshPromise;
+  const rt = getRefreshToken();
+  if (!rt) return Promise.reject(new Error('无刷新令牌'));
+
+  refreshPromise = (
+    instance.post(REFRESH_URL, { refreshToken: rt }) as unknown as Promise<{
+      token: string;
+      refreshToken?: string;
+    }>
+  )
+    .then((data) => {
+      setTokens(data.token, data.refreshToken);
+      return data.token;
+    })
+    .finally(() => {
+      // ⚠️ 无论成败都要放掉：否则一次失败的刷新会把后续所有请求永久钉在旧 promise 上
+      refreshPromise = null;
+    });
+  return refreshPromise;
+}
+
 instance.interceptors.response.use(
   (resp) => {
     const body = resp.data as ApiEnvelope<unknown> | undefined;
@@ -134,12 +179,31 @@ instance.interceptors.response.use(
 
     throw new ApiError(body.code, body.message || '请求失败', body.data, resp.status);
   },
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
     const status = error.response?.status;
     const body = error.response?.data as ApiEnvelope<unknown> | undefined;
     const code = body?.code ?? (status === 403 ? 10003 : NETWORK_ERROR_CODE);
 
-    if (code === 10002 || status === 401) redirectToLogin();
+    if (code === 10002 || status === 401) {
+      const cfg = error.config;
+      // ⚠️ 三条退出条件，缺一条就出事（见 refreshAccessToken 头注）：
+      //    · **刷新请求自己** 401 ⇒ 刷新令牌也过期，只能重新登录（否则无限递归）
+      //    · 压根没有 refreshToken ⇒ 没有可刷新的东西
+      //    · 拿不到 config ⇒ 无法重放
+      if (!cfg || cfg.url === REFRESH_URL || !getRefreshToken()) {
+        redirectToLogin();
+      } else {
+        try {
+          const token = await refreshAccessToken();
+          // 重放原请求：⚠️ 幂等头会**原样带走**（同一个 Idempotency-Key），
+          // 所以刷新不会把「一次提交」变成两次 —— 这正是写接口要的语义。
+          cfg.headers.Authorization = `Bearer ${token}`;
+          return instance.request(cfg);
+        } catch {
+          redirectToLogin();
+        }
+      }
+    }
 
     const message =
       body?.message ||

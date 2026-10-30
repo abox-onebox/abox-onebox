@@ -322,6 +322,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   auditSupplier,
   fetchAdminSuppliers,
+  fetchSupplierFilterOptions,
   updateSupplier,
   type Option,
   type SupplierRow,
@@ -529,7 +530,23 @@ function goCenters(): void {
   void router.push('/supplier/distribution-center');
 }
 
+/**
+ * 下拉枚举：改用独立端点（审核状态 / 合作状态 / 付款方式）
+ *
+ * ⚠️ 与楼宇同理的**静默兜底**：失败不弹错，`load()` 里列表内联的同名 options 会照样填回。
+ */
+async function loadOptions(): Promise<void> {
+  try {
+    const res = await fetchSupplierFilterOptions();
+    page.auditStatusOptions = res.auditStatusOptions ?? [];
+    page.statusOptions = res.statusOptions ?? [];
+  } catch {
+    // 兜底在 load() —— 见上方注释
+  }
+}
+
 onMounted(() => {
+  void loadOptions();
   void load();
 });
 </script>

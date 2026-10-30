@@ -402,7 +402,13 @@ export function orchestrateMessage(payload: {
 // 阶段 3 · 高危审批申请单（M37 新增）
 // ---------------------------------------------------------------------------
 
-export type OperationRequestStatus = 'pending' | 'approved' | 'rejected' | 'executed';
+/**
+ * ⚠️ `recalled` 是后端终态之一（`ab_operation_request.status`，见迁移 1700000000010），
+ *    2026-10-30 补「撤回」入口时才发现前端枚举**漏了这一态** ——
+ *    漏的后果不是报错，而是撤回成功后列表/详情把状态渲染成裸英文 `recalled`。
+ *    改状态机务必后端 enum 与此处**同时**改（两端各一份，无自动同步）。
+ */
+export type OperationRequestStatus = 'pending' | 'approved' | 'rejected' | 'executed' | 'recalled';
 
 export interface OperationRequestRow {
   id: number;
@@ -425,6 +431,11 @@ export interface OperationRequestRow {
   /** 执行回执（含 request_id 关联） */
   snapshot: unknown;
   executedAt: string | null;
+  /** ⭐ 撤回三件套（2026-10-30 补「撤回」入口时同步补上：状态有终态 `recalled`，
+   *    但字段此前没登记 ⇒ 撤了谁看都只知道「已撤回」，查不到谁撤的、为什么） */
+  recalledAt: string | null;
+  recalledBy: number | null;
+  recallReason: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -470,6 +481,18 @@ export function rejectOperationRequest(id: number, reason: string): Promise<Oper
 /** 执行已审批的申请（调原目标接口，复用 @OperationLog 审计） */
 export function executeOperationRequest(id: number): Promise<OperationRequestRow> {
   return http.post<OperationRequestRow>(`/admin/operation-requests/${id}/execute`);
+}
+
+/**
+ * 撤回未审批的申请（仅 `pending` 可撤；`operator` 仅能撤自己提交的）
+ *
+ * ⚠️ 这是**提交人自己的**动作，不是审批动作 —— 端上不要把按钮塞进
+ *    「仅 super_admin / admin 可见」的审批区里，否则 operator 永远看不到它
+ *    （与顶栏「修改口令」同类：入口必须跟着**谁有权用**走，不是跟着页面分区走）。
+ * @param reason 撤回理由（**选填**，服务端 RecallOperationRequestDto 不校验必填）
+ */
+export function recallOperationRequest(id: number, reason?: string): Promise<OperationRequestRow> {
+  return http.post<OperationRequestRow>(`/admin/operation-requests/${id}/recall`, { reason });
 }
 
 // ============================================================================
@@ -582,4 +605,48 @@ export function addOpBlock(payload: { opCode: string; note?: string }): Promise<
  */
 export function removeOpBlock(opCode: string): Promise<{ ok: boolean }> {
   return http.delete<{ ok: boolean }>(`/admin/op-blocklist/${encodeURIComponent(opCode)}`);
+}
+
+// ============================================================================
+// 企微令牌绑定（`/wecom/kb/bindings` · 仅 super_admin / admin）
+//
+// ⚠️ **令牌的两个「空」含义不同，端上必须能区分**：
+//      · 字段**不传**（undefined）→ 不改（服务端 `?? existing`）
+//      · 字段传 **空串 ''**  → **清空**该令牌（空串不是 nullish，会真写进去）
+//    ⇒ 一个空输入框若被无脑当 `''` 提交，就会在用户「我什么都没填」的直觉下
+//      把线上令牌悄悄清空。故本页约定：**留空 = 不修改**，清空走显式动作。
+// ⚠️ `GET` 出参是**裸数组**（不是 `{ list }`）—— 与 `/admin/op-blocklist` 不同，
+//    别照抄（已按控制器 `list(): Promise<Array<...>>` 回源确认）。
+// ============================================================================
+
+export interface WecomBindingRow {
+  userId: string;
+  operatorName: string;
+  /** ⚠️ 只回标记、不回令牌明文（避免令牌在管理面泄露） */
+  hasOperatorToken: boolean;
+  hasApproverToken: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertWecomBindingPayload {
+  userId: string;
+  operatorName: string;
+  /** 省略 = 不修改；空串 = 清空 */
+  operatorToken?: string;
+  /** 同上 */
+  approverToken?: string;
+}
+
+export function fetchWecomBindings(): Promise<WecomBindingRow[]> {
+  return http.get<WecomBindingRow[]>('/wecom/kb/bindings');
+}
+
+export function upsertWecomBinding(payload: UpsertWecomBindingPayload): Promise<WecomBindingRow> {
+  return http.post<WecomBindingRow>('/wecom/kb/bindings', payload);
+}
+
+/** 解绑（物理删除整行，含两个令牌）· userId 是企微 userid，可能含特殊字符 ⇒ 必编码 */
+export function removeWecomBinding(userId: string): Promise<{ ok: boolean }> {
+  return http.delete<{ ok: boolean }>(`/wecom/kb/bindings/${encodeURIComponent(userId)}`);
 }

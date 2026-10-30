@@ -128,6 +128,15 @@
           ><text class="abi abi-16">{{ I.chev }}</text></text
         >
       </view>
+      <!-- 往期菜单：U2 /home/history 此前端上零入口（admin:coverage #47） -->
+      <view class="menu__item" hover-class="menu__item--hover" @tap="goMealHistory">
+        <text class="menu__label"
+          ><text class="abi abi-16">{{ I.history }}</text> 往期菜单</text
+        >
+        <text class="menu__arrow"
+          ><text class="abi abi-16">{{ I.chev }}</text></text
+        >
+      </view>
       <view class="menu__item" hover-class="menu__item--hover" @tap="tapSwitchLeader">
         <text class="menu__label"
           ><text class="abi abi-16">{{ I.home }}</text> 切换团长（绑定办公楼）</text
@@ -416,6 +425,11 @@ function goBalance(): void {
 
 function goCoupons(): void {
   navigateTo('/pages/coupon-list/coupon-list');
+}
+
+/** 往期菜单（U2 `/home/history`）· 只作记录，不能补订 —— 见该页说明条 */
+function goMealHistory(): void {
+  navigateTo('/pages/meal-history/meal-history');
 }
 
 function goApply(): void {

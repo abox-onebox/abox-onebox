@@ -63,6 +63,19 @@
           <el-descriptions-item label="执行时间">
             {{ detail.executedAt ? formatDateTime(detail.executedAt) : '—' }}
           </el-descriptions-item>
+
+          <!-- 撤回三件套：仅 recalled 态有值，其余态恒空（不占位，避免满屏「—」） -->
+          <template v-if="detail.status === 'recalled'">
+            <el-descriptions-item label="撤回人">
+              后台 #{{ detail.recalledBy ?? '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="撤回时间">
+              {{ detail.recalledAt ? formatDateTime(detail.recalledAt) : '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="撤回理由">
+              {{ displayOr(detail.recallReason) }}
+            </el-descriptions-item>
+          </template>
         </el-descriptions>
 
         <!-- 审批 / 执行动作（仅 super_admin / admin 可见） -->
@@ -108,6 +121,25 @@
         <el-alert v-else type="info" :closable="false" class="actions__tip">
           <template #title>当前角色仅可查看，审批 / 执行需 super_admin 或 admin 操作。</template>
         </el-alert>
+
+        <!--
+          撤回：⚠️ 刻意放在 canApprove 块**之外**。
+          撤回是「提交人撤自己提交的单」，不是审批动作 —— 后端对 operator 的
+          限制是「只能撤 submitterAdminId === 自己的」（OperationRequestService.recall），
+          若把按钮塞进上面那个「仅 super_admin / admin 可见」的审批区，
+          operator 就永远看不到它（与顶栏「修改口令」同类的入口错放）。
+        -->
+        <div v-if="detail.status === 'pending'" class="actions">
+          <el-button :loading="acting === 'recall'" @click="doRecall">
+            <AbIcon name="x-circle" size="16" />
+            撤回申请
+          </el-button>
+          <el-alert type="info" :closable="false" class="actions__tip">
+            <template #title>
+              撤回后本单作废、不可再审批，需要时请重新提交。理由选填，但会写进审计。
+            </template>
+          </el-alert>
+        </div>
       </el-card>
 
       <!-- ─────────────── 参数 ─────────────── -->
@@ -165,6 +197,7 @@ import {
   approveOperationRequest,
   rejectOperationRequest,
   executeOperationRequest,
+  recallOperationRequest,
   type OperationRequestRow,
   type OperationRequestStatus,
 } from '@/api/system';
@@ -181,20 +214,31 @@ const detail = ref<OperationRequestRow | null>(null);
 const canApprove = auth.role === 'super_admin' || auth.role === 'admin';
 
 /** 正在执行的动作（防重复点击） */
-const acting = ref<'' | 'approve' | 'reject' | 'execute'>('');
+const acting = ref<'' | 'approve' | 'reject' | 'execute' | 'recall'>('');
 
 type TagType = 'success' | 'info' | 'warning' | 'danger' | 'primary';
 
 function statusText(s: OperationRequestStatus): string {
-  return { pending: '待审', approved: '已通过', rejected: '已驳回', executed: '已执行' }[s] ?? s;
+  return (
+    {
+      pending: '待审',
+      approved: '已通过',
+      rejected: '已驳回',
+      executed: '已执行',
+      recalled: '已撤回',
+    }[s] ?? s
+  );
 }
 function statusType(s: OperationRequestStatus): TagType {
   return (
     (
-      { pending: 'warning', approved: 'info', rejected: 'danger', executed: 'success' } as Record<
-        string,
-        TagType
-      >
+      {
+        pending: 'warning',
+        approved: 'info',
+        rejected: 'danger',
+        executed: 'success',
+        recalled: 'info',
+      } as Record<string, TagType>
     )[s] ?? 'info'
   );
 }
@@ -268,6 +312,39 @@ async function doExecute(): Promise<void> {
     ElMessage.success('执行完成');
   } catch (e) {
     ElMessage.error(e instanceof ApiError ? e.message : '执行失败');
+  } finally {
+    acting.value = '';
+  }
+}
+
+/**
+ * 撤回（提交人自己的动作）
+ *
+ * ⚠️ 理由**选填**（服务端 RecallOperationRequestDto 未标必填），所以这里不能用
+ *    非空校验器 —— 留空也要能提交，否则端上比服务端更严，用户会被卡住却不知为何。
+ * ⚠️ 失败一律回显服务端 message：operator 撤别人的单会收到 403「仅能撤回自己提交的单」，
+ *    这类权限错误必须让人看见原文，不能吞成一句「撤回失败」。
+ */
+async function doRecall(): Promise<void> {
+  if (!detail.value) return;
+  let reason = '';
+  try {
+    const { value } = await ElMessageBox.prompt('撤回理由可留空，写清便于事后追溯。', '撤回申请', {
+      confirmButtonText: '确认撤回',
+      cancelButtonText: '再想想',
+      inputType: 'textarea',
+      inputPlaceholder: '（选填）如：参数填错，重新提交',
+    });
+    reason = (value ?? '').trim();
+  } catch {
+    return; // 用户取消
+  }
+  acting.value = 'recall';
+  try {
+    detail.value = await recallOperationRequest(detail.value.id, reason || undefined);
+    ElMessage.success('已撤回');
+  } catch (e) {
+    ElMessage.error(e instanceof ApiError ? e.message : '撤回失败');
   } finally {
     acting.value = '';
   }

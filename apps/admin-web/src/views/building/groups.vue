@@ -99,6 +99,8 @@
                 g.coverageLabel
               }}</el-tag>
             </div>
+            <!-- 详情**只读**，故不挂 :disabled="!canManage" —— viewer 也要能查覆盖为什么断 -->
+            <el-button link @click="openDetail(g)">详情</el-button>
             <el-button link type="primary" :disabled="!canManage" @click="openEdit(g)"
               >编辑</el-button
             >
@@ -171,6 +173,56 @@
         @current-change="load()"
       />
     </div>
+
+    <!--
+      楼群详情（只读）
+      卡片已经给了「成员楼数 / 覆盖人数 / 今明两日分配」，但**没有**成员楼与服务它的
+      集散中心清单 —— 运营判断「这个群能不能停、能不能搬」恰恰要看这两张表。
+      `fetchGroupDetail` 一直在、页面零引用（admin:coverage #45）。
+    -->
+    <el-drawer v-model="detailVisible" :title="detailTitle" size="520px">
+      <div v-loading="detailLoading">
+        <template v-if="detail">
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="状态">{{
+              detail.statusLabel ?? '—'
+            }}</el-descriptions-item>
+            <el-descriptions-item label="覆盖状态">
+              {{ detail.coverageLabel }}
+            </el-descriptions-item>
+            <el-descriptions-item label="成员楼数">{{ detail.memberCount }}</el-descriptions-item>
+            <el-descriptions-item label="城市 / 行政区">
+              {{ detail.city }}{{ detail.district ? ` / ${detail.district}` : '' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="说明">
+              {{ detail.description || '—' }}
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <h4 class="detail__h">成员楼（{{ detail.members.length }}）</h4>
+          <el-table v-if="detail.members.length" :data="detail.members" border size="small">
+            <el-table-column prop="name" label="楼栋" min-width="180" />
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                {{ asMember(row).status === 1 ? '启用' : '停用' }}
+              </template>
+            </el-table-column>
+          </el-table>
+          <p v-else class="dialog__tip">空群 —— 停用前不必搬楼，但也没有楼会被配送。</p>
+
+          <h4 class="detail__h">服务该楼群的集散中心（{{ detail.centers.length }}）</h4>
+          <el-table v-if="detail.centers.length" :data="detail.centers" border size="small">
+            <el-table-column prop="name" label="名称" min-width="180" />
+            <el-table-column label="状态" width="120">
+              <template #default="{ row }">{{ asCenter(row).statusLabel }}</template>
+            </el-table-column>
+          </el-table>
+          <p v-else class="dialog__tip">
+            没有任何集散中心服务本群 —— 这是「未覆盖」的根因：用户能下单，履约断链。
+          </p>
+        </template>
+      </div>
+    </el-drawer>
 
     <!-- ─────────────── 新建 / 编辑弹窗 ─────────────── -->
     <el-dialog
@@ -257,13 +309,16 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus';
 
 import {
   createGroup,
   fetchGroups,
+  fetchGroupFilterOptions,
+  fetchGroupDetail,
   updateGroup,
+  type GroupDetail,
   type GroupRow,
   type GroupsPage,
   type GroupWritePayload,
@@ -290,6 +345,12 @@ const options = reactive<{ statuses: Option[]; buildings: Option[] }>({
   buildings: [],
 });
 const canManage = ref(false);
+
+/** 详情抽屉（只读） */
+const detailVisible = ref(false);
+const detailLoading = ref(false);
+const detail = ref<GroupDetail | null>(null);
+const detailTitle = computed(() => (detail.value ? `楼群详情 · ${detail.value.name}` : '楼群详情'));
 
 const query = reactive({
   status: undefined as number | undefined,
@@ -368,6 +429,31 @@ function openCreate() {
   dialog.visible = true;
 }
 
+/** 抽屉里两张小表的 row 断言：入口断言一次，不让 `as` 扩散进模板 */
+function asMember(raw: unknown): GroupDetail['members'][number] {
+  return raw as GroupDetail['members'][number];
+}
+function asCenter(raw: unknown): GroupDetail['centers'][number] {
+  return raw as GroupDetail['centers'][number];
+}
+
+/**
+ * 打开详情抽屉
+ *
+ * ⚠️ 每次**重新拉**：成员楼与集散中心都是派生态，用卡片上的缓存给运营看，
+ *    等于让他拿上一秒的数据判断「这个群现在能不能停」。
+ */
+async function openDetail(g: GroupRow): Promise<void> {
+  detail.value = null;
+  detailVisible.value = true;
+  detailLoading.value = true;
+  try {
+    detail.value = await fetchGroupDetail(g.id);
+  } finally {
+    detailLoading.value = false;
+  }
+}
+
 function openEdit(g: GroupRow) {
   dialog.isEdit = true;
   dialog.origin = g;
@@ -418,12 +504,37 @@ async function submit() {
   }
 }
 
-onMounted(load);
+/**
+ * 下拉枚举：改用独立端点（状态 + 可搬入的楼）
+ *
+ * ⚠️ 与 `building/list.vue` 同款**静默兜底**：失败不弹错，`load()` 里列表内联的
+ *    同名 options 会照样填回；弹错会让人误以为楼群没加载出来。
+ */
+async function loadOptions(): Promise<void> {
+  try {
+    const res = await fetchGroupFilterOptions();
+    options.statuses = res.statusOptions ?? [];
+    options.buildings = res.buildingOptions ?? [];
+  } catch {
+    // 兜底在 load() —— 见上方注释
+  }
+}
+
+onMounted(() => {
+  void loadOptions();
+  void load();
+});
 </script>
 
 <style lang="scss" scoped>
 .note {
   margin-bottom: $space-3;
+}
+
+.detail__h {
+  margin: $space-4 0 $space-2;
+  font-size: $fs-body;
+  color: $c-text;
 }
 
 .stats {

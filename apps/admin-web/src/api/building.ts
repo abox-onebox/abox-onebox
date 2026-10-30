@@ -104,6 +104,25 @@ export interface BuildingsPage extends PageResult<BuildingRow> {
 export const fetchBuildings = (params: BuildingsQuery) =>
   http.get<BuildingsPage>('/admin/buildings', params);
 
+/**
+ * D13 附属 · 筛选器下拉（状态 / 楼群 / 覆盖缺口 / 团长归属）
+ *
+ * ⭐ 为什么不继续吃列表响应里内联的那份：枚举是**静态**的，却要跟着每次翻页、
+ *    每次改筛选条件重新下发一遍 —— 翻到第 8 页，同样的四组 options 已传了 8 次。
+ *    独立端点拉一次就够（后端注释即写明「供搜索表单组件单独拉取」）。
+ * ⚠️ 页面仍保留列表内联那份作**兜底覆盖**：本接口偶发失败时筛选项不该凭空消失，
+ *    宁可多发一次请求，也不能让用户看见一片空下拉。
+ */
+export interface BuildingFilterOptions {
+  statusOptions: Option[];
+  gapOptions: Option[];
+  leaderStateOptions: Option[];
+  groupOptions: Option[];
+}
+
+export const fetchBuildingFilterOptions = () =>
+  http.get<BuildingFilterOptions>('/admin/buildings/filter-options');
+
 export interface BuildingDetail {
   building: {
     id: number;
@@ -434,6 +453,20 @@ export interface GroupsPage extends PageResult<GroupRow> {
 
 export const fetchGroups = (params: GroupsQuery) =>
   http.get<GroupsPage>('/admin/building-groups', params);
+
+/**
+ * D16 附属 · 楼群筛选器下拉（状态 + 可搬入的楼）
+ *
+ * ⚠️ `buildingOptions` 是 2026-10-30 才补进端点的：此前它只下发状态，
+ *    页面要的楼栋下拉只能从列表响应里拿 ⇒ 端点不自足，页面也就一直没用它。
+ */
+export interface GroupFilterOptions {
+  statusOptions: Option[];
+  buildingOptions: Option[];
+}
+
+export const fetchGroupFilterOptions = () =>
+  http.get<GroupFilterOptions>('/admin/building-groups/filter-options');
 
 export interface GroupDetail {
   id: number;

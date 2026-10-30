@@ -2,9 +2,7 @@ import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nest
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import {
-  BUILDING_GROUP_STATUS_LABEL,
   BUILDING_STATUS_LABEL,
-  BuildingGroupStatus,
   BuildingStatus,
   DISTRIBUTION_GAP_LABEL,
   DistributionGap,
@@ -203,16 +201,15 @@ export class BuildingGroupAdminController {
 
   @Get('filter-options')
   @ApiOperation({
-    summary: 'D16 附属 · 筛选器下拉（楼群状态）',
-    description: '楼群状态只有两态（1 启用 / 2 停用）—— 楼群是纯组织维度，没有「待开通」中间态。',
+    summary: 'D16 附属 · 筛选器下拉（楼群状态 + 可搬入的楼）',
+    description:
+      '楼群状态只有两态（1 启用 / 2 停用）—— 楼群是纯组织维度，没有「待开通」中间态。' +
+      '⚠️ 2026-10-30 补 `buildingOptions`：此前只下发状态，而页面「搬楼」下拉要的楼栋' +
+      '只能从列表响应里取 ⇒ 端点不自足，页面也就一直没用它（admin:coverage #43）。' +
+      '**筛选端点要自足**：表单需要的每一项都得在这儿能拿到。',
   })
   filterOptions() {
-    return {
-      statusOptions: (Object.values(BuildingGroupStatus) as BuildingGroupStatus[]).map((v) => ({
-        value: v,
-        label: BUILDING_GROUP_STATUS_LABEL[v],
-      })),
-    };
+    return this.buildingAdmin.groupFilterOptions();
   }
 
   @Get(':id')

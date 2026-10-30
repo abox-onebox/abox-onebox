@@ -144,6 +144,7 @@ export const ADMIN_MENU_KEYS = [
   //   ⚠️ 2026-10-30 补登：三端点早就在、后台零页面（admin:coverage #41），
   //      授权矩阵里也没有本 key ⇒ 除 super_admin 外**谁都进不去**。
   '/system/op-blocklist',
+  '/system/wecom-binding',
 ] as const;
 
 /**

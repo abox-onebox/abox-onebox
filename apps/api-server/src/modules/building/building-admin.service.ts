@@ -420,6 +420,28 @@ export class BuildingAdminService {
     };
   }
 
+  /**
+   * D16 附属 · 楼群筛选器下拉（**自足**：状态 + 可搬入的楼）
+   *
+   * ⚠️ 与 `listGroups` 内联的那份**必须同源同构**（字段名、`value` 类型、附加的 `groupId`）——
+   *    否则页面把来源换成这里之后，「搬楼」下拉会静默少一半楼，而 typecheck 拦不住
+   *    （两边都是宽松对象）。故此处**照抄**内联那份的写法，不另起一套。
+   */
+  async groupFilterOptions() {
+    const { buildings } = await this.queryService.loadContext();
+    return {
+      statusOptions: (Object.values(BuildingGroupStatus) as BuildingGroupStatus[]).map((v) => ({
+        value: v,
+        label: BUILDING_GROUP_STATUS_LABEL[v],
+      })),
+      buildingOptions: buildings.map((b) => ({
+        value: Number(b.id),
+        label: b.name,
+        groupId: b.buildingGroupId ? Number(b.buildingGroupId) : null,
+      })),
+    };
+  }
+
   /** 楼群详情（D16 附属） */
   async groupDetail(id: number): Promise<Row> {
     const { buildings, groups, dcList } = await this.queryService.loadContext();

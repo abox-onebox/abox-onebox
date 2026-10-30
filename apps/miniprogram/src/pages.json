@@ -47,6 +47,14 @@
       "style": { "navigationBarTitleText": "我的优惠券" }
     },
     {
+      "path": "pages/meal-history/meal-history",
+      "style": { "navigationBarTitleText": "往期菜单" }
+    },
+    {
+      "path": "pages/traceability/index",
+      "style": { "navigationBarTitleText": "今日这盒 · 溯源" }
+    },
+    {
       "path": "pages/leader-invite/leader-invite",
       "style": { "navigationBarTitleText": "欢迎加入" }
     },

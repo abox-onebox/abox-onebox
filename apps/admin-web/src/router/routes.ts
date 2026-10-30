@@ -355,6 +355,11 @@ export const routes: RouteRecordRaw[] = [
         name: 'SystemOpBlocklist',
         component: () => import('@/views/system/op-blocklist.vue'),
       },
+      {
+        path: 'system/wecom-binding',
+        name: 'SystemWecomBinding',
+        component: () => import('@/views/system/wecom-binding.vue'),
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/dashboard' },
