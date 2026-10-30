@@ -534,3 +534,52 @@ export function createSalesPause(payload: SalesPausePayload): Promise<SalesPause
 export function resumeSalesPause(id: number): Promise<SalesPauseRow> {
   return http.post<SalesPauseRow>(`/admin/sales-pause/${id}/resume`);
 }
+
+// ============================================================================
+// 知识助手禁止清单（P1-c · 补 admin:coverage 缺口 #41）
+// ============================================================================
+
+/**
+ * 清单行
+ *
+ * ⚠️ 与「运营申请」页的 `opLabel` 不同源：本表**不存**中文名（`ab_op_blocklist` 只有
+ *    opCode），中文一律在端上按 `ops` 清单现查（`labelOf`），
+ *    查不到就原样显示 opCode —— 宁可显示一串代码，也不编一个中文名。
+ */
+export interface OpBlockRow {
+  id: number;
+  opCode: string;
+  note: string | null;
+  createdBy: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 可禁止的 op 清单（真源 `wecom-kb/op-meta.ts`，端上不维护第二份） */
+export interface OpCatalogItem {
+  opCode: string;
+  label: string;
+}
+
+export function fetchOpCatalog(): Promise<{ list: OpCatalogItem[] }> {
+  return http.get<{ list: OpCatalogItem[] }>('/admin/op-blocklist/ops');
+}
+
+export function fetchOpBlocklist(): Promise<{ list: OpBlockRow[] }> {
+  return http.get<{ list: OpBlockRow[] }>('/admin/op-blocklist');
+}
+
+/** 列入禁止（已存在则幂等返回原行，不报错）· 仅 super_admin / admin */
+export function addOpBlock(payload: { opCode: string; note?: string }): Promise<OpBlockRow> {
+  return http.post<OpBlockRow>('/admin/op-blocklist', payload);
+}
+
+/**
+ * 解除禁止 · 仅 super_admin / admin
+ *
+ * ⚠️ 服务端是**物理删除**，解完连「这条禁令存在过」都查不出来 ——
+ *    故后端另写一条 `@OperationLog` 审计（对称留痕），端上不额外做二次确认外的提示。
+ */
+export function removeOpBlock(opCode: string): Promise<{ ok: boolean }> {
+  return http.delete<{ ok: boolean }>(`/admin/op-blocklist/${encodeURIComponent(opCode)}`);
+}

@@ -217,6 +217,9 @@
           <el-button link type="primary" :disabled="!canManage" @click="goPhotos(asRow(row).id)">
             门店实拍
           </el-button>
+          <el-button link type="primary" :disabled="!canManage" @click="openSettle(asRow(row))">
+            结算账户
+          </el-button>
           <el-button
             link
             :type="asRow(row).status === 1 ? 'danger' : 'success'"
@@ -300,6 +303,14 @@
         <el-button type="primary" :loading="submitting" @click="submitAudit">提交审核</el-button>
       </template>
     </el-dialog>
+
+    <!-- ─────────────── D28 结算账户 ─────────────── -->
+    <SettleAccountDialog
+      v-model="settleVisible"
+      :supplier-id="settleTarget?.id ?? null"
+      :supplier-name="settleTarget?.name ?? ''"
+      @saved="load"
+    />
   </div>
 </template>
 
@@ -319,6 +330,8 @@ import {
 } from '@/api/supplier';
 import { ApiError } from '@/api/request';
 import { displayOr, fenToCny } from '@/utils/format';
+// ⚠️ 在 `views/supplier/components/` 下，`unplugin-vue-components` 只扫 `src/components` ⇒ 显式 import
+import SettleAccountDialog from './components/settle-account-dialog.vue';
 
 const router = useRouter();
 
@@ -365,6 +378,13 @@ const query = reactive({
 
 const current = ref<SupplierRow | null>(null);
 const auditVisible = ref(false);
+/**
+ * D28 结算账户 —— 端点早就在，但**四个前端页面全无引用**（admin:coverage 缺口 #42），
+ * 且 `form.vue` 里那三个输入框填了根本不提交 ⇒ 结算账户事实上无处可填。
+ * 本弹窗是唯一的记账入口（D25 update 不写这三列）。
+ */
+const settleVisible = ref(false);
+const settleTarget = ref<SupplierRow | null>(null);
 const auditForm = reactive({
   result: 'approved' as 'approved' | 'rejected',
   licenseExpireAt: undefined as string | undefined,
@@ -494,6 +514,11 @@ function goTakeout(id: number): void {
 
 function goPhotos(id: number): void {
   void router.push({ path: '/supplier/store-photos', query: { supplierId: String(id) } });
+}
+
+function openSettle(row: SupplierRow): void {
+  settleTarget.value = row;
+  settleVisible.value = true;
 }
 
 function goDishes(): void {

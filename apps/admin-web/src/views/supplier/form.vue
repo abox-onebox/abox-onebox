@@ -140,27 +140,26 @@
           </el-radio-group>
         </el-form-item>
 
-        <template v-if="form.payeeType === 'corporate'">
-          <el-form-item label="开户行">
-            <el-input v-model="form.bankName" maxlength="64" style="width: 260px" />
-          </el-form-item>
-          <el-form-item label="银行账号">
-            <el-input v-model="form.bankAccount" maxlength="64" style="width: 260px" />
-            <div class="hint">
-              <AbIcon name="warn-tri" size="16" />
-              账号保存后<b>任何接口都不会回传原文</b>（连本页也只显示脱敏号）——
-              付款登记时由财务线下核对，避免账号在日志或截图里泄露。
-              <template v-if="isEdit && detail?.bank.bankAccountMasked">
-                当前：{{ detail.bank.bankAccountMasked }}
-              </template>
-            </div>
-          </el-form-item>
-        </template>
-
-        <el-form-item label="发票抬头">
-          <el-input v-model="form.invoiceTitle" maxlength="128" style="width: 320px" />
-          <div class="hint">与展示名可能不同（开票须用工商全称）。</div>
+        <!-- ⚠️ 开户行 / 银行账号 / 发票抬头**不在这里改**（2026-10-30 修）：
+             本页提交走 D25 `update`，它**不写这三列** —— 原先这三个输入框能填、
+             填了**静默丢失**。唯一记账入口是名录页的「结算账户」（D28），
+             故此处只做只读展示并指路，避免再出现第二个「填了不保存」的输入框。 -->
+        <el-form-item label="开户行">
+          <span class="ro-value">{{ displayOr(detail?.bank.bankName) }}</span>
         </el-form-item>
+        <el-form-item label="银行账号">
+          <span class="ro-value">{{ detail?.bank.bankAccountMasked || '未登记' }}</span>
+          <div class="hint">
+            账号原文<b>任何接口都不回传</b>，此处只有脱敏号 ——
+            付款登记时由财务线下核对，避免账号在日志或截图里泄露。
+          </div>
+        </el-form-item>
+        <el-form-item label="发票抬头">
+          <span class="ro-value">{{ displayOr(detail?.bank.invoiceTitle) }}</span>
+        </el-form-item>
+        <div class="hint">
+          上面三项请在<b>供应商名录 → 结算账户</b>中维护（保存即整份覆盖，留空 = 清空）。
+        </div>
       </div>
 
       <div class="actions">
@@ -272,9 +271,8 @@ const form = reactive({
   foodLicense: '',
   licenseExpireAt: undefined as string | undefined,
   payeeType: 'corporate' as string,
-  bankName: '',
-  bankAccount: '',
-  invoiceTitle: '',
+  // ⚠️ 刻意**没有** bankName / bankAccount / invoiceTitle：本页提交不写这三列
+  //    （D25 不写），留着字段就会有人再把它接回来（见模板「结算账户」区注释）。
   status: 1,
 });
 
@@ -313,10 +311,7 @@ async function loadDetail(): Promise<void> {
     form.contactPhone = res.contactPhone ?? '';
     form.licenseExpireAt = s.licenseExpireAt ?? undefined;
     form.payeeType = res.bank.payeeType;
-    form.bankName = res.bank.bankName ?? '';
-    // ⚠️ 不回填账号原文（服务端不回传）：留空 = 不修改，填写 = 覆盖
-    form.bankAccount = '';
-    form.invoiceTitle = res.bank.invoiceTitle ?? '';
+    // 开户行 / 账号 / 发票抬头**不回填到 form**（本页不提交它们），只读展示走 `detail.bank`
     form.status = s.status;
     form.capacityPerDay = s.capacityPerDay ?? undefined;
   } catch (e) {
@@ -328,11 +323,10 @@ async function submit(): Promise<void> {
   const ok = await formRef.value?.validate().catch(() => false);
   if (!ok) return;
 
-  // 对公必须有账户：与服务层同一条规则（此处预校验，省一次往返）
-  if (form.payeeType === 'corporate' && (!form.bankName || !form.bankAccount) && !isEdit.value) {
-    ElMessage.warning('对公转账必须填写开户行与银行账号（对私/现金可不填）');
-    return;
-  }
+  // ⚠️ 2026-10-30 移除：此处原有一条「新建时对公必填开户行与账号」的预校验，
+  //    但 create / update **都不提交**这两项（D25 不写这三列），那条校验只会拦住
+  //    运营、拦完照样不落库 —— 是纯粹的假闸门。账户校验的真源在 D28 服务层
+  //    （`SupplierAdminService.setSettleAccount`），由名录页「结算账户」弹窗触发。
 
   submitting.value = true;
   try {

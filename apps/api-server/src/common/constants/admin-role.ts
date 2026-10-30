@@ -138,6 +138,12 @@ export const ADMIN_MENU_KEYS = [
   //   ⚠️ 两个写端点（create / resume）方法级收窄到 `super_admin`/`admin`，
   //      故 operator 是**只读**：菜单可见、按钮不可见。
   '/system/sales-pause',
+  // 知识助手禁止清单（P1-c）—— 控制器 `@Roles('super_admin','admin')` **不含 operator**
+  //   （刻意：运营不该能自己解禁自己），故本 key 落在 `/system/` 下由派生规则挡住 operator
+  //   正是想要的结果，**不要**加进 OPERATOR_EXTRA_MENUS。
+  //   ⚠️ 2026-10-30 补登：三端点早就在、后台零页面（admin:coverage #41），
+  //      授权矩阵里也没有本 key ⇒ 除 super_admin 外**谁都进不去**。
+  '/system/op-blocklist',
 ] as const;
 
 /**

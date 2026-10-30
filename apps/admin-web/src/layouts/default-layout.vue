@@ -20,6 +20,7 @@
     </el-drawer>
 
     <el-container>
+      <ChangePasswordDialog v-model="pwdOpen" @changed="onPasswordChanged" />
       <el-header class="ab-layout__header">
         <!-- ⚠️ 标签必须是**静态的「打开菜单」**：这个按钮只负责**打开** —— 抽屉展开时它被
              遮罩盖住、根本点不到，所以写「收起菜单」是在描述一个用户做不到的动作（读屏
@@ -37,6 +38,9 @@
         <span class="ab-layout__user">
           <el-tag size="small" type="info" effect="plain">{{ auth.roleLabel || '—' }}</el-tag>
           <span v-if="!narrow" class="ab-layout__name">{{ auth.displayName || '—' }}</span>
+          <!-- ⚠️ 改密入口挂在外壳而非菜单里：被 must_change_password 卡死的账号进不去任何
+               业务页，挂在菜单里的入口对它等于不存在（端点在 /auth 下、不经 AdminGuard）。 -->
+          <el-button link type="primary" @click="pwdOpen = true">修改口令</el-button>
           <el-button link type="primary" @click="onLogout">退出登录</el-button>
         </span>
       </el-header>
@@ -74,6 +78,8 @@ import { useNarrow } from '@/composables/use-narrow';
 // 导航菜单抽成子组件：桌面侧栏与窄屏抽屉**共用同一实现**（避免两份菜单标记）。
 // ⚠️ 它在 `layouts/` 下，`unplugin-vue-components` 的 `dirs` 只扫 `src/components` ⇒ 必须显式 import。
 import AbNavMenu from './ab-nav-menu.vue';
+// 同 ab-nav-menu：在 `layouts/` 下，不在 `unplugin-vue-components` 的扫描目录内 ⇒ 显式 import
+import ChangePasswordDialog from './change-password-dialog.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -83,6 +89,9 @@ const { narrow } = useNarrow();
 
 /** 窄屏抽屉开关（仅窄屏渲染抽屉，见模板 `v-if="narrow"`） */
 const menuOpen = ref(false);
+
+/** 改密弹窗（见 ChangePasswordDialog 头注：入口必须在外壳，不能进菜单） */
+const pwdOpen = ref(false);
 
 /**
  * ⚠️ 抽屉是 `v-if` 渲染的：`narrow` 变 false 时抽屉组件被卸载，但 **`menuOpen` 不会跟着复位**
@@ -112,6 +121,18 @@ async function onLogout(): Promise<void> {
   } catch {
     return; // 用户取消
   }
+  await auth.logout();
+  void router.replace('/login');
+}
+
+/**
+ * 改密成功 —— 一律清态回登录页
+ *
+ * ⭐ 库里的 `must_change_password` 已清零，但**当前 JWT 里那个标记还在**，
+ *    带着它继续点任何业务接口都会被守卫挡回。这里不做「提示一下让用户自己决定」：
+ *    那种半截状态的表现是「改密成功了，但点什么都报错」，比直接重登难排查得多。
+ */
+async function onPasswordChanged(): Promise<void> {
   await auth.logout();
   void router.replace('/login');
 }

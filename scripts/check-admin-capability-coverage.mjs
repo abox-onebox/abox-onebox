@@ -124,39 +124,16 @@ const EXEMPT = [
  * 每条必须带 `todo`（待办编号）与 `since`（发现日期）。
  */
 const KNOWN_GAPS = [
-  {
-    method: 'GET',
-    path: '/admin/op-blocklist',
-    reason: '运营黑名单整模块无后台页面：接口 CRUD 齐全，admin-web 零引用 ⇒ 运营无法查看/维护黑名单',
-    todo: '待办#40',
-    since: '2026-10-30',
-  },
-  {
-    method: 'POST',
-    path: '/admin/op-blocklist',
-    reason: '同上',
-    todo: '待办#40',
-    since: '2026-10-30',
-  },
-  {
-    method: 'DELETE',
-    path: '/admin/op-blocklist/:p',
-    reason: '同上',
-    todo: '待办#40',
-    since: '2026-10-30',
-  },
+  // ✅ 2026-10-30 已修并已从本表删除（删条目的正是这段自收紧检查，见下方 C-0）：
+  //    · 待办#40 `/admin/op-blocklist` GET/POST/DELETE —— 新增 `views/system/op-blocklist.vue`
+  //    · 待办#42 `POST /auth/change-password` —— 顶栏「修改口令」（挂外壳，不进菜单）
+  //    · 待办#46 导出方法 `setSettleAccount` —— 名录页「结算账户」弹窗
+  //    （同时修掉 form.vue 里三个「能填但不提交」的银行输入框）
   {
     method: 'POST',
     path: '/admin/operation-requests/:p/recall',
     reason: '运营申请「撤回」无入口：列表/审批页面有，撤回按钮没有',
     todo: '待办#41',
-    since: '2026-10-30',
-  },
-  {
-    method: 'POST',
-    path: '/auth/change-password',
-    reason: '管理员修改密码无任何入口（admin-web 零引用）——安全相关，应尽快补',
-    todo: '待办#42',
     since: '2026-10-30',
   },
   {
@@ -228,13 +205,6 @@ const KNOWN_GAPS = [
     export: 'fetchRefundDetail',
     reason: '退款详情接口已封装，无页面使用',
     todo: '待办#45',
-    since: '2026-10-30',
-  },
-  {
-    target: 'admin',
-    export: 'setSettleAccount',
-    reason: '供应商结算账户设置接口已封装，无页面入口 —— 供应商无法维护收款账户',
-    todo: '待办#46',
     since: '2026-10-30',
   },
   {
@@ -582,6 +552,52 @@ export function check({ routes, refs, exports, identRefs, target, exempt, allRef
     });
   }
 
+  // C-0. 已知缺口表的**自收紧**（头注承诺过、这里才是真正的落实）
+  //
+  // ⭐ 为什么必须单独扫一遍 KNOWN_GAPS：上面的循环只在「端点**未被引用**」时才命中
+  //    knownHits —— 一旦页面补上，条目就**静默从打印里消失**，既不报也不留痕，
+  //    表里那条记录从此变成一句没人会来核对的假话（正是注释想防的「表腐烂成新谎言」）。
+  //    ⇒ 这里反过来查：条目还在、但缺口已经没了 ⇒ 报出来逼人删条目。
+  //
+  // ⚠️ 按 target 归属：无 `target` 字段的条目要先用 `matchRoute` 判它属不属于本端，
+  //    否则 `/home/history` 在 admin 端会被误报成「条目失效」。
+  for (const k of knownGaps ?? []) {
+    if (k.target && k.target !== target) continue;
+    const tag = `${k.todo} · ${k.since}`;
+    if (k.export) {
+      if ((identRefs.get(k.export) ?? 0) > 0) {
+        findings.push({
+          kind: '[缺口已修·请删条目]',
+          detail: `导出方法 ${k.export} 已被页面引用（${tag}）`,
+          where: 'scripts/check-admin-capability-coverage.mjs ∷ KNOWN_GAPS',
+        });
+      }
+      continue;
+    }
+    // ⚠️ 归属判定不能只看 path 前缀：`/wecom/kb/bindings` 是靠
+    //    `*.admin.controller.ts` 的**文件名**归入 admin 端的（见 TARGETS.matchRoute），
+    //    只按前缀判会把它错判给 mp 端、再误报成「条目失效」。
+    //    ⇒ 失效只在**全仓都找不到**这个端点时才报；找得到但不属于本端，交给那一端去判。
+    const anywhere = routes.find((r) => (!k.method || k.method === r.method) && k.path === r.norm);
+    if (!anywhere) {
+      findings.push({
+        kind: '[缺口条目失效]',
+        detail: `${k.method ?? ''} ${k.path} 在代码里已不存在（${tag}）`,
+        where: 'scripts/check-admin-capability-coverage.mjs ∷ KNOWN_GAPS',
+      });
+      continue;
+    }
+    const hit = myRoutes.find((r) => (!k.method || k.method === r.method) && k.path === r.norm);
+    if (!hit) continue; // 属于另一端，由那一端负责判定
+    if (isReferenced(hit.norm, coverRefs)) {
+      findings.push({
+        kind: '[缺口已修·请删条目]',
+        detail: `${hit.method} ${hit.norm} 已被前端引用（${tag}）`,
+        where: 'scripts/check-admin-capability-coverage.mjs ∷ KNOWN_GAPS',
+      });
+    }
+  }
+
   // C. 豁免过期（自收紧：已被引用的端点不许继续豁免）
   for (const ex of exempt.filter((x) => x.target === target && x.path)) {
     if (isReferenced(ex.path, refs)) {
@@ -793,7 +809,34 @@ export class UsedController {
       JSON.stringify(r5.findings.map((f) => f.kind)),
     );
 
-    // ⑥ 真实仓库跑一遍：集合必须非空（否则说明解析在真实代码上失效）
+    // ⑥ 已知缺口表的自收紧（C-0）：补了页面必须逼删条目，条目失效也要报
+    const gaps = [
+      { method: 'GET', path: '/admin/used/list', reason: 'r', todo: 'T-used', since: 's' },
+      { method: 'GET', path: '/admin/ghost/thing', reason: 'r', todo: 'T-ghost', since: 's' },
+      { method: 'GET', path: '/admin/nope/gone', reason: 'r', todo: 'T-gone', since: 's' },
+    ];
+    const r6 = check({
+      routes,
+      refs,
+      exports,
+      identRefs,
+      target: 'admin',
+      exempt: [],
+      knownGaps: gaps,
+    });
+    const fixed6 = r6.findings
+      .filter((f) => f.kind === '[缺口已修·请删条目]')
+      .map((f) => f.detail)
+      .join('|');
+    const gone6 = r6.findings
+      .filter((f) => f.kind === '[缺口条目失效]')
+      .map((f) => f.detail)
+      .join('|');
+    ok('必报：条目仍在但端点已被引用 ⇒ [缺口已修·请删条目]', fixed6.includes('/admin/used/list'), fixed6);
+    ok('必不报：端点仍未被引用 ⇒ 不许报「已修」', !fixed6.includes('/admin/ghost/thing'), fixed6);
+    ok('必报：条目写了代码里没有的端点 ⇒ [缺口条目失效]', gone6.includes('/admin/nope/gone'), gone6);
+
+    // ⑦ 真实仓库跑一遍：集合必须非空（否则说明解析在真实代码上失效）
     const realRoutes = parseRoutes(join(REPO, 'apps/api-server/src')).routes;
     const realRefs = parseRefs(TARGETS.admin.frontDirs);
     const realExports = parseExports(TARGETS.admin.apiDir);

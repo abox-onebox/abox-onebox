@@ -458,6 +458,16 @@ export const ADMIN_NAV = [
         module: 'W1',
         icon: 'pause',
       },
+      // 知识助手禁止清单（P1-c）—— 补 endpoint 有、页面无的缺口（admin:coverage #41）。
+      //   ⚠️ 与控制器 `@Roles('super_admin','admin')` 同向：不给 operator
+      //   （否则运营可以自己解禁自己），故**不需要**进 OPERATOR_EXTRA_MENUS。
+      {
+        path: '/system/op-blocklist',
+        title: '助手禁止清单',
+        page: '—',
+        module: 'P1-c',
+        icon: 'lock',
+      },
     ],
   },
 ] as const;

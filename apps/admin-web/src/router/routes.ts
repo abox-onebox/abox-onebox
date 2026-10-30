@@ -346,6 +346,15 @@ export const routes: RouteRecordRaw[] = [
         name: 'SystemSalesPause',
         component: () => import('@/views/system/sales-pause.vue'),
       },
+      // 知识助手禁止清单（P1-c）—— 三个端点此前**全无页面**（admin:coverage 缺口 #41），
+      //   即「有止血开关但阀门在墙里」。挂在 `/system/`：它约束的是自动化能力，
+      //   不是某个业务域；且 operator 经派生规则本就被挡在 /system/ 外
+      //   （与控制器 `@Roles('super_admin','admin')` 同向 —— 避免运营自己解禁自己）。
+      {
+        path: 'system/op-blocklist',
+        name: 'SystemOpBlocklist',
+        component: () => import('@/views/system/op-blocklist.vue'),
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/dashboard' },

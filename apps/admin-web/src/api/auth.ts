@@ -65,3 +65,21 @@ export function adminLogout(): Promise<null> {
 export function fetchAdminProfile(): Promise<AdminAccount> {
   return http.get<AdminAccount>('/auth/profile');
 }
+
+/**
+ * A6 修改口令
+ *
+ * ⚠️ 本端点在 `/auth` 下、**不经 AdminGuard**（服务端刻意如此）：
+ *    账号被 `must_change_password=1` 卡死时，所有业务接口都会被守卫挡回，
+ *    只有这个口还能调 —— 前端因此也**不能**把它挂在任何 `/admin/*` 的页面里，
+ *    否则「被强制改密的人点不到改密按钮」，正是 admin:coverage 扫出的 #40 缺口。
+ *
+ * 强度规则（≥10 位、含字母与数字）由服务端 `AuthService.changeAdminPassword` 判定，
+ * 前端只做必填 / 长度 / 两次一致的**提前拦**，真源在后端。
+ */
+export function changeAdminPassword(payload: {
+  oldPassword: string;
+  newPassword: string;
+}): Promise<{ ok: true }> {
+  return http.post<{ ok: true }>('/auth/change-password', payload);
+}

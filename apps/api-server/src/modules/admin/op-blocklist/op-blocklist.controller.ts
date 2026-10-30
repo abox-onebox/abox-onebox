@@ -14,6 +14,7 @@ import type { JwtPayload } from '../../../common/decorators/auth.decorator';
 import { OperationLog } from '../../../common/decorators/operation-log.decorator';
 import { AdminGuard } from '../../../common/guards/admin.guard';
 import { OpBlocklistService } from '../../../common/services/op-blocklist.service';
+import { OP_META } from '../../wecom-kb/op-meta';
 
 /**
  * 知识助手禁止清单管理（P1-c - 2026-10-19）
@@ -37,6 +38,24 @@ export class OpBlocklistController {
   @ApiOperation({ summary: '查看禁止清单（含 op / 原因 / 列入人 / 时间）' })
   list() {
     return this.svc.list().then((rows) => ({ list: rows }));
+  }
+
+  /**
+   * 可禁止的 op 清单（供后台下拉）—— 真源是 `wecom-kb/op-meta.ts` 的 `OP_META`
+   *
+   * ⭐ 为什么必须服务端下发：op 目录一旦在后台前端再写一份，就出现第二份「有哪些 op」
+   *    的表述，改一处必然漂移（本项目已多次栽在两套映射说不一样的话）。
+   *    ⚠️ 这里只给 **opCode + label**，不含 endpoint / 必填参数 —— 那份是**执行依据**，
+   *    不是「列个下拉」需要的，一并吐出去等于把内部路由表摊给所有 admin 角色。
+   */
+  @Get('ops')
+  @ApiOperation({ summary: '可列入禁止的 op 清单（opCode + 中文名）' })
+  ops() {
+    const list = Object.entries(OP_META)
+      .map(([opCode, meta]) => ({ opCode, label: meta.label }))
+      // 按中文名排，运营是按「禁哪个动作」找的，不是按 opCode 字典序
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-Hans-CN'));
+    return { list };
   }
 
   @Post()
