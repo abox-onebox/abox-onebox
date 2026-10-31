@@ -282,10 +282,15 @@
           <el-input
             v-model="editForm.description"
             type="textarea"
-            :rows="2"
-            maxlength="200"
+            :rows="3"
+            maxlength="512"
             show-word-limit
+            placeholder="如：古法慢炖，肥而不腻，配米饭正合适。"
           />
+          <p class="field-hint">
+            这段文字整段展示在小程序首页商品弹窗的「关于这道菜」里（上限与库字段一致： 512
+            字）。写成一整段话即可，不必分条；描述请避开功效宣称与绝对化用语。
+          </p>
         </el-form-item>
 
         <el-form-item label="图片地址">

@@ -44,11 +44,9 @@
             >由 {{ item.supplierName }} 供应</text
           >
 
-          <!-- 关于这道菜（description 为空时优雅降级为中性说明，与 C8 不冲突） -->
-          <view class="dp__section">
-            <text class="dp__section-title">
-              <text class="abi abi-16">{{ I.info }}</text> 关于这道菜
-            </text>
+          <!-- 关于这道菜（⭐ 2026-10-31 恢复高保真稿的「卡片框」视觉：独立卡片 + 金色小标签） -->
+          <view class="dp__intro">
+            <text class="dp__intro-tag">关于这道菜</text>
             <text class="dp__desc">{{ descriptionText }}</text>
           </view>
 
@@ -203,11 +201,16 @@ const maskStyle = computed(() => {
 const photos = computed(() => props.photos ?? []);
 const firstChar = computed(() => (props.item?.name?.charAt(0) ?? '').toUpperCase() || '菜');
 
+// 缺介绍时的降级文案。
+// ⭐ 2026-10-31：原写法回落到 `由 {supplierName} 供应`，而弹窗里「关于这道菜」上方第 43-45 行
+//    已经渲染了同一句话 —— 同一个信息出现两遍，观感像占位文案、不像介绍区。改为中性说明。
+const DISH_DESC_FALLBACK = '这道菜的介绍还在准备中。';
+
 const descriptionText = computed(() => {
   const d = props.item?.description;
   if (d && d.trim()) return d.trim();
   // 优雅降级：不报错，给一句中性说明
-  return props.item?.supplierName ? `由 ${props.item.supplierName} 供应` : '暂无更多介绍';
+  return DISH_DESC_FALLBACK;
 });
 
 // ---- 手势 ----
@@ -409,6 +412,26 @@ function closeZoom(): void {
   margin-top: $space-1;
   font-size: $fs-caption;
   color: $c-text-weak;
+}
+
+// 关于这道菜（⭐ 2026-10-31 恢复高保真稿的「卡片框」视觉：品牌色内嵌卡 + 深金棕小标签）
+.dp__intro {
+  margin-top: $space-3;
+  padding: $space-3;
+  background: $c-gold-bg;
+  border: 1px solid $c-gold-bd;
+  border-radius: $radius-md;
+}
+
+.dp__intro-tag {
+  display: inline-block;
+  padding: 4rpx 18rpx;
+  font-size: $fs-micro;
+  font-weight: bold;
+  color: #ffffff;
+  background: $c-gold-deep;
+  border-radius: $radius-pill;
+  letter-spacing: 2rpx;
 }
 
 // 段落
