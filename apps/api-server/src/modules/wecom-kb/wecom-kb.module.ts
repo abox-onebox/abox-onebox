@@ -10,6 +10,8 @@ import { WecomSvcTokenService } from './wecom-svc-token.service';
 import { NameResolverService } from './name-resolver.service';
 import { WecomChatService } from './wecom-chat.service';
 import { WecomBindingAdminController } from './wecom-binding.admin.controller';
+import { WecomOpsAdminController } from './wecom-ops.admin.controller';
+import { WecomSimulateController } from './wecom-simulate.admin.controller';
 import { WecomBinding } from './wecom-binding.entity';
 
 /**
@@ -21,7 +23,12 @@ import { WecomBinding } from './wecom-binding.entity';
  */
 @Module({
   imports: [TypeOrmModule.forFeature([WecomBinding])],
-  controllers: [WecomKbController, WecomBindingAdminController],
+  controllers: [
+    WecomKbController,
+    WecomBindingAdminController,
+    WecomOpsAdminController,
+    WecomSimulateController,
+  ],
   providers: [
     WecomKbService,
     WecomCryptoService,

@@ -3,6 +3,7 @@ import * as crypto from 'crypto';
 import { lookupOp, lookupQuery, OpMeta } from './op-meta';
 import { ADMIN_CATALOG } from './op-catalog.generated';
 import type { CatalogEntry } from './op-catalog.types';
+import { canExec } from './op-policy';
 import type { Tier } from './op-policy';
 
 /**
@@ -28,6 +29,15 @@ export interface Binding {
   approverToken?: string | null;
   /** 谁在操作：owner=负责人（admin 角色令牌），staff=同事（operator 角色令牌） */
   tier?: Tier;
+  /**
+   * 单独放给这个人的端点编码（只对 staff 有意义）。
+   *
+   * ⚠️ 有它时执行身份必须是 **owner 令牌**：被放权的端点 `@Roles` 里通常没有 operator，
+   * 用 operator 令牌打过去会被后台 403，表现成「授权了却用不了」。
+   * 安全性由两道判定保证：`execCatalog` 入口判一次（清单外一律拒），
+   * 聊天层列目录时再按同一份清单过滤一次（不让人看见点了才发现不行）。
+   */
+  grantedOps?: string[];
 }
 
 export interface ProxyResult {
@@ -242,6 +252,13 @@ export class OpProxyService {
     if (fail) return fail;
     const entry = this.catalog(code);
     if (!entry) return { code: 404, message: `目录里没有这个操作：${code}`, data: null };
+
+    // ★ 唯一执行入口的兜底闸门（不能省）：
+    //   聊天层虽然也判过，但那是「展示时」的判定 —— 管理员中途收回放权后，
+    //   会话里已生成、还没回 1 的草稿仍会走到这里。只剩这一道才能真正做到「收回立刻失效」。
+    //   反过来说，这里放过 = 越权，所以判据必须与 op-policy 完全同源，不许另写一套。
+    const perm = canExec(b.tier ?? 'staff', entry, { granted: b.grantedOps, code });
+    if (!perm.ok) return { code: 403, message: perm.reason || '权限不足', data: null };
 
     const missing = entry.params
       .filter((p) => p.required && p.name !== '*')

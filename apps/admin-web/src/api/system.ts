@@ -638,6 +638,16 @@ export interface WecomBindingRow {
   operatorName: string;
   /** 服务端恒回落 `staff`（`b.tier || 'staff'`），故不会是 undefined */
   tier: WecomTier;
+  /**
+   * 单独放权的端点编码清单（只对 `tier=staff` 生效）。
+   *
+   * 语义是**加号**：空数组 = 没放权，他只有 operator 角色本来的能力；
+   * 有编码 = 这些端点**额外**允许他做。所以收回放权（置空）是安全动作，
+   * 不会把他原本能做的事一起收走。
+   *
+   * 服务端恒回 `b.grantedOps || []`，故这里不会是 undefined。
+   */
+  grantedOps: string[];
   /** ⚠️ 只回标记、不回令牌明文（避免令牌在管理面泄露） */
   hasOperatorToken: boolean;
   hasApproverToken: boolean;
@@ -656,6 +666,13 @@ export interface UpsertWecomBindingPayload {
    *    `setWecomBindingTier`（独立端点，语义单一，不会顺手动到令牌）。
    */
   tier?: WecomTier;
+  /**
+   * 单独放权清单（省略 = 不改动已有清单）
+   *
+   * ⚠️ 与 `tier` 同款「省略即不改」语义，但**新建时省略会落空数组**（= 没放权）。
+   *    要精确控制请走 `setWecomBindingGrant`（独立端点，不会顺手动到令牌与等级）。
+   */
+  grantedOps?: string[];
   /** 省略 = 不修改；空串 = 清空 */
   operatorToken?: string;
   /** 同上 */
@@ -709,6 +726,74 @@ export function setWecomBindingTier(
   return http.patch<{ found: boolean; tier?: string }>(
     `/wecom/kb/bindings/${encodeURIComponent(userId)}/tier`,
     { tier },
+    WECOM_NO_PREFIX,
+  );
+}
+
+/**
+ * 机器人试跑 · `POST /admin/wecom/kb/simulate`（走 `/api/v1`，与上面 wecom 那组不同）
+ *
+ * 企微回调地址要域名、备案没过 ⇒ 机器人在真实环境里一次都没被跑通过。
+ * 这个端点让后台**当场说一句话**看它怎么回，走的还是同一套判据与执行通道，
+ * 不是另写的模拟器 —— 试跑的结果对线上有效。
+ *
+ * ⚠️ **这里会真的写库**：它不是沙箱。写操作仍要「回 1」才执行，但点了就是真执行。
+ * ⚠️ 执行身份固定为负责人（owner），故 `execAs` 恒为 `owner`；
+ *    审计里记的是**当前登录管理员的姓名**（`X-KB-Operator`），不是「机器人」。
+ */
+export function simulateWecomChat(
+  text: string,
+  reset = false,
+): Promise<{ reply: string; execAs: string }> {
+  return http.post<{ reply: string; execAs: string }>('/admin/wecom/kb/simulate', { text, reset });
+}
+
+/**
+ * 单独放权的可选项（后台功能目录，只读）· `GET /wecom/kb/ops`
+ *
+ * 数据由服务端从源码自动生成的目录给出，前端**不要硬编码**这 131 项：
+ * 端点改名/新增后硬编码会静默过期，表现成「勾了不生效」或「新功能勾不到」。
+ *
+ * `staffBase=true` 表示「不放权时同事本来就能做」—— 页面必须把这类与
+ * 「本次额外给的」分开显示，否则会把「本来就有的 40 项」误读成「我放权了 40 项」。
+ */
+export interface WecomOpItem {
+  code: string;
+  label: string;
+  method: string;
+  path: string;
+  module: string;
+  risk: 'low' | 'mid' | 'high';
+  staffBase: boolean;
+}
+
+export function fetchWecomOps(): Promise<{ total: number; items: WecomOpItem[] }> {
+  return http.get<{ total: number; items: WecomOpItem[] }>(
+    '/wecom/kb/ops',
+    undefined,
+    WECOM_NO_PREFIX,
+  );
+}
+
+/**
+ * 只改「单独放权的功能清单」· `PATCH /wecom/kb/bindings/:userId/grant`
+ *
+ * ⚠️ 与 `tier` 的区别，页面上必须说清（否则用户会以为放权 = 提权）：
+ *    · `tier=owner` → 把这个人**整体**升成负责人能力（131 项全开），是重手法；
+ *    · `grantedOps` → 只把**点到的那几件**给他（外加他原本 operator 就会的那些），是轻手法。
+ *    日常该用后者：给财务同事开「退款审批」一项，不必连「改团长佣金」一起给。
+ *
+ * ⚠️ 传 `[]` = 收回全部放权（安全：他退回 operator 本来的能力，不会残废）。
+ * ⚠️ 目录里已失效的编码由服务端剔除并回传 `unknown`，页面要如实提示，
+ *    不能静默当成功 —— 否则管理员会以为「放权成功了但其实一条没生效」。
+ */
+export function setWecomBindingGrant(
+  userId: string,
+  ops: string[],
+): Promise<{ found: boolean; count?: number; unknown?: string[] }> {
+  return http.patch<{ found: boolean; count?: number; unknown?: string[] }>(
+    `/wecom/kb/bindings/${encodeURIComponent(userId)}/grant`,
+    { ops },
     WECOM_NO_PREFIX,
   );
 }

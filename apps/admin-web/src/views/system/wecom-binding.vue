@@ -4,7 +4,8 @@
     <p class="page-container__meta">
       模块：P1-c · 接口：
       <code>GET / POST / DELETE /wecom/kb/bindings</code> ·
-      <code>PATCH /wecom/kb/bindings/:userId/tier</code> · 数据源
+      <code>PATCH /wecom/kb/bindings/:userId/tier</code> ·
+      <code>PATCH /wecom/kb/bindings/:userId/grant</code> · <code>GET /wecom/kb/ops</code> · 数据源
       <code>ab_wecom_binding</code>
     </p>
 
@@ -30,6 +31,14 @@
         <b>新增绑定默认是「同事」</b>（最小权限），要提权请点行内「设为负责人」。
       </template>
     </el-alert>
+    <el-alert type="success" :closable="false" class="note">
+      <template #title>
+        <b>要给同事开一两项敏感功能，用「单独特批」，别用「设为负责人」。</b>
+        提权是<b>整体</b>给（131 项全开，含改佣金、动账）；单独特批只把<b>你勾中的那几件</b>给他，
+        其余照旧。比如财务同事只要「退款审批」，就只勾那一条。
+        <b>清空勾选 = 收回</b>，他退回原本能力，不会因此做不了事。
+      </template>
+    </el-alert>
 
     <div class="toolbar">
       <el-button v-if="canWrite" type="primary" @click="openCreate">
@@ -37,6 +46,7 @@
         新增绑定
       </el-button>
       <el-button :loading="loading" @click="load">刷新</el-button>
+      <el-button v-if="canWrite" @click="openSim">试一句（机器人试跑）</el-button>
       <span v-if="!canWrite" class="dialog__tip">只读：绑定 / 解绑需要 super_admin / admin</span>
     </div>
 
@@ -51,6 +61,15 @@
         <template #default="{ row }">
           <el-tag size="small" :type="asRow(row).tier === 'owner' ? 'danger' : 'info'">
             {{ tierLabel(asRow(row).tier) }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="单独特批" width="120">
+        <template #default="{ row }">
+          <!-- owner 本来全通，特批对他没有意义，显式说明比给个空标签清楚 -->
+          <span v-if="asRow(row).tier === 'owner'" class="dialog__tip">全通，无需</span>
+          <el-tag v-else size="small" :type="grantCount(row) > 0 ? 'warning' : 'info'">
+            {{ grantCount(row) > 0 ? grantCount(row) + ' 项' : '无' }}
           </el-tag>
         </template>
       </el-table-column>
@@ -71,10 +90,19 @@
       <el-table-column label="更新时间" width="160">
         <template #default="{ row }">{{ formatDateTime(asRow(row).updatedAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="300" fixed="right">
+      <el-table-column label="操作" width="400" fixed="right">
         <template #default="{ row }">
           <el-button v-if="canWrite" link type="primary" @click="openEdit(asRow(row))">
             编辑
+          </el-button>
+          <!-- ⭐ 单独特批：按功能项给，不动身份、不动令牌 -->
+          <el-button
+            v-if="canWrite && asRow(row).tier !== 'owner'"
+            link
+            type="primary"
+            @click="openGrant(asRow(row))"
+          >
+            特批功能
           </el-button>
           <!-- ⭐ 放权 / 收回：只改 tier 一列，不动令牌、不动人名 -->
           <el-button
@@ -160,6 +188,129 @@
         <el-button type="primary" :loading="saving" @click="submit">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- ─────────────── 单独特批（按功能项放权）─────────────── -->
+    <el-drawer
+      v-model="grantVisible"
+      :title="`特批功能 · ${grantRow?.operatorName || grantRow?.userId || ''}`"
+      size="720px"
+      :close-on-click-modal="false"
+    >
+      <div v-loading="opsLoading" class="grant">
+        <el-alert type="info" :closable="false" class="note">
+          <template #title>
+            勾中的项<b>额外</b>允许他做；<b>不勾 = 收回</b>（他退回原本能力，不会做不了事）。
+            列表里标「本来就会」的是 <code>operator</code> 角色本来就能做的事，
+            <b>勾了也不会多给</b>，只为让你看清边界。
+          </template>
+        </el-alert>
+
+        <div class="grant__bar">
+          <el-select
+            v-model="grantModule"
+            placeholder="全部模块"
+            clearable
+            size="small"
+            class="grant__module"
+          >
+            <el-option v-for="m in grantModules" :key="m" :label="m" :value="m" />
+          </el-select>
+          <el-input
+            v-model="grantKeyword"
+            size="small"
+            clearable
+            placeholder="搜功能名 / 路径"
+            class="grant__kw"
+          />
+          <span class="grant__count">已勾 {{ grantPicked.length }} 项</span>
+          <el-button size="small" text type="danger" @click="grantPicked = []">清空勾选</el-button>
+        </div>
+
+        <el-table :data="grantShown" border size="small" height="calc(100vh - 300px)">
+          <el-table-column width="46">
+            <template #default="{ row }">
+              <!-- 本来就会的项禁用勾选：勾了没意义，还会让「放权 N 项」这个数虚高 -->
+              <el-checkbox
+                :model-value="grantPicked.includes(asOp(row).code)"
+                :disabled="asOp(row).staffBase"
+                @change="(v) => toggleGrant(asOp(row).code, v)"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="功能" min-width="220">
+            <template #default="{ row }">
+              <span>{{ asOp(row).label }}</span>
+              <el-tag v-if="asOp(row).staffBase" size="small" type="info" class="grant__tag">
+                本来就会
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="模块" width="120">
+            <template #default="{ row }">{{ asOp(row).module }}</template>
+          </el-table-column>
+          <el-table-column label="影响" width="130">
+            <template #default="{ row }">
+              <el-tag size="small" :type="riskTagType(asOp(row).risk)">
+                {{ riskLabel(asOp(row).risk) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="接口" min-width="200">
+            <template #default="{ row }">
+              <code class="grant__path">{{ asOp(row).method }} {{ asOp(row).path }}</code>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <p class="footnote">
+          提示：勾中「动钱 / 动单 / 动权」类功能时，机器人执行前仍会给出草稿让你确认；<br />
+          但<b>机器人会以负责人身份代为执行</b>（后台 <code>@Roles</code> 只认角色，不认人），
+          所以这里勾一项=<b>真给他这项能力</b>，请按需最小化。
+        </p>
+      </div>
+      <template #footer>
+        <el-button @click="grantVisible = false">取消</el-button>
+        <el-button type="primary" :loading="grantSaving" @click="submitGrant">保存特批</el-button>
+      </template>
+    </el-drawer>
+
+    <!-- ─────────────── 机器人试跑 ─────────────── -->
+    <el-drawer v-model="simVisible" title="机器人试跑" size="560px">
+      <div class="sim">
+        <el-alert type="warning" :closable="false" class="note">
+          <template #title>
+            <b>这里会真的写库。</b>它不是沙箱 —— 写操作仍要「回 1」才执行，但点了就是真执行。
+            用的也是<b>负责人身份</b>与线上同一套判据，所以跑通 = 企微通了就能用。
+            审计里记的是<b>你的姓名</b>。
+          </template>
+        </el-alert>
+
+        <div class="sim__log">
+          <div v-if="simLog.length === 0" class="dialog__tip">
+            试试发「操作目录」「看 orders」「找 退款」「帮助」。
+          </div>
+          <div
+            v-for="(m, i) in simLog"
+            :key="i"
+            :class="['sim__msg', m.role === 'me' ? 'sim__msg--me' : 'sim__msg--bot']"
+          >
+            <pre class="sim__text">{{ m.text }}</pre>
+          </div>
+        </div>
+
+        <div class="sim__bar">
+          <el-input
+            v-model="simInput"
+            placeholder="像在企微里那样说一句话"
+            maxlength="500"
+            :disabled="simBusy"
+            @keyup.enter="sendSim"
+          />
+          <el-button type="primary" :loading="simBusy" @click="sendSim">发送</el-button>
+          <el-button :disabled="simBusy" @click="resetSim">清空会话</el-button>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -184,10 +335,14 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
   fetchWecomBindings,
+  fetchWecomOps,
   removeWecomBinding,
+  setWecomBindingGrant,
   setWecomBindingTier,
+  simulateWecomChat,
   upsertWecomBinding,
   type WecomBindingRow,
+  type WecomOpItem,
   type WecomTier,
 } from '@/api/system';
 import { useAuthStore } from '@/stores/auth';
@@ -223,6 +378,145 @@ function tokenPlaceholder(has: boolean): string {
 /** 等级文案的唯一出口 —— 表格与确认框共用，避免两处各写一份中文 */
 function tierLabel(tier: WecomTier): string {
   return tier === 'owner' ? '负责人 · 全功能' : '同事 · 受限';
+}
+
+// ─────────────────── 单独特批（按功能项放权）───────────────────
+const grantVisible = ref(false);
+const grantRow = ref<WecomBindingRow | null>(null);
+const opsLoading = ref(false);
+const grantSaving = ref(false);
+const grantOps = ref<WecomOpItem[]>([]);
+const grantPicked = ref<string[]>([]);
+const grantModule = ref<string>('');
+const grantKeyword = ref<string>('');
+
+function asOp(raw: unknown): WecomOpItem {
+  return raw as WecomOpItem;
+}
+
+/** 列表里显示「特批 N 项」；owner 不计（他本来全通） */
+function grantCount(raw: unknown): number {
+  const r = asRow(raw);
+  return r.tier === 'owner' ? 0 : (r.grantedOps ?? []).length;
+}
+
+const grantModules = computed(() => [...new Set(grantOps.value.map((o) => o.module))].sort());
+
+/**
+ * 抽屉里显示哪些项。
+ *
+ * ⚠️ 这里**不**过滤掉「本来就会」的项，只把它标出来并禁用勾选：
+ *    管理者要判断「要不要给他开退款审批」，前提是能看见「他现在已有什么」。
+ *    只显示可放权项会让人误以为他什么都没有，越给越多。
+ */
+const grantShown = computed(() => {
+  const kw = grantKeyword.value.trim().toLowerCase();
+  return grantOps.value.filter((o) => {
+    if (grantModule.value && o.module !== grantModule.value) return false;
+    if (!kw) return true;
+    return (
+      o.label.toLowerCase().includes(kw) ||
+      o.path.toLowerCase().includes(kw) ||
+      o.code.toLowerCase().includes(kw)
+    );
+  });
+});
+
+function riskLabel(risk: WecomOpItem['risk']): string {
+  return risk === 'high' ? '动钱/动单/动权' : risk === 'mid' ? '改数据' : '只读';
+}
+
+function riskTagType(risk: WecomOpItem['risk']): 'danger' | 'warning' | 'info' {
+  return risk === 'high' ? 'danger' : risk === 'mid' ? 'warning' : 'info';
+}
+
+async function openGrant(row: WecomBindingRow): Promise<void> {
+  grantRow.value = row;
+  grantPicked.value = [...(row.grantedOps ?? [])];
+  grantModule.value = '';
+  grantKeyword.value = '';
+  grantVisible.value = true;
+  if (grantOps.value.length > 0) return;
+  // 目录只在首次打开时拉一次：它是静态的（随部署变，不随操作变）
+  opsLoading.value = true;
+  try {
+    const r = await fetchWecomOps();
+    grantOps.value = r?.items ?? [];
+  } finally {
+    opsLoading.value = false;
+  }
+}
+
+/**
+ * 勾选 / 取消勾选一项。
+ *
+ * `checked` 收 `unknown` 而不是 `boolean`：Element Plus 的 `checkbox.change` 回调
+ * 实际类型是 `CheckboxValueType`（`boolean | string | number`），标注成 `boolean`
+ * 会编译不过。非 group 场景下实参就是 boolean，故用 truthiness 归一即可
+ * （不写 `Boolean(checked)` —— eslint 的 `no-extra-boolean-cast` 会判冗余）。
+ */
+function toggleGrant(code: string, checked: unknown): void {
+  const set = new Set(grantPicked.value);
+  if (checked) set.add(code);
+  else set.delete(code);
+  grantPicked.value = [...set];
+}
+
+async function submitGrant(): Promise<void> {
+  const row = grantRow.value;
+  if (!row) return;
+  const ops = grantPicked.value;
+  const who = row.operatorName || row.userId;
+
+  // 勾了高危项必须二次确认：这一步等于「以负责人身份替他做」，不是普通配置
+  const high = grantOps.value.filter((o) => ops.includes(o.code) && o.risk === 'high');
+  if (high.length > 0) {
+    const names = high
+      .slice(0, 5)
+      .map((o) => o.label)
+      .join('、');
+    try {
+      await ElMessageBox.confirm(
+        `你给 ${who} 开了 ${high.length} 项「动钱/动单/动权」功能：${names}${
+          high.length > 5 ? ' 等' : ''
+        }。\n机器人会以负责人身份替 TA 执行，等于真把这几项能力给了他。确认？`,
+        '确认开放高危功能',
+        { type: 'warning', confirmButtonText: '确认开放', cancelButtonText: '再想想' },
+      );
+    } catch {
+      return;
+    }
+  }
+
+  grantSaving.value = true;
+  try {
+    const r = await setWecomBindingGrant(row.userId, ops);
+    if (!r?.found) {
+      ElMessage.warning('这条绑定已不存在（可能刚被解绑），请刷新列表');
+      grantVisible.value = false;
+      await load();
+      return;
+    }
+    // ⭐ 服务端会剔掉目录里已失效的编码；不提示的话管理员会以为「全保存成功了」
+    const unknown = r.unknown ?? [];
+    if (unknown.length > 0) {
+      ElMessage.warning(
+        `已保存 ${r.count ?? 0} 项，但有 ${unknown.length} 项在功能目录里已不存在、被忽略：${unknown
+          .slice(0, 3)
+          .join('、')}${unknown.length > 3 ? ' 等' : ''}`,
+      );
+    } else {
+      ElMessage.success(
+        ops.length > 0
+          ? `已给 ${who} 特批 ${r.count ?? ops.length} 项`
+          : `已收回 ${who} 的全部特批`,
+      );
+    }
+    grantVisible.value = false;
+    await load();
+  } finally {
+    grantSaving.value = false;
+  }
 }
 
 async function load(): Promise<void> {
@@ -358,6 +652,51 @@ async function onRemove(row: WecomBindingRow): Promise<void> {
   await load();
 }
 
+// ─────────────────── 机器人试跑 ───────────────────
+/**
+ * 为什么这个页面要有试跑：企微回调要域名、备案没过 ⇒ 机器人在真实环境里
+ * 一次都没被跑通过。没有它，「能操作全部功能」只是个没人验证过的说法。
+ */
+interface SimMsg {
+  role: 'me' | 'bot';
+  text: string;
+}
+
+const simVisible = ref(false);
+const simInput = ref('');
+const simBusy = ref(false);
+const simLog = ref<SimMsg[]>([]);
+
+function openSim(): void {
+  simVisible.value = true;
+}
+
+async function sendSim(): Promise<void> {
+  const text = simInput.value.trim();
+  if (!text || simBusy.value) return;
+  simLog.value.push({ role: 'me', text });
+  simInput.value = '';
+  simBusy.value = true;
+  try {
+    const r = await simulateWecomChat(text);
+    simLog.value.push({ role: 'bot', text: r?.reply ?? '（后台没有回复内容）' });
+  } finally {
+    simBusy.value = false;
+  }
+}
+
+/** 清空会话 = 服务端把「取消」当一句话处理（复用机器人的取消语义，不另开端点） */
+async function resetSim(): Promise<void> {
+  simBusy.value = true;
+  try {
+    await simulateWecomChat('取消', true);
+    simLog.value = [];
+    ElMessage.success('会话已清空');
+  } finally {
+    simBusy.value = false;
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -377,5 +716,90 @@ onMounted(load);
   margin-top: $space-3;
   color: $c-text-weak;
   font-size: $fs-caption;
+}
+
+.grant {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+}
+
+.grant__bar {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+}
+
+.grant__module {
+  width: 160px;
+}
+
+.grant__kw {
+  width: 220px;
+}
+
+.grant__count {
+  color: $c-text-weak;
+  font-size: $fs-caption;
+}
+
+.grant__tag {
+  margin-left: $space-2;
+}
+
+.grant__path {
+  color: $c-text-weak;
+  font-size: $fs-caption;
+}
+
+.sim {
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  height: 100%;
+}
+
+.sim__log {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: $space-2;
+  padding: $space-2 0;
+  min-height: 320px;
+}
+
+.sim__msg {
+  max-width: 86%;
+}
+
+.sim__msg--me {
+  align-self: flex-end;
+}
+
+.sim__msg--bot {
+  align-self: flex-start;
+}
+
+.sim__text {
+  margin: 0;
+  padding: $space-2;
+  border-radius: $radius-md;
+  font-family: inherit;
+  font-size: $fs-body;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: $c-surface-2;
+  color: $c-text;
+}
+
+.sim__msg--me .sim__text {
+  background: $c-gold-bg;
+}
+
+.sim__bar {
+  display: flex;
+  gap: $space-2;
+  align-items: center;
 }
 </style>

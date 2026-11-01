@@ -82,22 +82,52 @@ export interface PermissionResult {
   risk: Risk;
 }
 
+/** 放权上下文：单独放给某个同事的端点清单 + 当前这条的编码 */
+export interface GrantCtx {
+  /** 单独放权的端点编码（取自目录 code）。owner 忽略此字段。 */
+  granted?: readonly string[];
+  /** 当前端点的编码 —— 少了它就无法判断「这一条在不在清单里」，等于没放权 */
+  code?: string;
+}
+
+/** 这一条是否被单独放权（只看 staff；owner 不需放权） */
+export function isGranted(
+  tier: Tier,
+  code: string | undefined,
+  granted?: readonly string[],
+): boolean {
+  if (tier !== 'staff') return false;
+  if (!code || !granted || granted.length === 0) return false;
+  return granted.includes(code);
+}
+
 /**
  * 能不能执行这个端点。
  *
  * @param tier 谁在操作
  * @param entry 端点
- * @param requireOwnerForHigh owner tier 是否可以对 high 直接执行
+ * @param opts.requireOwnerForHigh owner tier 是否可以对 high 直接执行
  *        （true = 负责人本人直干；false = 连负责人也必须走审批，一期不用）
+ * @param opts.granted 单独放权清单（见 GrantCtx）
+ * @param opts.code 当前端点编码（见 GrantCtx）
  */
 export function canExec(
   tier: Tier,
   entry: CatalogEntry,
-  opts: { requireOwnerForHigh?: boolean } = {},
+  opts: { requireOwnerForHigh?: boolean } & GrantCtx = {},
 ): PermissionResult {
   const risk = riskOf(entry);
   const roles = entry.roles || [];
   const role = TIER_ROLE[tier];
+
+  // ── 单独放权：**必须**排在角色判定之前 ──────────────────────────
+  // 被放权的端点通常 `@Roles` 里根本没有 operator（这正是同事做不了的原因），
+  // 若先判角色，会出现「后台明明点了放权，机器人还是说做不了」。
+  // 真正的安全靠两层：① 这里只放清单内的编码；② 执行身份升到 owner 后，
+  // 执行入口（op-proxy.execCatalog）会再判一次，收回权限立刻失效。
+  if (isGranted(tier, opts.code, opts.granted)) {
+    return { ok: true, roles, risk, reason: '这一项是单独放给你的，可以做。' };
+  }
 
   // 源码没标 @Roles：不默认放行，只允许负责人操作（并提示这是未标注端点）
   if (roles.length === 0) {
@@ -165,35 +195,52 @@ export interface ModuleSummary {
   allowed: number;
 }
 
-export function modules(tier: Tier): ModuleSummary[] {
+export function modules(tier: Tier, granted?: readonly string[]): ModuleSummary[] {
   const map = new Map<string, ModuleSummary>();
   for (const it of ALL_ITEMS) {
     const m = moduleOf(it.entry);
     const cur = map.get(m) || { module: m, total: 0, allowed: 0 };
     cur.total += 1;
-    if (canExec(tier, it.entry).ok) cur.allowed += 1;
+    if (canExec(tier, it.entry, { granted, code: it.code }).ok) cur.allowed += 1;
     map.set(m, cur);
   }
   return [...map.values()].sort((a, b) => a.module.localeCompare(b.module));
 }
 
-/** 某模块下的端点（按当前 tier 过滤；allowedOnly=false 时也列出不可用的并标注原因） */
-export function itemsOfModule(module: string, tier: Tier, allowedOnly = true): CatalogItem[] {
+/** 某模块下的端点（按当前 tier + 放权清单过滤；allowedOnly=false 时也列出不可用的并标注原因） */
+export function itemsOfModule(
+  module: string,
+  tier: Tier,
+  allowedOnly = true,
+  granted?: readonly string[],
+): CatalogItem[] {
   return ALL_ITEMS.filter(
-    (it) => moduleOf(it.entry) === module && (!allowedOnly || canExec(tier, it.entry).ok),
+    (it) =>
+      moduleOf(it.entry) === module &&
+      (!allowedOnly || canExec(tier, it.entry, { granted, code: it.code }).ok),
   ).sort((a, b) => a.entry.path.localeCompare(b.entry.path));
+}
+
+/** 当前身份 + 放权清单下「能直接用」的条数（「操作目录」首行用） */
+export function usableCount(tier: Tier, granted?: readonly string[]): number {
+  return ALL_ITEMS.filter((it) => canExec(tier, it.entry, { granted, code: it.code }).ok).length;
 }
 
 /**
  * 按关键词找端点。匹配顺序（越靠前越可信）：
  *   中文名 → 路径 → 精确编码。命中多个时由调用方列候选让他回数字，绝不猜。
  */
-export function search(keyword: string, tier: Tier, limit = 8): CatalogItem[] {
+export function search(
+  keyword: string,
+  tier: Tier,
+  limit = 8,
+  granted?: readonly string[],
+): CatalogItem[] {
   const k = (keyword || '').trim().toLowerCase();
   if (!k) return [];
   const scored: { it: CatalogItem; score: number }[] = [];
   for (const it of ALL_ITEMS) {
-    if (!canExec(tier, it.entry).ok) continue;
+    if (!canExec(tier, it.entry, { granted, code: it.code }).ok) continue;
     const label = it.entry.label.toLowerCase();
     const p = it.entry.path.toLowerCase();
     let score = 0;
@@ -213,6 +260,28 @@ export function search(keyword: string, tier: Tier, limit = 8): CatalogItem[] {
 /** 取一条（编码精确匹配） */
 export function find(code: string): CatalogItem | undefined {
   return ALL_ITEMS.find((x) => x.code === code);
+}
+
+/**
+ * 规整放权清单：去重、去空、剔除目录里不存在的编码。
+ *
+ * 为什么必须剔除：端点编码由源码自动生成，`/admin` 路由改名或删除后编码会消失。
+ * 清单里残留死编码不会造成越权（`isGranted` 只对存在的端点生效），
+ * 但会让管理员在页面上看到「明明放权了却用不了」，也会让清单越来越脏。
+ */
+export function normalizeGrant(codes: unknown): { valid: string[]; unknown: string[] } {
+  const arr = Array.isArray(codes) ? codes : [];
+  const valid: string[] = [];
+  const unknown: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of arr) {
+    const c = String(raw ?? '').trim();
+    if (!c || seen.has(c)) continue;
+    seen.add(c);
+    if (find(c)) valid.push(c);
+    else unknown.push(c);
+  }
+  return { valid, unknown };
 }
 
 /**

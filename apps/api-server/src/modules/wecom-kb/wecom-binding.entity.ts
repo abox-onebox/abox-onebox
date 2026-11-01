@@ -32,6 +32,18 @@ export class WecomBinding {
   @Column({ name: 'tier', type: 'varchar', length: 16, default: 'staff' })
   tier!: 'owner' | 'staff';
 
+  /**
+   * 单独放权的端点编码清单（只对 `staff` 生效，`owner` 忽略）。
+   *
+   * 语义是「加号」而不是「减号」：`null` / `[]` = 没放权，同事只保留 operator 角色本来的能力；
+   * 填了编码 = 这些端点**额外**允许他做（执行身份同时升到 owner 账号，否则后台 @Roles 会挡）。
+   *
+   * ⚠️ 用 `simple-json`（底层 TEXT）而不是 MySQL `json`：值只有「编码数组」这一种形态，
+   *    不需要在库里做 JSON 查询，换成 json 类型只会给迁移和驱动版本增加不必要的一致性问题。
+   */
+  @Column({ name: 'granted_ops', type: 'simple-json', nullable: true })
+  grantedOps?: string[] | null;
+
   /** operator 权限令牌（执行 / 提交 / 撤回 / 查询用） */
   @Column({ name: 'operator_token', type: 'varchar', length: 512, nullable: true })
   operatorToken?: string | null;

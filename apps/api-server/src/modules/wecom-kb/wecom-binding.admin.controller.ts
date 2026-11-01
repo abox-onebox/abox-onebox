@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@n
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { Roles } from '../../common/decorators/auth.decorator';
 import { WecomBindingService } from './wecom-binding.service';
-import { SetWecomTierDto, UpsertWecomBindingDto } from './wecom-binding.dto';
+import { SetWecomGrantDto, SetWecomTierDto, UpsertWecomBindingDto } from './wecom-binding.dto';
 import { WecomBinding } from './wecom-binding.entity';
 
 /**
@@ -36,6 +36,23 @@ export class WecomBindingAdminController {
     return r ? { found: true, tier: r.tier } : { found: false };
   }
 
+  /**
+   * 只改「单独放权的功能清单」（按功能项给某个同事放权 / 收回）。
+   *
+   * 不动令牌、不动 tier：放权是「多做几件事」，不是「把身份改成负责人」。
+   * 传 `ops: []` 即收回全部放权（同事退回 operator 本来的能力，不会残废）。
+   * 目录里已失效的编码会被丢弃并回传 `unknown`，让页面能如实提示，而不是静默吞掉。
+   */
+  @Patch(':userId/grant')
+  async setGrant(
+    @Param('userId') userId: string,
+    @Body() dto: SetWecomGrantDto,
+  ): Promise<{ found: boolean; count?: number; unknown?: string[] }> {
+    const r = await this.svc.setGrant(userId, dto.ops);
+    if (!r) return { found: false };
+    return { found: true, count: (r.binding.grantedOps || []).length, unknown: r.unknown };
+  }
+
   @Get()
   async list(): Promise<Array<Record<string, unknown>>> {
     const all = await this.svc.list();
@@ -43,6 +60,11 @@ export class WecomBindingAdminController {
       userId: b.userId,
       operatorName: b.operatorName,
       tier: b.tier || 'staff',
+      /**
+       * 放权清单原样给前端（不是只给个数）：页面要能勾选回填，
+       * 只回个数会让「编辑已有放权」变成「每次都要重勾一遍」。
+       */
+      grantedOps: b.grantedOps || [],
       hasOperatorToken: !!b.operatorToken,
       hasApproverToken: !!b.approverToken,
       createdAt: b.createdAt,

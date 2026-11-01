@@ -16,10 +16,12 @@ import {
   canExec,
   displayName,
   find,
+  isGranted,
   itemsOfModule,
   modules,
   riskOf,
   search,
+  usableCount,
   RISK_LABEL,
   TIER_LABEL,
   type CatalogItem,
@@ -144,6 +146,9 @@ export class WecomChatService {
     }
 
     const tier: Tier = binding.tier === 'owner' ? 'owner' : 'staff';
+    // 单独放权的端点清单（只对同事有意义）：展示层与执行层必须用**同一份**清单，
+    // 否则会出现「目录里看不到、却能用」或者「目录里看得到、点了说没权限」两种更糟的错。
+    const granted = binding.grantedOps ?? [];
 
     // ── 通用操作通道（覆盖后台全部功能）──────────────────────
     // 优先级最高：一旦进了「选功能 / 填参数」状态，这一句就是参数值或序号，
@@ -152,8 +157,8 @@ export class WecomChatService {
       const handled = await this.handleOp(userId, text, session.op, binding, tier);
       if (handled !== null) return handled;
     }
-    const cat = this.matchCatalogEntry(text, tier);
-    if (cat) return this.openCatalog(userId, cat, tier);
+    const cat = this.matchCatalogEntry(text, tier, granted);
+    if (cat) return this.openCatalog(userId, cat, tier, granted);
 
     // 回数字：从候选里挑
     if (session?.draft?.options?.length && /^\d{1,2}$/.test(text)) {
@@ -215,6 +220,7 @@ export class WecomChatService {
   private matchCatalogEntry(
     text: string,
     tier: Tier,
+    granted: readonly string[] = [],
   ):
     | { kind: 'modules' }
     | { kind: 'module'; module: string }
@@ -233,7 +239,8 @@ export class WecomChatService {
     if (look) {
       const key = look[1];
       // 英文模块名直接命中就用模块；否则当关键词搜（「看 订单」）
-      if (modules(tier).some((m) => m.module === key)) return { kind: 'module', module: key };
+      if (modules(tier, granted).some((m) => m.module === key))
+        return { kind: 'module', module: key };
       return { kind: 'search', kw: key };
     }
 
@@ -247,16 +254,21 @@ export class WecomChatService {
     userId: string,
     cat: { kind: 'modules' } | { kind: 'module'; module: string } | { kind: 'search'; kw: string },
     tier: Tier,
+    granted: readonly string[] = [],
   ): string {
     if (cat.kind === 'modules') {
-      const ms = modules(tier);
+      const ms = modules(tier, granted);
       const total = allItems().length;
-      const usable = allItems().filter((i) => canExec(tier, i.entry).ok).length;
+      const usable = usableCount(tier, granted);
       const cells = ms.map((m) => `${m.module}(${m.allowed}/${m.total})`);
       const rows: string[] = [];
       for (let i = 0; i < cells.length; i += 3) rows.push(cells.slice(i, i + 3).join(' · '));
+      const head =
+        granted.length > 0
+          ? `后台一共 ${total} 项能力，你（${TIER_LABEL[tier]}）能直接用 ${usable} 项（含单独放给你的 ${granted.length} 项）。`
+          : `后台一共 ${total} 项能力，你（${TIER_LABEL[tier]}）能直接用 ${usable} 项。`;
       return [
-        `后台一共 ${total} 项能力，你（${TIER_LABEL[tier]}）能直接用 ${usable} 项。`,
+        head,
         `括号里是「你能用 / 全部」。`,
         '',
         ...rows,
@@ -266,30 +278,36 @@ export class WecomChatService {
     }
 
     if (cat.kind === 'module') {
-      const items = itemsOfModule(cat.module, tier, true);
+      const items = itemsOfModule(cat.module, tier, true, granted);
       if (items.length === 0)
         return `「${cat.module}」里没有你能直接做的操作。换别的模块，或让负责人放权。`;
       // ⚠️ 必须把候选写进会话，否则他回「1」时无处可选 —— 现象是「现在没有等你确认的事」
       this.putOp(userId, { code: '', params: {}, options: items, picking: 'op' });
-      return this.optionLines(`「${cat.module}」里你能做的（回数字选）：`, items, tier);
+      return this.optionLines(`「${cat.module}」里你能做的（回数字选）：`, items, tier, granted);
     }
 
-    const hits = search(cat.kw, tier, 8);
+    const hits = search(cat.kw, tier, 8, granted);
     if (hits.length === 0)
       return [
         `没找到和「${cat.kw}」相关的操作。`,
         '可以发「操作目录」看有哪些模块，或者换个说法（比如「退款」「套餐」「团长」）。',
       ].join('\n');
     this.putOp(userId, { code: '', params: {}, options: hits, picking: 'op' });
-    return this.optionLines(`找到 ${hits.length} 个（回数字选）：`, hits, tier);
+    return this.optionLines(`找到 ${hits.length} 个（回数字选）：`, hits, tier, granted);
   }
 
-  private optionLines(head: string, items: CatalogItem[], tier: Tier): string {
+  private optionLines(
+    head: string,
+    items: CatalogItem[],
+    tier: Tier,
+    granted: readonly string[] = [],
+  ): string {
     const lines = [head];
     items.forEach((it, i) => {
-      const perm = canExec(tier, it.entry);
+      const perm = canExec(tier, it.entry, { granted, code: it.code });
       const risk = RISK_LABEL[riskOf(it.entry)];
-      const tag = perm.ok ? risk : '不可用';
+      // 放权来的项单独标出来：让他知道「这项是专门给我的」，而不是以为人人都有
+      const tag = perm.ok ? (isGranted(tier, it.code, granted) ? `${risk}·放权` : risk) : '不可用';
       lines.push(`${i + 1}. ${displayName(it.entry)}  [${tag}]`);
     });
     lines.push('');
@@ -325,7 +343,10 @@ export class WecomChatService {
     binding: Binding,
     tier: Tier,
   ): Promise<string> {
-    const perm = canExec(tier, item.entry);
+    const perm = canExec(tier, item.entry, {
+      granted: binding.grantedOps ?? [],
+      code: item.code,
+    });
     if (!perm.ok)
       return `「${displayName(item.entry)}」你现在做不了：\n${perm.reason || '权限不足'}`;
 
@@ -345,7 +366,7 @@ export class WecomChatService {
       return ask;
     }
     this.putOp(userId, op);
-    return this.opDraftCard(op, tier);
+    return this.opDraftCard(op, tier, binding);
   }
 
   /** 问下一个还没填的必填参数；都齐了返回 null */
@@ -397,13 +418,16 @@ export class WecomChatService {
     const ask = this.askNext(op);
     this.putOp(userId, op);
     if (ask) return ask;
-    return this.opDraftCard(op, tier);
+    return this.opDraftCard(op, tier, binding);
   }
 
-  private opDraftCard(op: OpState, tier: Tier): string {
+  private opDraftCard(op: OpState, tier: Tier, binding: Binding): string {
     const item = find(op.code);
     if (!item) return '这个操作找不到了。发「操作目录」重来。';
-    const perm = canExec(tier, item.entry);
+    const perm = canExec(tier, item.entry, {
+      granted: binding.grantedOps ?? [],
+      code: item.code,
+    });
 
     const lines = ['我准备这么办：'];
     lines.push(`· 动作：${displayName(item.entry)}`);

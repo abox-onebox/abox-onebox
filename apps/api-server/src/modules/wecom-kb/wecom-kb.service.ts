@@ -101,17 +101,26 @@ export class WecomKbService implements OnModuleInit {
     //   owner → admin 角色服务账号（131 个后台端点全可达）
     //   staff → operator 角色服务账号（69 个；其余由后台 @Roles 直接拒绝）
     // 两者都是自续令牌，使用者完全不碰令牌。
+    //
+    // ⚠️ 例外：同事有**单独放权清单**时必须升到 owner 账号。
+    //    被放权的端点（如退款审批）`@Roles` 里没有 operator，用 operator 令牌打过去
+    //    会被后台 403 —— 现象是「后台明明点了放权，机器人还说做不了」。
+    //    安全性不依赖身份本身，而依赖 op-policy 按清单逐条判（执行入口 + 展示层各一次）：
+    //    清单外的端点在 `execCatalog` 里就被 403 挡掉，根本发不到后台。
     const tier = binding.tier === 'owner' ? 'owner' : 'staff';
-    const svcToken = await this.svcTokenSvc.get(tier);
+    const grantedOps = binding.grantedOps || [];
+    const execTier: 'owner' | 'staff' =
+      tier === 'owner' || grantedOps.length > 0 ? 'owner' : 'staff';
+    const svcToken = await this.svcTokenSvc.get(execTier);
     const execToken = svcToken ?? binding.operatorToken ?? null;
     if (!execToken) {
       const need =
-        tier === 'owner'
+        execTier === 'owner'
           ? 'WECOM_OWNER_USERNAME / WECOM_OWNER_PASSWORD（负责人执行账号）'
           : 'WECOM_SVC_USERNAME / WECOM_SVC_PASSWORD（同事执行账号）';
       await this.tokenSvc.sendText(
         fromUser,
-        `机器人还没配好「${tier === 'owner' ? '负责人' : '同事'}」执行账号：${need}。\n请联系管理员补齐后重试。`,
+        `机器人还没配好「${execTier === 'owner' ? '负责人' : '同事'}」执行账号：${need}。\n请联系管理员补齐后重试。`,
       );
       return;
     }
@@ -121,6 +130,7 @@ export class WecomKbService implements OnModuleInit {
       operatorToken: execToken,
       approverToken: binding.approverToken,
       tier,
+      grantedOps,
     };
 
     // ── 人话入口 ──────────────────────────────────────────────
@@ -181,7 +191,7 @@ export class WecomKbService implements OnModuleInit {
     }
     // 令牌被判失效（10002 = 鉴权失败）：作废缓存，下一条消息自动重新登录，
     // 不让同事看到「全部失败」却不知道为什么
-    if (res.code === 10002 && svcToken) this.svcTokenSvc.invalidate(tier);
+    if (res.code === 10002 && svcToken) this.svcTokenSvc.invalidate(execTier);
 
     await this.tokenSvc.sendText(fromUser, this.format(intent, res));
   }
