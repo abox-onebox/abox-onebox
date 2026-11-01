@@ -6,6 +6,9 @@ import { WecomCryptoService } from './wecom-crypto.service';
 import { WecomTokenService } from './wecom-token.service';
 import { OpProxyService } from './op-proxy.service';
 import { WecomBindingService } from './wecom-binding.service';
+import { WecomSvcTokenService } from './wecom-svc-token.service';
+import { NameResolverService } from './name-resolver.service';
+import { WecomChatService } from './wecom-chat.service';
 import { WecomBindingAdminController } from './wecom-binding.admin.controller';
 import { WecomBinding } from './wecom-binding.entity';
 
@@ -25,6 +28,9 @@ import { WecomBinding } from './wecom-binding.entity';
     WecomTokenService,
     OpProxyService,
     WecomBindingService,
+    WecomSvcTokenService,
+    NameResolverService,
+    WecomChatService,
   ],
   exports: [WecomBindingService],
 })

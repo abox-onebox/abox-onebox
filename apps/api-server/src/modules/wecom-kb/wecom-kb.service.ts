@@ -3,6 +3,9 @@ import { WecomCryptoService } from './wecom-crypto.service';
 import { WecomTokenService } from './wecom-token.service';
 import { OpProxyService, Binding, ProxyResult } from './op-proxy.service';
 import { WecomBindingService } from './wecom-binding.service';
+import { WecomSvcTokenService } from './wecom-svc-token.service';
+import { WecomChatService } from './wecom-chat.service';
+import { looksLikeStructuredCommand } from './chat-flow';
 import { parseCommand, Intent, HELP_TEXT } from './command-parser';
 
 /**
@@ -23,6 +26,8 @@ export class WecomKbService implements OnModuleInit {
     private readonly tokenSvc: WecomTokenService,
     private readonly proxy: OpProxyService,
     private readonly bindingSvc: WecomBindingService,
+    private readonly svcTokenSvc: WecomSvcTokenService,
+    private readonly chat: WecomChatService,
   ) {}
 
   onModuleInit(): void {
@@ -80,6 +85,45 @@ export class WecomKbService implements OnModuleInit {
   }
 
   private async process(fromUser: string, content: string): Promise<void> {
+    // 先认人：没绑定就不知道「谁在办事」，审计里也留不下真人姓名
+    const binding = await this.bindingSvc.get(fromUser);
+    if (!binding) {
+      await this.tokenSvc.sendText(
+        fromUser,
+        '你的企业微信账号还没绑到后台。\n请管理员在后台「企业微信绑定」页把你加进来（userid=' +
+          fromUser +
+          '）。',
+      );
+      return;
+    }
+
+    // 执行身份：优先用**服务账号自续令牌**（同事完全不用管令牌）；
+    // 未配 WECOM_SVC_* 时回落到绑定表里的旧令牌，不让已按老方式部署的环境被打死。
+    const svcToken = await this.svcTokenSvc.get();
+    const execToken = svcToken ?? binding.operatorToken ?? null;
+    if (!execToken) {
+      await this.tokenSvc.sendText(
+        fromUser,
+        '机器人还没配好执行账号（WECOM_SVC_USERNAME / WECOM_SVC_PASSWORD）。\n请联系管理员补齐后重试。',
+      );
+      return;
+    }
+
+    const b: Binding = {
+      operatorName: binding.operatorName,
+      operatorToken: execToken,
+      approverToken: binding.approverToken,
+    };
+
+    // ── 人话入口 ──────────────────────────────────────────────
+    // 除「结构化指令」（执行/提交/查询/撤回/审批…）之外，全部当成同事在说人话：
+    // 认楼、认套餐、认日子，缺什么问什么，最后回 1 才写库。
+    if (!looksLikeStructuredCommand(content)) {
+      const reply = await this.chat.reply(fromUser, content, b);
+      await this.tokenSvc.sendText(fromUser, reply);
+      return;
+    }
+
     const intent = parseCommand(content);
     if (intent.kind === 'help') {
       await this.tokenSvc.sendText(fromUser, HELP_TEXT);
@@ -93,21 +137,15 @@ export class WecomKbService implements OnModuleInit {
       return;
     }
 
-    const binding = await this.bindingSvc.get(fromUser);
-    if (!binding) {
+    // 审批必须真人：approverToken 只认绑定表里的，**绝不**回落服务账号 ——
+    // 否则「谁批的」会变成机器人自己，动钱的操作就失去了人工闸门。
+    if ((intent.kind === 'approve' || intent.kind === 'reject') && !binding.approverToken) {
       await this.tokenSvc.sendText(
         fromUser,
-        '你的企业微信账号尚未绑定 KB 令牌。请联系管理员在后台「企业微信绑定」页预绑定 userid=' +
-          fromUser +
-          '。',
+        '你的账号没有审批权限（未绑定审批人令牌）。\n审批必须由负责人本人在后台完成。',
       );
       return;
     }
-    const b: Binding = {
-      operatorName: binding.operatorName,
-      operatorToken: binding.operatorToken,
-      approverToken: binding.approverToken,
-    };
 
     let res: ProxyResult = { code: -1, message: '未处理', data: null };
     switch (intent.kind) {
@@ -133,6 +171,10 @@ export class WecomKbService implements OnModuleInit {
         res = await this.proxy.reject(intent.requestId, intent.reason, b, content);
         break;
     }
+    // 令牌被判失效（10002 = 鉴权失败）：作废缓存，下一条消息自动重新登录，
+    // 不让同事看到「全部失败」却不知道为什么
+    if (res.code === 10002 && svcToken) this.svcTokenSvc.invalidate();
+
     await this.tokenSvc.sendText(fromUser, this.format(intent, res));
   }
 
