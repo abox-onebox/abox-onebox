@@ -25,7 +25,7 @@ import { ScheduleAdminService } from './schedule-admin.service';
  *   也不含 `viewer` / `finance` —— 只读角色不该有改写历史的能力。
  *
  * ## 两个端点
- * · `GET  /admin/schedule`           跑批时刻表（8 个任务全列，含未实装项）
+ * · `GET  /admin/schedule`           跑批时刻表（9 个任务全列，含未实装项）
  * · `POST /admin/schedule/:task/run` 手动补跑
  */
 @ApiTags('后台·定时任务')
@@ -40,7 +40,7 @@ export class ScheduleAdminController {
   @ApiOperation({
     summary: '跑批时刻表',
     description:
-      '列出全部 8 个定时任务的触发时刻、**操作的目标日期语义**、职责说明与实装状态。\n\n' +
+      '列出全部 9 个定时任务的触发时刻、**操作的目标日期语义**、职责说明与实装状态。\n\n' +
       '⚠️ 重点看 `dateKind`：多个任务的 cron 时刻可能相同，但动的**不是同一天**。\n' +
       '例如 `meal-publish` 与 `auto-confirm` 都在 14:00 触发，前者开「次日」的团、' +
       '后者确认「当日」的单 —— 这是本系统最容易配错的一处，故在此显式下发。\n\n' +

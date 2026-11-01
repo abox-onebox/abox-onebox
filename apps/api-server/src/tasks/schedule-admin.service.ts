@@ -140,7 +140,7 @@ export class ScheduleAdminService {
   }
 
   /**
-   * 跑批时刻表（8 行全列出，含未实装项 —— 如实告知，而不是隐藏）
+   * 跑批时刻表（9 行全列出，含未实装项 —— 如实告知，而不是隐藏）
    *
    * ⚠️ 本方法为 **async**：要读生效时间轴（`ab_config` 可覆写时刻），
    *    故 `cron`（出厂）与 `registeredCron`（实际注册）可能不同 —— 这是特性不是 bug。
@@ -261,8 +261,8 @@ const DATE_KIND_LABEL: Record<string, string> = {
 /**
  * 未实装任务的补齐批次说明
  *
- * ⭐ **M4-2 后本表为空** —— 8 个任务全部实装（日切 3 + 结算 3 + 既有 2），
- * `GET /admin/schedule` 的 `summary.implemented` 应为 `8/8`。
+ * ⭐ **M4-2 后本表为空** —— 9 个任务全部实装（日切 3 + 结算 3 + 既有 2 + 支付查单 1），
+ * `GET /admin/schedule` 的 `summary.implemented` 应为 `9/9`。
  *
  * ⚠️ **本表刻意保留**（而不是连同 `implemented` 字段一起删掉）：`implemented` 不是
  *    手写常量，而是 `runners.has(task)` 的**派生值** —— 将来若有人只往
