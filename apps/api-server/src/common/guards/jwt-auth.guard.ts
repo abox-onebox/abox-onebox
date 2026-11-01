@@ -26,6 +26,24 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   private static readonly ADMIN_SCOPE = /^\/(?:api\/v\d+\/)?(?:admin|supplier)(?:\/|$)/;
 
   /**
+   * 挂在 `/wecom` 下、但**是后台管理端点**的路径。
+   *
+   * ⚠️ 为什么必须单列：`main.ts` 为了企微回调地址把 `wecom/(.*)` 从全局前缀里
+   *    exclude 掉了，于是这些路径既不带 `/api/v1`、也不以 `/admin` 开头 ——
+   *    `ADMIN_SCOPE` 认不出来，`scopeOf` 落到 `'user'`，后台 token（typ=admin）
+   *    一进来就撞上「后台账号请使用后台接口」，**整个企微绑定页线上不可用**。
+   *    这个缺陷很隐蔽：无 token 时回的是 401/10002（看起来「路由存在、只是要登录」），
+   *    只有**带真 token 打一次**才会暴露。实测线上踩过（2026-11-01）。
+   *
+   * ⚠️ 回调 `/wecom/kb/callback` 不在此列：它整个控制器标了 `@Public()`，
+   *    在 `JwtAuthGuard` 开头就 return true，到不了作用域判定；把 `callback`
+   *    排除在外只是让这张表读起来不会误会。
+   * ⚠️ 新增任何 `/wecom/kb/*` 的管理端点，**必须**同步加到这里，
+   *    否则线上表现是「页面点了没反应 / 提示请使用后台接口」。
+   */
+  private static readonly WECOM_ADMIN_SCOPE = /^\/wecom\/kb\/(?:bindings|ops|simulate)(?:\/|$)/;
+
+  /**
    * **主体无关**端点：两种 token 都收，由 controller 按 `typ` 分流。
    * `/auth/profile`（A5）与 `/auth/logout`（A4）在《接口规范》里本就是
    * 「小程序返回 user；后台返回 account」的双主体契约，故不做单边拦截。
@@ -39,7 +57,10 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   /** 该请求属于哪套账号体系（仅按路径判定，不看 token） */
   private scopeOf(url: string): SubjectType {
     const path = url.split('?')[0];
-    return JwtAuthGuard.ADMIN_SCOPE.test(path) ? 'admin' : 'user';
+    if (JwtAuthGuard.ADMIN_SCOPE.test(path)) return 'admin';
+    // wecom 下的后台管理端点（不带 /api/v1、也不以 /admin 开头）见上方注释
+    if (JwtAuthGuard.WECOM_ADMIN_SCOPE.test(path)) return 'admin';
+    return 'user';
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {

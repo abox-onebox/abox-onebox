@@ -311,7 +311,9 @@ function parseController(file, dtoIndex, roleConsts) {
       }
 
       let methodName = '';
-      const mn = /^(?:public\s+|private\s+|protected\s+)?(?:async\s+)?([a-zA-Z_]\w*)\s*\(/m.exec(sig);
+      const mn = /^(?:public\s+|private\s+|protected\s+)?(?:async\s+)?([a-zA-Z_]\w*)\s*\(/m.exec(
+        sig,
+      );
       if (mn) methodName = mn[1];
 
       const pathParams = [...sig.matchAll(/@Param\(\s*'(\w+)'\s*\)/g)].map((m) => m[1]);
@@ -335,7 +337,13 @@ function parseController(file, dtoIndex, roleConsts) {
             hint: `入参见 ${bodyType[1]}`,
           });
       } else if (inlineBody) {
-        params.push({ name: '*', required: true, type: 'object', in: 'body', hint: '内联入参对象' });
+        params.push({
+          name: '*',
+          required: true,
+          type: 'object',
+          in: 'body',
+          hint: '内联入参对象',
+        });
       }
       if (queryType) {
         const fields = dtoIndex.get(queryType[1]);
@@ -366,6 +374,22 @@ function parseController(file, dtoIndex, roleConsts) {
   return { ops: out, unresolvedRoles };
 }
 
+/**
+ * 不进「操作目录」的控制器前缀（整块排除，主解析与独立探针必须用同一份）。
+ *
+ * 目前只有 `admin/wecom/kb`（机器人试跑台）。排除理由三条，缺一条都不该放进去：
+ *   ① 它是**调试通道**，不是业务功能 —— 混在「你能操作的后台功能」里会让人困惑；
+ *   ② 它会**自指**：从聊天里调用试跑台，等于在对话中再开一次对话；
+ *   ③ 它只对 super_admin/admin 开放，对同事本来就不可用，列出来只是噪音。
+ *
+ * ⚠️ 排除只影响「目录条目」，不影响 `admin:coverage` —— 那个门禁按真实端点扫，
+ *    试跑台仍必须在前端有入口（本批已加）。
+ * ⚠️ 以后再加调试类端点，往这里加前缀，**不要**在解析器里散着写 if。
+ */
+const EXCLUDE_CONTROLLERS = ['admin/wecom/kb'];
+const inExcludedController = (p) =>
+  EXCLUDE_CONTROLLERS.some((b) => p === '/' + b || p.startsWith('/' + b + '/'));
+
 /** 独立探针：另一种算法只数端点个数，用于互证（与主解析器实现不同） */
 function independentCount() {
   let n = 0;
@@ -375,7 +399,13 @@ function independentCount() {
     for (const l of lines) {
       const cm = /@Controller\(\s*'([^']*)'\s*\)/.exec(l);
       if (cm) base = cm[1];
-      if (base && /^admin/.test(base) && /@(Get|Post|Put|Patch|Delete)\(/.test(l)) n++;
+      if (
+        base &&
+        /^admin/.test(base) &&
+        !EXCLUDE_CONTROLLERS.includes(base) &&
+        /@(Get|Post|Put|Patch|Delete)\(/.test(l)
+      )
+        n++;
     }
   }
   return n;
@@ -391,7 +421,7 @@ for (const f of walkControllers(SRC)) {
   allOps.push(...r.ops);
   allUnresolvedRoles.push(...r.unresolvedRoles);
 }
-const adminOps = allOps.filter((o) => /^\/admin\//.test(o.path));
+const adminOps = allOps.filter((o) => /^\/admin\//.test(o.path) && !inExcludedController(o.path));
 
 // ---------------------------------------------------------------- 自证
 const problems = [];
@@ -412,7 +442,8 @@ if (!sample) problems.push('样本 POST /admin/dishes 未解析到');
 else {
   const req = sample.params.filter((p) => p.required && p.in === 'body').map((p) => p.name);
   for (const must of ['supplierId', 'name', 'category', 'costPriceFen'])
-    if (!req.includes(must)) problems.push(`样本缺必填字段 ${must}（实得：${req.join(',') || '空'}）`);
+    if (!req.includes(must))
+      problems.push(`样本缺必填字段 ${must}（实得：${req.join(',') || '空'}）`);
   if (req.includes('description') && !req.includes('name'))
     problems.push('样本把装饰器续行误判成了字段（description 出现在必填里）');
 }

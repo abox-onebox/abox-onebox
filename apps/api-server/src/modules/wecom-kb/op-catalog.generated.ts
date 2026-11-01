@@ -12,7 +12,7 @@
  */
 import type { CatalogEntry } from './op-catalog.types';
 
-export const GENERATED_AT = '2026-11-01T13:29:32.701Z';
+export const GENERATED_AT = '2026-11-01T15:00:34.844Z';
 export const ADMIN_ENDPOINT_COUNT = 131;
 
 /** 端点数据（base64(JSON)，见文件头说明） */
