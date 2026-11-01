@@ -572,7 +572,7 @@ services:
     ports:
       - "3306:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_ROOT_PASSWORD: ******
       MYSQL_DATABASE: abox_onebox
       TZ: Asia/Shanghai
     volumes:

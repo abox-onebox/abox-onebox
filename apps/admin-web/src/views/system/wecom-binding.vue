@@ -2,7 +2,9 @@
   <div class="page-container">
     <h2 class="page-container__title">企微令牌绑定</h2>
     <p class="page-container__meta">
-      模块：P1-c · 接口：<code>GET / POST / DELETE /wecom/kb/bindings</code> · 数据源
+      模块：P1-c · 接口：
+      <code>GET / POST / DELETE /wecom/kb/bindings</code> ·
+      <code>PATCH /wecom/kb/bindings/:userId/tier</code> · 数据源
       <code>ab_wecom_binding</code>
     </p>
 
@@ -18,6 +20,14 @@
         <b>留空 = 不修改</b>，清空是<b>另一个动作</b>（要显式点「清空」）。
         两者在服务端靠「字段不传」与「传空串」区分 —— 把空输入框当空串提交，会在你什么都没填的
         情况下把线上令牌清掉。
+      </template>
+    </el-alert>
+    <el-alert type="warning" :closable="false" class="note">
+      <template #title>
+        <b>身份等级决定这个人能让机器人做多少事。</b>
+        <b>负责人</b>＝后台 <code>admin</code> 角色，<b>全部功能</b>（含动钱、动单、改团长）；
+        <b>同事</b>＝<code>operator</code> 角色，只能做查单、改菜品等日常操作。
+        <b>新增绑定默认是「同事」</b>（最小权限），要提权请点行内「设为负责人」。
       </template>
     </el-alert>
 
@@ -37,6 +47,13 @@
       <el-table-column label="操作人名" min-width="140">
         <template #default="{ row }">{{ asRow(row).operatorName || '—' }}</template>
       </el-table-column>
+      <el-table-column label="身份等级" width="150">
+        <template #default="{ row }">
+          <el-tag size="small" :type="asRow(row).tier === 'owner' ? 'danger' : 'info'">
+            {{ tierLabel(asRow(row).tier) }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="操作令牌" width="110">
         <template #default="{ row }">
           <el-tag size="small" :type="asRow(row).hasOperatorToken ? 'success' : 'info'">
@@ -54,10 +71,19 @@
       <el-table-column label="更新时间" width="160">
         <template #default="{ row }">{{ formatDateTime(asRow(row).updatedAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
+      <el-table-column label="操作" width="300" fixed="right">
         <template #default="{ row }">
           <el-button v-if="canWrite" link type="primary" @click="openEdit(asRow(row))">
             编辑
+          </el-button>
+          <!-- ⭐ 放权 / 收回：只改 tier 一列，不动令牌、不动人名 -->
+          <el-button
+            v-if="canWrite"
+            link
+            :type="asRow(row).tier === 'owner' ? 'warning' : 'success'"
+            @click="onToggleTier(asRow(row))"
+          >
+            {{ asRow(row).tier === 'owner' ? '收回为同事' : '设为负责人' }}
           </el-button>
           <el-button
             v-if="canWrite"
@@ -82,6 +108,8 @@
     <p class="footnote">
       提示：<b>解绑</b>是物理删除整行（两个令牌一起没）；<b>清空令牌</b>保留这条绑定，
       只把两个令牌置空，便于保留 userid 与人名下次直接粘贴。
+      <b>收回为同事</b>只降级身份，令牌和人名都不动 —— 收回后这个人还能用机器人查单，
+      但动不了钱、动不了单。
     </p>
 
     <!-- ─────────────── 新增 / 编辑 ─────────────── -->
@@ -157,8 +185,10 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   fetchWecomBindings,
   removeWecomBinding,
+  setWecomBindingTier,
   upsertWecomBinding,
   type WecomBindingRow,
+  type WecomTier,
 } from '@/api/system';
 import { useAuthStore } from '@/stores/auth';
 import { formatDateTime } from '@/utils/format';
@@ -188,6 +218,11 @@ function asRow(raw: unknown): WecomBindingRow {
  */
 function tokenPlaceholder(has: boolean): string {
   return has ? '已配置 · 留空表示不修改' : '未配置 · 留空表示不填';
+}
+
+/** 等级文案的唯一出口 —— 表格与确认框共用，避免两处各写一份中文 */
+function tierLabel(tier: WecomTier): string {
+  return tier === 'owner' ? '负责人 · 全功能' : '同事 · 受限';
 }
 
 async function load(): Promise<void> {
@@ -271,6 +306,43 @@ async function onClearTokens(row: WecomBindingRow): Promise<void> {
   await load();
 }
 
+/**
+ * 放权 / 收回 —— 只改 `tier` 一列
+ *
+ * ⚠️ 走独立端点而不是复用「编辑」弹窗：编辑弹窗是**整行覆盖式保存**，
+ *    而放权只是一个意图。若借道编辑，用户点「设为负责人」时若弹窗里令牌框恰好
+ *    有残留内容，就会顺手改掉令牌 —— 两件事不该共用一个提交路径。
+ * ⚠️ 提权（staff→owner）要求二次确认并写清后果：这是**从受限到全权**的一步，
+ *    确认文案必须点名「可以动钱、动单」；降权只是收敛权限，问一句即可，不必吓人。
+ */
+async function onToggleTier(row: WecomBindingRow): Promise<void> {
+  const next: WecomTier = row.tier === 'owner' ? 'staff' : 'owner';
+  const who = row.operatorName || row.userId;
+  const message =
+    next === 'owner'
+      ? `把 ${who} 提为「负责人」后，TA 在企微里能让机器人操作后台全部功能 —— 包括退款审批、改单、改团长佣金、批量发券。确认提权？`
+      : `把 ${who} 收回为「同事」后，TA 仍可查单、改菜品等日常操作，但动不了钱、动不了单。确认收回？`;
+  try {
+    await ElMessageBox.confirm(message, next === 'owner' ? '确认提权' : '确认收回', {
+      type: 'warning',
+      confirmButtonText: next === 'owner' ? '确认提权' : '确认收回',
+      cancelButtonText: '再想想',
+    });
+  } catch {
+    return;
+  }
+  const r = await setWecomBindingTier(row.userId, next);
+  if (!r?.found) {
+    // ⭐ 服务端刻意不静默成功：绑定可能已被别人解绑，此时不能提示「已保存」
+    ElMessage.warning('这条绑定已不存在（可能刚被解绑），请刷新列表');
+    await load();
+    return;
+  }
+  ElMessage.success(next === 'owner' ? `已设为负责人：${who}` : `已收回为同事：${who}`);
+  await load();
+}
+
+/** 解绑（物理删除整行）· 与「清空令牌」的区别必须写在确认文案里，否则用户分不清 */
 async function onRemove(row: WecomBindingRow): Promise<void> {
   try {
     await ElMessageBox.confirm(

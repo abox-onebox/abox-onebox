@@ -56,7 +56,7 @@ e2e 之所以全绿：夹具**直接 `UPDATE ab_order SET status='delivered'`** 
 | 16 | P2 | 永续增长表（操作日志等）无归档/清理任务 | `tasks/`（无相关任务） |
 | 17 | P3 | `canTransit()` 全仓零调用 → 状态机是纯声明，可被任意直写 | `order-state-machine.ts:40` |
 | 18 | P3 | `traceability` 模块 3 文件×5 行全空壳；集散中心服务为空壳 | 见 §三.18 |
-| 19 | P3 | `data-source.ts:64` CLI 默认密码 `root123`、无连接池上限（仅本地） | `data-source.ts:64` |
+| 19 | P3 | `data-source.ts:64` CLI 默认密码 `******`、无连接池上限（仅本地） | `data-source.ts:64` |
 | 20 | P3 | Redis 失联时 KvService **静默**降级内存（多实例下锁/幂等/限流瞬时退化） | `kv.service.ts:46`/`:84` |
 | 21 | P3 | 内存队列在途任务不在关闭时 await（Redis 侧已正确等待） | `memory.queue.backend.ts` |
 
@@ -211,7 +211,7 @@ e2e 之所以全绿：夹具**直接 `UPDATE ab_order SET status='delivered'`** 
 `modules/traceability/**` 3 个文件共 15 行（controller/service/module 全占位）—— 溯源能力为零；`modules/distribution-center/distribution-center.service.ts` 服务体为空，admin 侧只有 `activeCount` 统计（`:124`/`:299`），**无容量/满载/均衡逻辑**。→ 这两处已在「死文件注释」批次中标注，但**建议在对外文档/测试清单里明确排除**，否则测试者会照文档测出「功能不存在」。
 
 ### 19-21【P3】资源与降级
-`data-source.ts:64` CLI 默认密码 `root123`、无连接池上限（仅本地 CLI 路径）；`kv.service.ts:46-51`/`:84-87` Redis 失联时**静默**降级内存（多实例下任务锁/幂等键/限流计数瞬时只剩单实例有效，仅打 WARN，无告警）;`memory.queue.backend.ts` 不像 Redis 侧 `worker.close()` 那样 await 在途 job。
+`data-source.ts:64` CLI 默认密码 `******`、无连接池上限（仅本地 CLI 路径）；`kv.service.ts:46-51`/`:84-87` Redis 失联时**静默**降级内存（多实例下任务锁/幂等键/限流计数瞬时只剩单实例有效，仅打 WARN，无告警）;`memory.queue.backend.ts` 不像 Redis 侧 `worker.close()` 那样 await 在途 job。
 **✅ 顺带修正一条常见误解**：`KvService` 的「无 TTL 键永驻」**当前无实害** —— 本轮把全部写入点过了一遍（`idempotent.interceptor.ts:71/78`、`rate-limit.middleware.ts:208`），**全部带 TTL**。风险是「将来有人写一个不带 TTL 的键」，属加固项。
 
 ---

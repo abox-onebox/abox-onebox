@@ -619,9 +619,25 @@ export function removeOpBlock(opCode: string): Promise<{ ok: boolean }> {
 //    别照抄（已按控制器 `list(): Promise<Array<...>>` 回源确认）。
 // ============================================================================
 
+/**
+ * 身份等级 —— 决定机器人用**哪个执行账号**去打后台端点
+ *
+ * · `owner` → 执行账号 `kb-owner`（后台 role=`admin`）⇒ 131 个端点全可达
+ * · `staff` → 执行账号 `kb-bot`（后台 role=`operator`）⇒ 只能到 69 个
+ *
+ * ⚠️ 这是**第二道闸门**之外的**第一道**：后端 `@Roles` 是代码里写死的，
+ *    改不动；能改的是「以谁的身份去撞那道闸」。故放权 / 收回 = 改这一列，
+ *    **不需要**重发令牌、不需要改后端。
+ * ⚠️ 默认值是 `staff`（迁移 `1700000000022` 的刻意选择）：新绑一个人
+ *    先只给最小权限，要提权得显式点「设为负责人」。
+ */
+export type WecomTier = 'owner' | 'staff';
+
 export interface WecomBindingRow {
   userId: string;
   operatorName: string;
+  /** 服务端恒回落 `staff`（`b.tier || 'staff'`），故不会是 undefined */
+  tier: WecomTier;
   /** ⚠️ 只回标记、不回令牌明文（避免令牌在管理面泄露） */
   hasOperatorToken: boolean;
   hasApproverToken: boolean;
@@ -632,6 +648,14 @@ export interface WecomBindingRow {
 export interface UpsertWecomBindingPayload {
   userId: string;
   operatorName: string;
+  /**
+   * 身份等级（省略 = 新建走 `staff` / 编辑时不改）
+   *
+   * ⚠️ 服务端 `upsert` 对 `tier` 的处理与令牌**不同**：令牌留空=不改，
+   *    而 `tier` 省略时新建落 `staff`、编辑保持原值。要改等级请走
+   *    `setWecomBindingTier`（独立端点，语义单一，不会顺手动到令牌）。
+   */
+  tier?: WecomTier;
   /** 省略 = 不修改；空串 = 清空 */
   operatorToken?: string;
   /** 同上 */
@@ -662,6 +686,29 @@ export function upsertWecomBinding(payload: UpsertWecomBindingPayload): Promise<
 export function removeWecomBinding(userId: string): Promise<{ ok: boolean }> {
   return http.delete<{ ok: boolean }>(
     `/wecom/kb/bindings/${encodeURIComponent(userId)}`,
+    WECOM_NO_PREFIX,
+  );
+}
+
+/**
+ * 只改身份等级（放权 / 收回）· `PATCH /wecom/kb/bindings/:userId/tier`
+ *
+ * ⚠️ 为什么单开一个端点而不复用 `upsert`：`upsert` 是「整行覆盖式保存」，
+ *    而放权/收回只是**一个布尔量级的意图**。若走 `upsert`，调用点必须把
+ *    `operatorName` 一起传（否则被清空）、且一旦漏传 `tier` 还会静默保持原值
+ *    —— 页面上的「设为负责人」按钮就变成「顺手重存整行」，是没必要的事故面。
+ *
+ * ⚠️ 绑定不存在时**不报错**，回 `{ found: false }`：服务端刻意不静默成功
+ *    （`setTier` 返回 null 就回 found=false），页面据此提示「这条绑定已被删除，请刷新」。
+ *    判 `code` 看不出这个区别，必须判 `found`。
+ */
+export function setWecomBindingTier(
+  userId: string,
+  tier: WecomTier,
+): Promise<{ found: boolean; tier?: string }> {
+  return http.patch<{ found: boolean; tier?: string }>(
+    `/wecom/kb/bindings/${encodeURIComponent(userId)}/tier`,
+    { tier },
     WECOM_NO_PREFIX,
   );
 }
