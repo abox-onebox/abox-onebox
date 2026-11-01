@@ -97,14 +97,21 @@ export class WecomKbService implements OnModuleInit {
       return;
     }
 
-    // 执行身份：优先用**服务账号自续令牌**（同事完全不用管令牌）；
-    // 未配 WECOM_SVC_* 时回落到绑定表里的旧令牌，不让已按老方式部署的环境被打死。
-    const svcToken = await this.svcTokenSvc.get();
+    // 执行身份按**身份等级**取（binding.tier）：
+    //   owner → admin 角色服务账号（131 个后台端点全可达）
+    //   staff → operator 角色服务账号（69 个；其余由后台 @Roles 直接拒绝）
+    // 两者都是自续令牌，使用者完全不碰令牌。
+    const tier = binding.tier === 'owner' ? 'owner' : 'staff';
+    const svcToken = await this.svcTokenSvc.get(tier);
     const execToken = svcToken ?? binding.operatorToken ?? null;
     if (!execToken) {
+      const need =
+        tier === 'owner'
+          ? 'WECOM_OWNER_USERNAME / WECOM_OWNER_PASSWORD（负责人执行账号）'
+          : 'WECOM_SVC_USERNAME / WECOM_SVC_PASSWORD（同事执行账号）';
       await this.tokenSvc.sendText(
         fromUser,
-        '机器人还没配好执行账号（WECOM_SVC_USERNAME / WECOM_SVC_PASSWORD）。\n请联系管理员补齐后重试。',
+        `机器人还没配好「${tier === 'owner' ? '负责人' : '同事'}」执行账号：${need}。\n请联系管理员补齐后重试。`,
       );
       return;
     }
@@ -113,6 +120,7 @@ export class WecomKbService implements OnModuleInit {
       operatorName: binding.operatorName,
       operatorToken: execToken,
       approverToken: binding.approverToken,
+      tier,
     };
 
     // ── 人话入口 ──────────────────────────────────────────────
@@ -173,7 +181,7 @@ export class WecomKbService implements OnModuleInit {
     }
     // 令牌被判失效（10002 = 鉴权失败）：作废缓存，下一条消息自动重新登录，
     // 不让同事看到「全部失败」却不知道为什么
-    if (res.code === 10002 && svcToken) this.svcTokenSvc.invalidate();
+    if (res.code === 10002 && svcToken) this.svcTokenSvc.invalidate(tier);
 
     await this.tokenSvc.sendText(fromUser, this.format(intent, res));
   }

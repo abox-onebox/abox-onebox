@@ -233,6 +233,23 @@ const GATES = {
     cmd: 'node scripts/check-admin-capability-coverage.mjs',
   },
   /**
+   * 企微操作助手的**端点目录 ↔ 源码**对账（2026-11-01）
+   *
+   * 机器人「能操作全部后台功能」靠的是 `op-catalog.generated.ts`（从源码解析出的
+   * 全部 /admin 端点：method / path / roles / 入参字段）。这份目录是**生成产物**，
+   * 一旦源码加了端点而目录没重生成，现象是：
+   *   · 新功能在机器人里**永远搜不到**（不是报错，是像不存在）；
+   *   · 更糟：端点改了路径/角色，目录仍是旧的 ⇒ 打 404 或**用错角色**。
+   * 两者都不会让任何测试变红 —— 与 `admin:coverage` 是同一类病（做了但没用上）。
+   *
+   * 生成器自带自证：端点总数须与独立探针一致、样本 DTO 字段须与真源一致、
+   * 角色常量必须展开（`...FUND_ACTION_ROLES` 不展开会变成「谁都不匹配」）。
+   */
+  'wecom:catalog': {
+    cwd: '.',
+    cmd: 'node scripts/gen-wecom-catalog.mjs --check',
+  },
+  /**
    * M5-15：**契约文档的 Markdown 表格完整性**（防「表格被空行截断」）
    *
    * GFM 里**表格遇空行即结束** —— 「表行 → 空行 → 表行」会让空行之后的行退化成

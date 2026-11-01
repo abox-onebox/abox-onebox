@@ -3,16 +3,28 @@ import { isAfterCutoff } from '../../common/utils/time';
 import { OpProxyService, Binding } from './op-proxy.service';
 import { NameResolverService, GroupResolve, ItemResolve } from './name-resolver.service';
 import { bjYmdPlus, parseMealDate } from './name-match';
+import { parseIntent, isConfirm, isCancel } from './chat-flow';
 import {
-  parseIntent,
-  isConfirm,
-  isCancel,
   chatErrorText,
   summarizeOrderData,
   CHAT_HELP,
   CHAT_FALLBACK,
   CHAT_NEGATED,
 } from './chat-flow';
+import {
+  allItems,
+  canExec,
+  displayName,
+  find,
+  itemsOfModule,
+  modules,
+  riskOf,
+  search,
+  RISK_LABEL,
+  TIER_LABEL,
+  type CatalogItem,
+  type Tier,
+} from './op-policy';
 
 /**
  * 人话 → 后台操作 的编排（「说一句话就干活」这一层的核心）
@@ -54,6 +66,26 @@ interface Draft {
 interface Session {
   at: number;
   draft?: Draft;
+  /** 通用操作（走目录的任意后台功能）状态 */
+  op?: OpState;
+}
+
+/**
+ * 通用操作状态：先选中一个目录端点，再逐个把必填参数问出来。
+ *
+ * 为什么不用「一条命令写全」（`执行 xxx a=1 b=2`）：
+ *   同事记不住参数名，负责人也不该记。所以做成「选中 → 只问缺的那个 → 他回一个值」，
+ *   每一步都只需要理解一件事。
+ */
+interface OpState {
+  code: string;
+  params: Record<string, string>;
+  /** 候选（搜索结果 / 模块下的端点），他回数字选 */
+  options?: CatalogItem[];
+  /** 语义标记，避免与排套餐的 options 混用 */
+  picking?: 'op';
+  /** 正在问的参数名 */
+  asking?: string;
 }
 
 /** 2026-11-02 → 明天（11-02） */
@@ -99,14 +131,29 @@ export class WecomChatService {
   async reply(userId: string, content: string, binding: Binding): Promise<string> {
     const now = new Date();
     const text = (content || '').trim();
+    const session = this.getSession(userId);
 
-    // 「2 / 取消」先处理：任何时候都能撤销，且不受会话是否过期影响
-    if (isCancel(text)) {
+    // 「2 / 取消」先处理：任何时候都能撤销，且不受会话是否过期影响。
+    // ⚠️ 例外：正在等某个参数值时，纯数字是**值**不是取消 ——
+    //    楼群 id 完全可能就是 2，若被当成取消，他永远填不进去这个 2。
+    //    此时只认文字型取消（「取消」「算了」「不用了」）。
+    const numericParamValue = Boolean(session?.op?.asking) && /^\d+$/.test(text);
+    if (isCancel(text) && !numericParamValue) {
       this.sessions.delete(userId);
       return '好，什么都没动。';
     }
 
-    const session = this.getSession(userId);
+    const tier: Tier = binding.tier === 'owner' ? 'owner' : 'staff';
+
+    // ── 通用操作通道（覆盖后台全部功能）──────────────────────
+    // 优先级最高：一旦进了「选功能 / 填参数」状态，这一句就是参数值或序号，
+    // 不能被当成新的排套餐请求（否则他刚填的楼名会被丢掉重问）。
+    if (session?.op) {
+      const handled = await this.handleOp(userId, text, session.op, binding, tier);
+      if (handled !== null) return handled;
+    }
+    const cat = this.matchCatalogEntry(text, tier);
+    if (cat) return this.openCatalog(userId, cat, tier);
 
     // 回数字：从候选里挑
     if (session?.draft?.options?.length && /^\d{1,2}$/.test(text)) {
@@ -115,6 +162,7 @@ export class WecomChatService {
 
     // 回 1 / 确认：执行草稿
     if (isConfirm(text)) {
+      if (session?.op) return this.execOp(userId, session.op, binding, text);
       if (!session?.draft) return '现在没有等你确认的事。要排套餐就说「给 X 上明天的 Y 套餐」。';
       const d = session.draft;
       if (!d.groupId || !d.mealId || !d.date) {
@@ -150,6 +198,267 @@ export class WecomChatService {
       default:
         return CHAT_FALLBACK;
     }
+  }
+
+  // ---------------------------------------------------------------- 通用操作（全部后台功能）
+
+  private putOp(userId: string, op?: OpState): void {
+    this.sessions.set(userId, { at: Date.now(), op });
+  }
+
+  /**
+   * 认「要看/要找」这类入口。返回 null 表示这句不是在要目录。
+   *
+   * ⚠️ 只认明确说法（「操作目录」「看 orders」「找 退款」），不做模糊猜测：
+   *    把「给量子大厦排套餐」误认成「找端点」会让常用路径变慢，得不偿失。
+   */
+  private matchCatalogEntry(
+    text: string,
+    tier: Tier,
+  ):
+    | { kind: 'modules' }
+    | { kind: 'module'; module: string }
+    | { kind: 'search'; kw: string }
+    | null {
+    const t = text.trim();
+
+    if (
+      /^(操作目录|功能目录|全部功能|所有功能|后台功能|功能清单|能干哪些|能做哪些|有哪些功能)$/.test(
+        t,
+      )
+    )
+      return { kind: 'modules' };
+
+    const look = /^(?:看|查看|列出|打开)\s*([a-zA-Z\u4e00-\u9fa5_-]+)$/.exec(t);
+    if (look) {
+      const key = look[1];
+      // 英文模块名直接命中就用模块；否则当关键词搜（「看 订单」）
+      if (modules(tier).some((m) => m.module === key)) return { kind: 'module', module: key };
+      return { kind: 'search', kw: key };
+    }
+
+    const s = /^(?:找|搜索|搜|查功能)\s*(.+)$/.exec(t);
+    if (s) return { kind: 'search', kw: s[1].trim() };
+
+    return null;
+  }
+
+  private openCatalog(
+    userId: string,
+    cat: { kind: 'modules' } | { kind: 'module'; module: string } | { kind: 'search'; kw: string },
+    tier: Tier,
+  ): string {
+    if (cat.kind === 'modules') {
+      const ms = modules(tier);
+      const total = allItems().length;
+      const usable = allItems().filter((i) => canExec(tier, i.entry).ok).length;
+      const cells = ms.map((m) => `${m.module}(${m.allowed}/${m.total})`);
+      const rows: string[] = [];
+      for (let i = 0; i < cells.length; i += 3) rows.push(cells.slice(i, i + 3).join(' · '));
+      return [
+        `后台一共 ${total} 项能力，你（${TIER_LABEL[tier]}）能直接用 ${usable} 项。`,
+        `括号里是「你能用 / 全部」。`,
+        '',
+        ...rows,
+        '',
+        '说「看 orders」看明细；说「找 退款」直接搜。选中后我只问缺的参数。',
+      ].join('\n');
+    }
+
+    if (cat.kind === 'module') {
+      const items = itemsOfModule(cat.module, tier, true);
+      if (items.length === 0)
+        return `「${cat.module}」里没有你能直接做的操作。换别的模块，或让负责人放权。`;
+      // ⚠️ 必须把候选写进会话，否则他回「1」时无处可选 —— 现象是「现在没有等你确认的事」
+      this.putOp(userId, { code: '', params: {}, options: items, picking: 'op' });
+      return this.optionLines(`「${cat.module}」里你能做的（回数字选）：`, items, tier);
+    }
+
+    const hits = search(cat.kw, tier, 8);
+    if (hits.length === 0)
+      return [
+        `没找到和「${cat.kw}」相关的操作。`,
+        '可以发「操作目录」看有哪些模块，或者换个说法（比如「退款」「套餐」「团长」）。',
+      ].join('\n');
+    this.putOp(userId, { code: '', params: {}, options: hits, picking: 'op' });
+    return this.optionLines(`找到 ${hits.length} 个（回数字选）：`, hits, tier);
+  }
+
+  private optionLines(head: string, items: CatalogItem[], tier: Tier): string {
+    const lines = [head];
+    items.forEach((it, i) => {
+      const perm = canExec(tier, it.entry);
+      const risk = RISK_LABEL[riskOf(it.entry)];
+      const tag = perm.ok ? risk : '不可用';
+      lines.push(`${i + 1}. ${displayName(it.entry)}  [${tag}]`);
+    });
+    lines.push('');
+    lines.push('回数字选一项；要停就回「取消」。');
+    return lines.join('\n');
+  }
+
+  /** op 状态下的这一句怎么处理；返回 null 表示交回正常意图识别 */
+  private async handleOp(
+    userId: string,
+    text: string,
+    op: OpState,
+    binding: Binding,
+    tier: Tier,
+  ): Promise<string | null> {
+    // 候选列表里回数字
+    if (op.options?.length && /^\d{1,2}$/.test(text)) {
+      const chosen = op.options[Number(text) - 1];
+      if (!chosen) return `只有 ${op.options.length} 个，回 1 到 ${op.options.length}。`;
+      return this.beginOp(userId, chosen, binding, tier);
+    }
+
+    // 正问着某个参数：这句话就是值
+    if (op.asking) return this.applyParamValue(userId, op, text, binding, tier);
+
+    return null;
+  }
+
+  /** 选中一个端点：只读的直接查，写入的逐个问必填参数 */
+  private async beginOp(
+    userId: string,
+    item: CatalogItem,
+    binding: Binding,
+    tier: Tier,
+  ): Promise<string> {
+    const perm = canExec(tier, item.entry);
+    if (!perm.ok)
+      return `「${displayName(item.entry)}」你现在做不了：\n${perm.reason || '权限不足'}`;
+
+    const op: OpState = { code: item.code, params: {}, options: undefined, picking: undefined };
+
+    if (item.entry.method === 'GET') {
+      // 只读：可选筛选一律先不填，直接查了给他看
+      this.sessions.delete(userId);
+      const res = await this.proxy.execCatalog(item.code, {}, binding, displayName(item.entry));
+      if (res.code !== 0) return `没查到：${chatErrorText(res.code, res.message)}`;
+      return `「${displayName(item.entry)}」的结果：\n${this.summarizeResult(res.data)}`;
+    }
+
+    const ask = this.askNext(op);
+    if (ask) {
+      this.putOp(userId, op);
+      return ask;
+    }
+    this.putOp(userId, op);
+    return this.opDraftCard(op, tier);
+  }
+
+  /** 问下一个还没填的必填参数；都齐了返回 null */
+  private askNext(op: OpState): string | null {
+    const item = find(op.code);
+    if (!item) return null;
+
+    const next = item.entry.params.find((p) => p.required && p.name !== '*' && !op.params[p.name]);
+    if (next) {
+      op.asking = next.name;
+      const hint = next.hint ? `\n（${next.hint.slice(0, 100)}）` : '';
+      // 这里刻意不写「回 2 取消」：填参数时纯数字是值，写 2 会让人以为不能填 2
+      return `「${displayName(item.entry)}」还需要：${next.name}${hint}\n直接回值就行；要停就回「取消」。`;
+    }
+
+    // 入参 DTO 没解析出字段的端点：只能收一整段 JSON
+    if (item.entry.params.some((p) => p.name === '*' && p.required) && !op.params.__raw) {
+      op.asking = '__raw';
+      return [
+        `「${displayName(item.entry)}」要一整段参数（后台没把字段逐个标出来）。`,
+        '把参数按 {"字段":"值"} 发给我；不确定就先回「取消」。',
+      ].join('\n');
+    }
+
+    return null;
+  }
+
+  private async applyParamValue(
+    userId: string,
+    op: OpState,
+    text: string,
+    binding: Binding,
+    tier: Tier,
+  ): Promise<string> {
+    const v = text.trim();
+    if (op.asking) op.params[op.asking] = v;
+    op.asking = undefined;
+
+    if (op.params.__raw) {
+      try {
+        JSON.parse(op.params.__raw);
+      } catch {
+        op.asking = '__raw';
+        this.putOp(userId, op);
+        return '这段不是合法 JSON（比如少了引号或括号）。再发一次，或回 2 取消。';
+      }
+    }
+
+    const ask = this.askNext(op);
+    this.putOp(userId, op);
+    if (ask) return ask;
+    return this.opDraftCard(op, tier);
+  }
+
+  private opDraftCard(op: OpState, tier: Tier): string {
+    const item = find(op.code);
+    if (!item) return '这个操作找不到了。发「操作目录」重来。';
+    const perm = canExec(tier, item.entry);
+
+    const lines = ['我准备这么办：'];
+    lines.push(`· 动作：${displayName(item.entry)}`);
+    lines.push(`· 接口：${item.entry.method} ${item.entry.path}`);
+    const kv = Object.entries(op.params)
+      .filter(([k]) => k !== '__raw')
+      .map(([k, v]) => `${k}=${v}`);
+    lines.push(`· 参数：${kv.length ? kv.join('  ') : '（无）'}`);
+    if (op.params.__raw) lines.push(`· 参数：${op.params.__raw.slice(0, 200)}`);
+    lines.push(`· 影响：${RISK_LABEL[riskOf(item.entry)]}`);
+    if (!perm.ok) {
+      lines.push('');
+      lines.push(`⚠️ 你做不了这一项：${perm.reason || '权限不足'}`);
+      lines.push('发「操作目录」换个功能，或让负责人来执行。');
+      return lines.join('\n');
+    }
+    lines.push('');
+    lines.push('回 1 执行；回 2 取消。');
+    return lines.join('\n');
+  }
+
+  private async execOp(userId: string, op: OpState, binding: Binding, nl: string): Promise<string> {
+    const item = find(op.code);
+    this.sessions.delete(userId);
+    if (!item) return '这个操作找不到了。发「操作目录」重来。';
+
+    const res = await this.proxy.execCatalog(op.code, op.params, binding, nl);
+    if (res.code === 0) {
+      return `办好了：${displayName(item.entry)}\n${this.summarizeResult(res.data)}`;
+    }
+    return `没成功：${chatErrorText(res.code, res.message)}\n（${item.entry.method} ${item.entry.path}）`;
+  }
+
+  /** 通用出参说人话：能认出的关键字段点名，认不出就给截断 JSON 并指路 */
+  private summarizeResult(data: unknown): string {
+    if (data == null) return '（后台没有返回内容，通常是成功但无回执）';
+    if (typeof data !== 'object') return String(data).slice(0, 300);
+
+    const d = data as Record<string, unknown>;
+    const bits: string[] = [];
+    for (const k of ['id', 'orderNo', 'status', 'totalCount', 'count', 'ok', 'tier']) {
+      if (d[k] != null) bits.push(`${k}=${String(d[k])}`);
+    }
+    if (Array.isArray(data)) {
+      const arr = data as unknown[];
+      const first = arr[0];
+      const sample =
+        first && typeof first === 'object'
+          ? JSON.stringify(first).slice(0, 200)
+          : String(first).slice(0, 200);
+      return `${arr.length} 条。第一条：${sample}`;
+    }
+    if (bits.length) return bits.join(' · ');
+    const s = JSON.stringify(d);
+    return s.length > 600 ? s.slice(0, 600) + '…（更长的结果去后台看）' : s;
   }
 
   // ---------------------------------------------------------------- 排套餐

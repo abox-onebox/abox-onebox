@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { lookupOp, lookupQuery, OpMeta } from './op-meta';
+import { ADMIN_CATALOG } from './op-catalog.generated';
+import type { CatalogEntry } from './op-catalog.types';
+import type { Tier } from './op-policy';
 
 /**
  * op 代理：bot 的「文本前端」忠实复用 api-server 既有 /api/v1 端点
@@ -23,6 +26,8 @@ export interface Binding {
   operatorName: string;
   operatorToken?: string | null;
   approverToken?: string | null;
+  /** 谁在操作：owner=负责人（admin 角色令牌），staff=同事（operator 角色令牌） */
+  tier?: Tier;
 }
 
 export interface ProxyResult {
@@ -152,7 +157,12 @@ export class OpProxyService {
     const fail = this.needOperator(b);
     if (fail) return fail;
     const meta: OpMeta | undefined = lookupOp(opCode);
-    if (!meta) return { code: 404, message: `未知操作码 ${opCode}`, data: null };
+    if (!meta) {
+      // 短码表（16 个）里没有 → 看是不是目录全码；是就走通用通道，
+      // 这样「执行 post_admin_finance_refunds_id_approve id=9」也能直接生效。
+      if (this.catalog(opCode)) return this.execCatalog(opCode, params, b, nlText);
+      return { code: 404, message: `未知操作码 ${opCode}`, data: null };
+    }
     const missing = meta.required.filter((k) => params[k] == null || params[k] === '');
     if (missing.length)
       return { code: 422, message: `缺少必填参数：${missing.join('、')}`, data: null };
@@ -162,6 +172,103 @@ export class OpProxyService {
       headers: this.opHeaders(b, opCode, params, nlText),
     };
     if (meta.method !== 'GET') init.body = JSON.stringify(this.coerce(params));
+    return this.call(url, init);
+  }
+
+  /** 目录里的端点（通用通道：覆盖全部后台功能，不只是 OP_META 登记的 16 个） */
+  private catalog(code: string): CatalogEntry | undefined {
+    return ADMIN_CATALOG[code];
+  }
+
+  /** 按目录声明的类型转换字符串入参 */
+  private castType(v: string, type: string): unknown {
+    if (type === 'array')
+      return v.includes(',')
+        ? v
+            .split(',')
+            .map((x) => x.trim())
+            .filter(Boolean)
+        : [v];
+    if (type === 'number') {
+      const n = Number(v);
+      // 转不动就原样传 —— 让后端报它自己的参数错误，比前端瞎猜成 NaN 更容易定位
+      return Number.isFinite(n) ? n : v;
+    }
+    if (type === 'boolean') return v === 'true' || v === '1';
+    return v;
+  }
+
+  private bodyOf(
+    entry: CatalogEntry,
+    params: Record<string, string>,
+  ): Record<string, unknown> | null {
+    if (!entry.params.some((p) => p.in === 'body')) return null;
+    const out: Record<string, unknown> = {};
+    for (const p of entry.params) {
+      if (p.in !== 'body') continue;
+      if (p.name === '*') {
+        // 入参 DTO 没解析出字段：只接受整段 JSON（`__raw`），不猜字段名
+        const raw = params.__raw;
+        if (raw) {
+          try {
+            return JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            // 非 JSON 就交给后端判，别在这里假装成功
+          }
+        }
+        continue;
+      }
+      const v = params[p.name];
+      if (v == null || v === '') continue;
+      out[p.name] = this.castType(v, p.type);
+    }
+    return out;
+  }
+
+  /**
+   * 通用执行：按**目录**里的 method / path / 参数定义直打后台端点。
+   *
+   * 与 `exec()` 的区别：`exec()` 只认 `op-meta.ts` 手写的 16 个短码；
+   * 本方法是「覆盖全部 131 个后台功能」的通道，端点清单由源码自动生成。
+   * 两者共用同一套请求头（审计 / 禁止清单 / 幂等），后台校验一条不少。
+   */
+  async execCatalog(
+    code: string,
+    params: Record<string, string>,
+    b: Binding,
+    nlText: string,
+  ): Promise<ProxyResult> {
+    const fail = this.needOperator(b);
+    if (fail) return fail;
+    const entry = this.catalog(code);
+    if (!entry) return { code: 404, message: `目录里没有这个操作：${code}`, data: null };
+
+    const missing = entry.params
+      .filter((p) => p.required && p.name !== '*')
+      .filter((p) => params[p.name] == null || params[p.name] === '')
+      .map((p) => p.name);
+    if (missing.length)
+      return { code: 422, message: `缺少必填参数：${missing.join('、')}`, data: null };
+
+    let url = this.base() + '/api/v1' + this.fill(entry.path, params);
+
+    const qs = new URLSearchParams();
+    for (const p of entry.params) {
+      if (p.in !== 'query' || p.name === '*') continue;
+      const v = params[p.name];
+      if (v != null && v !== '') qs.set(p.name, v);
+    }
+    const q = qs.toString();
+    if (q) url += '?' + q;
+
+    const init: RequestInit = {
+      method: entry.method,
+      headers: this.opHeaders(b, code, params, nlText),
+    };
+    const body = this.bodyOf(entry, params);
+    if (entry.method !== 'GET' && entry.method !== 'DELETE' && body) {
+      init.body = JSON.stringify(body);
+    }
     return this.call(url, init);
   }
 

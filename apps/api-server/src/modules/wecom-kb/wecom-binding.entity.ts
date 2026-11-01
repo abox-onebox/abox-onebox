@@ -22,6 +22,16 @@ export class WecomBinding {
   @Column({ name: 'operator_name', type: 'varchar', length: 64, nullable: false })
   operatorName!: string;
 
+  /**
+   * 身份等级，决定机器人用哪个执行账号：
+   *   · `owner` → 后台 `admin` 角色账号，131 个端点全可达（负责人本人）
+   *   · `staff` → 后台 `operator` 角色账号，69 个可达，其余由后台 @Roles 拦下
+   *
+   * ⚠️ 默认 `staff` 是**最小权限**的刻意选择：新绑定不该天生带 admin 能力。
+   */
+  @Column({ name: 'tier', type: 'varchar', length: 16, default: 'staff' })
+  tier!: 'owner' | 'staff';
+
   /** operator 权限令牌（执行 / 提交 / 撤回 / 查询用） */
   @Column({ name: 'operator_token', type: 'varchar', length: 512, nullable: true })
   operatorToken?: string | null;
