@@ -32,6 +32,7 @@
 | 最近修订（M5-20） | 2026-09-23 · **账号注销 U19（提审阻塞项收口）· 工程本批（零 DDL · 零新表 · 表数仍 27）**：① ⭐⭐ **补上提审硬要求** —— 《提审自检清单 v1.2》第 10 条要求小程序提供**账号注销入口**，此前系统里**一行相关代码都没有**（只在合规清单 §七 row 2 挂着「未实装」），与 U16 协议阅读页并列属**提审阻塞对**；本批把它落成**可点的原生页**（`pages/account-cancel/account-cancel`），入口在「我的 → 设置 → 账号注销」。② ⭐⭐ **「注销」= 匿名化 + 停用，不是删行**：`ab_user.status = 3`（新增 `UserStatus.CANCELED`） + `deleted_at` + `nickname = '已注销用户'`，并清空 `avatar_url` / `phone` / `phone_hash` / `building_id` / `team_leader_id` / `subscribe_flag`（共 7 个字段，由**服务端下发** `clearedFields`）。⭐ **`openid` / `unionid` 刻意保留** —— 删掉它只会让**同一个人**下次登录又注册成一个全新账号（同一微信两套账，比留一行匿名数据更糟）；「注销后不能再登录」由 `status = 3` 保证，不靠删标识。③ ⭐⭐ **再登录 → 新码 `20014`**（`AuthService.login()` 查库后**先于黑名单 `20006`** 判 `CANCELED`）：**刻意不复用 `20006`** —— 黑名单是**平台的决定**、注销是**用户自己的决定**，混成一个码客服就无法从错误码判断该走「解封」还是「恢复账号」。（与 `40015`/`40002`、`40017`/`40013` 的取舍同源：形态相似、**排查入口不同**。）④ ⭐⭐ **三道闸门 fail-closed → 新码 `20015`**：在职团长 / 余额或冻结 > 0 / 有未终态订单；`data.reasons` 下发**原因码数组**（`leader`/`balance`/`orders`）+ `data.pendingOrders`。⭐ **三道全查一遍再报**（逐个报会让用户「改一条、再被拦一条」来回试）；⭐ 为什么不「连余额一起清掉」：注销不可逆而余额是**钱**，一期没有「余额清零 / 退款到微信」的自动通道，自动清掉 = **用户的钱被系统吞掉且不会有任何报错**；fail-closed 的正确含义是把他挡在**一次失败**上。⑤ ⭐⭐ **二次确认词由服务端裁定**（`confirmText` 须逐字等于「注销账号」，否则 `10001`）：端上自绘的确认弹窗**不构成证据**，服务端认这个词才使得**任何调用方**都必须走同一道确认。⑥ ⭐ **原子占位**（本批自查发现并当场修掉）—— 初版写成「查库判 status → 再无条件下 UPDATE」，即 M5-19 刚立过的「**读-再写**」形状：两个并发请求同时读到 `status = 1` 会**双双注销成功**，第二个人拿到的是「刚注销成功」的**假回执**。改为 `WHERE id = :id AND status != 3` + `affected = 0` 判归属 → `20014`；查库那次降级为**快路径**（错误码更准、少一次写），**不构成并发防护**。⑦ ⭐ **不碰资金账**：注销**不删** `ab_commission` / `ab_balance_log` / `ab_order` 行（财务凭证留存先于「删除个人数据」），注销是**身份层**动作。⑧ ⭐ **口径由服务端下发**（`clearedFields` + `note`），端上不复制第二份文案；`note` **必须**写清「与订单、退款、佣金相关的记录按法律法规要求保留」—— 否则用户以为「注销 = 数据全没了」，而客服在后台仍看得到他的历史订单，两边说法不一致就是**虚假告知**。⑨ ⭐ 端上：成功后**就地切「已注销」终态屏且不提供返回**（返回栈会把用户带回一个已失效的「我的」页）；`request.ts` 对 `20014` **清本地登录态但不重试**（重试会变成「登录 → 被拒 → 跳登录页 → 再登录」的**死循环**）；协议文本 §五 注销条款由「联系客服」改为**自助路径**（原文与实现不符即合规风险）。⑩ ⚠️ **已知边界（写成断言而非遗漏）**：已签发的旧 token 在过期前仍可用，但读到的是**已匿名化**的资料 —— 与 `20006` 黑名单**同口径**（状态只在**登录时**判，不做每请求查库；后者要给全站加一次 DB 往返，属**待裁定**项）。⑪ 落点：实装原**空壳** `modules/user`（`UserService` 此前只有骨架）+ 新文件 `common/constants/user-status.ts` · `modules/user/dto/user-cancel.dto.ts` · 端上 `pages/account-cancel/`；`pages.json` / `mine.vue` / `api/user.ts` / `api/request.ts` / `constants/agreements.ts` / `agreement.vue` 同步。⑫ **e2e `§9` 新增 24 条断言**（m1 **64 → 88**，逐条实跑）：二次确认词被拒后**账号未被误注销** · 两道闸门**互不误报**（干净账号 `reasons` 恰为 `["orders"]`）· 取消在途单后闸门**随即放开**（证明拦的是「在途」而非「下过单」）· `clearedFields` 恰为 7 项 · 落库三查（`status=3` + 软删 / 资料已匿名化 / **`openid` 仍在**）· 订单行未被删除 · 再登录 `20014`（且 ≠ `20006`）· 重复注销 `20014` · 旧 token 读到匿名化资料。⚠️ 样本用 `dev:qa-cancel-<时间戳>` **现造干净账号** —— 种子里的 5 个用户**本身全是团长**，拿他们做「成功注销」样本会**必然**撞上闸门①，永远测不到成功路径。详见《里程碑计划》§五「子批次 M5-20」 |
 | 最近修订（U2 · 口味评价与菜品迭代闭环） | 2026-09-25 · **P1-U2 口味评价（U20 提交 + D69 红黑榜 · 新增第 28 张表 `ab_dish_rating` · 第 4 支迁移 · 新增错误码 30020·30021）**：真源《ABox一盒创业系统地图与开发路线 v1.0》U2 —— P1 验收判据「**能说出本周最差的三道菜**」。① ⭐⭐ **§三 新增 `U20 POST /orders/{orderNo}/rating`（逐菜三键 · 一次提交定稿）+ §6.6 新增 `D69 GET /admin/stats/dish-rating`（口味红黑榜）** + 新增「U2 实现口径」表（28 项）；② ⭐ **四项开工前裁决**：粒度 = **逐菜三键**（「一键」体现在一屏 4 行点完一次提交，不是整餐一个分 —— 按菜聚合的前提）；红黑榜落点 = **P35 菜品热度页第二个 Tab**（同域互补 · 零导航变更 · F5 先例）；红线阈值 = **代码常量**（避开 D-1 `fallback` 恒不生效缺陷，出参仍下发 `redLineThreshold` 端上不写死）；**一次提交即定稿不可改**（→ `30021`，**刻意不复用 `10006`** —— 重放返回首次成功结果，与「拒绝新提交」语义相反）；③ ⭐⭐ **`badCount` 与 `monthBadCount` 分道**：区间投诉 vs **锚点月**投诉 —— 月初若按区间算「本月投诉」会把上月旧账计入、红线天天误报（e2e §40 用「2025-12-31 差评进 30d 窗口、不进 2026-01 锚点月」钉死；单测同款）；④ ⭐ **区间切 `meal_date`（吃到的日子）**而非评价提交日 ——「本周最差的菜」对齐「本周吃到的菜」；`resolveStatsRange` 从 StatsService 私有方法**上提为纯函数**（D49/D69 共用，杜绝「缺省锚=今日」两处各自演化）；⑤ ⭐ **U10 详情补 `dishes[].dishId` + 内嵌 `rating` 块**（`canRate/rated/ratedAt/items`）—— 评价卡的菜键与状态**唯一来源**是详情出参（端上不按 status 自推可评性）；⑥ ⭐ **聚合收敛为纯函数** `aggregateDishRatings()`（零 IO · 月界/排序/截断可单测 —— `dish-rating-agg.spec.ts` 6 条；F5 教训：导出写「供单测」就必须真有人测）+ 快照纪律（`dish_name`/`supplier_name`/`slot` 落库定格，改名不改史）；⑦ **e2e**：m1 新增 U20 用户流 **16 条**（88 → 104 · 状态闸门 / 越权 / 菜属 / 一次定稿 / 终态回显 / 快照落库 / **节末夹具还原** —— 不还原会让后续套件的开篇 U6 夹具红在 30004）；m3 新增 **§40 · 18 条**（固定锚 2026-01-10 + 手算期望值对账 · 空态/月界/黑榜序/权限/还原，1092 → 1110）；⑧ 表数 **27 → 28**（`uk_dish_rating_order_dish` 唯一键兜底「一次定稿」）· 迁移 **三支 → 四支**；jest **6 → 7 套 / 45 → 51 条**。 |
 | 最近修订（F5 · 通知触达矩阵） | 2026-09-25 · **F5 通知触达矩阵补强（编排 + 到达率 + 截单提醒场景 · 零 DDL · 零新增错误码 · 表数仍 27）**：真源《ABox一盒创业系统地图与开发路线 v1.0》F5 —— 原文「已有 `message` 模块，缺的是**按人按场景编排 + 到达率回看**」，P1 验收判据「**截单与取餐提醒的到达率可见**」。① ⭐⭐ **§6.7 新增 `D67 GET /admin/messages/reach`（到达率回看）+ `D68 POST /admin/messages/orchestrate`（按人按场景批量触达）** + 新增「F5 实现口径」表（23 项）；② ⭐ **M3-12 场景清单 6 → 7**：新增第 7 行 `cutoff_remind`「截单提醒」（`requestSubscribe=true` · `wiring='live'` · 一期 `enabled=0`），**追加在数组末尾**以保住「前 5 行 = 原型」的可核对性（该结构被 e2e §24 锚定）；`NOTIFY_PAGES` 新增 `orderCreate`（促单要落到**能下单的页**）；③ ⭐⭐ **安全性靠「结构」而非「自觉」**：受众入参**只接受预定义选择器**（不收 `userId[]` —— 收一个任意列表就等于开了**群发后门**），且选择器与场景**强绑定**（串用 → `10001`）；`dryRun` **缺省 `true`**（默认只算不发，要真发须显式 `false`），默认值**定义在服务层**、DTO 刻意不给默认值（否则「未传」与「传 `false`」在契约上不可分）；④ ⭐⭐ **`ab_message` 没有 `scene` 列** ⇒ 场景藏在 `payload.scene`，而 `JSON_EXTRACT` 属**驱动相关语法** ⇒ 按场景聚合**必须在服务端内存完成**（同 D44 发票先例）；⭐ **范围过滤走 `created_at`（非空列）、日归属优先 `sent_at`**，两者不可混用 —— 用 `sent_at` 过滤会把「已尝试未成功」整批漏掉，而那正是到达率最该被看见的部分；⑤ ⭐⭐ **两个「不许混淆」的显示口径**：`reachRate` 分母是**已尝试投递数**（不是受众数）；**无记录时是 `null` 而非 `0`**（「没发过」与「发了全失败」是两回事，显示 0% 会让运营去查一个不存在的故障），端上渲染为 `—`；无记录时 `note` **明写原因**（一期无微信账号 → 模板 ID 全空 → 闸门拦住 → 跳过且不写日志）；⑥ ⭐⭐ **一期必然「一条也发不出去」，且如实呈现**：无微信账号 ⇒ 启用闸门 fail-closed 拦住所有订阅消息场景 ⇒ `notify()` 在第 2 步返回 `delivered=false`；**这不是缺陷，是当前真实状态** —— 出参照样给真实 `audienceSize`，让运营看得见「今天若已开通，会有多少人收到」，**不许粉饰成「已发送」**；⑦ ⭐ **`scenes[]` 含 0 投递的场景**（全部 7 个，否则一期整页空白）+ `orphanScenes[]`（已下线场景的历史记录，**不静默丢**）；区间缺省近 7 天、上限 **90 天 = `ab_message` 保留期**，非法日期 / `from > to` / 超限一律 `10001`（**不静默回落**）；⑧ ⭐ **第 27 张表零改动**（场景定义在代码里，`ab_message_template` 只存可编辑部分）；**错误码零新增**（场景/选择器/串用/日期/区间全走 `10001`，全部 fail-closed）；⑨ ⚠️ **未做的部分如实登记**：**企业微信 / 短信**两条通道一期不做（2026-09-25 裁决）· **自动跑批**未接入（真源 F5 依赖「订阅消息模板审核」，一周触达入口是编排端点，接跑批时直接调同一服务方法、业务逻辑一行不改）；⑩ ⭐ **顺手校正一处文档漂移**：§6.7 的「实现状态」行原写「`D59–D60` 待后续批次」，与**本文档下方 M3-12 小节**及实装（`admin.controller.ts` 的 `@Get('templates')` / `@Put('templates/:id')`）**自相矛盾**（M3-12 落地时未回改），已更正并留痕；⑪ 验收 `scripts/e2e-m3.mjs` **§39 · 26 条断言**（场景接线 + 安全默认 + 入参闸门 + 真发 + 到达率 + 权限 + 夹具还原，**不依赖下单窗口**），m3 **1066 → 1092**；`§24` 同步 4 处（6 → 7 / `live` 3 → 4 / 描述去硬数字）。 |
+| 最近修订（2026-10-30/31 · 新页面与新字段补登） | 2026-11-01 · **纯文档补登（零代码 · 零 DDL · 零端点变更）**：① U1 出参补 `dishes[].description`（商品弹窗「关于这道菜」的整段文案，源 = `ab_item.description` varchar 512；`null` 时端上降级句**刻意不含供应商名**，避免与卡片上方的「由 X 供应」重复），并写入「U1 出参口径」表；② U2 补端上入口 —— **2026-10-30 起有独立页**「我的 → 往期菜单」（`pages/meal-history/meal-history`），此前只有接口、端上零入口，只作记录**不可补订**；③ L22 补端上入口（**P16 佣金中心**「重新核算晋级进度」，2026-10-30 接通 —— 此前封装好却零调用，团长只能干等后台审计任务）并写明 **只升不降**语义；④ §八 映射表新增「往期菜单」页行、P16 行补 L22。⭐ **补登动机**：知识助手语料**只吃文档、不吃代码**（`scan.py` 仅收工作区根 `_ABox*` 与 `docs/`）⇒ 代码里已实装而文档未记的功能，助手**永远答不上来**，重扫也无效 |
 
 ---
 
@@ -313,8 +314,8 @@
 
 | # | 方法 | 路径 | 说明 | 关键出参 |
 | --- | --- | --- | --- | --- |
-| U1 | GET | `/home/daily` | 明日套餐 | `{ mealDate, publishAt, cutoffAt, deliverAt, canOrder, countdownSec, dishes:[{name,image,category,supplierName,supplierId}], rice, priceFen:2580, leader:{id,name,building,floor,source} }` |
-| U2 | GET | `/home/history` | 历史套餐归档（M01-02） | 分页 `{mealDate, dishes[], priceFen, ordersCount}` · ⚠️ **端上首页已不展示**（M5-17），接口保留 |
+| U1 | GET | `/home/daily` | 明日套餐 | `{ mealDate, publishAt, cutoffAt, deliverAt, canOrder, countdownSec, dishes:[{name,image,category,description,supplierName,supplierId}], rice, priceFen:2580, leader:{id,name,building,floor,source} }` |
+| U2 | GET | `/home/history` | 历史套餐归档（M01-02） | 分页 `{mealDate, dishes[], priceFen, ordersCount}` · ⚠️ **端上首页已不展示**（M5-17）；**2026-10-30 起有独立页面入口** —— 「我的 → 往期菜单」（`pages/meal-history/meal-history` · `navigationBarTitleText=往期菜单`），**只作记录、不可补订** |
 | U3 | GET | `/leader/invite/{leaderCode}` | 团长邀请落地（M01-03） | `{ leaderName, building, floor, slogan, deliverAt }`（**免登录**） |
 | U4 | GET | `/me/upload-token` | COS 临时上传密钥 · ⚠️ **一期未实装**（服务端无路由，且 `apps/miniprogram` 与 `apps/admin-web` 全仓 **0 引用**）—— 缺口在**云资源**：COS 临时密钥签发需存储桶与密钥，随云资源到位 + 「我的」页头像功能一并补 | `{ credentials, bucket, region, expiredAt }` |
 
@@ -324,6 +325,7 @@
 
 | 字段 | 口径 |
 | --- | --- |
+| `dishes[].description` | **「关于这道菜」整段文案**（源 = `ab_item.description`，varchar 512；`null` 时端上降级为不带供应商名的中性句，避免与卡片上方的「由 X 供应」重复）。后台录入：**供应商 → 商品 → 编辑 → 描述**（上限 512 字，与列宽一致）。⭐ **刻意不新增主料/分量等结构化字段** —— 一整段话由运营自由写（口味 + 吃法即可）；⚠️ 文案须避开功效宣称与绝对化用语 |
 | `dishes[].supplierId` | 出品方 id（`ab_supplier.id`），**恒为正整数**。存在的唯一理由：端上「来自：X」这一行可点，跳溯源页并**按 id 定位**。**不按 `supplierName` 定位** —— `ab_supplier.name` **没有唯一约束**（同名两家是合法数据），按名定位会跳错家。⚠️ 与 C8 不冲突：id 既不是合作状态、也不是供价 / 分账 / 联系方式 |
 | `leader.source` | `'bound'` = 经团长邀请链接绑定（`ab_user.team_leader_id` 指向的**在任**团长）；`'building_default'` = 未绑定 → **自动挂靠**本楼在任团长（`ab_team_leader` 中该楼 id 最小且在职者）。端上据此把「你的邀请团长」与「本楼自动挂靠」**说清楚** —— 佣金是**从这一单里分出去的**，让用户以为「我没跟谁」而实际有人在收他的佣金，是比不显示更糟的沉默 |
 | `leader` 归属判据 | ⭐ **必须与 U6 `OrderService.resolveLeader` 同判据**（缺陷⑫ 收口）：① 绑定且**在职** → 用；② 否则本楼 id 最小且在职 → 用；③ 都没有 → `null`。此前 U1 第一级**不看在职**，于是「团长停职 + 用户未重绑」时首页显示 A、佣金却记给 B（根因：D22「停职」只改 `ab_team_leader.status`、**不清** `ab_user.team_leader_id` —— 这是对的，复职后绑定该还在）。e2e `§M5-17` 用**停职**逼出分歧点，并以**独立复算**的 U6 判据对账（不复用 U1 结果，否则只能证明「U1 等于它自己」） |
@@ -661,6 +663,25 @@
 
 ---
 
+### 3.7 补登端点（2026-11-01 契约对账补齐）
+
+> 同 6.11：这 6 个端点**一直在跑**，规范里从未登记 ⇒ **内部助手查不到**。说明取自 `@ApiOperation.summary`。
+
+| # | 方法 | 路径 | 说明（取自 `@ApiOperation.summary`） | 入参 DTO |
+| --- | --- | --- | --- | --- |
+| U23 | GET | `/building` | 可选办公楼列表（**仅营业中** · 含该楼在职团长） | — |
+| U24 | PUT | `/me/building` | 自助绑定 / 更换办公楼（**换楼即按新楼重算跟随团长**） | `BindBuildingDto` |
+| U25 | GET | `/me/referral` | 我的推荐中心（**非团长也可推荐**）· USR 码 + 落地链接 + 推荐列表 | `InviteListQueryDto` |
+| U26 | GET | `/traceability/suppliers` | 供应商资质墙 · 列表（**免登录只读**） | — |
+| U27 | GET | `/traceability/suppliers/{id}` | 供应商资质墙 · 详情（**免登录只读**） | — |
+| U28 | POST | `/track/page-duration` | 上报页面停留时长（**匿名批量**） | `PageDurationBatchDto` |
+
+> ⭐ **U24 换楼要重算团长**：团长是按楼归属的（`leader.source` 见 U1 口径），换楼不改跟随团长
+> ⇒ 用户在新楼、佣金却记给旧楼团长，是**最容易被当成 bug 上报的沉默错误**。
+> ⭐ **U28 只有写侧有端上入口、读侧在后台**：`GET /admin/stats/page-duration`（D77）才是读侧，
+> 入参 `range` 仅 `today` / `7d` / `30d`，出参时长字段是 `avgMs` / `medianMs` / `maxMs`。
+> ⚠️ **匿名埋点无用户维度** ⇒ 只有 PV 类指标，不能按人查。
+> ⚠️ **U26/U27 与 C8 同源**：资质墙只出**合作状态与资质**，不含供价 / 分账 / 联系方式。
 ## 四、团长端接口（小程序 · `isLeader=true`）
 
 > 全部接口经 `auth.guard` + **团长身份二次校验**（见 §1.5 纪律）。
@@ -749,7 +770,7 @@
 | L18 | POST | `/leader/agreement` | 勾选同意《团长合作协议》（记录签署时间/IP/版本号） |
 | L20 | POST | `/leader/quit` | **退出团长身份**（M2-2.8；停职保留档案，资金未清 → `20008`） |
 | L21 | GET | `/leader/invites?page=` | **我的推荐**（邀请明细 + 转正汇总，M2-2.9） |
-| L22 | POST | `/leader/level/audit` | **重新核算我的晋级**（月单 + 介绍转正 → 落表并升级，M2-2.9） |
+| L22 | POST | `/leader/level/audit` | **重新核算我的晋级**（月单 + 介绍转正 → 落表并升级，M2-2.9）· 端上入口 = **P16 佣金中心**「重新核算晋级进度」按钮（**2026-10-30 接通** —— 此前封装好却零调用，团长只能干等后台审计任务）· ⚠️ **服务端只升不降**：不满足条件时不回落，降级只由见习失效任务与后台人工触发 |
 
 **L17 业务（C3 · 无审核）**
 
@@ -2088,15 +2109,129 @@ approve
 
 ---
 
+### 6.11 补登端点（2026-11-01 契约对账补齐）
+
+> **为什么整节补登**：`tests/tools/audit-contract.mjs` 对账出 **52 个「代码有、规范未列」** 的端点 ——
+> 它们**一直在跑、页面也一直在用**，但规范里从没有一行字写过。
+> ⭐ 直接后果：**内部助手答不上来** —— 语料只吃文档、不吃代码（见 `scan.py` 收录范围），
+> 没登记 = 助手永远不知道这些端点存在（2026-11-01 实测：助手语料里 `op-blocklist` / `wecom` /
+> `page-duration` 等关键词命中均为 0）。本节按 `@ApiOperation.summary` **逐条回源**登记，不改写口径。
+>
+> ⚠️ 本节**只补登记**，出参要点未逐一展开（service 返回类型多为 `Promise<Row>` 通用别名，
+> 从类型系统取不到可靠字段 ⇒ 宁缺勿编）。出参以后续逐条精化为准。
+
+**运营申请与审批（D86–D91）**
+
+| # | 方法 | 路径 | 说明（取自 `@ApiOperation.summary`） | 入参 DTO |
+| --- | --- | --- | --- | --- |
+| D86 | POST | `/admin/operation-requests` | 提交高危操作申请（operator 可提交，admin 可代建） | `CreateOperationRequestDto` |
+| D87 | GET | `/admin/operation-requests` | 申请单列表（**operator 仅看自己提交**） | `OperationRequestQueryDto` |
+| D88 | GET | `/admin/operation-requests/{id}` | 申请单详情 | — |
+| D89 | POST | `/admin/operation-requests/{id}/approve` | 审批通过（**两步制**：仅置 `approved`，**不执行**） | — |
+| D90 | POST | `/admin/operation-requests/{id}/reject` | 驳回申请 | `RejectOperationRequestDto` |
+| D91 | POST | `/admin/operation-requests/{id}/execute` | 执行已审批的申请（调原目标接口，复用 `@OperationLog` 审计） | — |
+
+> D89/D91 **刻意分两步**：审批人点「通过」只表示同意，**真正改数据发生在执行**。合成一步会让
+> 「审批动作」与「执行结果」绑成一次调用 —— 执行失败时既没有可重放的申请单，也没有「谁批的」留痕。
+> 撤回（`recall`）是**提交人**的动作，见 6.7 系统管理。
+
+**停售区间（D92–D94）**
+
+| # | 方法 | 路径 | 说明 | 入参 DTO |
+| --- | --- | --- | --- | --- |
+| D92 | GET | `/admin/sales-pause` | 停售区间列表（含历史） | — |
+| D93 | POST | `/admin/sales-pause` | 创建停售区间（**立刻生效**） | `CreateSalesPauseDto` |
+| D94 | POST | `/admin/sales-pause/{id}/resume` | 恢复指定停售区间（**打 `resumedAt`，不删行**） | — |
+
+**楼栋与楼群（D95–D100）**
+
+| # | 方法 | 路径 | 说明 | 入参 DTO |
+| --- | --- | --- | --- | --- |
+| D95 | GET | `/admin/buildings/filter-options` | 筛选器下拉（状态 / 楼群 / 覆盖缺口 / 团长归属） | — |
+| D96 | GET | `/admin/buildings/overview` | 总览视图 · 主数据健康度（楼栋 / 楼群 / 团长 / 集散覆盖） | — |
+| D97 | GET | `/admin/buildings/delivery-map` | 集散中心映射视图 · 办公楼 → 主/备集散中心（派生） | — |
+| D98 | GET | `/admin/buildings/{id}` | 办公楼详情（档案 + 楼群 + 团长 + 集散映射 + 近期套餐） | `BuildingIdParamDto` |
+| D99 | GET | `/admin/building-groups/filter-options` | 筛选器下拉（楼群状态 + 可搬入的楼） | — |
+| D100 | GET | `/admin/building-groups/{id}` | 楼群详情（成员楼 + 服务集散中心） | `BuildingGroupIdParamDto` |
+
+**Q3 送达凭证（D101–D103）**
+
+| # | 方法 | 路径 | 说明 | 入参 DTO |
+| --- | --- | --- | --- | --- |
+| D101 | GET | `/admin/deliveries/{id}/proofs` | 送达凭证列表（`scope`：`alive`（缺省）/ `deleted` / `all`） | `DeliveryProofListQueryDto` |
+| D102 | POST | `/admin/deliveries/{id}/proofs` | 挂一张送达凭证到配送单（`kind`：`photo` / `sign` / `other`） | `DeliveryProofCreateDto` |
+| D103 | DELETE | `/admin/deliveries/{id}/proofs/{proofId}` | 撤销一张送达凭证（**软删**） | — |
+
+> ⚠️ **D101 的 `scope` 刻意不做布尔开关**：query 里的布尔串经 `@Type(() => Boolean)` 会把 `false`
+> 转成 `true`（非空字符串一律为真）⇒ 「传了 false 却筛出全部」。`aliveCount`（有效凭证数）
+> **始终真实回查**，不会因 `scope=deleted` 变成 0。
+> ⚠️ **D102 不校验配送单是否已送达**：司机常在装车时先拍照留证；卡死在 `arrived` 之后会逼人
+> 「为了传照片先点送达」，而点送达**联动订单**。
+> ⚠️ **D103 软删**：「这张凭证曾经存在、被谁撤了」本身是审计事实。按 `(proofId, deliveryId)`
+> **双条件**定位 —— 只按 id 查会让「拿 A 单的凭证 id 去撤 B 单」成功，而它本该是 404。
+
+**E5 退款批量（D104–D109）**
+
+| # | 方法 | 路径 | 说明 | 入参 DTO |
+| --- | --- | --- | --- | --- |
+| D104 | GET | `/admin/finance/refunds/detail/{id}` | 退款单详情（**审批前二次确认**用） | `RefundIdParamDto` |
+| D105 | POST | `/admin/finance/refunds/batch-approve` | 批量审批通过（D41 的批量形态） | `BatchApproveRefundDto` |
+| D106 | POST | `/admin/finance/refunds/batch-reject` | 批量驳回（D42 的批量形态） | `BatchRejectRefundDto` |
+| D107 | POST | `/admin/finance/refunds/scope-preview` | 按配送日 / 楼宇批量 —— **预览（只算不执行）** | `BatchRefundPreviewDto` |
+| D108 | POST | `/admin/finance/refunds/scope-approve` | 按配送日 / 楼宇批量 —— 审批通过 | `BatchApproveByScopeDto` |
+| D109 | POST | `/admin/finance/refunds/scope-reject` | 按配送日 / 楼宇批量 —— 驳回 | `BatchRejectByScopeDto` |
+
+> ⭐ **D104 的存在理由**：审批弹窗不能对**打开时点的陈旧快照**点头。审批前必须回源取服务端最新金额
+> 与订单状态（前端 `refund.vue` 的 `openApprove` 已改为先调 D104）。
+> ⭐ **D107 先预览后执行**：批量动作的影响面必须由服务端**算出来给人看**，不能让人凭 id 列表想象。
+
+**商品与菜单编排（D110–D116）**
+
+| # | 方法 | 路径 | 说明 | 入参 DTO |
+| --- | --- | --- | --- | --- |
+| D110 | GET | `/admin/meal/dishes` | 商品选择器（D7 编排页候选商品 · 只读） | `ItemOptionQueryDto` |
+| D111 | GET | `/admin/meal/distribution-centers` | 集散中心选择器（D2/D3 前置数据源 · 只读） | — |
+| D112 | GET | `/admin/dishes` | 商品库列表（扩展） | `AdminDishesQueryDto` |
+| D113 | POST | `/admin/dishes` | 新增商品（扩展） | `CreateDishDto` |
+| D114 | PUT | `/admin/dishes/{id}` | 编辑商品（扩展） | `UpdateItemDto` |
+| D115 | POST | `/admin/dishes/batch-status` | 批量上下架（扩展） | `BatchDishStatusDto` |
+| D116 | GET | `/admin/packing-tasks` | 加工场所打包任务（原 S3 · P39） | `PackingTasksQueryDto` |
+
+**上传与订单（D117–D118）**
+
+| # | 方法 | 路径 | 说明 | 入参 DTO |
+| --- | --- | --- | --- | --- |
+| D117 | POST | `/admin/uploads` | 后台上传媒体文件（图片）。**通用能力** —— 商品图 / 证照 / 送达凭证都走它；`url` 拿到后再挂到各自业务域 | multipart |
+| D118 | GET | `/admin/orders/filter-options` | 订单筛选下拉（楼群 / 办公楼 / 团长 / 状态 · 只读） | — |
+
+> ⭐ **D117 刻意不做成「业务域专用上传」**：把上传绑死在配送 / 商品语义上，会让通用能力随业务改而反复重写。
+
+**供应商、团长与用户（D119–D128）**
+
+| # | 方法 | 路径 | 说明 | 入参 DTO |
+| --- | --- | --- | --- | --- |
+| D119 | GET | `/admin/suppliers/filter-options` | 筛选器下拉（审核状态 / 合作状态 / 付款方式） | — |
+| D120 | GET | `/admin/suppliers/{id}` | 供应商详情（档案 + 商品 + 应付 + 操作日志） | `SupplierIdParamDto` |
+| D121 | PUT | `/admin/suppliers/{id}/takeout-links` | 外卖平台店铺链接（美团 / 淘宝闪购 / 京东） | `SetTakeoutLinksDto` |
+| D122 | PUT | `/admin/suppliers/{id}/photos` | 供应商门店实拍 / 证照照片（照片墙） | `SetStorePhotosDto` |
+| D123 | GET | `/admin/leaders/filter-options` | 筛选器下拉（楼群 / 办公楼 / 等级 / 状态） | — |
+| D124 | GET | `/admin/leaders/{id}` | 团长详情（档案 + 裂变链 + 佣金流水 + 操作日志） | `LeaderIdParamDto` |
+| D125 | GET | `/admin/users` | C 端用户名录（分页 · 关键词 / 办公楼 / 状态 / 绑楼状态过滤） | `AdminUsersQueryDto` |
+| D126 | GET | `/admin/users/filter-options` | 筛选器下拉（办公楼 / 账号状态 / 绑楼状态） | — |
+| D127 | GET | `/admin/users/{id}` | 用户详情（档案 + 余额 + 最近 10 单） | `UserIdParamDto` |
+| D128 | PUT | `/admin/users/{id}` | 修改 C 端用户（代绑 / 解绑办公楼 · 拉黑 / 恢复正常） | `UpdateUserDto` |
 ## 七、回调与探针
 
 | # | 方法 | 路径 | 说明 |
 | --- | --- | --- | --- |
 | W1 | POST | `/pay/notify` | 微信支付结果通知（V3，验签 + 解密） |
-| W2 | POST | `/pay/refund-notify` | 退款结果通知 |
-| W3 | POST | `/pay/transfer-notify` | **佣金打款结果回执**（灵活用工平台代发结果；一期由运营登记，二期接平台回调） |
+| W2 | POST | `/pay/refund-notify` | 退款结果通知 · ⚠️ **一期未实装**（全仓无此路由，2026-11-01 核）：退款状态**刻意不靠回调定案** —— 由 `pay-reconcile.service.ts` 向微信**主动查单**（`WxPayProvider.queryOrder`）按真实状态补齐（P3 单边账口径）。回调对本期只属「更快知道」，缺它**不产生单边账** |
+| W3 | POST | `/pay/transfer-notify` | **佣金打款结果回执**（灵活用工平台代发结果）· ⚠️ **一期未实装**（全仓无此路由，2026-11-01 核）：一期佣金打款是**运营线下打款后在后台登记**（无平台代发 ⇒ 无回调可接）；二期接了平台代发才需要本端点 |
 | W4 | GET | `/health` | **存活探针（liveness）** —— 进程还能应答即 `200 / code 0`，**刻意不检任何依赖**；编排器据此判「要不要重启」 |
 | W5 | GET | `/health/ready` | **就绪探针（readiness）** —— 检**数据库连通**（`SELECT 1`）+ **3 个队列消费者是否齐备**；编排器据此判「要不要给流量」。未就绪 → **HTTP 503** + `code 90002`（响应体含 `checks`），出参回显 `version` / `uptimeSec`（灰度 / 回滚判据） |
+| W6 | POST | `/pay/mock/paid` | 调试：手动触发支付成功（**仅 `PROVIDER_MODE=mock` 生效**；金额省略则取订单实付）· `MockPaidDto` —— ⚠️ 生产 `PROVIDER_MODE=mock` 时该端点**可被匿名调到**（`payment.controller.ts` 未标注守卫），是**验收用的后门**：真实支付链路（W1）一旦接商户号，应同步给它加 @Public 之外的收敛（或按环境注册控制器），否则「谁都能把订单点成已付」 |
+| W7 | GET | `/wecom/kb/callback` | 企微知识库回调 **URL 校验握手**（后台填回调 URL 时企微发起）。⚠️ 必须用 `@Res()` **直接写出**解密后的 `echostr` 明文、绕过统一响应信封 —— 包成 `{code,data}` 会让企微签名比对失败、后台「保存」过不了 |
+| W8 | POST | `/wecom/kb/callback` | 企微知识库消息回调。**立即回 200 空体**（企微 5s 超时，处理异步进行），结果走**主动发消息**。原始报文取 `req.rawBody`（XML 不进 JSON body-parser）；鉴权靠 `WXBizMsgCrypt` 签名验真 |
 
 > ⭐ **两条探针必须分开**（M5-0 · 《缺陷与陷阱》#75）：若把 liveness 也做成「检 DB」，则 DB 一抖动 → 探针全红 → 编排器**重启所有容器** → 重启期间没人服务、DB 压力更大 → **重启风暴**（而 DB 挂了重启应用根本治不好）；若只保留「不检依赖」的那条当 readiness，则**摘不掉流量**。
 > ⭐ **readiness 检「消费者齐不齐」而不是「Redis 通不通」**：Redis / DB 连通性在**启动期已 fail-closed 验过**（连不上即拒绝启动）；而「消费者没注册上」是**启动期验不到、失败后完全静默**的一类故障 —— 入队照常成功、`GET /admin/queue` 计数照常显示，但任务**永远无人消费**。
@@ -2120,7 +2255,7 @@ approve
 | P11/P12 | 工作台/本楼概况 | M11/M12 | L1/L4 | `ab_order`、`ab_team_leader` |
 | P13/P14 | 订单明细/退款处理 | M12 | L4/L5/L6/L7 | `ab_order`、`ab_refund` |
 | P15 | 取餐确认 | M13 | L8/L9 | `ab_delivery_record`、`ab_order` |
-| P16/P17/P18 | 佣金/余额/提现 | M14 | L10–L13、**L19** | `ab_commission`、`ab_balance`、`ab_balance_log`、**`ab_withdraw`** |
+| P16/P17/P18 | 佣金/余额/提现 | M14 | L10–L13、**L19**、**L22（P16 内「重新核算晋级进度」）** | `ab_commission`、`ab_balance`、`ab_balance_log`、**`ab_withdraw`**、`ab_team_leader` |
 | P19/P20 | 分享/资料 | M11/M15 | L2/L3/L14–L18、**L20/L21/L22** | `ab_team_leader`、`ab_leader_invite`、`ab_balance`、`ab_withdraw` |
 | 联系客服（无 P 编号） | 在线客服 / 客服微信号（按 `csMode` 分流） | M04 | **U17** | `ab_config`（`service.*`） |
 | 账号注销（无 P 编号 · **提审硬要求**） | 我的 → 设置 → 账号注销 | M04 | **U19** | `ab_user`（`status` / 软删 / 匿名化）+ `ab_team_leader`、`ab_balance`、`ab_order`（**仅读**，用于三道闸门） |
@@ -2136,6 +2271,7 @@ approve
 | P36 | 系统配置 | M37 | D51–D60 · **D67–D68（F5 通知触达矩阵：编排 + 到达率 · 同一页第二个 Tab）**（**已实装**） | `ab_admin_user`、`ab_operation_log`、`ab_config`、`ab_message`、**`ab_message_template`** |
 | P37 | 办公楼管理 | M33 | D13–D18 | `ab_building`、`ab_building_group` |
 | P39 | 加工场所打包 | M21-03 | `GET /admin/packing-tasks`（**M4-0 由 S3 迁入**） | `ab_supplier_dish_center_daily`、`ab_distribution_center` |
+| 往期菜单（无 P 编号 · **2026-10-30 新增**） | 我的 → 往期菜单（`pages/meal-history/meal-history`）· 逐日回看过往套餐，**只作记录、不可补订** | M01-02 | **U2** | `ab_set_meal`、`ab_set_meal_item`、`ab_dish` |
 | 我的优惠券（无 P 编号 · **2026-10-23 新增**） | 我的券 / 下单抵扣 | — | **U21/U22** | `ab_user_coupon`、`ab_coupon` |
 | 代金券（后台 · 财务 → 代金券） | 券种 / 发放 / 批量发放 / 回收 | — | **D70–D76** | `ab_coupon`、`ab_user_coupon` |
 | 助手禁止清单（后台 · 系统） | 查看 / 列入 / 解除 AI 禁用的操作 | P1-c | **D78–D81** | `ab_op_blocklist`、`ab_operation_log`（解除留痕） |
