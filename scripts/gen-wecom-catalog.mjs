@@ -375,37 +375,36 @@ function parseController(file, dtoIndex, roleConsts) {
 }
 
 /**
- * 不进「操作目录」的控制器前缀（整块排除，主解析与独立探针必须用同一份）。
+ * 不进「操作目录」的控制器（按**类名**精确排除，主解析与独立探针共用同一份）。
  *
- * 目前只有 `admin/wecom/kb`（机器人试跑台）。排除理由三条，缺一条都不该放进去：
+ * 为什么用类名而不是路径前缀：`admin/wecom-kb` 既是试跑台控制器的前缀，
+ * 也是 `bindings` / `ops` 两个真业务控制器的前缀 —— 用前缀排除会把它们一起误伤，
+ * 表现成「互证数字对不上」（主解析 131、探针 137）。类名没有这种歧义。
+ *
+ * 目前只有试跑台 `WecomSimulateController`。排除理由三条，缺一条都不该放进去：
  *   ① 它是**调试通道**，不是业务功能 —— 混在「你能操作的后台功能」里会让人困惑；
  *   ② 它会**自指**：从聊天里调用试跑台，等于在对话中再开一次对话；
  *   ③ 它只对 super_admin/admin 开放，对同事本来就不可用，列出来只是噪音。
  *
  * ⚠️ 排除只影响「目录条目」，不影响 `admin:coverage` —— 那个门禁按真实端点扫，
  *    试跑台仍必须在前端有入口（本批已加）。
- * ⚠️ 以后再加调试类端点，往这里加前缀，**不要**在解析器里散着写 if。
  */
-const EXCLUDE_CONTROLLERS = ['admin/wecom/kb'];
-const inExcludedController = (p) =>
-  EXCLUDE_CONTROLLERS.some((b) => p === '/' + b || p.startsWith('/' + b + '/'));
+const EXCLUDE_CONTROLLERS = new Set(['WecomSimulateController']);
 
 /** 独立探针：另一种算法只数端点个数，用于互证（与主解析器实现不同） */
 function independentCount() {
   let n = 0;
   for (const f of walkControllers(SRC)) {
     const lines = fs.readFileSync(f, 'utf8').split('\n');
+    // 类名：探针自己从源码取，不依赖主解析器的产物
+    const cls = lines.map((l) => /export class (\w+)/.exec(l)).find(Boolean);
+    const className = cls ? cls[1] : '';
+    if (EXCLUDE_CONTROLLERS.has(className)) continue;
     let base = null;
     for (const l of lines) {
       const cm = /@Controller\(\s*'([^']*)'\s*\)/.exec(l);
       if (cm) base = cm[1];
-      if (
-        base &&
-        /^admin/.test(base) &&
-        !EXCLUDE_CONTROLLERS.includes(base) &&
-        /@(Get|Post|Put|Patch|Delete)\(/.test(l)
-      )
-        n++;
+      if (base && /^admin/.test(base) && /@(Get|Post|Put|Patch|Delete)\(/.test(l)) n++;
     }
   }
   return n;
@@ -421,7 +420,9 @@ for (const f of walkControllers(SRC)) {
   allOps.push(...r.ops);
   allUnresolvedRoles.push(...r.unresolvedRoles);
 }
-const adminOps = allOps.filter((o) => /^\/admin\//.test(o.path) && !inExcludedController(o.path));
+const adminOps = allOps.filter(
+  (o) => /^\/admin\//.test(o.path) && !EXCLUDE_CONTROLLERS.has(o.controller),
+);
 
 // ---------------------------------------------------------------- 自证
 const problems = [];

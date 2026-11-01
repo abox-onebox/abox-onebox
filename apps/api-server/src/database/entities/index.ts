@@ -66,6 +66,19 @@ import {
   SalesPause,
 } from './system.entity';
 
+/**
+ * 企微绑定表（`ab_wecom_binding`）的实体住在功能模块里，不在本目录。
+ *
+ * ⚠️ 为什么要从这里 import：`database.module.ts` 用的是**显式清单**
+ *    `entities: ALL_ENTITIES`（不是 `autoLoadEntities`）。漏登记的症状不是启动失败，
+ *    而是运行到那一步才炸 `EntityMetadataNotFoundError: No metadata for "WecomBinding"` ——
+ *    线上表现成「列表 500、写入参数校验失败」，看起来像两个无关的 bug。
+ *    实测 2026-11-01 踩过：漏登记 + 路径作用域错，两个问题叠在一起排查了很久。
+ * ⚠️ 也因为漏登记，`schema:parity` / `index:parity` **根本不检查这张表** ——
+ *    门禁全绿不代表它被覆盖了。加实体必须同时进这个清单。
+ */
+import { WecomBinding } from '../../modules/wecom-kb/wecom-binding.entity';
+
 /** 全量实体数组（TypeORM 注册用） */
 export const ALL_ENTITIES = [
   User,
@@ -103,4 +116,5 @@ export const ALL_ENTITIES = [
   OpBlocklist,
   PageTrack,
   SalesPause,
+  WecomBinding,
 ];

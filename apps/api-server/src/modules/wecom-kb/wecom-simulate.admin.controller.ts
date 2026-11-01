@@ -44,7 +44,7 @@ class SimulateDto {
  * 与其做一个「看起来能试但试不出问题」的假沙箱，不如明确标注「这里会真写库」，
  * 让试跑的人自己决定用哪句话。
  */
-@Controller('admin/wecom/kb')
+@Controller('admin/wecom-kb')
 @UseGuards(AdminGuard)
 @Roles('super_admin', 'admin')
 export class WecomSimulateController {

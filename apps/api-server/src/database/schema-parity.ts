@@ -285,11 +285,9 @@ const PROG_UNSUPPORTED: { pat: RegExp; label: string }[] = [
  * 删除条件**，且自检会查「豁免腐烂」（表已注册/已不在迁移里 ⇒ 要求删条目）。
  */
 const MIGRATION_ONLY_EXEMPT = new Set<string>([
-  // ab_wecom_binding（迁移 1700000000013-wecom-binding · 企业微信 KB 路线B WIP）：
-  //   实体已存在于 `modules/wecom-kb/wecom-binding.entity.ts`（@PrimaryColumn userid
-  //   varchar(64)），但**尚未注册进 ALL_ENTITIES**（并行会话 WIP，该文件未入库）。
-  //   ⇒ 删除条件：实体注册进 `entities/index.ts` 后，本行必须删（自检「豁免腐烂」会催）。
-  'ab_wecom_binding',
+  // 2026-11-01 已清空：`ab_wecom_binding` 的实体已注册进 `entities/index.ts`
+  // （此前因「实体未入库」挂在这里豁免，按该条自己的删除条件移除）。
+  // 新增豁免必须写明「为什么不能有实体」与**删除条件** —— 自检会查「豁免腐烂」。
 ]);
 
 /**

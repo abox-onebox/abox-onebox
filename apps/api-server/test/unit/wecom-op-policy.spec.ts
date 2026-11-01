@@ -35,10 +35,10 @@ const entry = (patch: Partial<CatalogEntry>): CatalogEntry => ({
 });
 
 describe('op-policy · 目录规模', () => {
-  it('目录覆盖全部后台端点（131 条，与生成器自证一致）', () => {
-    expect(ADMIN_ENDPOINT_COUNT).toBe(131);
-    expect(allItems().length).toBe(131);
-    expect(Object.keys(ADMIN_CATALOG).length).toBe(131);
+  it('目录覆盖全部后台端点（137 条，与生成器自证一致）', () => {
+    expect(ADMIN_ENDPOINT_COUNT).toBe(137);
+    expect(allItems().length).toBe(137);
+    expect(Object.keys(ADMIN_CATALOG).length).toBe(137);
   });
 
   it('每条都能定位到源码位置（否则改端点后无从核对漂移）', () => {
@@ -49,7 +49,7 @@ describe('op-policy · 目录规模', () => {
 });
 
 describe('op-policy · 负责人拥有全部权限', () => {
-  it('★ 131 个端点对 owner 全部可执行（这是本功能的核心诉求）', () => {
+  it('★ 137 个端点对 owner 全部可执行（这是本功能的核心诉求）', () => {
     const blocked = allItems().filter((it) => !canExec('owner', it.entry).ok);
     expect(blocked.map((b) => b.code)).toEqual([]);
   });
@@ -161,7 +161,7 @@ describe('op-policy · 检索与展示', () => {
 
   it('模块分组总数等于目录规模', () => {
     const sum = modules('owner').reduce((a, m) => a + m.total, 0);
-    expect(sum).toBe(131);
+    expect(sum).toBe(137);
   });
 
   it('模块名取路径第 2 段', () => {

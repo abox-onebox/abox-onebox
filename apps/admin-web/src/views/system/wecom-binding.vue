@@ -3,9 +3,10 @@
     <h2 class="page-container__title">企微令牌绑定</h2>
     <p class="page-container__meta">
       模块：P1-c · 接口：
-      <code>GET / POST / DELETE /wecom/kb/bindings</code> ·
-      <code>PATCH /wecom/kb/bindings/:userId/tier</code> ·
-      <code>PATCH /wecom/kb/bindings/:userId/grant</code> · <code>GET /wecom/kb/ops</code> · 数据源
+      <code>GET / POST / DELETE /admin/wecom-kb/bindings</code> ·
+      <code>PATCH /admin/wecom-kb/bindings/:userId/tier</code> ·
+      <code>PATCH /admin/wecom-kb/bindings/:userId/grant</code> ·
+      <code>GET /admin/wecom-kb/ops</code> · 数据源
       <code>ab_wecom_binding</code>
     </p>
 

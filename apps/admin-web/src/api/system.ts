@@ -680,35 +680,35 @@ export interface UpsertWecomBindingPayload {
 }
 
 /**
- * ⚠️⭐ **这三个端点不走 `/api/v1` 前缀**：后端 `main.ts` 是
- *    `setGlobalPrefix(prefix, { exclude: ['wecom/(.*)'] })` —— wecom 路由**故意**挂在根下
- *    （企微回调地址由企微侧配置，加前缀会让回调 URL 对不上，故整段 exclude）。
+ * ⚠️⭐ 这一组走**正常前缀**（`/api/v1/admin/wecom-kb/...`），不要再写 `{ baseURL: '' }`。
  *
- *    ⇒ 而前端 baseURL 就是 `/api/v1`：照常写相对路径会被拼成 `/api/v1/wecom/kb/bindings`，
- *      服务端回 `10004 接口不存在或已调整` —— **不报网络错**，页面上只是「点了没反应」，
- *      这类问题光看控制台很难定位。故逐个显式 `{ baseURL: '' }` 覆盖。
- *    ⇒ nginx 侧 `location /wecom/` 已反代到 api，路径本身不用改。
+ *   曾经为了「和回调凑一组」写成 `/wecom/kb/bindings` + 空 baseURL。那是错的，
+ *   而且错得隐蔽 —— 免前缀会连带丢掉三样东西：
+ *     ① **body 解析**：`main.ts` 关了默认 bodyParser，自定义中间件只挂 `/api/v1/*`
+ *        ⇒ `req.body` 恒 undefined ⇒ 所有写入回 10001「参数校验失败」；
+ *     ② **后台主体判定**：`JwtAuthGuard` 只认 `/admin`、`/supplier` 开头
+ *        ⇒ 后台 token 被判成「用户端」，一律回 10002；
+ *     ③ 统一限流规则。
+ *   2026-11-01 线上实测：整页不可用（列表 500、写入 10001、点按钮提示请用后台接口）。
+ *
+ *   ⇒ 只有**企微回调**需要免前缀（那是企微侧配的地址，不能带 `/api/v1`）；
+ *     管理端点已整体归位到 `/admin/wecom-kb`。
  */
-const WECOM_NO_PREFIX = { baseURL: '' } as const;
-
 export function fetchWecomBindings(): Promise<WecomBindingRow[]> {
-  return http.get<WecomBindingRow[]>('/wecom/kb/bindings', undefined, WECOM_NO_PREFIX);
+  return http.get<WecomBindingRow[]>('/admin/wecom-kb/bindings');
 }
 
 export function upsertWecomBinding(payload: UpsertWecomBindingPayload): Promise<WecomBindingRow> {
-  return http.post<WecomBindingRow>('/wecom/kb/bindings', payload, WECOM_NO_PREFIX);
+  return http.post<WecomBindingRow>('/admin/wecom-kb/bindings', payload);
 }
 
 /** 解绑（物理删除整行，含两个令牌）· userId 是企微 userid，可能含特殊字符 ⇒ 必编码 */
 export function removeWecomBinding(userId: string): Promise<{ ok: boolean }> {
-  return http.delete<{ ok: boolean }>(
-    `/wecom/kb/bindings/${encodeURIComponent(userId)}`,
-    WECOM_NO_PREFIX,
-  );
+  return http.delete<{ ok: boolean }>(`/admin/wecom-kb/bindings/${encodeURIComponent(userId)}`);
 }
 
 /**
- * 只改身份等级（放权 / 收回）· `PATCH /wecom/kb/bindings/:userId/tier`
+ * 只改身份等级（放权 / 收回）· `PATCH /admin/wecom-kb/bindings/:userId/tier`
  *
  * ⚠️ 为什么单开一个端点而不复用 `upsert`：`upsert` 是「整行覆盖式保存」，
  *    而放权/收回只是**一个布尔量级的意图**。若走 `upsert`，调用点必须把
@@ -724,14 +724,13 @@ export function setWecomBindingTier(
   tier: WecomTier,
 ): Promise<{ found: boolean; tier?: string }> {
   return http.patch<{ found: boolean; tier?: string }>(
-    `/wecom/kb/bindings/${encodeURIComponent(userId)}/tier`,
+    `/admin/wecom-kb/bindings/${encodeURIComponent(userId)}/tier`,
     { tier },
-    WECOM_NO_PREFIX,
   );
 }
 
 /**
- * 机器人试跑 · `POST /admin/wecom/kb/simulate`（走 `/api/v1`，与上面 wecom 那组不同）
+ * 机器人试跑 · `POST /admin/wecom-kb/simulate`
  *
  * 企微回调地址要域名、备案没过 ⇒ 机器人在真实环境里一次都没被跑通过。
  * 这个端点让后台**当场说一句话**看它怎么回，走的还是同一套判据与执行通道，
@@ -745,11 +744,11 @@ export function simulateWecomChat(
   text: string,
   reset = false,
 ): Promise<{ reply: string; execAs: string }> {
-  return http.post<{ reply: string; execAs: string }>('/admin/wecom/kb/simulate', { text, reset });
+  return http.post<{ reply: string; execAs: string }>('/admin/wecom-kb/simulate', { text, reset });
 }
 
 /**
- * 单独放权的可选项（后台功能目录，只读）· `GET /wecom/kb/ops`
+ * 单独放权的可选项（后台功能目录，只读）· `GET /admin/wecom-kb/ops`
  *
  * 数据由服务端从源码自动生成的目录给出，前端**不要硬编码**这 131 项：
  * 端点改名/新增后硬编码会静默过期，表现成「勾了不生效」或「新功能勾不到」。
@@ -768,15 +767,11 @@ export interface WecomOpItem {
 }
 
 export function fetchWecomOps(): Promise<{ total: number; items: WecomOpItem[] }> {
-  return http.get<{ total: number; items: WecomOpItem[] }>(
-    '/wecom/kb/ops',
-    undefined,
-    WECOM_NO_PREFIX,
-  );
+  return http.get<{ total: number; items: WecomOpItem[] }>('/admin/wecom-kb/ops');
 }
 
 /**
- * 只改「单独放权的功能清单」· `PATCH /wecom/kb/bindings/:userId/grant`
+ * 只改「单独放权的功能清单」· `PATCH /admin/wecom-kb/bindings/:userId/grant`
  *
  * ⚠️ 与 `tier` 的区别，页面上必须说清（否则用户会以为放权 = 提权）：
  *    · `tier=owner` → 把这个人**整体**升成负责人能力（131 项全开），是重手法；
@@ -792,8 +787,7 @@ export function setWecomBindingGrant(
   ops: string[],
 ): Promise<{ found: boolean; count?: number; unknown?: string[] }> {
   return http.patch<{ found: boolean; count?: number; unknown?: string[] }>(
-    `/wecom/kb/bindings/${encodeURIComponent(userId)}/grant`,
+    `/admin/wecom-kb/bindings/${encodeURIComponent(userId)}/grant`,
     { ops },
-    WECOM_NO_PREFIX,
   );
 }

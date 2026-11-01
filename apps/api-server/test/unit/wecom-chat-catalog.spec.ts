@@ -5,6 +5,7 @@ import type {
   ItemResolve,
 } from '../../src/modules/wecom-kb/name-resolver.service';
 import type { OpProxyService, Binding } from '../../src/modules/wecom-kb/op-proxy.service';
+import { ADMIN_ENDPOINT_COUNT } from '../../src/modules/wecom-kb/op-catalog.generated';
 
 /**
  * 「用机器人操作后台全部功能」的端到端判据（假 proxy，不碰网络）
@@ -59,20 +60,21 @@ function build(opts: { code?: number; data?: unknown } = {}): {
 }
 
 describe('操作目录：全量能力可见', () => {
-  it('负责人打开目录能看到全部 131 项', async () => {
+  // 用常量而不是写死数字：端点总数随源码自动生成，写死会在每次加/改端点时假红
+  it(`负责人打开目录能看到全部 ${ADMIN_ENDPOINT_COUNT} 项`, async () => {
     const { svc } = build();
     const said = await svc.reply('o1', '操作目录', OWNER);
-    expect(said).toContain('131 项能力');
+    expect(said).toContain(`${ADMIN_ENDPOINT_COUNT} 项能力`);
     expect(said).toContain('负责人');
   });
 
   it('同事看到的是「能用/全部」两栏，能用的明显少于全部', async () => {
     const { svc } = build();
     const said = await svc.reply('s1', '操作目录', STAFF);
-    expect(said).toContain('131 项能力');
+    expect(said).toContain(`${ADMIN_ENDPOINT_COUNT} 项能力`);
     const used = Number(/能直接用 (\d+) 项/.exec(said)![1]);
     expect(used).toBeGreaterThan(0);
-    expect(used).toBeLessThan(131);
+    expect(used).toBeLessThan(ADMIN_ENDPOINT_COUNT);
     // 模块明细里每个括号都该是「能用/全部」，且能用不超过全部
     const cells = [...said.matchAll(/\((\d+)\/(\d+)\)/g)];
     expect(cells.length).toBeGreaterThan(0);

@@ -17,7 +17,7 @@ import { allItems, canExec, displayName, moduleOf, riskOf } from './op-policy';
  *    页面上必须把这类项与「这次额外给的」分开显示 —— 否则管理员会以为
  *    「我给他开了 40 项」，其实那 40 项他本来就会，真正新增的可能只有 3 项。
  */
-@Controller('wecom/kb/ops')
+@Controller('admin/wecom-kb/ops')
 @UseGuards(AdminGuard)
 @Roles('super_admin', 'admin')
 export class WecomOpsAdminController {
