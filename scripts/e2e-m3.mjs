@@ -5973,7 +5973,7 @@ async function main() {
     assert(
       bA2?.canAssign === true,
       'D13 覆盖补齐后 canAssign=true（营业中 ∧ 已归群 ∧ 楼群未暂停）',
-      `canOrder=${bA2?.canOrder}`,
+      `canAssign=${bA2?.canAssign}`,
     );
 
     const dcDisable = await call('PUT', `/admin/distribution-centers/${dcxId}`, {
