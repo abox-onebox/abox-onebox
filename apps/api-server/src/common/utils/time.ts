@@ -148,6 +148,38 @@ export function addDays(dateStr: string, days: number): string {
   return new Date(base + days * DAY_MS).toISOString().slice(0, 10);
 }
 
+/**
+ * 把「任意来源的日期值」归一成业务日 `YYYY-MM-DD`；取不到真实日期时返回 `''`
+ *
+ * ⭐ 为什么必须有它（2026-11-02 线上事故）：
+ *   mysql2 对 `DATE` 列**默认返回 JS `Date` 对象**，而 TypeScript 里实体字段标的是 `string`。
+ *   于是任何 `String(row.xxx)` 都会得到 `'Wed Oct 28 2026 00:00:00 GMT+0800…'`：
+ *     · 与 `/^\d{4}-\d{2}-\d{2}$/` 一定不匹配；
+ *     · 丢进 `split('-')` 会得到 `NaN` → `Date.UTC(NaN,…)` → 抛 `Invalid time value`；
+ *     · 与 `'2026-10-26'` 做字符串比较恒为 `false`（`'W' > '2'` 方向不定，但绝不等价于日期序）。
+ *   留存端点因此**既 500、又把所有人都判成「回流」**（新客恒 0）。
+ *
+ * ⚠️ 转 `Date` **必须用本地分量**，不能用 `toISOString()`：
+ *   mysql2 是按**本地时区**构造 `new Date(y, m, d)` 的，容器设 `TZ=Asia/Shanghai` 时
+ *   `toISOString().slice(0,10)` 会退回**前一天** —— 那是比崩溃更隐蔽的错（数字看着正常）。
+ *
+ * @param v `Date` / `'YYYY-MM-DD'` / 带时间的 ISO 串 / 其他（返回 `''`）
+ */
+export function toBizDateStr(v: unknown): string {
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return '';
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(v ?? '');
+  if (isDateStr(s)) return s;
+  // 兜底：`2026-10-20T00:00:00.000Z` 这类带时间的串（取日期段，不做时区换算）
+  const m = /\d{4}-\d{2}-\d{2}/.exec(s);
+  return m ? m[0] : '';
+}
+
 /** `YYYY-MM-DD` + 北京时间时刻 → 绝对时刻 */
 /**
  * ⚠️ `bjDateTime` 的 `hour` 允许传 **24**：`Date.UTC(y, m, d, 24)` 会自动进位到次日 0 点，

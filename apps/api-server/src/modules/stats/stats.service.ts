@@ -14,7 +14,7 @@ import {
   type PageDurationDailyRow,
   type PageDurationRowInput,
 } from '../../common/utils/page-duration-stats';
-import { bjDateTime } from '../../common/utils/time';
+import { bjDateTime, toBizDateStr } from '../../common/utils/time';
 import { Building, BuildingGroup } from '../../database/entities/building.entity';
 import { Commission, SupplierShare } from '../../database/entities/finance.entity';
 import { SetMealItem } from '../../database/entities/meal.entity';
@@ -728,31 +728,55 @@ export class StatsService {
     //
     //    修法**不是**「取不到就跳过」：跳过会让「新客 + 回流 ≠ 活跃数」，
     //    等于把「这人首单日不知道」悄悄算成「不是新客」，比崩溃更难发现。
-    //    而是从整行里把**日期值**找出来 —— `MIN(meal_date)` 必然有值，只是 key 名不可靠。
-    //    合法路径（key 叫 firstDate）结果完全不变。
-    const pickBizDate = (row: Record<string, unknown>): string => {
-      const direct = String(row.firstDate ?? '');
-      if (/^\d{4}-\d{2}-\d{2}$/.test(direct)) return direct;
+    //
+    //    ⚠️⚠️ 第二次实测才找到真根因：**SQL 数据完全正常，是 mysql2 把 DATE 列返回成 JS `Date` 对象**。
+    //    `String(new Date('2026-10-28'))` = `'Wed Oct 28 2026 …'` —— 既不是 `YYYY-MM-DD`，
+    //    也进不了 `split('-')` 的日期解析。于是：
+    //      · `weekStartBizDate('Wed Oct 28…')` → `Date.UTC(NaN, NaN, NaN)` → **500**；
+    //      · `'Wed Oct 28…' >= '2026-10-26'` → `false` → **全员被判成「回流」、新客恒 0**。
+    //    也就是说这个端点不只是崩，**它算出来的新客/回流本来就一直是错的**。
+    //
+    //    ⚠️ 转日期**必须用本地分量**，不能用 `toISOString()`（理由见 `toBizDateStr` 的注释）。
+    //    归一实现放在 `common/utils/time.ts` 里，**本文件不再写第二份** ——
+    //    这个坑在「留存」里出现了两次（首单日、复查日），两处必须同一判据。
+    const toBizDate = toBizDateStr;
+    /**
+     * 从 raw 行里取一个业务日（`YYYY-MM-DD`）
+     *
+     * ⚠️ 为什么不能只按别名取：这几个 `getRawMany` 的别名在实测中**并不可靠**，
+     *    按名字取会拿到 `undefined`。而这两处的行都只有「用户 id + 一个日期列」两列，
+     *    所以「扫一遍取值，命中日期格式的就是它」是安全且不依赖别名的。
+     */
+    const pickBizDateFromRow = (row: Record<string, unknown>, name: string): string => {
+      const named = toBizDate(row[name]);
+      if (named) return named;
       for (const v of Object.values(row)) {
-        const s = String(v ?? '');
-        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        const d = toBizDate(v);
+        if (d) return d;
       }
       return '';
     };
     let missingFirstDate = 0;
     for (const r of firstRows) {
-      const d = pickBizDate(r as unknown as Record<string, unknown>);
-      const uid = Number(r.userId);
-      if (!d || !Number.isFinite(uid)) {
+      const row = r as unknown as Record<string, unknown>;
+      const vals = Object.values(row);
+      const uidNum = Number(row.userId ?? vals[0]);
+      const d = pickBizDateFromRow(row, 'firstDate');
+      if (!d || !Number.isFinite(uidNum)) {
         missingFirstDate += 1;
         continue;
       }
-      firstDateByUser.set(uid, d);
+      firstDateByUser.set(uidNum, d);
     }
     if (missingFirstDate > 0) {
-      // 不静默：留着这条日志，下次真出现脏数据时能立刻定位
+      // 不静默，且**打印 raw 的真实形状** —— 只报「取不到」而不报「长什么样」，
+      // 下次还得再猜一轮（本次就是先猜了 alias、线上才发现 key 名不同）。
+      const sample = firstRows[0] as unknown as Record<string, unknown> | undefined;
       this.logger.warn(
-        `留存：${missingFirstDate} 行取不到「首单出餐日」，这些用户不计入新客/回流（活跃数仍含他们）`,
+        `留存：${missingFirstDate}/${firstRows.length} 行取不到「首单出餐日」，` +
+          `这些用户不计入新客/回流（活跃数仍含他们）。` +
+          `raw keys=${JSON.stringify(Object.keys(sample ?? {}))} ` +
+          `sample=${JSON.stringify(sample ?? null)?.slice(0, 200)}`,
       );
     }
 
@@ -770,9 +794,15 @@ export class StatsService {
 
     const revisitDates = new Map<number, Set<string>>();
     for (const r of revisitRows) {
-      const uid = Number(r.userId);
+      const row = r as unknown as Record<string, unknown>;
+      const uid = Number(row.userId ?? Object.values(row)[0]);
+      // ⚠️ 同 firstRows 的坑：`String(r.mealDate)` 拿到的是 `'Wed Oct 28 2026 …'`，
+      //    与下面 `shiftBizDate(...)` 产出的 `'YYYY-MM-DD'` 做字符串比较**永远为 false**
+      //    ⇒ 次周留存恒 0。必须走 `toBizDate` 归一（并按兜底扫值，不依赖别名）。
+      const d = pickBizDateFromRow(row, 'mealDate');
+      if (!d || !Number.isFinite(uid)) continue;
       const set = revisitDates.get(uid) ?? new Set<string>();
-      set.add(String(r.mealDate));
+      set.add(d);
       revisitDates.set(uid, set);
     }
 

@@ -15,7 +15,13 @@
  *   认了它就会给出一个用户没要的区间。
  */
 
-import { toBjIso } from '../../common/utils/time';
+import { addDays, todayBj } from '../../common/utils/time';
+
+/**
+ * 日期加减：**复用 `common/utils/time.ts` 的实现**，本文件不再写第二份。
+ * 两套日期运算各自修 bug 是这类代码最典型的腐烂方式（本项目已因此吃过亏）。
+ */
+export { addDays };
 
 /** 五个统计视角（与 `/admin/stats/*` 的端点一一对应） */
 export type StatsWhich = 'dashboard' | 'buildingRank' | 'dishHeat' | 'retention' | 'pageDuration';
@@ -136,28 +142,9 @@ export function daysOf(range: StatsRangeWord): number {
   return 7;
 }
 
-/** 北京「今天」的日期串（YYYY-MM-DD）。统计区间的终点基准一律取它，不用本地时区 */
+/** 北京「今天」的日期串（YYYY-MM-DD）。**薄委托** `todayBj`，不另写一份时区换算 */
 export function bjTodayStr(at: Date): string {
-  const iso = toBjIso(at);
-  // toBjIso 已做 +08:00 平移，前 10 位就是北京日历日
-  return iso ? iso.slice(0, 10) : '';
-}
-
-const pad2 = (n: number): string => String(n).padStart(2, '0');
-
-/**
- * 日期加减（纯字符串运算，不经过本地时区）
- *
- * ⚠️ 不能用 `new Date('2026-11-01')` 再 `setDate()`：那样得到的是**本地时区**的
- *    零点，而本机与服务器时区不一定相同，跨时区会整体偏一天。
- *    这里用 `Date.UTC` 做纯日历运算，输入输出都是「日历日」，与时区无关。
- */
-export function addDays(dateStr: string, delta: number): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
-  if (!m) return dateStr;
-  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) + delta * 86_400_000;
-  const d = new Date(t);
-  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+  return todayBj(at);
 }
 
 /**
