@@ -116,11 +116,31 @@ function inlineTpl(s, ctx) {
 }
 
 /**
+ * 路径参数的兜底中文提示（`@ApiParam` 没写时用）。
+ *
+ * 键是**路由模板里的段名**（`:orderNo` / `:id`），语义由路由本身决定，
+ * 所以这张表是稳定的 —— 它不描述某个端点的业务值，只说「这一段该填什么」。
+ *
+ * ⚠️ 为什么不给所有路径参数都补 `@ApiParam`：8 个详情类 GET 用的是同一个
+ *    `:id`，逐个补注解只会把同一句话抄 8 遍（改一处要改 8 处）。
+ *    真正需要端点级语义的（`userId` / `opCode` / `task` / `role`）仍然走注解。
+ */
+const PATH_HINT = {
+  orderNo: '订单号（AB 开头那一串，从订单列表里取）',
+  id: '记录 id（数字，从对应列表里取）',
+  proofId: '送达凭证 id（数字，从该配送单的凭证列表里取）',
+  userId: '企微 userid（企微「通讯录 → 成员资料」里那个账号）',
+  opCode: 'op 代码（从「高危申请」列表里取）',
+  task: '任务名（从定时任务列表里取，如 meal-publish）',
+  role: '角色名（super_admin / admin / operator …）',
+};
+
+/**
  * 解析方法装饰器区里的 `@ApiParam({ name, description })`（可跨行）。
  *
  * ⚠️ 路径参数（`:id` / `:opCode` / `:task`）**不走 DTO**，描述只可能写在 `@ApiParam` 里；
- *    没写就是没有，机器人只会问「还需要：opCode」。⇒ 想让它说人话，得在控制器补注解
- *    （顺便也补了 swagger —— 描述只维护一处）。
+ *    没写就退回 {@link PATH_HINT}，两者都没有才会只问「还需要：xxx」
+ *    （门禁 `wecom:hints` 会因此报红）。
  */
 function parseApiParams(deco) {
   const out = new Map();
@@ -513,7 +533,16 @@ function parseController(file, dtoIndex, roleConsts) {
       );
       if (mn) methodName = mn[1];
 
-      const pathParams = [...sig.matchAll(/@Param\(\s*'(\w+)'\s*\)/g)].map((m) => m[1]);
+      // 路径参数有**两个**来源，必须取并集：
+      //   ① 路由模板里的 `:name` —— 权威来源（URL 里明明写着必须有一段）；
+      //   ② 方法签名里的 `@Param('name')` —— 有的方法用 `@Param()` 取整个对象，扫不到。
+      // ⚠️ 2026-11-02 事故：只扫 ② 时，8 个详情类 GET（`/admin/orders/:orderNo`、
+      //    `/admin/users/:id` …）的 params 是**空数组** ⇒ 机器人以为不用参数，
+      //    直接按 `/admin/orders/` 打过去 —— **命中列表路由**，把整张订单列表
+      //    当成「订单详情」的答案返回。数据是错的，而且不报错。
+      const fromSig = [...sig.matchAll(/@Param\(\s*'(\w+)'\s*\)/g)].map((m) => m[1]);
+      const fromPath = [...fullPath.matchAll(/:(\w+)/g)].map((m) => m[1]);
+      const pathParams = [...new Set([...fromPath, ...fromSig])];
       // `sig` 从方法签名行开始，**不含**装饰器 ⇒ `@ApiParam` 得单独从上面那一段取
       const decoBlock = lines.slice(j + 1, sigStart > 0 ? sigStart : j + 40).join('\n');
       const apiParams = parseApiParams(decoBlock);
@@ -524,7 +553,7 @@ function parseController(file, dtoIndex, roleConsts) {
 
       const params = [];
       for (const p of pathParams) {
-        const hint = apiParams.get(p);
+        const hint = apiParams.get(p) ?? PATH_HINT[p];
         params.push(
           hint
             ? { name: p, required: true, type: 'string', in: 'path', hint }

@@ -167,6 +167,31 @@ describe('只读端点：选中就查，不逼人填筛选', () => {
     expect(calls[0].code).toBe('get_admin_orders');
     expect(said).toContain('结果');
   });
+
+  /**
+   * ⭐ 详情类 GET：必须先问路径参数再查。
+   *
+   * 不修的后果不是报错，是**静默给错数据**：`/admin/orders/:orderNo` 空参打成
+   * `/admin/orders/`，命中的是列表路由 —— 标题写「订单详情」，回来 98 条订单。
+   */
+  it('★订单详情先问 orderNo（带中文提示），答了才查，且不再要「回 1」', async () => {
+    const { svc, calls } = build({
+      data: { order: { orderNo: 'AB2026102802850288', statusText: '已完成' } },
+    });
+    await svc.reply('d1', '找 get_admin_orders_orderno', OWNER);
+    const ask = await svc.reply('d1', '1', OWNER);
+    expect(ask).toContain('还需要：orderNo');
+    expect(ask).toContain('订单号');
+    expect(calls).toHaveLength(0); // 参数没齐，一次都没打后台
+
+    const said = await svc.reply('d1', 'AB2026102802850288', OWNER);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].code).toBe('get_admin_orders_orderno');
+    expect(calls[0].params.orderNo).toBe('AB2026102802850288');
+    // 只读端点参数齐了直接查，不让人再回一次 1
+    expect(said).not.toContain('回 1 执行');
+    expect(said).toContain('AB2026102802850288');
+  });
 });
 
 describe('同事的边界：列出来的才做得了', () => {

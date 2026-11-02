@@ -374,7 +374,7 @@ export class WecomChatService {
     return null;
   }
 
-  /** 选中一个端点：只读的直接查，写入的逐个问必填参数 */
+  /** 选中一个端点：只读的问齐必填（有的话）就查，写入的逐个问完再出草稿 */
   private async beginOp(
     userId: string,
     item: CatalogItem,
@@ -391,11 +391,17 @@ export class WecomChatService {
     const op: OpState = { code: item.code, params: {}, options: undefined, picking: undefined };
 
     if (item.entry.method === 'GET') {
-      // 只读：可选筛选一律先不填，直接查了给他看
-      this.sessions.delete(userId);
-      const res = await this.proxy.execCatalog(item.code, {}, binding, displayName(item.entry));
-      if (res.code !== 0) return `没查到：${chatErrorText(res.code, res.message)}`;
-      return `「${displayName(item.entry)}」的结果：\n${this.summarizeResult(res.data, item.code)}`;
+      // ⚠️ 只读端点也可能带**路径参数**（订单详情 `/admin/orders/:orderNo`、
+      //    用户详情 `/admin/users/:id` …）。以前这里一律空参直接查，结果
+      //    `/admin/orders/` 命中的是**列表**路由 —— 标题写着「订单详情」，
+      //    回来的是整张订单列表。数据是错的，也不报错（2026-11-02 线上实测）。
+      //    所以：有必填参数就先问，问齐了再查。
+      const need = this.askNext(op);
+      if (need) {
+        this.putOp(userId, op);
+        return need;
+      }
+      return this.runGetOp(userId, op, binding);
     }
 
     const ask = this.askNext(op);
@@ -457,8 +463,13 @@ export class WecomChatService {
     }
 
     const ask = this.askNext(op);
+    if (ask) {
+      this.putOp(userId, op);
+      return ask;
+    }
+    // 只读端点的参数问齐了就直接查：它没有副作用，不必再让人回一次 1
+    if (find(op.code)?.entry.method === 'GET') return this.runGetOp(userId, op, binding);
     this.putOp(userId, op);
-    if (ask) return ask;
     return this.opDraftCard(op, tier, binding);
   }
 
@@ -500,6 +511,16 @@ export class WecomChatService {
       return `办好了：${displayName(item.entry)}\n${this.summarizeResult(res.data, op.code)}`;
     }
     return `没成功：${chatErrorText(res.code, res.message)}\n（${item.entry.method} ${item.entry.path}）`;
+  }
+
+  /** 只读端点执行（参数已齐）。只读没有副作用，不需要草稿卡确认。 */
+  private async runGetOp(userId: string, op: OpState, binding: Binding): Promise<string> {
+    this.sessions.delete(userId);
+    const item = find(op.code);
+    if (!item) return '这个操作找不到了。发「操作目录」重来。';
+    const res = await this.proxy.execCatalog(op.code, op.params, binding, displayName(item.entry));
+    if (res.code !== 0) return `没查到：${chatErrorText(res.code, res.message)}`;
+    return `「${displayName(item.entry)}」的结果：\n${this.summarizeResult(res.data, op.code)}`;
   }
 
   /**
