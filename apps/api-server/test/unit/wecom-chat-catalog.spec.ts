@@ -6,6 +6,7 @@ import type {
 } from '../../src/modules/wecom-kb/name-resolver.service';
 import type { OpProxyService, Binding } from '../../src/modules/wecom-kb/op-proxy.service';
 import { ADMIN_ENDPOINT_COUNT } from '../../src/modules/wecom-kb/op-catalog.generated';
+import { find } from '../../src/modules/wecom-kb/op-policy';
 
 /**
  * 「用机器人操作后台全部功能」的端到端判据（假 proxy，不碰网络）
@@ -129,6 +130,22 @@ describe('搜索 → 选中 → 逐个问参数', () => {
 
     const card = await svc.reply('o4', '12', OWNER);
     expect(card).toContain('buildingGroupId=2');
+  });
+
+  it('★参数的中文提示不被截掉尾巴（取值排在最后，截短了就只剩半句话）', async () => {
+    const item = find('post_admin_operationrequests');
+    expect(item).toBeDefined();
+    const p = item!.entry.params.find((x) => x.name === 'opCode');
+    // 先证明样本真的是「长提示」：短提示轮不到被截，拿了短样本测等于没测
+    expect(p?.hint?.length ?? 0).toBeGreaterThan(100);
+
+    const { svc } = build();
+    await svc.reply('o7', '找 post_admin_operationrequests', OWNER);
+    const ask = await svc.reply('o7', '1', OWNER);
+    expect(ask).toContain('opCode');
+    // 整段提示都在 —— 尾巴（「等 9 项」）没被切掉。
+    // 历史上这里截到 100 字，取值清单被切成「…financ」「…manual_a」，用户以为是显示问题。
+    expect(ask).toContain(p!.hint!);
   });
 
   it('回「取消」能真的停下，且不执行', async () => {

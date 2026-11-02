@@ -268,6 +268,18 @@ const GATES = {
     cmd: 'node scripts/check-wecom-op-params.mjs --selftest && node scripts/check-wecom-op-params.mjs',
   },
   /**
+   * 企微「必填参数必须能说成人话」（防机器人问出「还需要：role」这种没人看得懂的话）。
+   *
+   * 2026-11-02 实测：94 个必填参数里 17 个提示为空，而原因**不是**没人写注释 ——
+   * 是生成器认不全三种写法（模板字符串 / 跨行 / `@IsIn(常量)`），加上全仓 0 处 `@ApiParam`。
+   * 修完后 94/94 都有中文提示，这道门禁防它悄悄退回去。
+   * 脚本自带 `--selftest`（真实数据必不报 + 两个必报样本：无提示 / 纯英文提示）。
+   */
+  'wecom:hints': {
+    cwd: '.',
+    cmd: 'node scripts/check-wecom-param-hints.mjs --selftest && node scripts/check-wecom-param-hints.mjs',
+  },
+  /**
    * M5-15：**契约文档的 Markdown 表格完整性**（防「表格被空行截断」）
    *
    * GFM 里**表格遇空行即结束** —— 「表行 → 空行 → 表行」会让空行之后的行退化成
@@ -675,6 +687,8 @@ const ALIASES = {
     // 2026-11-02：企微「参数名 ↔ 真实 DTO」对账（防「机器人问的参数端点不认 / 必填不问」）
     // 与 wecom:catalog 同一类病：功能做了却用不上，且任何测试都不会红 —— 纯静态、毫秒级
     'wecom:params',
+    // 2026-11-02：企微「必填参数必须带中文提示」（防「问得出、看不懂」）—— 纯静态、毫秒级
+    'wecom:hints',
     // M5-15：契约文档表格完整性（表格被空行截断 → 行退化成正文）—— 纯静态、毫秒级
     'doc:tables',
     // 2026-09-21：真源字面量外溢（档位映射 / 送达时刻 / 日期解析）—— 纯静态、秒级

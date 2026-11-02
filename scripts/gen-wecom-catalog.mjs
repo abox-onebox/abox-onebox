@@ -71,12 +71,102 @@ function walkTs(dir, acc = []) {
   return acc;
 }
 
-function collectDecoratorHints(line, pending) {
+/**
+ * 取值清单的呈现：短就全列，长了就列前几个 + 总数。
+ *
+ * ⚠️ 为什么要截断：**硬截到 140 字会把取值切在半中间**（实测 `opCode` 的提示以
+ *    `…force_re` 结尾，用户以为还有个字没显示完，其实后面还有好几项）。
+ *    列前 N 项 + 「等 N 项」是**语义完整**的截断，比硬截一段文字强。
+ */
+function fmtValues(arr) {
+  if (arr.length === 0) return '';
+  if (arr.length <= 6) return '取值：' + arr.join(' / ');
+  return `取值：${arr.slice(0, 6).join(' / ')} 等 ${arr.length} 项`;
+}
+
+/**
+ * 把取值提示收进 hints —— **描述里已经列过的就不再重复**。
+ *
+ * ⚠️ 为什么：本项目很多描述本身就写成了 `角色：super_admin / admin / …`（为了人类可读），
+ *    而 `@IsIn` 又会再给一份取值 ⇒ 同一串东西出现两遍。目录里 hint 上限 140 字，
+ *    重复一遍就把真正需要的部分挤出去了（实测 `opCode` 的取值被切成 `…manual_a`）。
+ *    ⇒ 判据：前 3 个取值都已出现在已收集的描述里，就认为描述已经说清楚了。
+ */
+function pushValues(pending, v) {
+  const arr = String(v)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (arr.length === 0) return;
+  const joined = pending.hints.join('；');
+  if (arr.slice(0, 3).every((x) => joined.includes(x))) return;
+  pending.hints.push(fmtValues(arr));
+}
+
+/** 把 `${NAME}` 换成常量真值；查不到就保留原样（至少静态中文还在） */
+function inlineTpl(s, ctx) {
+  let out = String(s ?? '');
+  for (let round = 0; round < 3 && /\$\{/.test(out); round++) {
+    out = out.replace(/\$\{([^}]+)\}/g, (_, expr) => {
+      const name = expr.trim();
+      return ctx.consts.has(name) ? String(ctx.consts.get(name)) : expr;
+    });
+  }
+  return out;
+}
+
+/**
+ * 解析方法装饰器区里的 `@ApiParam({ name, description })`（可跨行）。
+ *
+ * ⚠️ 路径参数（`:id` / `:opCode` / `:task`）**不走 DTO**，描述只可能写在 `@ApiParam` 里；
+ *    没写就是没有，机器人只会问「还需要：opCode」。⇒ 想让它说人话，得在控制器补注解
+ *    （顺便也补了 swagger —— 描述只维护一处）。
+ */
+function parseApiParams(deco) {
+  const out = new Map();
+  for (const m of deco.matchAll(/@ApiParam\(\s*\{([\s\S]*?)\}\s*\)/g)) {
+    const body = m[1];
+    const nm = /name:\s*['"]([\w]+)['"]/.exec(body);
+    if (!nm) continue;
+    const ds = /description:\s*(['"`])([\s\S]*?)\1/.exec(body);
+    if (ds) out.set(nm[1], ds[2]);
+  }
+  return out;
+}
+
+/**
+ * 收集一行装饰器里能给用户看的提示。
+ *
+ * ⚠️ 描述在本仓有三种写法，认不全一种，机器人就会问出
+ *    「还需要：role」这种没人看得懂的话：
+ *    ① 单行单引号 `@ApiProperty({ description: 'xxx' })`
+ *    ② 模板字符串 `` description: `角色：${ROLE_HINT}` ``（为和 `@IsIn` 共用取值）
+ *    ③ 跨行 `description:` 换行、值落在下一行
+ *    另：`@IsIn(ADMIN_ROLES)` 这种传常量的写法，`[字面量]` 那条正则抓不到。
+ */
+function collectDecoratorHints(line, pending, ctx) {
   if (/ApiPropertyOptional|@IsOptional/.test(line)) pending.optional = true;
-  const desc = /description:\s*'([^']*)'/.exec(line);
-  if (desc) pending.hints.push(desc[1]);
+
+  // ③ 跨行取值：上一行只写了 `description:`
+  if (pending.awaitDesc) {
+    pending.awaitDesc = false;
+    const v = /^\s*(['"`])([\s\S]*)\1/.exec(line);
+    if (v) pending.hints.push(inlineTpl(v[2], ctx));
+  }
+
+  // ① ② 同行：单引号 / 双引号 / 反引号都认（lazy 到同类型闭合引号）
+  const desc = /description:\s*(['"`])([\s\S]*?)\1/.exec(line);
+  if (desc) pending.hints.push(inlineTpl(desc[2], ctx));
+  else if (/description:\s*$/.test(line)) pending.awaitDesc = true;
+
   const isIn = /@IsIn\(\s*\[([^\]]*)\]/.exec(line);
-  if (isIn) pending.hints.push('取值：' + isIn[1].replace(/['"\s]/g, ''));
+  if (isIn) pushValues(pending, isIn[1].replace(/['"\s]/g, ''));
+  else {
+    const isInName = /@IsIn\(\s*([A-Za-z_]\w*)/.exec(line);
+    if (isInName) {
+      pushValues(pending, ctx.consts.get(isInName[1]) ?? '');
+    }
+  }
   const en = /@IsEnum\((\w+)\)/.exec(line);
   if (en) pending.hints.push('枚举：' + en[1]);
 }
@@ -95,7 +185,7 @@ function inferType(t) {
  * ⚠️ 装饰器可能是多行的（`@ApiProperty({` … `})`），必须按括号深度整块跳过，
  *    否则续行 `description: '...'` 会被误判成一个叫 description 的字段（实测踩过）。
  */
-function parseDtoClass(text, className) {
+function parseDtoClass(text, className, ctx) {
   const lines = text.split('\n');
   const startIdx = lines.findIndex((l) =>
     new RegExp(`^export\\s+class\\s+${className}\\b`).test(l.trim()),
@@ -114,13 +204,13 @@ function parseDtoClass(text, className) {
     if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) continue;
 
     if (inDec) {
-      collectDecoratorHints(line, pending);
+      collectDecoratorHints(line, pending, ctx);
       depth += countParens(line);
       if (depth <= 0) inDec = false;
       continue;
     }
     if (line.startsWith('@')) {
-      collectDecoratorHints(line, pending);
+      collectDecoratorHints(line, pending, ctx);
       depth = countParens(line);
       inDec = depth > 0;
       continue;
@@ -140,15 +230,94 @@ function parseDtoClass(text, className) {
   return params.length ? params : null;
 }
 
+/**
+ * 全仓常量索引（名字 → 真值字符串）。
+ *
+ * 用途：把 `` description: `角色：${ROLE_HINT}` `` 和 `@IsIn(ADMIN_ROLES)` 里的
+ * 常量引用还原成用户能看懂的字面量。
+ *
+ * ⚠️ 为什么要做：这些枚举字段恰恰是**最需要提示**的（填错就 422），而它们的描述
+ *    又恰恰最爱写成模板字符串（为了和 `@IsIn` 共用一份取值、不重复维护）。
+ *    于是「最爱写提示的地方」=「提示最容易丢的地方」，机器人只能干巴巴地问
+ *    「还需要：role」。2026-11-02 实测 94 个必填参数里 17 个提示为空。
+ */
+function buildConstIndex() {
+  const idx = new Map();
+  const objKeys = new Map();
+  const files = walkTs(SRC).map((f) => [f, fs.readFileSync(f, 'utf8')]);
+
+  for (const [, text] of files) {
+    for (const m of text.matchAll(/^(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*(['"`])([\s\S]*?)\2;/gm)) {
+      idx.set(m[1], m[3]);
+    }
+    for (const m of text.matchAll(/^(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*(-?\d[\d_.]*)\s*;/gm)) {
+      idx.set(m[1], m[2]);
+    }
+    for (const m of text.matchAll(/^(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*\[([^\]]*)\]/gm)) {
+      idx.set(m[1], m[2].replace(/['"`\s]/g, ''));
+    }
+  }
+
+  // 对象字面量的顶层键（供 `Object.keys(X)` 用）
+  // ⚠️ 必须**按行**匹配行首的 `标识符:`：逐字符扫会把值里的字符串也当成键 ——
+  //    实测 `ROLE_MENUS` 的值是菜单路径数组，逐字符版把 `/system/queue` 等
+  //    全收进来，于是 `role` 的提示变成「super_admin / admin / operator / /system/ …」。
+  for (const [, text] of files) {
+    for (const m of text.matchAll(/^(?:export\s+)?const\s+([A-Za-z_]\w*)[\s\S]{0,80}?=\s*\{/gm)) {
+      const open = m.index + m[0].length - 1;
+      let depth = 0;
+      let end = -1;
+      for (let i = open; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) {
+            end = i;
+            break;
+          }
+        }
+      }
+      if (end < 0) continue;
+      const keys = [];
+      for (const rawLine of text.slice(open + 1, end).split('\n')) {
+        const line = rawLine.trim();
+        if (!line || /^(\/\/|\*|\/\*)/.test(line)) continue;
+        const km = /^['"]?([A-Za-z_]\w*)['"]?\s*:/.exec(line);
+        if (km) keys.push(km[1]);
+      }
+      if (keys.length) objKeys.set(m[1], keys.join(','));
+    }
+  }
+
+  // 派生：`const HINT = ARR.join(' / ')` / `const ROLES = Object.keys(MENUS)`
+  for (const [, text] of files) {
+    for (const m of text.matchAll(
+      /^(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\.join\(\s*(['"`])([\s\S]*?)\3\s*\)/gm,
+    )) {
+      const arr = idx.get(m[2]);
+      if (arr) idx.set(m[1], arr.split(',').filter(Boolean).join(m[4]));
+    }
+    for (const m of text.matchAll(
+      /^(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*Object\.keys\(\s*([A-Za-z_]\w*)\s*\)/gm,
+    )) {
+      const keys = objKeys.get(m[2]);
+      if (keys) idx.set(m[1], keys);
+    }
+  }
+  return idx;
+}
+
 function buildDtoIndex() {
   const idx = new Map();
   const parents = new Map();
+  const ctx = { consts: buildConstIndex() };
   for (const f of walkTs(SRC)) {
     const text = fs.readFileSync(f, 'utf8');
     const names = [...text.matchAll(/^export\s+class\s+(\w+)/gm)].map((m) => m[1]);
     for (const n of names) {
       if (!/Dto$|Query$|Params$|Body$/.test(n)) continue;
-      const fields = parseDtoClass(text, n);
+      const fields = parseDtoClass(text, n, ctx);
       if (fields) idx.set(n, fields);
       const pm = new RegExp(`^export\\s+class\\s+${n}\\s+extends\\s+(\\w+)`, 'm').exec(text);
       if (pm) parents.set(n, pm[1]);
@@ -345,14 +514,23 @@ function parseController(file, dtoIndex, roleConsts) {
       if (mn) methodName = mn[1];
 
       const pathParams = [...sig.matchAll(/@Param\(\s*'(\w+)'\s*\)/g)].map((m) => m[1]);
+      // `sig` 从方法签名行开始，**不含**装饰器 ⇒ `@ApiParam` 得单独从上面那一段取
+      const decoBlock = lines.slice(j + 1, sigStart > 0 ? sigStart : j + 40).join('\n');
+      const apiParams = parseApiParams(decoBlock);
       const bodyType = /@Body\(\s*\)\s*\w+\s*:\s*(\w+)/.exec(sig);
       const queryType = /@Query\(\s*\)\s*\w+\s*:\s*(\w+)/.exec(sig);
       const inlineBody = /@Body\(\s*\)\s*\w+\s*:\s*\{/.test(sig);
       const inlineQuery = /@Query\(\s*\)\s*\w+\s*:\s*\{/.test(sig);
 
       const params = [];
-      for (const p of pathParams)
-        params.push({ name: p, required: true, type: 'string', in: 'path' });
+      for (const p of pathParams) {
+        const hint = apiParams.get(p);
+        params.push(
+          hint
+            ? { name: p, required: true, type: 'string', in: 'path', hint }
+            : { name: p, required: true, type: 'string', in: 'path' },
+        );
+      }
       if (bodyType) {
         const fields = dtoIndex.get(bodyType[1]);
         if (fields) for (const f of fields) params.push({ ...f, in: 'body' });

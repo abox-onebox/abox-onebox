@@ -414,7 +414,10 @@ export class WecomChatService {
     const next = item.entry.params.find((p) => p.required && p.name !== '*' && !op.params[p.name]);
     if (next) {
       op.asking = next.name;
-      const hint = next.hint ? `\n（${next.hint.slice(0, 100)}）` : '';
+      // ⚠️ 160 不是随手写的：目录里 hint 的上限是 140，而取值恰恰排在最后
+      //    （如「角色：super_admin / admin / …；取值：super_admin,admin,operator,…」117 字）——
+      //    截到 100 会把**取值尾巴**切掉，用户看到的是半句话（`…financ`）。
+      const hint = next.hint ? `\n（${next.hint.slice(0, 160)}）` : '';
       // 这里刻意不写「回 2 取消」：填参数时纯数字是值，写 2 会让人以为不能填 2
       return `「${displayName(item.entry)}」还需要：${next.name}${hint}\n直接回值就行；要停就回「取消」。`;
     }

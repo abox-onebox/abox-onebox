@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 
 import { Roles } from '../common/decorators/auth.decorator';
 import { OperationLog } from '../common/decorators/operation-log.decorator';
@@ -52,6 +52,11 @@ export class ScheduleAdminController {
   }
 
   @Post(':task/run')
+  @ApiParam({
+    name: 'task',
+    description:
+      '任务名（`定时任务`列表里的 `task` 字段，如 `meal-publish`）；不确定就先查列表再填',
+  })
   @HttpCode(200)
   @OperationLog({ module: 'schedule', action: '手动补跑定时任务' })
   @ApiOperation({

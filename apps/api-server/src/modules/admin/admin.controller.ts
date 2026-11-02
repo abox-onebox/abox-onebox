@@ -9,7 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 
 import { CurrentAdmin, Roles } from '../../common/decorators/auth.decorator';
 import { OperationLog } from '../../common/decorators/operation-log.decorator';
@@ -96,6 +96,11 @@ export class AdminController {
   }
 
   @Put('roles/:role')
+  @ApiParam({
+    name: 'role',
+    description:
+      '角色名（super_admin / admin / operator / finance / viewer / supplier —— 取值见「角色矩阵」页）',
+  })
   @OperationLog({ module: 'system', action: '调整角色权限' })
   @ApiOperation({
     summary: 'D55 权限调整 —— 一期不支持（10001）',

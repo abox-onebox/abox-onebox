@@ -8,7 +8,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { CurrentAdmin, Roles } from '../../../common/decorators/auth.decorator';
 import type { JwtPayload } from '../../../common/decorators/auth.decorator';
 import { OperationLog } from '../../../common/decorators/operation-log.decorator';
@@ -66,6 +66,11 @@ export class OpBlocklistController {
   }
 
   @Delete(':opCode')
+  @ApiParam({
+    name: 'opCode',
+    description:
+      '要解禁的操作编码（如 `get_admin_stats_dashboard`）；让机器人发「操作目录」可拿到全部编码',
+  })
   @ApiOperation({ summary: '解除某 op 的禁止（记录操作人与目标 op，可审计）' })
   @OperationLog({ module: 'system', action: '解除AI禁止清单', targetParam: 'opCode' })
   async remove(@Param('opCode') opCode: string, @CurrentAdmin() actor: JwtPayload) {

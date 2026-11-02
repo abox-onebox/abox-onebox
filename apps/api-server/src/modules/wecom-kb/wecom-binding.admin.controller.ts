@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { ApiParam } from '@nestjs/swagger';
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { Roles } from '../../common/decorators/auth.decorator';
 import { WecomBindingService } from './wecom-binding.service';
@@ -35,6 +36,10 @@ export class WecomBindingAdminController {
 
   /** 只改身份等级（放权 / 收回）；绑定不存在返回 found=false，不静默成功 */
   @Patch(':userId/tier')
+  @ApiParam({
+    name: 'userId',
+    description: '企微 userid（**不是**平台用户 id）；已绑定的可在绑定列表里复制',
+  })
   async setTier(
     @Param('userId') userId: string,
     @Body() dto: SetWecomTierDto,
@@ -51,6 +56,10 @@ export class WecomBindingAdminController {
    * 目录里已失效的编码会被丢弃并回传 `unknown`，让页面能如实提示，而不是静默吞掉。
    */
   @Patch(':userId/grant')
+  @ApiParam({
+    name: 'userId',
+    description: '企微 userid（**不是**平台用户 id）；已绑定的可在绑定列表里复制',
+  })
   async setGrant(
     @Param('userId') userId: string,
     @Body() dto: SetWecomGrantDto,
@@ -80,6 +89,10 @@ export class WecomBindingAdminController {
   }
 
   @Delete(':userId')
+  @ApiParam({
+    name: 'userId',
+    description: '企微 userid（**不是**平台用户 id）；已绑定的可在绑定列表里复制',
+  })
   async remove(@Param('userId') userId: string): Promise<{ ok: boolean }> {
     await this.svc.remove(userId);
     return { ok: true };
