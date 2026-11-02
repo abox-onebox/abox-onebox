@@ -26,6 +26,7 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import { callLLM, extractJson } from './lib/cloud-llm.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -36,7 +37,29 @@ const argv = process.argv.slice(2);
 let briefText = null;
 let briefFile = null;
 let slug = null;
-let outRoot = resolve(ROOT, 'releases', 'campaign');
+/**
+ * 输出目录：默认优先落在 <ROOT>/releases/campaign（与文档/直觉一致），
+ * 但若运行环境对该路径不可写（如容器内以非 root 用户运行、/app 属主 root 且 755），
+ * 自动回退到「可写且持久」的挂载卷目录 <ROOT>/data/uploads/campaign，再不行才退 /tmp。
+ * 这样无论部署形态如何，节点 B 都能落盘（原则零：优雅降级，不把写入失败抛给用户）。
+ */
+function pickWritableDir(...cands) {
+  for (const c of cands) {
+    try {
+      mkdirSync(c, { recursive: true });
+      return c;
+    } catch {
+      /* 该候选不可写，试下一个 */
+    }
+  }
+  return cands[cands.length - 1];
+}
+const OUT_CANDIDATES = [
+  resolve(ROOT, 'releases', 'campaign'),
+  resolve(ROOT, 'data', 'uploads', 'campaign'),
+  resolve(tmpdir(), 'abox-campaign'),
+];
+let outRoot = pickWritableDir(...OUT_CANDIDATES);
 let noLlm = false;
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--brief') briefText = argv[++i] || null;
