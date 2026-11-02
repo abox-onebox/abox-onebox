@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { spawn } from 'child_process';
-import { existsSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'path';
 import { isAfterCutoff } from '../../common/utils/time';
@@ -529,6 +529,7 @@ export class WecomChatService {
     ];
     for (const c of candidates) {
       try {
+        mkdirSync(c, { recursive: true });
         writeFileSync(join(c, '.w'), '');
         unlinkSync(join(c, '.w'));
         return c;

@@ -16,7 +16,7 @@
  *     未配置则只回显 + 落盘，退回「人看后台/看会话」的传统路径。
  */
 
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -43,7 +43,8 @@ function pickWritableDir() {
   ];
   for (const c of candidates) {
     try {
-      // 试探写权限
+      // 先确保目录存在（recursive），再试探写权限
+      mkdirSync(c, { recursive: true });
       writeFileSync(join(c, '.w'), '');
       unlinkSync(join(c, '.w'));
       return c;
