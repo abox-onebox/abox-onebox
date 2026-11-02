@@ -281,10 +281,47 @@
         <el-alert type="warning" :closable="false" class="note">
           <template #title>
             <b>这里会真的写库。</b>它不是沙箱 —— 写操作仍要「回 1」才执行，但点了就是真执行。
-            用的也是<b>负责人身份</b>与线上同一套判据，所以跑通 = 企微通了就能用。
-            审计里记的是<b>你的姓名</b>。
+            判据与线上同一套，所以跑通 = 企微通了就能用。审计里记的是<b>你的姓名</b>。
           </template>
         </el-alert>
+
+        <!-- 身份档：只以负责人跑，就证明不了「同事放权后能做什么」 -->
+        <div class="sim__id">
+          <span class="sim__id-label">以谁的身份</span>
+          <el-radio-group v-model="simTier" size="small" @change="switchSimIdentity">
+            <el-radio-button label="owner">负责人 · 全功能</el-radio-button>
+            <el-radio-button label="staff">同事 · 仅其本职</el-radio-button>
+          </el-radio-group>
+        </div>
+
+        <el-select
+          v-if="simTier === 'staff'"
+          v-model="simGranted"
+          multiple
+          filterable
+          clearable
+          size="small"
+          class="sim__grant"
+          placeholder="可选：额外特批几项（模拟放权给他）"
+          @change="switchSimIdentity"
+        >
+          <el-option
+            v-for="o in simGrantOptions"
+            :key="o.code"
+            :label="`${o.label}（${o.module}）`"
+            :value="o.code"
+          />
+        </el-select>
+
+        <p v-if="simTier === 'staff'" class="dialog__tip sim__grant-tip">
+          <template v-if="simGranted.length === 0">
+            不放权 = 同事真实的本职能力（他越权的话这里会如实说「做不了」）。
+          </template>
+          <template v-else>
+            勾了 {{ simGranted.length }} 项 ⇒ 这几项会被<b>以负责人身份</b>代执行（后台只认角色，
+            不认人），清单之外的仍然做不了。
+          </template>
+        </p>
 
         <div class="sim__log">
           <div v-if="simLog.length === 0" class="dialog__tip">
@@ -437,15 +474,8 @@ async function openGrant(row: WecomBindingRow): Promise<void> {
   grantModule.value = '';
   grantKeyword.value = '';
   grantVisible.value = true;
-  if (grantOps.value.length > 0) return;
-  // 目录只在首次打开时拉一次：它是静态的（随部署变，不随操作变）
-  opsLoading.value = true;
-  try {
-    const r = await fetchWecomOps();
-    grantOps.value = r?.items ?? [];
-  } finally {
-    opsLoading.value = false;
-  }
+  // 目录只在首次打开时拉一次（静态数据）；与试跑台共用同一个加载器
+  await ensureOps();
 }
 
 /**
@@ -667,9 +697,34 @@ const simVisible = ref(false);
 const simInput = ref('');
 const simBusy = ref(false);
 const simLog = ref<SimMsg[]>([]);
+/** 以谁的身份跑：默认负责人（最常用）；切到同事才能验「放权到底生效没」 */
+const simTier = ref<WecomTier>('owner');
+/** 同事档的额外特批（与真实绑定同一语义：加号 —— 只多给这几项） */
+const simGranted = ref<string[]>([]);
+
+/**
+ * 特批可选项：只列「同事本来做不了」的项。
+ *
+ * 与特批抽屉不同 —— 那里必须把「本来就会」的也列出来（管理者要看清他现在有什么边界），
+ * 这里只是模拟，勾了不会改变任何结论，只会让下拉更长，故过滤掉。
+ */
+const simGrantOptions = computed(() => grantOps.value.filter((o) => !o.staffBase));
+
+/** 目录只在首次打开时拉一次：它是静态的（随部署变，不随操作变） */
+async function ensureOps(): Promise<void> {
+  if (grantOps.value.length > 0) return;
+  opsLoading.value = true;
+  try {
+    const r = await fetchWecomOps();
+    grantOps.value = r?.items ?? [];
+  } finally {
+    opsLoading.value = false;
+  }
+}
 
 function openSim(): void {
   simVisible.value = true;
+  void ensureOps();
 }
 
 async function sendSim(): Promise<void> {
@@ -679,10 +734,41 @@ async function sendSim(): Promise<void> {
   simInput.value = '';
   simBusy.value = true;
   try {
-    const r = await simulateWecomChat(text);
+    const r = await simulateWecomChat(text, {
+      tier: simTier.value,
+      grantedOps: simGranted.value,
+    });
+    // 死编码要当场说：不然「勾了 3 项、只生效 2 项」会被当成机器人算错
+    const dead = r?.unknown ?? [];
+    if (dead.length > 0) {
+      simLog.value.push({
+        role: 'bot',
+        text: `（已忽略 ${dead.length} 项在功能目录里不存在的编码：${dead.slice(0, 3).join('、')}）`,
+      });
+    }
     simLog.value.push({ role: 'bot', text: r?.reply ?? '（后台没有回复内容）' });
   } finally {
     simBusy.value = false;
+  }
+}
+
+/**
+ * 切身份 = 换一个会话。
+ *
+ * 服务端按「管理员 + 身份档 + 清单指纹」分会话，切过去本来就是新会话；
+ * 这里再显式清一次并清屏，是为了不把两个身份的对话混在同一屏 ——
+ * 混着看最容易得出错结论（「同事也能退款？」其实上一句是负责人问的）。
+ */
+async function switchSimIdentity(): Promise<void> {
+  simLog.value = [];
+  try {
+    await simulateWecomChat('取消', {
+      reset: true,
+      tier: simTier.value,
+      grantedOps: simGranted.value,
+    });
+  } catch {
+    // 清会话失败不挡住试用：真正的错误（执行账号没配好等）会在发第一句时如实回显
   }
 }
 
@@ -690,7 +776,11 @@ async function sendSim(): Promise<void> {
 async function resetSim(): Promise<void> {
   simBusy.value = true;
   try {
-    await simulateWecomChat('取消', true);
+    await simulateWecomChat('取消', {
+      reset: true,
+      tier: simTier.value,
+      grantedOps: simGranted.value,
+    });
     simLog.value = [];
     ElMessage.success('会话已清空');
   } finally {
@@ -758,6 +848,25 @@ onMounted(load);
   flex-direction: column;
   gap: $space-2;
   height: 100%;
+}
+
+.sim__id {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+}
+
+.sim__id-label {
+  color: $c-text-weak;
+  font-size: $fs-caption;
+}
+
+.sim__grant {
+  width: 100%;
+}
+
+.sim__grant-tip {
+  margin: 0;
 }
 
 .sim__log {

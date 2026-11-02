@@ -737,14 +737,36 @@ export function setWecomBindingTier(
  * 不是另写的模拟器 —— 试跑的结果对线上有效。
  *
  * ⚠️ **这里会真的写库**：它不是沙箱。写操作仍要「回 1」才执行，但点了就是真执行。
- * ⚠️ 执行身份固定为负责人（owner），故 `execAs` 恒为 `owner`；
- *    审计里记的是**当前登录管理员的姓名**（`X-KB-Operator`），不是「机器人」。
+ * 审计里记的是**当前登录管理员的姓名**（`X-KB-Operator`），不是「机器人」。
+ *
+ * ⭐⭐ **身份可选**（`tier` + `grantedOps`）：不指定时按负责人跑。
+ *    指定 `staff` 才是「同事看到的结论」—— 只以负责人跑，证明不了放权到底有没有生效。
+ *    注意 `execAs` 可能与所选 `tier` **不同**：同事一旦有特批项，执行身份会升到
+ *    `owner`（否则后台 `@Roles` 直接 403），那时限制由清单逐条判，`execAs` 会回 `owner`。
  */
+export interface SimulateWecomResult {
+  reply: string;
+  execAs: 'owner' | 'staff' | 'none';
+  /** 回显所选档位（与实际执行身份可能不同，见上） */
+  tier?: WecomTier;
+  /** 生效的放权条数 */
+  granted?: number;
+  /** 目录里已失效、被剔除的编码（不提示会让人以为「放权了却没生效」） */
+  unknown?: string[];
+}
+
+export interface SimulateWecomOptions {
+  /** true = 清掉「这个管理员 + 这个身份档」的试跑会话 */
+  reset?: boolean;
+  tier?: WecomTier;
+  grantedOps?: string[];
+}
+
 export function simulateWecomChat(
   text: string,
-  reset = false,
-): Promise<{ reply: string; execAs: string }> {
-  return http.post<{ reply: string; execAs: string }>('/admin/wecom-kb/simulate', { text, reset });
+  opts: SimulateWecomOptions = {},
+): Promise<SimulateWecomResult> {
+  return http.post<SimulateWecomResult>('/admin/wecom-kb/simulate', { text, ...opts });
 }
 
 /**

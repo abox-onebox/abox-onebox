@@ -30,6 +30,25 @@ export const TIER_LABEL: Record<Tier, string> = {
 };
 
 /**
+ * 执行身份：机器人该用**哪个角色**的服务账号去打后台。
+ *
+ *   owner → admin 角色（全部端点）
+ *   staff → operator 角色（只有它本来能做的那些，其余由后台 @Roles 直接拒）
+ *
+ * ⚠️ 同事一旦有**单独放权清单**，执行身份必须升到 owner：
+ *    被放权的端点（如退款审批）`@Roles` 里没有 operator，用 operator 令牌打过去
+ *    会被后台 403 —— 现象是「后台明明点了放权，机器人还说做不了」。
+ *    安全性**不依赖身份本身**，而靠 `canExec` 按清单逐条判（执行入口 + 展示层各一次）：
+ *    清单外的端点在 `execCatalog` 入口就被 403 挡掉，根本发不到后台。
+ *
+ * ⚠️⚠️ 这条规则**只能有一个出处**。试跑台若自己写死 `owner`，跑出来的就不是
+ *    「同事看到的结论」—— 那样试跑等于没试（2026-11-02 实修：试跑台看不出放权效果）。
+ */
+export function execTierOf(tier: Tier, granted?: readonly string[]): Tier {
+  return tier === 'owner' || (granted?.length ?? 0) > 0 ? 'owner' : 'staff';
+}
+
+/**
  * 高危模块（写操作一律按「动钱/动单/动权」处理）。
  *
  * ⚠️ 必须用**真实模块名**（路径第 2 段，取自实际控制器前缀），不能凭印象写单数：

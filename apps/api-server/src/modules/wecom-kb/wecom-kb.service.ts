@@ -6,6 +6,7 @@ import { WecomBindingService } from './wecom-binding.service';
 import { WecomSvcTokenService } from './wecom-svc-token.service';
 import { WecomChatService } from './wecom-chat.service';
 import { looksLikeStructuredCommand } from './chat-flow';
+import { execTierOf } from './op-policy';
 import { parseCommand, Intent, HELP_TEXT } from './command-parser';
 
 /**
@@ -109,8 +110,8 @@ export class WecomKbService implements OnModuleInit {
     //    清单外的端点在 `execCatalog` 里就被 403 挡掉，根本发不到后台。
     const tier = binding.tier === 'owner' ? 'owner' : 'staff';
     const grantedOps = binding.grantedOps || [];
-    const execTier: 'owner' | 'staff' =
-      tier === 'owner' || grantedOps.length > 0 ? 'owner' : 'staff';
+    // 身份升级规则见 `op-policy.execTierOf`（试跑台用的是同一个函数，不另写一份）
+    const execTier = execTierOf(tier, grantedOps);
     const svcToken = await this.svcTokenSvc.get(execTier);
     const execToken = svcToken ?? binding.operatorToken ?? null;
     if (!execToken) {

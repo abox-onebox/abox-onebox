@@ -1,21 +1,54 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { CurrentAdmin, Roles } from '../../common/decorators/auth.decorator';
 import type { JwtPayload } from '../../common/decorators/auth.decorator';
-import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { WecomChatService } from './wecom-chat.service';
 import { WecomSvcTokenService } from './wecom-svc-token.service';
 import type { Binding } from './op-proxy.service';
+import { execTierOf, normalizeGrant } from './op-policy';
+import type { Tier } from './op-policy';
 
 class SimulateDto {
   @IsString()
   @MaxLength(500)
   text!: string;
 
-  /** true = 先清掉这个管理员的试跑会话（等价于在企微里发「取消」） */
+  /** true = 先清掉这个管理员（+ 这个身份档）的试跑会话（等价于在企微里发「取消」） */
   @IsOptional()
   @IsBoolean()
   reset?: boolean;
+
+  /**
+   * 以谁的身份跑：`owner` = 负责人（默认）/ `staff` = 同事。
+   *
+   * 必须能选，否则试跑台只能验「负责人视角」：同事档（69 项）与「特批了某项」
+   * 这两种最需要验的状态，恰恰是企微被备案卡住时唯一验不了的 ——
+   * 而它们也正是这套权限设计的重点。
+   */
+  @IsOptional()
+  @IsIn(['owner', 'staff'])
+  tier?: Tier;
+
+  /** 同事档的「单独放权」清单（空 = 同事本来能做的那些；有值 = 额外允许） */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  grantedOps?: string[];
+}
+
+/** 试跑结果：`reply` 是机器人要回的那段话，其余是给页面看的「这次以什么身份、按什么清单跑的」 */
+export interface SimulateResult {
+  reply: string;
+  /** 实际执行身份 —— 可能与所选 tier 不同（同事有清单时会升 owner，见 `execTierOf`） */
+  execAs: 'owner' | 'staff' | 'none';
+  /** 回显所选档位，便于页面把「你选的」和「实际执行的」并排显示 */
+  tier?: Tier;
+  /** 生效的放权条数（目录里已失效的编码会被剔除，不计入） */
+  granted?: number;
+  /** 被剔除的死编码 —— 不提示的话会让人以为「放权了却没生效」 */
+  unknown?: string[];
 }
 
 /**
@@ -24,18 +57,24 @@ class SimulateDto {
  * ## 为什么必须有它
  *
  * 企微回调地址要求**域名**（企业微信不收 IP），备案未完成前机器人收不到任何消息 ——
- * 也就是说「它能操作 131 个后台功能」这件事，**在当前环境里无法被任何人验证一次**。
+ * 也就是说「它能操作后台全部功能」这件事，**在当前环境里无法被任何人验证一次**。
  * 「门禁全绿 ≠ 功能可用」在本项目已经踩过：写完了、测过了，但没人真的跑通过一遍。
  * 这个端点走**服务端内部同一套** `WecomChatService.reply()`，不复制任何判据，
  * 所以试跑跑通 ≈ 企微通了就能用。
  *
+ * ## 两种身份都能试（2026-11-02 加）
+ *
+ * 只能以负责人跑时，试跑台证明得了「功能通了」，证明不了「同事放权后到底能做什么」——
+ * 而后者才是这套权限设计的目的。故 `tier` + `grantedOps` 可指定，
+ * 身份升级规则复用 `op-policy.execTierOf`（与真实回调链路**同一个函数**）。
+ *
  * ## 安全边界（这里执行是**真的**写库，不是沙箱）
  *
- *   · 只有 `super_admin / admin` 能进（`AdminGuard` + `@Roles`），且**用负责人身份**执行；
+ *   · 只有 `super_admin / admin` 能进（`AdminGuard` + `@Roles`）；
  *   · 审计不丢人：`X-KB-Operator` 记的是**当前登录管理员姓名**（不是「机器人」），
  *     事后在 `ab_operation_log.kb_operator` 里能查到是谁试的；
- *   · 会话按管理员隔离（`sim:<id>`），与真实企微 userid 不共用状态，
- *     避免「试跑时填了一半的参数」串到真人的对话里；
+ *   · 会话按「管理员 + 身份档 + 放权清单」隔离（`sim:<id>:...`），
+ *     与真实企微 userid 不共用状态，也避免「负责人填了一半的草稿」被同事档接着用；
  *   · 高危操作仍然是「草稿 → 回 1 才执行」两轮，试跑也一样 —— 不会因为点了试跑就立刻动钱。
  *
  * ## 为什么不做成「沙箱 / 只读模式」
@@ -57,16 +96,27 @@ export class WecomSimulateController {
   async simulate(
     @Body() dto: SimulateDto,
     @CurrentAdmin() admin: JwtPayload,
-  ): Promise<{ reply: string; execAs: string }> {
+  ): Promise<SimulateResult> {
     const who = admin?.username || 'admin#' + String(admin?.sub ?? '?');
-    // 用负责人执行账号：试跑要能覆盖 131 项，用 operator 账号会有 62 项直接回「做不了」，
-    // 那样的试跑结论是假的（会让人以为功能没做）。
-    const token = await this.svcToken.get('owner');
+    const tier: Tier = dto.tier === 'staff' ? 'staff' : 'owner';
+
+    // 死编码一律剔除：否则页面上「勾了 3 项」实际只生效 2 项，且没有任何提示
+    const { valid, unknown } = normalizeGrant(dto.grantedOps);
+
+    // ★ 与真实回调链路同一个函数（不另写一份规则）
+    const execTier = execTierOf(tier, valid);
+    const token = await this.svcToken.get(execTier);
     if (!token) {
+      const need =
+        execTier === 'owner'
+          ? 'WECOM_OWNER_USERNAME / WECOM_OWNER_PASSWORD（负责人执行账号）'
+          : 'WECOM_SVC_USERNAME / WECOM_SVC_PASSWORD（同事执行账号）';
       return {
-        reply:
-          '负责人执行账号还没配好（服务器 .env.prod 缺 WECOM_OWNER_USERNAME / WECOM_OWNER_PASSWORD），暂时没法试跑。',
+        reply: `「${execTier === 'owner' ? '负责人' : '同事'}」执行账号还没配好：服务器 .env.prod 缺 ${need}，暂时没法试跑。`,
         execAs: 'none',
+        tier,
+        granted: valid.length,
+        unknown,
       };
     }
 
@@ -75,18 +125,42 @@ export class WecomSimulateController {
       operatorName: who,
       operatorToken: token,
       approverToken: null,
-      tier: 'owner',
-      grantedOps: [],
+      tier,
+      grantedOps: valid,
     };
 
     const text = dto.reset ? '取消' : dto.text;
     try {
-      const reply = await this.chat.reply('sim:' + String(admin?.sub ?? '0'), text, b);
-      return { reply, execAs: 'owner' };
+      const reply = await this.chat.reply(this.sessionKey(admin, tier, valid), text, b);
+      return { reply, execAs: execTier, tier, granted: valid.length, unknown };
     } catch (e) {
       // 试跑台自己不能把异常抛成 500：那样页面上只会看到「请求失败」，
       // 而真正有价值的信息是「机器人这一句崩在哪」。
-      return { reply: '机器人这一句处理出错：' + (e as Error).message, execAs: 'owner' };
+      return {
+        reply: '机器人这一句处理出错：' + (e as Error).message,
+        execAs: execTier,
+        tier,
+        granted: valid.length,
+        unknown,
+      };
     }
+  }
+
+  /**
+   * 会话键：管理员 + 身份档 + 放权清单指纹。
+   *
+   * 为什么把清单也算进去：同一个管理员先以「同事（无特批）」试一句「找 退款」，
+   * 再切到「同事 + 特批退款」接着回「1」——若共用会话，那次执行用的还是上一档的上下文，
+   * 结论就会莫名其妙。清单变了就当换了一个人，各聊各的。
+   */
+  private sessionKey(admin: JwtPayload, tier: Tier, granted: readonly string[]): string {
+    const id = String(admin?.sub ?? '0');
+    if (tier === 'owner') return 'sim:' + id + ':owner';
+    if (granted.length === 0) return 'sim:' + id + ':staff';
+    const h = crypto
+      .createHash('sha1')
+      .update([...granted].sort().join(','))
+      .digest('hex');
+    return 'sim:' + id + ':staff:' + h.slice(0, 8);
   }
 }

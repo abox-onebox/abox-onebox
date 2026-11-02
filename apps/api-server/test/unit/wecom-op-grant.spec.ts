@@ -1,6 +1,9 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   allItems,
   canExec,
+  execTierOf,
   find,
   isGranted,
   itemsOfModule,
@@ -222,5 +225,52 @@ describe('放权 · tier 类型边界', () => {
       // 不断言具体结果，只断言「有明确结论且不抛」
       expect(() => canExec(t, find('post_admin_meal_assignments')!.entry)).not.toThrow();
     }
+  });
+});
+
+/**
+ * 执行身份的同源性
+ *
+ * 背景（2026-11-02）：试跑台原先写死用负责人令牌，于是它能证明「功能通了」，
+ * 却证明不了「同事放权后能做什么」—— 而后者才是放权设计的目的。
+ * 企微回调被备案卡住时，试跑台是唯一能验的口子，所以它必须能换身份跑。
+ *
+ * 光加参数不够：身份升级规则（同事有清单就升 owner）若在两处各写一份，
+ * 早晚会漂开 —— 那时试跑结论与真机不一致，而**没人看得出来**。
+ * 故这里同时钉两件事：判据本身正确 + 两个调用点确实用的是同一个函数。
+ */
+describe('执行身份 · 与真实链路同源', () => {
+  it('owner 恒为 owner；staff 无清单为 staff、有清单升 owner', () => {
+    expect(execTierOf('owner')).toBe('owner');
+    expect(execTierOf('owner', [])).toBe('owner');
+    expect(execTierOf('owner', ['post_admin_finance_refunds_id_approve'])).toBe('owner');
+
+    expect(execTierOf('staff')).toBe('staff');
+    expect(execTierOf('staff', [])).toBe('staff');
+
+    // ⭐ 核心：被放权的端点 @Roles 里通常没有 operator，不升 owner 就会 403
+    expect(execTierOf('staff', ['post_admin_finance_refunds_id_approve'])).toBe('owner');
+  });
+
+  it('清单里全是死编码 ⇒ 规整后为空 ⇒ 身份仍为 staff（不能因为「勾了」就升权）', () => {
+    const { valid } = normalizeGrant(['dead_code_xxx']);
+    expect(valid).toEqual([]);
+    expect(execTierOf('staff', valid)).toBe('staff');
+  });
+
+  const dir = path.join(__dirname, '../../src/modules/wecom-kb');
+  const read = (f: string): string => fs.readFileSync(path.join(dir, f), 'utf8');
+
+  it('真实链路与试跑台都调 execTierOf，没有各写一份内联规则', () => {
+    const svc = read('wecom-kb.service.ts');
+    const sim = read('wecom-simulate.admin.controller.ts');
+
+    expect(svc).toContain('execTierOf(');
+    expect(sim).toContain('execTierOf(');
+
+    // 内联写法一旦回来，就说明又分裂出第二份判据
+    expect(svc).not.toContain("grantedOps.length > 0 ? 'owner'");
+    // 试跑台写死 owner 正是这次要修的缺陷形状
+    expect(sim).not.toContain("get('owner')");
   });
 });
