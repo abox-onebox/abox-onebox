@@ -865,7 +865,10 @@ export class WecomChatService {
   }
 
   private async queryOrders(date: string | null, binding: Binding, now: Date): Promise<string> {
-    const res = await this.proxy.query('q_orders', date ? { date } : {}, binding);
+    // ⚠️ 参数名必须是 `mealDate`：`/admin/orders` 的 DTO 就这一个日期字段，
+    //    传 `date` 会被白名单校验挡下（`property date should not exist`），
+    //    而现象只是「没查到」——「今天多少单」因此一直是坏的，且很难从报错看出是字段名问题。
+    const res = await this.proxy.query('q_orders', date ? { mealDate: date } : {}, binding);
     if (res.code !== 0) return `没查到：${chatErrorText(res.code, res.message)}`;
 
     const day = date ? dateLabel(date, now) : '今天';

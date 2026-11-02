@@ -110,7 +110,7 @@ export function parseCommand(text: string): Intent {
 export const HELP_TEXT = [
   '【KB 助手 · 企业微信指令】',
   '帮助 / 我的申请',
-  '查询 <qKey> [k=v]  例：查询 q_orders date=2026-10-20',
+  '查询 <qKey> [k=v]  例：查询 q_orders mealDate=2026-10-20',
   '执行 <opCode> [k=v]  例：执行 publish_assignment id=123 action=publish',
   '提交 <opCode> [k=v]  例：提交 force_refund orderNo=A123 reason=错单',
   '撤回 <requestId> [reason=...]',

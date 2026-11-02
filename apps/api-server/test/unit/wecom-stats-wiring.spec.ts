@@ -165,6 +165,17 @@ describe('统计问句 · 接线', () => {
     expect(calls[0].code).toBe('q_orders');
   });
 
+  it('⭐ 订单查询的日期字段是 `mealDate`，不是 `date`（否则 DTO 白名单直接 400）', async () => {
+    const { svc, calls } = makeSvc(() => ({
+      summary: { totalCount: 40, validCount: 38, validQuantity: 42, abnormalCount: 1 },
+    }));
+    await svc.reply('u7b', '今天多少单', BINDING);
+    // `/admin/orders` 的 DTO 只有 mealDate；传 date 会回 `property date should not exist`，
+    // 而机器人把它转成「没查到：…」，于是这句（还在帮助文案里当示例）一直是坏的。
+    expect(calls[0].params).toHaveProperty('mealDate');
+    expect(calls[0].params).not.toHaveProperty('date');
+  });
+
   it('反面：说「取消」仍然清会话，不触发任何取数', async () => {
     const { svc, calls } = makeSvc(() => DASH);
     const out = await svc.reply('u8', '取消', BINDING);

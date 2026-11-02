@@ -251,13 +251,23 @@ export function compareDashboard(cur: unknown, prev: unknown): string[] {
   const cGmv = numField(cm, 'gmvFen');
   const pGmv = numField(pm, 'gmvFen');
   if (cGmv != null && pGmv != null) {
-    focus.push(`GMV ${fmtChange(cGmv, pGmv)}（${fmtYuanSigned(cGmv - pGmv)}）`);
+    // ⚠️ 上期为 0 时不能说「无法算变化（+¥567.60）」—— 那句话既没回答问题又多塞个数字。
+    //    实际情况是「上一档一单都没有」，直接这么说。
+    focus.push(
+      pGmv === 0 && cGmv !== 0
+        ? `GMV 本期 ${fmtYuan(cGmv)}（上一档为 0）`
+        : `GMV ${fmtChange(cGmv, pGmv)}（${fmtYuanSigned(cGmv - pGmv)}）`,
+    );
   }
 
   const cCnt = numField(cm, 'orderCount');
   const pCnt = numField(pm, 'orderCount');
   if (cCnt != null && pCnt != null && cCnt !== pCnt) {
-    focus.push(`单量 ${cCnt > pCnt ? '+' : ''}${fmtInt(cCnt - pCnt)} 单`);
+    focus.push(
+      pCnt === 0
+        ? `单量 0 → ${fmtInt(cCnt)} 单`
+        : `单量 ${cCnt > pCnt ? '+' : ''}${fmtInt(cCnt - pCnt)} 单`,
+    );
   }
 
   const cRefund = numField(cm, 'refundRate');
@@ -268,8 +278,12 @@ export function compareDashboard(cur: unknown, prev: unknown): string[] {
 
   const cProfit = numField(cm, 'grossProfitFen');
   const pProfit = numField(pm, 'grossProfitFen');
-  if (cProfit != null && pProfit != null) {
-    focus.push(`毛利 ${fmtChange(cProfit, pProfit)}`);
+  if (cProfit != null && pProfit != null && cProfit !== pProfit) {
+    focus.push(
+      pProfit === 0
+        ? `毛利 本期 ${fmtYuan(cProfit)}（上一档为 0）`
+        : `毛利 ${fmtChange(cProfit, pProfit)}`,
+    );
   }
 
   if (focus.length === 0) return [];

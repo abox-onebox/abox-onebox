@@ -720,7 +720,41 @@ export class StatsService {
       .getRawMany<{ userId: number | string; firstDate: string }>();
 
     const firstDateByUser = new Map<number, string>();
-    for (const r of firstRows) firstDateByUser.set(Number(r.userId), String(r.firstDate));
+    // ⚠️⚠️ 2026-11-02 实测崩溃：`/admin/stats/retention` 直接 500，日志是
+    //    `RangeError: Invalid time value`，抛在 `weekStartBizDate(first)` 里。
+    //    根因是这里 `String(r.firstDate)`：raw 别名一旦取不到就是 `undefined`，
+    //    `String(undefined)` = `'undefined'` —— **非空串**，所以下游 `if (!first) continue` 拦不住，
+    //    一路进 `shiftBizDate` → `Date.UTC(y, NaN, NaN)` → `new Date(NaN).toISOString()` → 抛错。
+    //
+    //    修法**不是**「取不到就跳过」：跳过会让「新客 + 回流 ≠ 活跃数」，
+    //    等于把「这人首单日不知道」悄悄算成「不是新客」，比崩溃更难发现。
+    //    而是从整行里把**日期值**找出来 —— `MIN(meal_date)` 必然有值，只是 key 名不可靠。
+    //    合法路径（key 叫 firstDate）结果完全不变。
+    const pickBizDate = (row: Record<string, unknown>): string => {
+      const direct = String(row.firstDate ?? '');
+      if (/^\d{4}-\d{2}-\d{2}$/.test(direct)) return direct;
+      for (const v of Object.values(row)) {
+        const s = String(v ?? '');
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+      }
+      return '';
+    };
+    let missingFirstDate = 0;
+    for (const r of firstRows) {
+      const d = pickBizDate(r as unknown as Record<string, unknown>);
+      const uid = Number(r.userId);
+      if (!d || !Number.isFinite(uid)) {
+        missingFirstDate += 1;
+        continue;
+      }
+      firstDateByUser.set(uid, d);
+    }
+    if (missingFirstDate > 0) {
+      // 不静默：留着这条日志，下次真出现脏数据时能立刻定位
+      this.logger.warn(
+        `留存：${missingFirstDate} 行取不到「首单出餐日」，这些用户不计入新客/回流（活跃数仍含他们）`,
+      );
+    }
 
     /** 首单出餐日（有效订单口径 · 超时未支付的单不能把用户判成老客） */
     const firstDateOf = (uid: number): string => firstDateByUser.get(uid) ?? '';

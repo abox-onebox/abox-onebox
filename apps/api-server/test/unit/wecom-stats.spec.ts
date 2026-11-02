@@ -321,6 +321,16 @@ describe('环比与阈值预警', () => {
     expect(lines).toContain('毛利为负');
   });
 
+  it('上期为 0 时说「本期多少 / 上一档为 0」，不说「无法算变化」', () => {
+    const cur = dash();
+    const prev = dash({ gmvFen: 0, orderCount: 0, grossProfitFen: 0 });
+    const lines = compareDashboard(cur, prev).join('\n');
+    // 线上实测原话是「GMV 上期为 0，无法算变化（+¥567.60）」—— 既没回答问题又多塞个数字
+    expect(lines).toContain('GMV 本期 ¥12,345.67（上一档为 0）');
+    expect(lines).toContain('单量 0 → 38 单');
+    expect(lines).not.toContain('无法算变化');
+  });
+
   it('上期结构不认识 ⇒ 空数组（宁可不给，不给错）', () => {
     expect(compareDashboard(dash(), {})).toEqual([]);
     expect(compareDashboard({}, dash())).toEqual([]);

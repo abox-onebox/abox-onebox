@@ -141,7 +141,14 @@ export const QUERY_META: Record<string, OpMeta> = {
     method: 'GET',
     endpoint: '/admin/orders',
     required: [],
-    optional: ['date', 'status', 'buildingGroupId'],
+    /**
+     * ⚠️ 日期字段名是 **`mealDate`** 不是 `date`（`AdminOrdersQueryDto` 的字段就那么叫）。
+     *    2026-11-02 实测：传 `date` 会被白名单校验拦下 —— 响应是
+     *    `property date should not exist`，而机器人把它转成了「没查到：…」，
+     *    于是「今天多少单」这句（还在帮助文案里当示例）**一直是坏的**。
+     *    这与 stats 系端点不同：那边 `StatsQueryDto` 用的就是 `date`（区间终点锚点）。
+     */
+    optional: ['mealDate', 'status', 'buildingGroupId'],
   },
   q_dish_heat: {
     label: '菜品热度',
