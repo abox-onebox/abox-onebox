@@ -205,3 +205,56 @@ describe('执行失败：说人话，不谎报成功', () => {
     expect(done).toContain('没成功');
   });
 });
+
+/**
+ * 接线：定向摘要要靠**端点编码**才能生效。
+ *
+ * ⚠️ 这两个调用点（只读直接查 / 写入执行完）如果忘了把 code 传下去，
+ *    定向摘要会**静默失效**退回通用三路 —— 不报错、不告警，
+ *    只是用户又看到「后台返回了 N 个字段」。所以必须盯一条端到端。
+ */
+describe('出参说人话：接线', () => {
+  it('查队列 → 念驱动与各队列计数，而不是「后台返回了 N 个字段」', async () => {
+    const { svc, calls } = build({
+      data: {
+        driver: 'redis',
+        durable: true,
+        queues: [
+          { queue: 'order-paid', label: '支付后续', waiting: 0, active: 0, delayed: 0, failed: 0 },
+        ],
+      },
+    });
+    await svc.reply('q1', '找 get_admin_queue', OWNER);
+    const said = await svc.reply('q1', '1', OWNER);
+    expect(calls[0].code).toBe('get_admin_queue');
+    expect(said).toContain('队列驱动：redis（持久）');
+    expect(said).toContain('支付后续：等待 0');
+    expect(said).not.toContain('后台返回了');
+  });
+
+  it('列表端点 → 念「共 N 条 + 前几条」，不再吐 JSON', async () => {
+    const { svc } = build({
+      data: {
+        list: [
+          {
+            orderNo: 'AB1',
+            mealDate: '2026-10-29',
+            statusText: '已完成',
+            quantity: 2,
+            totalAmountFen: 5160,
+          },
+        ],
+        page: 1,
+        pageSize: 20,
+        total: 1,
+        hasMore: false,
+      },
+    });
+    await svc.reply('q2', '找 get_admin_orders', OWNER);
+    const said = await svc.reply('q2', '1', OWNER);
+    expect(said).toContain('共 1 条');
+    expect(said).toContain('AB1');
+    expect(said).toContain('¥51.60');
+    expect(said).not.toContain('{');
+  });
+});

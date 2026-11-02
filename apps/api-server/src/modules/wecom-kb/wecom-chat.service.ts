@@ -44,6 +44,7 @@ import {
   summarizeRetention,
   compareDashboard,
 } from './stats-summary';
+import { summarizeData } from './result-summary';
 
 /**
  * 人话 → 后台操作 的编排（「说一句话就干活」这一层的核心）
@@ -394,7 +395,7 @@ export class WecomChatService {
       this.sessions.delete(userId);
       const res = await this.proxy.execCatalog(item.code, {}, binding, displayName(item.entry));
       if (res.code !== 0) return `没查到：${chatErrorText(res.code, res.message)}`;
-      return `「${displayName(item.entry)}」的结果：\n${this.summarizeResult(res.data)}`;
+      return `「${displayName(item.entry)}」的结果：\n${this.summarizeResult(res.data, item.code)}`;
     }
 
     const ask = this.askNext(op);
@@ -496,33 +497,20 @@ export class WecomChatService {
 
     const res = await this.proxy.execCatalog(op.code, op.params, binding, nl);
     if (res.code === 0) {
-      return `办好了：${displayName(item.entry)}\n${this.summarizeResult(res.data)}`;
+      return `办好了：${displayName(item.entry)}\n${this.summarizeResult(res.data, op.code)}`;
     }
     return `没成功：${chatErrorText(res.code, res.message)}\n（${item.entry.method} ${item.entry.path}）`;
   }
 
-  /** 通用出参说人话：能认出的关键字段点名，认不出就给截断 JSON 并指路 */
-  private summarizeResult(data: unknown): string {
-    if (data == null) return '（后台没有返回内容，通常是成功但无回执）';
-    if (typeof data !== 'object') return String(data).slice(0, 300);
-
-    const d = data as Record<string, unknown>;
-    const bits: string[] = [];
-    for (const k of ['id', 'orderNo', 'status', 'totalCount', 'count', 'ok', 'tier']) {
-      if (d[k] != null) bits.push(`${k}=${String(d[k])}`);
-    }
-    if (Array.isArray(data)) {
-      const arr = data as unknown[];
-      const first = arr[0];
-      const sample =
-        first && typeof first === 'object'
-          ? JSON.stringify(first).slice(0, 200)
-          : String(first).slice(0, 200);
-      return `${arr.length} 条。第一条：${sample}`;
-    }
-    if (bits.length) return bits.join(' · ');
-    const s = JSON.stringify(d);
-    return s.length > 600 ? s.slice(0, 600) + '…（更长的结果去后台看）' : s;
+  /**
+   * 通用出参说人话。
+   *
+   * 实现在 `result-summary.ts`（纯函数 + 单测）：按返回形态分「分页信封 / 数组 / 单对象」
+   * 三路，字段走白名单。**不再 dump JSON** —— 认不出就实话说认不出，
+   * 因为用户行里有 `passwordHash` 这类不该出现在群聊里的东西。
+   */
+  private summarizeResult(data: unknown, code?: string): string {
+    return summarizeData(data, code);
   }
 
   // ---------------------------------------------------------------- 排套餐
