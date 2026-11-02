@@ -27,6 +27,21 @@ import {
   type CatalogItem,
   type Tier,
 } from './op-policy';
+import {
+  bjTodayStr,
+  endDateOf,
+  parseStatsIntent,
+  prevEndDateOf,
+  type StatsIntent,
+} from './stats-intent';
+import {
+  summarizeBuildingRank,
+  summarizeDashboard,
+  summarizeDishHeat,
+  summarizePageDuration,
+  summarizeRetention,
+  compareDashboard,
+} from './stats-summary';
 
 /**
  * 人话 → 后台操作 的编排（「说一句话就干活」这一层的核心）
@@ -157,6 +172,12 @@ export class WecomChatService {
       const handled = await this.handleOp(userId, text, session.op, binding, tier);
       if (handled !== null) return handled;
     }
+    // ── 统计问句（必须早于 matchCatalogEntry）──────────────
+    // 那条 /^(?:看|查看|列出|打开)\s*(.+)$/ 会把「看经营数据」当成「搜端点：经营数据」，
+    // 而目录里没有这个模块 ⇒ 回「没找到」。顺序错了的现象是「这个功能做了但用不出来」。
+    const stats = parseStatsIntent(text);
+    if (stats) return this.replyStats(stats, binding, now);
+
     const cat = this.matchCatalogEntry(text, tier, granted);
     if (cat) return this.openCatalog(userId, cat, tier, granted);
 
@@ -776,6 +797,72 @@ export class WecomChatService {
   }
 
   // ---------------------------------------------------------------- 查数
+
+  /**
+   * 统计口径问答（经营数据 / 楼栋排行 / 菜品热度 / 留存 / 页面停留）
+   *
+   * 三个视角要两次取数（`dashboard` 与 `buildingRank` 要环比），其余一次。
+   *
+   * ⚠️ **环比失败不影响本期结论**：本期数字是真的，只是少了参照。故这里退化成
+   *    「只报本期 + 说明没取到上期」，而不是整条报错 —— 报错会让老板以为数据都没有。
+   *
+   * ⚠️ 所有数字都来自端点，本方法**不计算任何业务口径**（GMV 怎么算、退款率分母是谁，
+   *    全在 `StatsService` 里）。机器人这一层只做「取 → 说人话 → 比大小」。
+   */
+  private async replyStats(it: StatsIntent, binding: Binding, now: Date): Promise<string> {
+    const today = bjTodayStr(now);
+    if (!today) return '取不到今天的日期，我先不动。稍后再试。';
+
+    const endDate = endDateOf(it, today);
+    const params = { range: it.range, date: endDate };
+    const unreadable =
+      '数据取到了，但我没能把它说成人话（结构对不上）。请让负责人在后台看一眼，或把这条报给技术。';
+    const noPrev = '\n\n（上一档没取到，这次先不给环比）';
+
+    if (it.which === 'dashboard') {
+      const cur = await this.proxy.query('q_stats_dashboard', params, binding);
+      if (cur.code !== 0) return `没查到：${chatErrorText(cur.code, cur.message)}`;
+      const head = summarizeDashboard(cur.data);
+      if (!head) return unreadable;
+
+      const prev = await this.proxy.query(
+        'q_stats_dashboard',
+        { range: it.range, date: prevEndDateOf(it, endDate) },
+        binding,
+      );
+      if (prev.code !== 0) return head + noPrev;
+      const cmp = compareDashboard(cur.data, prev.data);
+      return cmp.length ? [head, ...cmp].join('\n') : head + noPrev;
+    }
+
+    if (it.which === 'buildingRank') {
+      const cur = await this.proxy.query('q_building_rank', params, binding);
+      if (cur.code !== 0) return `没查到：${chatErrorText(cur.code, cur.message)}`;
+      // 上期取不到时传 null：榜单照常出，只是不点名跌幅（不能因为拿不到参照就不给榜）
+      const prev = await this.proxy.query(
+        'q_building_rank',
+        { range: it.range, date: prevEndDateOf(it, endDate) },
+        binding,
+      );
+      return summarizeBuildingRank(cur.data, prev.code === 0 ? prev.data : null) ?? unreadable;
+    }
+
+    if (it.which === 'dishHeat') {
+      const cur = await this.proxy.query('q_dish_heat', params, binding);
+      if (cur.code !== 0) return `没查到：${chatErrorText(cur.code, cur.message)}`;
+      return summarizeDishHeat(cur.data) ?? unreadable;
+    }
+
+    if (it.which === 'retention') {
+      const cur = await this.proxy.query('q_stats_retention', params, binding);
+      if (cur.code !== 0) return `没查到：${chatErrorText(cur.code, cur.message)}`;
+      return summarizeRetention(cur.data) ?? unreadable;
+    }
+
+    const cur = await this.proxy.query('q_stats_page_duration', params, binding);
+    if (cur.code !== 0) return `没查到：${chatErrorText(cur.code, cur.message)}`;
+    return summarizePageDuration(cur.data) ?? unreadable;
+  }
 
   private async queryOrders(date: string | null, binding: Binding, now: Date): Promise<string> {
     const res = await this.proxy.query('q_orders', date ? { date } : {}, binding);

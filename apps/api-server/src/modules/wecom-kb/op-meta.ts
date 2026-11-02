@@ -148,14 +148,45 @@ export const QUERY_META: Record<string, OpMeta> = {
     method: 'GET',
     endpoint: '/admin/stats/dish-heat',
     required: [],
-    optional: ['date'],
+    optional: ['date', 'range'],
   },
   q_building_rank: {
     label: '楼栋下单排行',
     method: 'GET',
     endpoint: '/admin/stats/building-rank',
     required: [],
-    optional: ['date'],
+    optional: ['date', 'range'],
+  },
+  /**
+   * 统计三连（2026-11-02 新增）
+   *
+   * ⚠️ 为什么补这三个而不是让机器人直接走「操作目录」里那 5 个端点：
+   *   ① `QUERY_META` 是**只读查数**白名单，`query()` 用 operator 令牌，同事档本来就能查；
+   *      走目录的话要按 `canExec` 的高风险判定来，而看板是 GET，本不该受那套限制。
+   *   ② `query()` 会把 params 全部塞进 queryString，`range`/`date` 自动透传，
+   *      不需要为「环比要传两个不同终点」再开新通道。
+   * ⚠️ `date` 是**区间终点锚点**（不是自由起止），语义见 `StatsQueryDto`。
+   */
+  q_stats_dashboard: {
+    label: '经营数据',
+    method: 'GET',
+    endpoint: '/admin/stats/dashboard',
+    required: [],
+    optional: ['date', 'range'],
+  },
+  q_stats_retention: {
+    label: '留存分析',
+    method: 'GET',
+    endpoint: '/admin/stats/retention',
+    required: [],
+    optional: ['date', 'range'],
+  },
+  q_stats_page_duration: {
+    label: '页面停留',
+    method: 'GET',
+    endpoint: '/admin/stats/page-duration',
+    required: [],
+    optional: ['date', 'range'],
   },
   q_my_requests: {
     label: '我提交的高危审批进度',
