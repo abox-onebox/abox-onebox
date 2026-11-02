@@ -72,6 +72,32 @@ const HIGH_MODULES = new Set([
 const HIGH_ACTIONS =
   /(force|refund|cancel|adjust|approve|reject|publish|revoke|grant|delete|remove|reset)/i;
 
+/**
+ * 「钱的口径」只读端点：默认只给负责人，**可单条放权**。
+ *
+ * 为什么不用 risk 表达：这些是 `GET`，`riskOf` 一律给 `low`；而源码 `@Roles` 里
+ * **本来就含 operator**（`stats-admin.controller.ts` 那行是
+ * `@Roles('super_admin','admin','finance','operator','viewer')`）。
+ * 也就是说「同事能看 GMV 与毛利」不是判错，而是后台本来允许 ——
+ * 这条限制是**我们额外加的**，所以必须单独一条规则，靠 risk 或 @Roles 都表达不出来。
+ *
+ * ⚠️ 放权仍然有效：`isGranted` 在 `canExec` 里排在这条之前，勾了就放行。
+ *    后台入口是「系统 → 企微令牌绑定 → 特批功能」（`views/system/wecom-binding.vue`
+ *    的「特批功能」抽屉），提示文案必须写这个**真实路径**，写错等于让人白找一圈。
+ * ⚠️ 判定必须在 `canExec` 内部（不是聊天层 if），否则「说『看 stats』从目录点进去」
+ *    就绕过去了 —— 展示层与执行层必须同源，这条踩过一次（见 2026-11-02 留痕）。
+ */
+const OWNER_ONLY_PATH = /^\/admin\/stats\//;
+
+export const OWNER_ONLY_REASON =
+  '这类数据里带营收和毛利（钱的口径），默认只给负责人看。' +
+  '需要的话让负责人到后台「系统 → 企微令牌绑定 → 特批功能」里把这一项勾给你。';
+
+/** 这条是否属于「钱的口径」只读端点 */
+export function isMoneyView(entry: CatalogEntry): boolean {
+  return entry.method === 'GET' && OWNER_ONLY_PATH.test(entry.path);
+}
+
 export function riskOf(entry: CatalogEntry): Risk {
   if (entry.method === 'GET') return 'low';
   if (entry.method === 'DELETE') return 'high';
@@ -146,6 +172,12 @@ export function canExec(
   // 执行入口（op-proxy.execCatalog）会再判一次，收回权限立刻失效。
   if (isGranted(tier, opts.code, opts.granted)) {
     return { ok: true, roles, risk, reason: '这一项是单独放给你的，可以做。' };
+  }
+
+  // ── 钱的口径：同事默认看不到（勾了放权才放行，见上面 isGranted）──────
+  // 必须排在角色判定之前：`@Roles` 里本来就有 operator，判角色等于放行。
+  if (tier === 'staff' && isMoneyView(entry)) {
+    return { ok: false, roles, risk, reason: OWNER_ONLY_REASON };
   }
 
   // 源码没标 @Roles：不默认放行，只允许负责人操作（并提示这是未标注端点）
@@ -279,6 +311,17 @@ export function search(
 /** 取一条（编码精确匹配） */
 export function find(code: string): CatalogItem | undefined {
   return ALL_ITEMS.find((x) => x.code === code);
+}
+
+/**
+ * 按「方法 + 路径」反查编码。
+ *
+ * 用途：`QUERY_META` 里只有 endpoint（`/admin/stats/dashboard`）没有目录编码，
+ * 而权限判定（`canExec`）要的是编码。用路径反查而不是把编码写死 ——
+ * 编码由 `gen-wecom-catalog.mjs` 按源码生成，写死会在改名/加版本号时静默失配。
+ */
+export function codeOfPath(path: string, method: string = 'GET'): string | undefined {
+  return ALL_ITEMS.find((x) => x.entry.path === path && x.entry.method === method)?.code;
 }
 
 /**

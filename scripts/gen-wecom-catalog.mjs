@@ -142,6 +142,7 @@ function parseDtoClass(text, className) {
 
 function buildDtoIndex() {
   const idx = new Map();
+  const parents = new Map();
   for (const f of walkTs(SRC)) {
     const text = fs.readFileSync(f, 'utf8');
     const names = [...text.matchAll(/^export\s+class\s+(\w+)/gm)].map((m) => m[1]);
@@ -149,7 +150,34 @@ function buildDtoIndex() {
       if (!/Dto$|Query$|Params$|Body$/.test(n)) continue;
       const fields = parseDtoClass(text, n);
       if (fields) idx.set(n, fields);
+      const pm = new RegExp(`^export\\s+class\\s+${n}\\s+extends\\s+(\\w+)`, 'm').exec(text);
+      if (pm) parents.set(n, pm[1]);
     }
+  }
+  // ── 解析 extends 继承 ─────────────────────────────────────────────
+  // ⚠️ 不展开父类字段，子 DTO 的参数就是「缺一半」的：`ItemHeatQueryDto extends StatsQueryDto`
+  //    只解析出 `topN`，于是 `range` / `date` 看起来「端点不接受」——
+  //    实测后果有两个：① 机器人以为菜品热度不能选档位（永远按默认 7 天，数字对、语义错）；
+  //    ② 参数名自检把「合法参数」误报成 `UNKNOWN_PARAM`，真缺陷被噪音埋掉。
+  for (const [child] of idx) {
+    const chain = [];
+    let cur = parents.get(child);
+    let guard = 0;
+    while (cur && guard++ < 5) {
+      chain.unshift(cur);
+      cur = parents.get(cur);
+    }
+    if (!chain.length) continue;
+    const merged = [];
+    const seen = new Set();
+    for (const name of [...chain, child]) {
+      for (const f of idx.get(name) ?? []) {
+        if (seen.has(f.name)) continue; // 子类覆盖父类同名字段
+        seen.add(f.name);
+        merged.push(f);
+      }
+    }
+    idx.set(child, merged);
   }
   return idx;
 }

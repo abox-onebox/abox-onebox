@@ -14,6 +14,7 @@ import {
 import {
   allItems,
   canExec,
+  codeOfPath,
   displayName,
   find,
   isGranted,
@@ -27,6 +28,7 @@ import {
   type CatalogItem,
   type Tier,
 } from './op-policy';
+import { lookupQuery } from './op-meta';
 import {
   bjTodayStr,
   endDateOf,
@@ -104,6 +106,20 @@ interface OpState {
   /** 正在问的参数名 */
   asking?: string;
 }
+
+/**
+ * 统计视角 → 查询码。
+ *
+ * ⚠️ 只此一份：判权（`statsDenied`）与取数（`replyStats`）都用它，
+ *    两处各写一份的话，改了视角名就会出现「拦的是 A、查的是 B」。
+ */
+const STATS_QCODE: Record<StatsIntent['which'], string> = {
+  dashboard: 'q_stats_dashboard',
+  buildingRank: 'q_building_rank',
+  dishHeat: 'q_dish_heat',
+  retention: 'q_stats_retention',
+  pageDuration: 'q_stats_page_duration',
+};
 
 /** 2026-11-02 → 明天（11-02） */
 function dateLabel(date: string, now: Date): string {
@@ -809,7 +825,39 @@ export class WecomChatService {
    * ⚠️ 所有数字都来自端点，本方法**不计算任何业务口径**（GMV 怎么算、退款率分母是谁，
    *    全在 `StatsService` 里）。机器人这一层只做「取 → 说人话 → 比大小」。
    */
+  /**
+   * 「钱的口径」能不能给这个人看；能看返回 null，不能看返回那句该说的人话。
+   *
+   * ⚠️ 判据**只有一处**：`canExec`（与「从目录点进去」完全同源）。
+   *    这里若另写一份 if，就会出现「问句被拦、目录能进」的缝 ——
+   *    2026-11-02 之前正是这个缝：`query()` 根本不看 tier，同事问一句就能看 GMV。
+   *
+   * ⚠️ 挂不上判据时**不查**（宁可少给一次，也不把营收毛利漏出去）：
+   *    `QUERY_META` 只有 endpoint、没有目录编码，靠 `codeOfPath` 反查；
+   *    端点改名后反查会落空，落空时放行等于静默越权。
+   */
+  private statsDenied(qCode: string, binding: Binding): string | null {
+    const tier: Tier = binding.tier === 'owner' ? 'owner' : 'staff';
+    if (tier === 'owner') return null;
+
+    const meta = lookupQuery(qCode);
+    const code = meta ? codeOfPath(meta.endpoint, 'GET') : undefined;
+    const item = code ? find(code) : undefined;
+    if (!item) {
+      this.logger.warn(`统计判权挂不上：${qCode} → 目录里找不到同路径端点，已按「不给」处理`);
+      return '这项数据的权限我判不了（目录里对不上端点），先不查。请让负责人看一眼。';
+    }
+
+    const perm = canExec(tier, item.entry, { granted: binding.grantedOps, code });
+    return perm.ok ? null : perm.reason || '这项数据默认只给负责人看。';
+  }
+
   private async replyStats(it: StatsIntent, binding: Binding, now: Date): Promise<string> {
+    // 先判权再取数：取完再拦等于已经把数发出去了
+    const denied = this.statsDenied(STATS_QCODE[it.which], binding);
+    if (denied) return denied;
+
+    const q = STATS_QCODE[it.which];
     const today = bjTodayStr(now);
     if (!today) return '取不到今天的日期，我先不动。稍后再试。';
 
@@ -820,13 +868,13 @@ export class WecomChatService {
     const noPrev = '\n\n（上一档没取到，这次先不给环比）';
 
     if (it.which === 'dashboard') {
-      const cur = await this.proxy.query('q_stats_dashboard', params, binding);
+      const cur = await this.proxy.query(q, params, binding);
       if (cur.code !== 0) return `没查到：${chatErrorText(cur.code, cur.message)}`;
       const head = summarizeDashboard(cur.data);
       if (!head) return unreadable;
 
       const prev = await this.proxy.query(
-        'q_stats_dashboard',
+        q,
         { range: it.range, date: prevEndDateOf(it, endDate) },
         binding,
       );
@@ -836,11 +884,11 @@ export class WecomChatService {
     }
 
     if (it.which === 'buildingRank') {
-      const cur = await this.proxy.query('q_building_rank', params, binding);
+      const cur = await this.proxy.query(q, params, binding);
       if (cur.code !== 0) return `没查到：${chatErrorText(cur.code, cur.message)}`;
       // 上期取不到时传 null：榜单照常出，只是不点名跌幅（不能因为拿不到参照就不给榜）
       const prev = await this.proxy.query(
-        'q_building_rank',
+        q,
         { range: it.range, date: prevEndDateOf(it, endDate) },
         binding,
       );
@@ -848,18 +896,18 @@ export class WecomChatService {
     }
 
     if (it.which === 'dishHeat') {
-      const cur = await this.proxy.query('q_dish_heat', params, binding);
+      const cur = await this.proxy.query(q, params, binding);
       if (cur.code !== 0) return `没查到：${chatErrorText(cur.code, cur.message)}`;
       return summarizeDishHeat(cur.data) ?? unreadable;
     }
 
     if (it.which === 'retention') {
-      const cur = await this.proxy.query('q_stats_retention', params, binding);
+      const cur = await this.proxy.query(q, params, binding);
       if (cur.code !== 0) return `没查到：${chatErrorText(cur.code, cur.message)}`;
       return summarizeRetention(cur.data) ?? unreadable;
     }
 
-    const cur = await this.proxy.query('q_stats_page_duration', params, binding);
+    const cur = await this.proxy.query(q, params, binding);
     if (cur.code !== 0) return `没查到：${chatErrorText(cur.code, cur.message)}`;
     return summarizePageDuration(cur.data) ?? unreadable;
   }

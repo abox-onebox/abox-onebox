@@ -3,6 +3,7 @@ import {
   canExec,
   displayName,
   find,
+  isMoneyView,
   moduleOf,
   modules,
   riskOf,
@@ -72,7 +73,19 @@ describe('op-policy · 同事受限', () => {
         riskOf(it.entry) === 'high' &&
         !canExec('staff', it.entry).ok,
     ).length;
-    expect(actual).toBe(should - highBlocked);
+    // ⭐ 第三个桶（2026-11-02 加）：钱的口径（`/admin/stats/*`）。
+    //   这些是 GET、源码 @Roles 本来就含 operator，靠 risk 与角色都判不出来 ——
+    //   是**额外加的一条规则**，所以必须在这里显式减掉，否则这个等式会莫名其妙差 6。
+    const moneyBlocked = allItems().filter(
+      (it) =>
+        it.entry.roles.includes('operator') &&
+        isMoneyView(it.entry) &&
+        !canExec('staff', it.entry).ok,
+    ).length;
+    // 反过来盯住「桶是空的」：若哪天 isMoneyView 判据失效，上面那个等式会**恒真**（两边一起变），
+    // 这条断言就是那个情况的探针。
+    expect(moneyBlocked).toBeGreaterThan(0);
+    expect(actual).toBe(should - highBlocked - moneyBlocked);
   });
 
   it('★ 财务退款审批：同事做不了（后台角色不含 operator）', () => {

@@ -250,6 +250,24 @@ const GATES = {
     cmd: 'node scripts/gen-wecom-catalog.mjs --check',
   },
   /**
+   * 2026-11-02：企微「参数名 ↔ 真实 DTO」对账（`op-meta.ts` 的声明 vs 端点真值）
+   *
+   * 与 `wecom:catalog` 同族，但查的是**另一件事**：catalog 管「这个端点存不存在」，
+   * 本门管「机器人问你的那个参数名，端点到底认不认」。两个方向都查：
+   *   ① 声明了但端点不认 ⇒ 传了被 DTO 白名单挡下；
+   *   ② 端点标必填但没声明 ⇒ 机器人永远不问，每次 422。
+   *
+   * 真实事故（2026-11-02 线上）：`q_orders.optional` 写 `date`，真实字段是 `mealDate`
+   * ⇒「今天多少单」**一直是坏的**，而现象只是「没查到」，门禁全绿、单测全绿。
+   * 同一轮还扫出 `buildingGroupId`（真实是 `groupId`）与菜品热度缺继承字段。
+   *
+   * 脚本自带 `--selftest`（真实数据必不报 + 两个必报样本），先自证再判红。
+   */
+  'wecom:params': {
+    cwd: '.',
+    cmd: 'node scripts/check-wecom-op-params.mjs --selftest && node scripts/check-wecom-op-params.mjs',
+  },
+  /**
    * M5-15：**契约文档的 Markdown 表格完整性**（防「表格被空行截断」）
    *
    * GFM 里**表格遇空行即结束** —— 「表行 → 空行 → 表行」会让空行之后的行退化成
@@ -654,6 +672,9 @@ const ALIASES = {
     // 2026-11-01：企微助手「端点目录 ↔ 源码」对账（防「加了端点、机器人不认识」）
     // ⚠️ 与 admin:coverage 同族：能力做了但用不上，任何测试都不会红 —— 纯静态、毫秒级
     'wecom:catalog',
+    // 2026-11-02：企微「参数名 ↔ 真实 DTO」对账（防「机器人问的参数端点不认 / 必填不问」）
+    // 与 wecom:catalog 同一类病：功能做了却用不上，且任何测试都不会红 —— 纯静态、毫秒级
+    'wecom:params',
     // M5-15：契约文档表格完整性（表格被空行截断 → 行退化成正文）—— 纯静态、毫秒级
     'doc:tables',
     // 2026-09-21：真源字面量外溢（档位映射 / 送达时刻 / 日期解析）—— 纯静态、秒级

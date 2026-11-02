@@ -243,7 +243,7 @@ node abox-onebox\scripts\gate.mjs design          # 设计线：design:spec + de
 > 📌 **门禁条数全文只在此处声明一次**（下面这行是**机器可读标记**，由 `gate:parity` 门禁校验；
 > 加/删门禁后必须同步它，否则门禁会红并点名指出差多少）：
 >
-> `<!-- gate-count: all=33 verify=6 -->`
+> `<!-- gate-count: all=34 verify=6 -->`
 >
 > （2026-11-01 企微操作机器人批次：新增 `wecom:catalog` —— 机器人「能操作哪些后台端点」
 > 是一份**自动生成的目录**（`op-catalog.generated.ts`，131 条），它从 controller 源码解析而来。

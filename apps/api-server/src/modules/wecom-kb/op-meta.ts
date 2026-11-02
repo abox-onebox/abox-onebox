@@ -147,8 +147,12 @@ export const QUERY_META: Record<string, OpMeta> = {
      *    `property date should not exist`，而机器人把它转成了「没查到：…」，
      *    于是「今天多少单」这句（还在帮助文案里当示例）**一直是坏的**。
      *    这与 stats 系端点不同：那边 `StatsQueryDto` 用的就是 `date`（区间终点锚点）。
+     *
+     * ⚠️ 楼群字段是 **`groupId`**（`AdminOrdersQueryDto`：`buildingId`=办公楼 / `groupId`=楼群），
+     *    原来写的 `buildingGroupId` 端点根本不认 —— 传了会被白名单挡下，症状与 `date` 一模一样
+     *    （回「没查到」）。2026-11-02 由 `scripts/check-wecom-op-params.mjs` 扫出来。
      */
-    optional: ['mealDate', 'status', 'buildingGroupId'],
+    optional: ['mealDate', 'status', 'groupId'],
   },
   q_dish_heat: {
     label: '菜品热度',
