@@ -87,7 +87,7 @@ const PROPOSAL_SYSTEM = `你是「ABox 一盒」的团长招募策略助理。�
 - 一栋楼可有多位团长，话术不得暗示独占；
 - 英文名恒为 ABox（禁 ABOX / abox）；
 - 只基于给到的数据说话；数据缺失写「暂缺」，**绝不编造数字或楼名**；
-- 不要使用 emoji；不超过 600 字；结尾必须写明「此为 AI 草稿，需人工确认后执行」。`;
+- 不要使用 emoji；不超过 900 字；结尾必须写明「此为 AI 草稿，需人工确认后执行」。`;
 
 function fallback(plain, reason) {
   const head = '（AI 提案暂不可用' + (reason ? `：${reason}` : '') + '，附原始数据）';
@@ -114,7 +114,7 @@ async function main() {
     proposal = await callLLM({
       system: PROPOSAL_SYSTEM,
       user: plain,
-      timeoutMs: 9000,
+      timeoutMs: 20000,
       temperature: 0.3,
     });
     proposal = (proposal || '').trim();
