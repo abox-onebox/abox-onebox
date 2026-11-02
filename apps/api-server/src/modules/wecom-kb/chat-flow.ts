@@ -21,6 +21,7 @@ export type ChatIntent =
   | { kind: 'cancel' }
   | { kind: 'negated'; raw: string }
   | { kind: 'genCampaign'; brief: string }
+  | { kind: 'genDailyReport' }
   | { kind: 'unknown'; raw: string };
 
 const RE_CONFIRM = /^(1|好|好的|好嘞|确认|确定|执行|对|是|可以|行|干吧|办吧|就这样|ok|yes)$/i;
@@ -54,6 +55,15 @@ export function parseIntent(raw: string, now: Date): ChatIntent {
       t,
     );
   if (genCampaign) return { kind: 'genCampaign', brief: genCampaign[1].trim() };
+
+  // AI 编排节点 E · 运营日报（企微触发）：认出「日报/每日简报」即走该节点。
+  // ⚠️ 必须带「日报」二字（避免与统计问句「经营情况/经营数据」混淆）；「生成招募页」已在前置分支处理。
+  if (
+    /(生成|出|报一下|来一份|给我|看|要|今日|经营|运营|每日|daily)?\s*(今日|经营|运营|每日|daily)?\s*(日报|每日简报|运营日报|经营日报)/i.test(
+      t,
+    )
+  )
+    return { kind: 'genDailyReport' };
 
   if (/^(帮助|help|\?|？|菜单|能干什么|会什么|怎么用|使用说明)$/.test(t)) return { kind: 'help' };
 
@@ -100,6 +110,7 @@ export const CHAT_HELP = [
   '· 发「操作目录」看全部功能（按模块分组，只列你能用的）',
   '· 或直接搜：「找 退款」「找 团长」「找 优惠券」',
   '· 出招募物料：发「生成招募页 <一句话需求>」（AI 起草文案与海报，草稿需人工终审）',
+  '· 出运营日报：发「生成今日日报」（AI 汇总近 7 天经营数据，给总览·亮点·风险·行动建议）',
   '选好之后我只问缺的那几个参数，回 1 才真执行。',
   '',
   '直接说事，例如：',

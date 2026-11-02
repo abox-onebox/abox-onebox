@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { spawn } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, writeFileSync, unlinkSync } from 'fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'path';
 import { isAfterCutoff } from '../../common/utils/time';
 import { OpProxyService, Binding } from './op-proxy.service';
@@ -244,6 +245,8 @@ export class WecomChatService {
         return '现在没有等你确认的事。';
       case 'genCampaign':
         return this.genCampaign(intent.brief);
+      case 'genDailyReport':
+        return this.genDailyReport(binding, now);
       default:
         return this.maybeLLMReply(text, binding);
     }
@@ -343,6 +346,197 @@ export class WecomChatService {
         }
       });
     });
+  }
+
+  /**
+   * AI 编排节点 E · 运营日报（企微触发）
+   * ------------------------------------------------------------------
+   * 同事在企微发「生成今日日报」即触发：本方法先用 proxy.query 取近 7 天四视角数据
+   * （经营看板/楼栋排行/菜品热度/留存，看板与排行附带上一档环比），复用 stats-summary
+   * 的纯函数格式化成「人话」，再交给 `gen-daily-report.mjs` 做 AI 归因摘要 + 落盘。
+   *
+   * 原则零保障（AI 可剥离、可降级，不影响发布与传统运营）：
+   *   · 全段包在大 try 内，且每个视角取数各自 try/catch：任一视角失败只跳过该段，不整机失败；
+   *   · 脚本缺失/启动失败/超时/异常 → 降级为「直接回显原始数据」，不阻塞应答；
+   *   · 不碰订单/支付/配送核心，纯只读聚合；
+   *   · 触发方式为企微命令（非定时任务），符合「祝总禁自动任务」约束，后续放开后再接每日定时。
+   */
+  private genDailyReport(binding: Binding, now: Date): Promise<string> {
+    const run = async (): Promise<string> => {
+      const today = bjTodayStr(now);
+      if (!today) return '取不到今天的日期，我先不动。稍后再试。';
+
+      const base = {
+        which: 'dashboard' as const,
+        range: '7d' as const,
+        endShift: -1,
+      } as StatsIntent;
+      const endDate = endDateOf(base, today);
+      const prevEnd = prevEndDateOf(base, endDate);
+
+      const sections: string[] = [];
+
+      // 1. 经营看板（含环比）
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.dashboard,
+          { range: '7d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const head = summarizeDashboard(cur.data);
+          if (head) {
+            const prev = await this.proxy.query(
+              STATS_QCODE.dashboard,
+              { range: '7d', date: prevEnd },
+              binding,
+            );
+            const cmp = prev.code === 0 ? compareDashboard(cur.data, prev.data) : [];
+            sections.push([head, ...cmp].join('\n'));
+          }
+        }
+      } catch {
+        /* 该视角跳过 */
+      }
+
+      // 2. 楼栋排行（含环比点名）
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.buildingRank,
+          { range: '7d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const prev = await this.proxy.query(
+            STATS_QCODE.buildingRank,
+            { range: '7d', date: prevEnd },
+            binding,
+          );
+          const txt = summarizeBuildingRank(cur.data, prev.code === 0 ? prev.data : null);
+          if (txt) sections.push(txt);
+        }
+      } catch {
+        /* 该视角跳过 */
+      }
+
+      // 3. 菜品热度
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.dishHeat,
+          { range: '7d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const txt = summarizeDishHeat(cur.data);
+          if (txt) sections.push(txt);
+        }
+      } catch {
+        /* 该视角跳过 */
+      }
+
+      // 4. 留存
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.retention,
+          { range: '7d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const txt = summarizeRetention(cur.data);
+          if (txt) sections.push(txt);
+        }
+      } catch {
+        /* 该视角跳过 */
+      }
+
+      if (sections.length === 0)
+        return '近 7 天经营数据这次没取到（可能权限不足或数据还没生成）。可在后台看板查看，或稍后重试。';
+
+      const plain = sections.join('\n\n');
+
+      // 写临时数据文件，交给脚本做 AI 摘要 + 落盘
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const plainFile = join(tmpDir, `_in_${Date.now()}.txt`);
+      try {
+        writeFileSync(plainFile, plain, 'utf8');
+      } catch {
+        return `运营日报数据已生成，但写入临时文件失败（磁盘权限）。可在后台看板查看原始数据：\n\n${plain}`;
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-daily-report.mjs');
+      if (!existsSync(script)) {
+        // 脚本缺失：降级为「直接回显原始数据」，不依赖 AI
+        return `运营日报（原始数据，AI 摘要脚本未找到）：\n\n${plain}`;
+      }
+
+      return new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = (m: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch (e) {
+          finish(
+            `日报生成启动失败：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          );
+          return;
+        }
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish('日报生成超时（>90s）。原始数据已在后台看板，可稍后重试触发。');
+        }, 90_000);
+        let out = '';
+        let err = '';
+        child.stdout?.on('data', (d) => (out += String(d)));
+        child.stderr?.on('data', (d) => (err += String(d)));
+        child.on('error', (e) =>
+          finish(
+            `日报生成出错：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          ),
+        );
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          if (out.trim()) finish(out.trim());
+          else
+            finish(
+              `日报生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
+            );
+        });
+      });
+    };
+    return run();
+  }
+
+  /** 选一个可写目录放临时数据文件（与脚本侧同源逻辑）：挂载卷优先，回退 releases，再退系统临时目录 */
+  private pickWritableDir(repoRoot: string): string {
+    const candidates = [
+      join(repoRoot, 'data', 'uploads', 'daily'),
+      join(repoRoot, 'releases', 'daily'),
+      join(tmpdir(), 'abox-daily'),
+    ];
+    for (const c of candidates) {
+      try {
+        writeFileSync(join(c, '.w'), '');
+        unlinkSync(join(c, '.w'));
+        return c;
+      } catch {
+        /* 不可写，试下一个 */
+      }
+    }
+    return candidates[candidates.length - 1];
   }
 
   /**
