@@ -54,6 +54,16 @@ interface RawGroup {
   statusLabel?: string | null;
 }
 
+/** 在职团长清单行（admin/leaders 名册，status=1）—— 招募缺口计算用 */
+interface RawLeader {
+  id: number;
+  buildingId: number;
+  buildingName: string | null;
+  level: string;
+  status: number;
+  monthOrders: number;
+}
+
 interface RawTemplate {
   id: number;
   name?: string | null;
@@ -199,6 +209,31 @@ export class NameResolverService {
     if (!list) return null;
     this.dishes = { at: Date.now(), items: list };
     return list;
+  }
+
+  /**
+   * 在职团长清单（status=1）—— 招募缺口计算用。
+   *
+   * 分页拉全（pageSize=100，最多 20 页 = 2000 人，超过即截断，防死循环），
+   * 每页都带 `status=1` 只取在职。失败策略：首屏失败返回 null（交给上层人话提示）；
+   * 中途某页失败则保留已攒到的，宁缺毋滥、绝不抛异常打断对话。
+   * 不带 60s 缓存（仅在命令触发时调用，要最新口径）。
+   */
+  async listLeaders(): Promise<RawLeader[] | null> {
+    const all: RawLeader[] = [];
+    const pageSize = 100;
+    for (let page = 1; page <= 20; page++) {
+      const list = await this.fetchList<RawLeader>(
+        `/admin/leaders?view=roster&status=1&pageSize=${pageSize}&page=${page}`,
+      );
+      if (!list) {
+        if (page === 1) return null;
+        break;
+      }
+      all.push(...list);
+      if (list.length < pageSize) break;
+    }
+    return all;
   }
 
   /** 清缓存（执行完写操作后调，避免刚改的数据还是旧的） */

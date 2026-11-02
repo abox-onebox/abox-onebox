@@ -249,6 +249,8 @@ export class WecomChatService {
         return this.genDailyReport(binding, now);
       case 'genMealProposal':
         return this.genMealProposal(binding, now);
+      case 'genRecruitProposal':
+        return this.genRecruitProposal(binding, now);
       default:
         return this.maybeLLMReply(text, binding);
     }
@@ -674,6 +676,175 @@ export class WecomChatService {
           else
             finish(
               `选品提案生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
+            );
+        });
+      });
+    };
+    return run();
+  }
+
+  /**
+   * AI 编排节点 G · 团长智能招募赋能（企微触发）
+   * ------------------------------------------------------------------
+   * 同事在企微发「生成招募提案」即触发：取「近 30 天有订单楼栋」与「在职团长覆盖楼」做差集，
+   * 算出**招募缺口**，再 spawn 独立脚本 `gen-recruit-proposal.mjs` 产出招募优先级 + 话术草稿 + 新人赋能要点。
+   *
+   * 原则零保障（AI 可剥离、可降级，不影响发布与传统运营）：
+   *   · 纯增量分支，不动订单/支付/配送核心，也不碰确定性问答逻辑；
+   *   · 取数走既有 `proxy.query(buildingRank)` + `resolver.listLeaders()`（复用已验证链路，零新增 DI 依赖）；
+   *   · 两数据源各自 try/catch：任一取不到都不中断，拿得到的先算缺口；
+   *   · 脚本缺失/超时/异常 → 降级回显「原始缺口数据」，绝不阻塞应答；
+   *   · 只产出草稿（releases/recruit-proposal/），由人工确认后执行，不自动改任何团长/楼数据。
+   */
+  private genRecruitProposal(binding: Binding, now: Date): Promise<string> {
+    const run = async (): Promise<string> => {
+      const today = bjTodayStr(now);
+      if (!today) return '取不到今天的日期，我先不动。稍后再试。';
+
+      const base = {
+        which: 'dashboard' as const,
+        range: '30d' as const,
+        endShift: -1,
+      } as StatsIntent;
+      const endDate = endDateOf(base, today);
+
+      // 1. 近 30 天有订单楼栋（按 GMV）
+      type Bld = { id: number; name: string; gmvFen: number; orderCount: number; gmvShare: number };
+      let buildings: Bld[] = [];
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.buildingRank,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const rows = (cur.data as Record<string, unknown>)?.buildings;
+          if (Array.isArray(rows)) {
+            for (const r of rows) {
+              const rr = r as Record<string, unknown>;
+              const id = Number(rr.id);
+              if (!Number.isFinite(id)) continue;
+              buildings.push({
+                id,
+                name: typeof rr.name === 'string' && rr.name ? rr.name : `#${id}`,
+                gmvFen: typeof rr.gmvFen === 'number' ? rr.gmvFen : 0,
+                orderCount: typeof rr.orderCount === 'number' ? rr.orderCount : 0,
+                gmvShare: typeof rr.gmvShare === 'number' ? rr.gmvShare : 0,
+              });
+            }
+            buildings = buildings.slice(0, 20);
+          }
+        }
+      } catch {
+        /* 跳过该视角，仍可用团长覆盖判断 */
+      }
+
+      // 2. 在职团长覆盖的楼（status=1）
+      const covered = new Set<number>();
+      try {
+        const leaders = await this.resolver.listLeaders();
+        if (leaders && leaders.length) {
+          for (const l of leaders) {
+            const bid = Number(l.buildingId);
+            if (l.status === 1 && Number.isFinite(bid)) covered.add(bid);
+          }
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      if (buildings.length === 0)
+        return '近 30 天楼栋销量数据这次没取到（可能权限不足或还没开团）。可在后台看板查看，或稍后重试。';
+
+      // 3. 组装缺口分析文本（先把差集算出来，AI 只负责「说人话」）
+      const lines: string[] = [];
+      lines.push(`近 30 天有订单楼栋与团长覆盖（按 GMV，共取 ${buildings.length} 栋）：`);
+      const gaps: Bld[] = [];
+      buildings.forEach((b, i) => {
+        const has = covered.has(b.id);
+        if (!has) gaps.push(b);
+        const gmv = `¥${(b.gmvFen / 100).toFixed(2)}`;
+        const share = b.gmvShare ? ` ${(b.gmvShare * 100).toFixed(1)}%` : '';
+        lines.push(
+          `${i + 1}. ${b.name}  GMV ${gmv}${share} · ${b.orderCount} 单 · ${
+            has ? '已有在职团长' : '【无在职团长】'
+          }`,
+        );
+      });
+      const summary = `汇总：近 30 天有订单 ${buildings.length} 栋，其中 ${
+        buildings.length - gaps.length
+      } 栋已有在职团长，招募缺口 ${gaps.length} 栋。`;
+      lines.push('');
+      lines.push(summary);
+      if (gaps.length) {
+        lines.push('');
+        lines.push('招募缺口清单（按 GMV 降序，优先拓展这些楼）：');
+        gaps.forEach((b, i) => {
+          const gmv = `¥${(b.gmvFen / 100).toFixed(2)}`;
+          lines.push(`${i + 1}. ${b.name}  GMV ${gmv} · ${b.orderCount} 单`);
+        });
+      }
+      const plain = lines.join('\n');
+
+      // 4. 写临时数据文件，交给脚本做 AI 提案 + 落盘
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const plainFile = join(tmpDir, `_rp_${Date.now()}.txt`);
+      try {
+        writeFileSync(plainFile, plain, 'utf8');
+      } catch {
+        return `招募提案数据已生成，但写入临时文件失败（磁盘权限）。可在后台看板查看原始数据：\n\n${plain}`;
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-recruit-proposal.mjs');
+      if (!existsSync(script)) {
+        // 脚本缺失：降级为「直接回显原始数据」，不依赖 AI
+        return `招募提案（原始数据，AI 脚本未找到）：\n\n${plain}`;
+      }
+
+      return new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = (m: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch (e) {
+          finish(
+            `招募提案生成启动失败：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          );
+          return;
+        }
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish('招募提案生成超时（>90s）。原始数据已在后台看板，可稍后重试触发。');
+        }, 90_000);
+        let out = '';
+        let err = '';
+        child.stdout?.on('data', (d) => (out += String(d)));
+        child.stderr?.on('data', (d) => (err += String(d)));
+        child.on('error', (e) =>
+          finish(
+            `招募提案生成出错：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          ),
+        );
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          if (out.trim()) finish(out.trim());
+          else
+            finish(
+              `招募提案生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
             );
         });
       });
