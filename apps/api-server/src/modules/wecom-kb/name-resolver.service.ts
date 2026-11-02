@@ -67,6 +67,28 @@ interface RawDish {
   name?: string | null;
 }
 
+/** 套餐模板全量（含菜品构成/被排次数/状态）—— 选品提案用，不复用 `RawTemplate` 的裁剪版 */
+interface RawTemplateItem {
+  itemId: number;
+  slot: number;
+  slotLabel: string;
+  name: string;
+  supplierId: number;
+}
+interface RawTemplateFull {
+  id: number;
+  name?: string | null;
+  priceFen?: number;
+  costPriceFen?: number;
+  oneLiner?: string | null;
+  status?: number;
+  statusText?: string;
+  kind?: string;
+  itemCount?: number;
+  items?: RawTemplateItem[];
+  usedCount?: number;
+}
+
 /** 后台统一响应外壳（具名类型：写成 `as typeof body` 会被收窄成 null 而报 TS2339） */
 interface ListEnvelope {
   code?: number;
@@ -82,6 +104,7 @@ export class NameResolverService {
   private groups?: CacheEntry<RawGroup>;
   private buildings?: CacheEntry<RawBuilding>;
   private templates?: CacheEntry<RawTemplate>;
+  private templatesFull?: CacheEntry<RawTemplateFull>;
   private dishes?: CacheEntry<RawDish>;
 
   constructor(private readonly svcToken: WecomSvcTokenService) {}
@@ -155,6 +178,21 @@ export class NameResolverService {
     return list;
   }
 
+  /**
+   * 套餐模板**全量**（含菜品构成 / 被排次数 / 状态）—— 选品提案用。
+   *
+   * 与 `listTemplates` 的区别：那个只留 `status===1` 且裁剪到 id/name/price，
+   * 选品提案要看到**全部**（含停用、含 0 被排的），才能给出「留 / 试 / 退」判断。
+   * 复用同一个 `fetchList` 与 60s 缓存，纯只读、零新接口。
+   */
+  async listTemplatesFull(force = false): Promise<RawTemplateFull[] | null> {
+    if (!force && this.fresh(this.templatesFull)) return this.templatesFull!.items;
+    const list = await this.fetchList<RawTemplateFull>('/admin/meal/templates?pageSize=200');
+    if (!list) return null;
+    this.templatesFull = { at: Date.now(), items: list };
+    return list;
+  }
+
   async listDishes(force = false): Promise<RawDish[] | null> {
     if (!force && this.fresh(this.dishes)) return this.dishes!.items;
     const list = await this.fetchList<RawDish>('/admin/meal/dishes');
@@ -168,6 +206,7 @@ export class NameResolverService {
     this.groups = undefined;
     this.buildings = undefined;
     this.templates = undefined;
+    this.templatesFull = undefined;
     this.dishes = undefined;
   }
 

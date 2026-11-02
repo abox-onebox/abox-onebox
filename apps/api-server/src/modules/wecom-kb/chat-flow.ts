@@ -22,6 +22,7 @@ export type ChatIntent =
   | { kind: 'negated'; raw: string }
   | { kind: 'genCampaign'; brief: string }
   | { kind: 'genDailyReport' }
+  | { kind: 'genMealProposal' }
   | { kind: 'unknown'; raw: string };
 
 const RE_CONFIRM = /^(1|好|好的|好嘞|确认|确定|执行|对|是|可以|行|干吧|办吧|就这样|ok|yes)$/i;
@@ -64,6 +65,16 @@ export function parseIntent(raw: string, now: Date): ChatIntent {
     )
   )
     return { kind: 'genDailyReport' };
+
+  // AI 编排节点 F · 选品提案（企微触发）：认出「选品/菜单 + 提案/建议/方案」即走该节点。
+  // ⚠️ 必须带明确提案词（提案/建议/方案/下周菜单），避免与统计问句「菜品热度」混淆；
+  //    「生成招募页」已在前置分支处理，「日报」已在上一个分支处理。
+  if (
+    /(生成|出|给|来一份|我要|做|写|报一下)?\s*(下周|本周|明日|今日|运营|每周)?\s*(选品提案|选品建议|选品方案|菜单提案|菜单建议|菜单方案|下周菜单|下周选品)/i.test(
+      t,
+    )
+  )
+    return { kind: 'genMealProposal' };
 
   if (/^(帮助|help|\?|？|菜单|能干什么|会什么|怎么用|使用说明)$/.test(t)) return { kind: 'help' };
 
@@ -111,6 +122,7 @@ export const CHAT_HELP = [
   '· 或直接搜：「找 退款」「找 团长」「找 优惠券」',
   '· 出招募物料：发「生成招募页 <一句话需求>」（AI 起草文案与海报，草稿需人工终审）',
   '· 出运营日报：发「生成今日日报」（AI 汇总近 7 天经营数据，给总览·亮点·风险·行动建议）',
+  '· 出选品提案：发「生成选品提案」（AI 基于近 30 天热销与套餐目录，给下周留用/试水/观察建议）',
   '选好之后我只问缺的那几个参数，回 1 才真执行。',
   '',
   '直接说事，例如：',

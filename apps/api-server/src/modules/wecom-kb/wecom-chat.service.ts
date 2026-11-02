@@ -247,6 +247,8 @@ export class WecomChatService {
         return this.genCampaign(intent.brief);
       case 'genDailyReport':
         return this.genDailyReport(binding, now);
+      case 'genMealProposal':
+        return this.genMealProposal(binding, now);
       default:
         return this.maybeLLMReply(text, binding);
     }
@@ -513,6 +515,165 @@ export class WecomChatService {
           else
             finish(
               `日报生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
+            );
+        });
+      });
+    };
+    return run();
+  }
+
+  /**
+   * AI 编排节点 F · 选品提案（企微触发）
+   * ------------------------------------------------------------------
+   * 同事发「生成选品提案」即触发：本方法先用 proxy.query 取近 30 天两视角
+   * （菜品热度/楼栋排行），再用 `resolver.listTemplatesFull()` 取**全量套餐目录**
+   * （含菜品构成、状态、被排次数），拼成结构化纯文本，交给 `gen-meal-proposal.mjs`
+   * 做 AI 选品提案（留用/试水/观察）+ 落盘。
+   *
+   * 与节点 E 完全相同的原则零保障：全段包 try、各视角独立 try/catch；脚本缺失/超时/
+   * 异常 → 降级为「直接回显原始数据」；纯只读聚合，不碰订单/支付/配送核心；
+   * 触发方式为企微命令（非定时任务），符合「祝总禁自动任务」约束。
+   *
+   * ⚠️ 与 E 的唯一差异：多取一份「套餐目录全量」。E 只用聚合视图，
+   *   而选品提案必须知道「有哪些套餐可选、各自含什么菜、被排过几次」才能给建议 ——
+   *   这份数据来自既有的 `/admin/meal/templates` 列表端点，未新建任何查询接口。
+   */
+  private genMealProposal(binding: Binding, now: Date): Promise<string> {
+    const run = async (): Promise<string> => {
+      const today = bjTodayStr(now);
+      if (!today) return '取不到今天的日期，我先不动。稍后再试。';
+
+      const base = {
+        which: 'dashboard' as const,
+        range: '30d' as const,
+        endShift: -1,
+      } as StatsIntent;
+      const endDate = endDateOf(base, today);
+
+      const sections: string[] = [];
+
+      // 1. 菜品热度（30d）
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.dishHeat,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const txt = summarizeDishHeat(cur.data);
+          if (txt) sections.push(txt);
+        }
+      } catch {
+        /* 该视角跳过 */
+      }
+
+      // 2. 楼栋排行（30d，无环比）
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.buildingRank,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const txt = summarizeBuildingRank(cur.data, null);
+          if (txt) sections.push(txt);
+        }
+      } catch {
+        /* 该视角跳过 */
+      }
+
+      // 3. 套餐目录全量（含菜品构成 / 状态 / 被排次数）
+      const catalogLines: string[] = [];
+      try {
+        const tpls = await this.resolver.listTemplatesFull();
+        if (tpls && tpls.length) {
+          catalogLines.push(`可选套餐目录（共 ${tpls.length} 个，含状态 / 被排次数 / 菜品构成）：`);
+          for (const t of tpls) {
+            const price =
+              typeof t.priceFen === 'number'
+                ? `¥${((t.priceFen as number) / 100).toFixed(2)}`
+                : '?';
+            const status = t.status === 1 ? '启用' : '停用';
+            const dishes =
+              (t.items ?? [])
+                .map((i) => (typeof i.name === 'string' ? i.name : `#${i.itemId}`))
+                .join('、') || '（无菜品）';
+            const used = typeof t.usedCount === 'number' ? (t.usedCount as number) : 0;
+            const cnt =
+              typeof t.itemCount === 'number' ? (t.itemCount as number) : (t.items ?? []).length;
+            catalogLines.push(
+              `· ${t.name ?? '?'} (#${t.id}) ${price} [${status}] 被排${used}次 含${cnt}品：${dishes}`,
+            );
+          }
+        }
+      } catch {
+        /* 目录取不到则跳过，仍给出已有视角 */
+      }
+
+      if (sections.length === 0 && catalogLines.length === 0)
+        return '近 30 天销售数据与套餐目录这次都没取到（可能权限不足或数据还没生成）。可在后台看板查看，或稍后重试。';
+
+      const plain = [...sections, ...catalogLines].join('\n\n');
+
+      // 写临时数据文件，交给脚本做 AI 提案 + 落盘
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const plainFile = join(tmpDir, `_mp_${Date.now()}.txt`);
+      try {
+        writeFileSync(plainFile, plain, 'utf8');
+      } catch {
+        return `选品提案数据已生成，但写入临时文件失败（磁盘权限）。可在后台看板查看原始数据：\n\n${plain}`;
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-meal-proposal.mjs');
+      if (!existsSync(script)) {
+        // 脚本缺失：降级为「直接回显原始数据」，不依赖 AI
+        return `选品提案（原始数据，AI 脚本未找到）：\n\n${plain}`;
+      }
+
+      return new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = (m: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch (e) {
+          finish(
+            `选品提案生成启动失败：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          );
+          return;
+        }
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish('选品提案生成超时（>90s）。原始数据已在后台看板，可稍后重试触发。');
+        }, 90_000);
+        let out = '';
+        let err = '';
+        child.stdout?.on('data', (d) => (out += String(d)));
+        child.stderr?.on('data', (d) => (err += String(d)));
+        child.on('error', (e) =>
+          finish(
+            `选品提案生成出错：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          ),
+        );
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          if (out.trim()) finish(out.trim());
+          else
+            finish(
+              `选品提案生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
             );
         });
       });
