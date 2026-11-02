@@ -99,3 +99,42 @@ jobs:
 #    `scripts/gate.mjs` 里注明该门禁的依赖，让本地跑的人也知道要起容器。
 #    真机 MySQL 的验证路径仍是生产首迁（`ref《缺陷与陷阱》` 已登记未跑过）。
 # ─────────────────────────────────────────────────────────────────────────────
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # AI 编排节点 A · AI 代码审查（软建议，非阻塞）
+  #
+  # 原则零：AI 只做「叠加旁路」。
+  #   · continue-on-error: true —— 即使 LLM 不可用 / 超时 / 异常，本 job 失败也不阻塞合并；
+  #     脚本内部已降级为「仅转发门禁清单 + 人工审查提示」。
+  #   · 脚本依赖 @tencent-ai/workbuddy-cloud-sdk（已加入根依赖 + pnpm-lock.yaml），
+  #     复用仓库内 cloud-public-config.json（公钥，可随源码分发）。
+  #   · 报告同时落盘（releases/ai-review/）并尝试贴 PR 评论；绝不自动 merge。
+  # ⚠️ 不要在门禁清单里另列一份 AI 审查规则 —— gate.mjs 是门禁唯一真源，本 job 不 fork 它。
+  # ───────────────────────────────────────────────────────────────────────────
+  ai-review:
+    name: AI Code Review (node A · soft)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Generate PR diff
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git diff "${PR_BASE_SHA}...${PR_HEAD_SHA}" > /tmp/pr.diff
+      - name: AI review (soft, non-blocking)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/ai-pr-review.mjs --diff-file /tmp/pr.diff --pr "$PR_NUMBER"

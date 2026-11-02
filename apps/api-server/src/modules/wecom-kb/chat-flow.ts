@@ -20,6 +20,7 @@ export type ChatIntent =
   | { kind: 'confirm' }
   | { kind: 'cancel' }
   | { kind: 'negated'; raw: string }
+  | { kind: 'genCampaign'; brief: string }
   | { kind: 'unknown'; raw: string };
 
 const RE_CONFIRM = /^(1|好|好的|好嘞|确认|确定|执行|对|是|可以|行|干吧|办吧|就这样|ok|yes)$/i;
@@ -45,6 +46,14 @@ export function parseIntent(raw: string, now: Date): ChatIntent {
 
   if (isConfirm(t)) return { kind: 'confirm' };
   if (isCancel(t)) return { kind: 'cancel' };
+
+  // AI 编排节点 B · 文案与素材生成（企微触发）：认出「生成招募页/文案 + 需求」即走该节点。
+  // ⚠️ 必须早于后面的 orders/assign 判定 —— 需求里若误带「套餐/订单」等词也不应被截走。
+  const genCampaign =
+    /^(?:生成招募页|生成文案|招募文案|招募页|写招募文案|生成海报|出招募页|campaign)\s*[:：]?\s*(.*)$/i.exec(
+      t,
+    );
+  if (genCampaign) return { kind: 'genCampaign', brief: genCampaign[1].trim() };
 
   if (/^(帮助|help|\?|？|菜单|能干什么|会什么|怎么用|使用说明)$/.test(t)) return { kind: 'help' };
 
@@ -90,6 +99,7 @@ export const CHAT_HELP = [
   '要用后台其它功能：',
   '· 发「操作目录」看全部功能（按模块分组，只列你能用的）',
   '· 或直接搜：「找 退款」「找 团长」「找 优惠券」',
+  '· 出招募物料：发「生成招募页 <一句话需求>」（AI 起草文案与海报，草稿需人工终审）',
   '选好之后我只问缺的那几个参数，回 1 才真执行。',
   '',
   '直接说事，例如：',

@@ -1,4 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { spawn } from 'child_process';
+import { existsSync } from 'fs';
+import { join, resolve } from 'path';
 import { isAfterCutoff } from '../../common/utils/time';
 import { OpProxyService, Binding } from './op-proxy.service';
 import { NameResolverService, GroupResolve, ItemResolve } from './name-resolver.service';
@@ -45,6 +48,7 @@ import {
   compareDashboard,
 } from './stats-summary';
 import { summarizeData } from './result-summary';
+import { callLLM, retrieveKB, isLlmAssistEnabled } from './llm.adapter';
 
 /**
  * 人话 → 后台操作 的编排（「说一句话就干活」这一层的核心）
@@ -238,9 +242,122 @@ export class WecomChatService {
         return '好，什么都没动。';
       case 'confirm':
         return '现在没有等你确认的事。';
+      case 'genCampaign':
+        return this.genCampaign(intent.brief);
       default:
-        return CHAT_FALLBACK;
+        return this.maybeLLMReply(text, binding);
     }
+  }
+
+  /**
+   * LLM 增强兜底：仅在「规则/意图都未命中」时尝试 LLM 应答。
+   * 关闭 / 未激活 / 超时 / 异常 → 退回 CHAT_FALLBACK（与未接 LLM 的线上行为完全一致）。
+   * 这一层是「可剥离」的：删除 llm.adapter 或设 LLM_ASSIST_ENABLED=false，行为退回规则驱动。
+   */
+  private async maybeLLMReply(text: string, _binding: Binding): Promise<string> {
+    if (!isLlmAssistEnabled()) return CHAT_FALLBACK;
+    try {
+      const kb = await retrieveKB(text);
+      const answer = await callLLM(text, kb);
+      if (answer) return answer;
+    } catch {
+      // callLLM 已自捕；此处再兜一层，确保绝不把异常抛到消息回路之外
+    }
+    return CHAT_FALLBACK;
+  }
+
+  /**
+   * AI 编排节点 B · 文案与素材生成（企微触发）
+   * ------------------------------------------------------------------
+   * 同事在企微发「生成招募页 <需求>」即触发：spawn 独立脚本 `gen-campaign.mjs` 起草文案与海报。
+   *
+   * 原则零保障（AI 可剥离、可降级，不影响发布与传统运营）：
+   *   · 本方法是「纯增量」—— 只新增分支，不动订单/支付/配送核心，也不碰确定性问答逻辑；
+   *   · 脚本本身是独立文件（scripts/gen-campaign.mjs），删掉/关掉即退回「手工写文案」传统路径；
+   *   · 全程包在 try/finally + 超时里：脚本启动失败 / 超时 / 异常 → 立刻回退一句提示，
+   *     绝不把异常抛到消息回路之外、绝不阻塞应答；
+   *   · 脚本只产出草稿文件（releases/campaign/<slug>/），由人工终审后再发布，不自动上线。
+   */
+  private genCampaign(brief: string): Promise<string> {
+    const needBrief =
+      '要生成招募页，请告诉我这次推什么。例如：\n生成招募页 双十一暖冬团，推热饮+点心组合，招募一栋写字楼团长';
+    if (!brief || !brief.trim()) return Promise.resolve(needBrief);
+
+    const repoRoot = this.resolveRepoRoot();
+    const script = join(repoRoot, 'scripts', 'gen-campaign.mjs');
+    if (!existsSync(script)) {
+      return Promise.resolve(
+        '招募页生成脚本未找到（scripts/gen-campaign.mjs）。请确认部署包完整，或走手工写文案路径。',
+      );
+    }
+
+    const slug = 'wx_' + Date.now();
+    return new Promise<string>((resolve) => {
+      let settled = false;
+      const finish = (msg: string): void => {
+        if (!settled) {
+          settled = true;
+          resolve(msg);
+        }
+      };
+
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn('node', [script, '--brief', brief, '--slug', slug], {
+          cwd: repoRoot,
+          env: { ...process.env },
+        });
+      } catch (e) {
+        finish(
+          `生成任务启动失败：${e instanceof Error ? e.message : String(e)}。可走手工写文案路径。`,
+        );
+        return;
+      }
+
+      const timer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* noop */
+        }
+        finish(
+          `生成超时（>90s），可能 LLM 较慢或暂不可用。文件若已生成，在 releases/campaign/${slug}/ 下查看；否则请稍后重试或手工运行脚本。`,
+        );
+      }, 90_000);
+
+      let stderr = '';
+      child.stderr?.on('data', (d) => (stderr += String(d)));
+      child.on('error', (e) =>
+        finish(`生成任务出错：${e instanceof Error ? e.message : String(e)}。可走手工写文案路径。`),
+      );
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        if (code === 0) {
+          finish(
+            `招募文案与素材已生成（AI 草稿，请人工终审后再发布）：\nreleases/campaign/${slug}/\n· copy.md（招募/朋友圈/社群文案）\n· poster.html（品牌招募页）\n· poster.svg（移动端海报）\n\n要再来一份，直接发「生成招募页 <需求>」。`,
+          );
+        } else {
+          finish(
+            `生成未成功（退出码 ${code}）。${stderr ? '\n' + stderr.slice(0, 400) : ''}\n传统手工写文案路径不受影响，可稍后重试。`,
+          );
+        }
+      });
+    });
+  }
+
+  /**
+   * 从当前模块位置推导仓库根（abox-onebox）。dist/src 路径层级一致（均 4 段到 repo root），
+   * 并用 existsSync 兜底：任一候选命中脚本即采用，避免部署结构/启动 cwd 差异导致解析失败。
+   */
+  private resolveRepoRoot(): string {
+    const candidates: string[] = [];
+    if (typeof __dirname !== 'undefined') candidates.push(resolve(__dirname, '../../../../'));
+    candidates.push(resolve(process.cwd(), '..', '..'));
+    candidates.push(process.cwd());
+    for (const c of candidates) {
+      if (existsSync(join(c, 'scripts', 'gen-campaign.mjs'))) return c;
+    }
+    return candidates[0];
   }
 
   // ---------------------------------------------------------------- 通用操作（全部后台功能）

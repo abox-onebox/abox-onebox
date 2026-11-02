@@ -12,6 +12,9 @@ unpackage/
 dist-h5/
 *.tsbuildinfo
 
+# AI 编排脚本生成产物（提审包 / 文案素材 / 审查报告，按需重跑脚本再生，不入库）
+releases/
+
 # unplugin 自动生成的类型声明（构建期产物；当前未被 tsconfig include 消费）
 apps/*/auto-imports.d.ts
 apps/*/components.d.ts
