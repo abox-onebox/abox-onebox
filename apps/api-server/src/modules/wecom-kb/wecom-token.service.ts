@@ -48,7 +48,10 @@ export class WecomTokenService {
   }
 
   /** 主动下发文本消息给指定 userid（回调处理完异步发送，避免 5s 超时重试） */
-  async sendText(userId: string, content: string): Promise<void> {
+  async sendText(
+    userId: string,
+    content: string,
+  ): Promise<{ ok: boolean; errcode?: number; errmsg?: string }> {
     try {
       const token = await this.getAccessToken();
       const agentid = Number(this.need('WECOM_AGENT_ID'));
@@ -64,11 +67,13 @@ export class WecomTokenService {
         this.logger.error(
           `企业微信发消息失败 touser=${userId} errcode=${json.errcode} errmsg=${json.errmsg}`,
         );
-      } else {
-        this.logger.log(`企业微信消息已下发 touser=${userId}`);
+        return { ok: false, errcode: json.errcode, errmsg: json.errmsg };
       }
+      this.logger.log(`企业微信消息已下发 touser=${userId}`);
+      return { ok: true };
     } catch (e) {
       this.logger.error(`企业微信发消息异常 touser=${userId}：${(e as Error).message}`);
+      return { ok: false, errmsg: (e as Error).message };
     }
   }
 }

@@ -583,8 +583,15 @@ export class WecomChatService {
     const digest = this.composeDigest(results, now);
     let pushed = false;
     try {
-      await this.tokenSvc.sendText(userId, digest);
-      pushed = true;
+      const r = await this.tokenSvc.sendText(userId, digest);
+      pushed = r.ok;
+      if (!pushed) {
+        this.logger.error(
+          'AI 编排推送被企业微信拒绝（摘要仍已生成）：' +
+            (r.errcode ? 'errcode=' + r.errcode + ' ' : '') +
+            (r.errmsg || ''),
+        );
+      }
     } catch (e) {
       this.logger.error(
         'AI 编排推送失败（摘要仍已生成）：' + (e instanceof Error ? e.message : String(e)),
