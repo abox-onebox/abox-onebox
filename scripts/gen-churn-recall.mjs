@@ -67,9 +67,8 @@ function pickWritableDir() {
 
 /** 北京日期 YYYY-MM-DD */
 function bjYmd() {
-  const bj = new Date(Date.now() + 8 * 3600 * 1000);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${bj.getFullYear()}-${p(bj.getMonth() + 1)}-${p(bj.getDate())}`;
+  // ⚠️ 用 toISOString（TZ 无关），不要「+8h 后读本地分量」（容器 TZ=Asia/Shanghai 会双平移）
+  return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
 const PROPOSAL_SYSTEM = `你是「ABox 一盒」的用户增长与留存官。下面是一段已取好的「全量用户流失分群 + D50 留存背景 + 现有可复用券种」数据（数值均为系统实读汇总，已脱敏，不含任何个人信息）。

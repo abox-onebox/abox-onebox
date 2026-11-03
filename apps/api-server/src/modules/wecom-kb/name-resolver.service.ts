@@ -168,7 +168,32 @@ interface RawReconcile {
   note?: string;
 }
 
-/** 退款审批列表（admin/finance/refunds）—— 风控对账 AI 用，仅读 summary */
+/**
+ * 退款列表行（admin/finance/refunds 的 `list` 项）—— 节点 K 只读 summary；
+ * 节点 Q（退款根因聚类）要逐笔聚类，故这里把用得到的字段显式列出。
+ * ⚠️ `user.nickname` / `user.phoneMasked` **刻意不取**：聚类只需要 `userId` 计数，
+ *    身份信息一律不进本层，避免顺着 LLM 外泄。
+ */
+export interface RawRefundRow {
+  id?: number;
+  refundNo?: string | null;
+  orderNo?: string | null;
+  mealDate?: string | null;
+  amountFen?: number | null;
+  status?: string | null;
+  statusText?: string | null;
+  applySource?: string | null;
+  applySourceText?: string | null;
+  reasonType?: string | null;
+  reasonTypeText?: string | null;
+  reason?: string | null;
+  refundedAt?: string | null;
+  auditAt?: string | null;
+  user?: { id?: number | null } | null;
+  leader?: { id?: number | null } | null;
+}
+
+/** 退款审批列表（admin/finance/refunds）—— K 读 summary，Q 读 list 聚类 */
 interface RawRefundPage {
   summary?: {
     pendingCount?: number;
@@ -178,7 +203,7 @@ interface RawRefundPage {
     refundedAmountFen?: number;
     rejectedCount?: number;
   };
-  list?: unknown[];
+  list?: RawRefundRow[];
 }
 
 /** 应付未出单异常（admin/supplier-shares/exceptions）—— 风控对账 AI 用，仅读 summary */
@@ -415,10 +440,20 @@ export class NameResolverService {
   }
 
   /** 退款审批列表：admin/finance/refunds?tab=pending（待审批积压，运营风控关注点） */
-  async getRefunds(tab = 'pending'): Promise<RawRefundPage | null> {
+  async getRefunds(tab = 'pending', pageSize = 50): Promise<RawRefundPage | null> {
     return this.fetchJson<RawRefundPage>(
-      `/admin/finance/refunds?tab=${encodeURIComponent(tab)}&pageSize=50`,
+      `/admin/finance/refunds?tab=${encodeURIComponent(tab)}&pageSize=${pageSize}`,
     );
+  }
+
+  /**
+   * 退款逐笔清单（节点 Q 用）：取 `tab=all` 的最近一页（接口无日期区间参数，
+   * pageSize 上限 100），窗口过滤交给纯函数 `clusterRefunds`。
+   * ⚠️ 返回的样本量就是「最近 N 笔」，文案里必须说明，别写成「全部退款」。
+   */
+  async listRefundRows(pageSize = 100): Promise<RawRefundRow[] | null> {
+    const page = await this.getRefunds('all', Math.min(100, Math.max(1, pageSize)));
+    return page?.list ?? null;
   }
 
   /** 应付未出单异常：admin/supplier-shares/exceptions?date=Y（date 必填，出餐日） */

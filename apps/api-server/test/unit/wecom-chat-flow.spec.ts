@@ -227,3 +227,61 @@ describe('parseIntent · 节点 N / O 分流', () => {
     expect(kindOf('今天多少单')).toBe('orders');
   });
 });
+
+/**
+ * 节点 P（社群运营）与 Q（退款根因）的意图分流
+ * ------------------------------------------------------------------
+ * 这两条最容易和邻居串台：
+ *   · P 和 B「生成文案」、M「私域」都有词面重叠；
+ *   · Q 和 K「风控对账」都在财务语境里。
+ * 所以除了正例，必须给「邻居不被抢走」的负控——否则一旦串台，
+ * 用户问的是「为什么退款」，收到的却是一份「钱对不对得上」的对账报告。
+ */
+describe('chatIntent · 社群运营 / 退款根因', () => {
+  const kindOf = (s: string): string => parseIntent(s, now).kind;
+
+  it('认社群运营（多种说法）', () => {
+    for (const s of [
+      '生成社群运营',
+      '社群排期',
+      '本周社群内容',
+      '群运营方案',
+      '朋友圈文案',
+      '私域运营',
+      '社群话术',
+    ]) {
+      expect(kindOf(s)).toBe('genCommunityPlan');
+    }
+  });
+
+  it('认退款根因（多种说法）', () => {
+    for (const s of [
+      '生成退款根因',
+      '退款聚类',
+      '退款分析',
+      '退款原因',
+      '为什么退款',
+      '退款复盘',
+    ]) {
+      expect(kindOf(s)).toBe('genRefundCluster');
+    }
+  });
+
+  it('★「风控对账」仍归 K，「退款分析」归 Q（钱对不对 ≠ 为什么退）', () => {
+    expect(kindOf('生成风控对账')).toBe('genRiskRecon');
+    expect(kindOf('退款分析')).toBe('genRefundCluster');
+  });
+
+  it('负控：单条文案仍归 B，不被 P 抢走', () => {
+    expect(kindOf('生成文案 周五截单提醒')).toBe('genCampaign');
+  });
+
+  it('负控：用户流失仍归 M，不被 P 的「私域」抢走', () => {
+    expect(kindOf('生成流失预警')).toBe('genChurnRecall');
+    expect(kindOf('私域流失召回')).toBe('genChurnRecall');
+  });
+
+  it('负控：团长健康度仍归 N，不被 P/Q 抢走', () => {
+    expect(kindOf('生成团长健康度')).toBe('genLeaderHealth');
+  });
+});

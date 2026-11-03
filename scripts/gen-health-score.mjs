@@ -63,9 +63,8 @@ function pickWritableDir() {
 }
 
 function bjYmd() {
-  const bj = new Date(Date.now() + 8 * 3600 * 1000);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${bj.getFullYear()}-${p(bj.getMonth() + 1)}-${p(bj.getDate())}`;
+  // ⚠️ 用 toISOString（TZ 无关），不要「+8h 后读本地分量」（容器 TZ=Asia/Shanghai 会双平移）
+  return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
 const PROPOSAL_SYSTEM = `你是「ABox 一盒」的经营分析师。下面是一段由系统纯函数算好的《经营健康度总分》数据：五维各 20 分（增长 / 留存 / 资金 / 履约 / 组织），已折算成 0~100 总分与红黄绿等级，并附了原始关键数字。

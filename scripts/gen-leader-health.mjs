@@ -65,9 +65,9 @@ function pickWritableDir() {
 }
 
 function bjYmd() {
-  const bj = new Date(Date.now() + 8 * 3600 * 1000);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${bj.getFullYear()}-${p(bj.getMonth() + 1)}-${p(bj.getDate())}`;
+  // ⚠️ 用 toISOString（TZ 无关），不要「+8h 后读本地分量」：
+  //    容器 TZ=Asia/Shanghai 时本地分量已含东八区，再 +8h 会在 16:00 后跨到明天。
+  return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
 const PROPOSAL_SYSTEM = `你是「ABox 一盒」的团长运营负责人。下面是一段已取好的「在职团长健康度」数据（数值均为系统实读汇总，已脱敏：不含姓名、手机号、微信标识）。

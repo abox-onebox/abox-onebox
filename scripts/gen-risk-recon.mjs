@@ -66,9 +66,8 @@ function pickWritableDir() {
 
 /** 北京日期 YYYY-MM-DD */
 function bjYmd() {
-  const bj = new Date(Date.now() + 8 * 3600 * 1000);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${bj.getFullYear()}-${p(bj.getMonth() + 1)}-${p(bj.getDate())}`;
+  // ⚠️ 用 toISOString（TZ 无关），不要「+8h 后读本地分量」（容器 TZ=Asia/Shanghai 会双平移）
+  return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
 const PROPOSAL_SYSTEM = `你是「ABox 一盒」的风控对账体检官。下面是一段已取好的「本地三头支付对账差异 + 退款积压 + 应付未出单异常 + 提现待审批」数据（数值均为系统实读汇总，已脱敏）。

@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync } from 'fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'path';
-import { isAfterCutoff } from '../../common/utils/time';
+import { isAfterCutoff, todayBj } from '../../common/utils/time';
 import { Cron } from '@nestjs/schedule';
 import { OpProxyService, Binding } from './op-proxy.service';
 import { NameResolverService, GroupResolve, ItemResolve } from './name-resolver.service';
@@ -57,6 +57,8 @@ import { summarizeData } from './result-summary';
 import { callLLM, retrieveKB, isLlmAssistEnabled } from './llm.adapter';
 import { summarizeLeaderHealth, describeLeader, type LeaderHealthItem } from './leader-health';
 import { computeHealthScore, weakestDimension, type HealthScoreInput } from './health-score';
+import { pickCommunityTargets, describeTargets, AMPLIFY_MIN_ORDERS } from './community-plan';
+import { clusterRefunds, describeRefundCluster } from './refund-cluster';
 
 /** 取首行非空文本，截断到 80 字，用于编排摘要的一行预览 */
 function firstLineOf(text: string): string {
@@ -307,6 +309,10 @@ export class WecomChatService {
         return this.genLeaderHealth(binding, now);
       case 'genHealthScore':
         return this.genHealthScore(binding, now);
+      case 'genCommunityPlan':
+        return this.genCommunityPlan(binding, now);
+      case 'genRefundCluster':
+        return this.genRefundCluster(binding, now);
       default:
         return this.maybeLLMReply(text, binding);
     }
@@ -443,6 +449,8 @@ export class WecomChatService {
       // 总分放最后一个跑：它要读对账/留存/团长覆盖，先让前面的节点把数据准备好
       // （但它是**独立取数**的，不依赖上面节点的文本 —— 节点失败不会连锁影响分数）
       { key: 'health', title: '经营健康度总分', run: () => this.genHealthScore(binding, now) },
+      { key: 'community', title: '社群运营排期', run: () => this.genCommunityPlan(binding, now) },
+      { key: 'refund', title: '退款根因聚类', run: () => this.genRefundCluster(binding, now) },
     ];
     const out: DailyNodeResult[] = [];
     // 每天重新生成封面徽标：若本节点今天失败，宁可**没有**徽标，也不能挂昨天的旧分数
@@ -2099,9 +2107,10 @@ export class WecomChatService {
   private genChurnRecall(binding: Binding, now: Date): Promise<string> {
     const run = async (): Promise<string> => {
       // 北京日期（本地分量，绝不用 toISOString 退一天）
-      const bjNow = new Date(now.getTime() + 8 * 3600 * 1000);
-      const pad = (n: number): string => String(n).padStart(2, '0');
-      const endDate = `${bjNow.getFullYear()}-${pad(bjNow.getMonth() + 1)}-${pad(bjNow.getDate())}`;
+      // ⚠️ 必须用 `todayBj`（内部走 toISOString），不能「+8h 后读本地分量」：
+      //    容器 TZ=Asia/Shanghai，本地分量本就含东八区，再 +8h 会在 16:00 后跨到「明天」，
+      //    于是拿明天的日期去查统计（恒空）。2026-11-03 自证：16:27 时该写法得出 11-04。
+      const endDate = todayBj(now);
       const RECENCY_THRESHOLD = 14; // 周一周盒：>14 天未下单 = 已错过 ≥2 周，判流失风险
       const nowMs = now.getTime();
       const daysBetween = (s: string | null): number | null => {
@@ -2393,9 +2402,8 @@ export class WecomChatService {
    */
   private genLeaderHealth(_binding: Binding, now: Date): Promise<string> {
     const run = async (): Promise<string> => {
-      const bjNow = new Date(now.getTime() + 8 * 3600 * 1000);
-      const pad = (n: number): string => String(n).padStart(2, '0');
-      const today = `${bjNow.getFullYear()}-${pad(bjNow.getMonth() + 1)}-${pad(bjNow.getDate())}`;
+      // 同上：用 todayBj，别用「+8h 后读本地分量」（TZ=Asia/Shanghai 会双平移）
+      const today = todayBj(now);
       const nowMs = now.getTime();
 
       const BAND_LABEL: Record<string, string> = {
@@ -2624,10 +2632,8 @@ export class WecomChatService {
     const run = async (): Promise<string> => {
       const today = bjTodayStr(now);
       if (!today) return '取不到今天的日期，我先不动。稍后再试。';
-      const bjNow = new Date(now.getTime() + 8 * 3600 * 1000);
-      const yBj = new Date(bjNow.getTime() - 24 * 3600 * 1000);
-      const pad = (n: number): string => String(n).padStart(2, '0');
-      const yDate = `${yBj.getFullYear()}-${pad(yBj.getMonth() + 1)}-${pad(yBj.getDate())}`;
+      // 昨天：bjYmdPlus 走 UTC 分量，天然免疫容器 TZ（别用「+8h 后读本地分量」）
+      const yDate = bjYmdPlus(now, -1);
       const nowMs = now.getTime();
 
       // 与节点 E 日报同口径：近 7 天，截止最近一个闭合日
@@ -3002,13 +3008,369 @@ export class WecomChatService {
     }
   }
 
+  /**
+   * 节点 P · 社群/私域运营助手（企微触发 + 每日编排）
+   * 只出「排期 + 话术 + 朋友圈文案」草案，**不自动发群、不自动发券、不加好友**。
+   * 判据（哪几栋楼该放量/唤醒）在 community-plan.ts 纯函数里，这里只负责取数与拼装。
+   */
+  private genCommunityPlan(binding: Binding, now: Date): Promise<string> {
+    const run = async (): Promise<string> => {
+      const today = todayBj(now);
+      const nowMs = now.getTime();
+
+      // 1. 靶楼分层（复用 N 的 band 判据，不另写阈值）
+      let tierSec = '（暂缺）';
+      let detailSec = '（暂缺）';
+      try {
+        const rows = await this.resolver.listLeaders();
+        if (rows && rows.length) {
+          const { items } = summarizeLeaderHealth(rows, nowMs);
+          const t = pickCommunityTargets(items);
+          tierSec = [
+            `在职团长 ${items.length} 人 · 其中新上任 ${t.newCount} 人（<7 天，不参与沉默判定）`,
+            describeTargets(t),
+            `放量门槛：本月 ≥ ${AMPLIFY_MIN_ORDERS} 单才归「放量」（有量可放大时，社群该加码而不是唤醒）`,
+          ].join('\n');
+
+          const d: string[] = [];
+          if (t.focus.length) {
+            d.push('主战场（本月单量最高，社群主推这里）：');
+            for (const x of t.focus) {
+              d.push(
+                `  · ${x.buildingName ?? `团长#${x.leaderId}`} 本月 ${x.monthOrders} 单 · 累计 ${x.totalOrders} 单`,
+              );
+            }
+          }
+          if (t.wake.length) {
+            d.push('待唤醒（8~14 天没单，一条群消息就能拉回）：');
+            for (const x of t.wake) {
+              d.push(
+                `  · ${x.buildingName ?? `团长#${x.leaderId}`} 距最近出单 ${x.silentDays ?? '?'} 天 · 本月 ${x.monthOrders} 单`,
+              );
+            }
+          }
+          if (t.mustWake.length) {
+            d.push('最该先救的沉默楼（历史有量，救回来的概率最高）：');
+            for (const x of t.mustWake) {
+              const silent = x.silentDays == null ? '从未出单' : `距最近出单 ${x.silentDays} 天`;
+              d.push(
+                `  · ${x.buildingName ?? `团长#${x.leaderId}`} 累计 ${x.totalOrders} 单 · ${silent} · 本月 ${x.monthOrders} 单`,
+              );
+            }
+          }
+          detailSec = d.length ? d.join('\n') : '（无需要单独点名的楼栋）';
+        }
+      } catch {
+        /* 该视角跳过 */
+      }
+
+      // 2. 当期可排套餐（社群发的就是这张菜单，不能凭空编菜名）
+      let menuSec = '（暂缺）';
+      try {
+        const tpls = await this.resolver.listTemplatesFull();
+        if (tpls && tpls.length) {
+          const picked = tpls.filter((t) => t.status === 1).slice(0, 8);
+          menuSec =
+            picked.length === 0
+              ? '（当前没有启用中的套餐）'
+              : `启用中套餐（共 ${tpls.filter((t) => t.status === 1).length} 个，列前 ${picked.length} 个）：\n` +
+                picked
+                  .map(
+                    (t) =>
+                      `  · ${t.name ?? '未命名'} ¥${((Number(t.priceFen) || 0) / 100).toFixed(2)}`,
+                  )
+                  .join('\n');
+        }
+      } catch {
+        /* 跳过 */
+      }
+
+      // 3. 现有券种（话术里要提券就提这几张，不许编 id）
+      let couponSec = '（暂缺）';
+      try {
+        const defs = await this.resolver.listCouponDefs();
+        if (defs && defs.length) {
+          couponSec = defs
+            .slice(0, 8)
+            .map(
+              (c) =>
+                `  · #${c.id} ${c.name} 面额¥${((c.faceValueFen || 0) / 100).toFixed(2)} 门槛¥${((c.thresholdFen || 0) / 100).toFixed(2)}（${c.status ?? '?'}）`,
+            )
+            .join('\n');
+        }
+      } catch {
+        /* 跳过 */
+      }
+
+      // 4. 留存背景（群运营的抓手是复购，不是拉新）
+      let retainSec = '（暂缺）';
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.retention,
+          { range: '30d', date: today },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const txt = summarizeRetention(cur.data);
+          if (txt) retainSec = txt;
+        }
+      } catch {
+        /* 跳过 */
+      }
+
+      const lines: string[] = [];
+      lines.push(`社群运营数据 · 基准日 ${today}（数值均为系统实读汇总，不含团长姓名/手机号）`);
+      lines.push('');
+      lines.push('【一、靶楼分层】');
+      lines.push(tierSec);
+      lines.push('');
+      lines.push('【二、重点楼栋】');
+      lines.push(detailSec);
+      lines.push('');
+      lines.push('【三、当期可排套餐】');
+      lines.push(menuSec);
+      lines.push('');
+      lines.push('【四、现有券种】');
+      lines.push(couponSec);
+      lines.push('');
+      lines.push('【五、留存背景（近 30 天）】');
+      lines.push(retainSec);
+      lines.push('');
+      lines.push(
+        '说明：分档阈值为系统判定（新上任 <7 天不参与沉默判定、7 天内健康、8~14 天待唤醒、>14 天沉睡）；放量/唤醒/沉默三档互斥。本节点只出提案，发群、发券、加好友均须人工执行。',
+      );
+
+      const plain = lines.join('\n');
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const plainFile = join(tmpDir, `_community_${Date.now()}.txt`);
+      try {
+        writeFileSync(plainFile, plain, 'utf8');
+      } catch {
+        return `社群运营数据已生成，但写入临时文件失败（磁盘权限）。原始数据：\n\n${plain}`;
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-community-plan.mjs');
+      if (!existsSync(script)) {
+        return `社群运营方案（原始数据，AI 脚本未找到）：\n\n${plain}`;
+      }
+
+      return new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = (m: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch (e) {
+          finish(
+            `社群运营方案生成启动失败：${e instanceof Error ? e.message : String(e)}。原始数据见上。`,
+          );
+          return;
+        }
+        let out = '';
+        child.stdout?.on('data', (b: Buffer) => {
+          out += b.toString('utf8');
+        });
+        child.stderr?.on('data', () => {
+          /* 脚本自会降级，stderr 只用于日志 */
+        });
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish(
+            out.trim() ||
+              `社群运营方案生成超时（90 秒）。稍后再试，或直接在后台按上表人工编排。\n\n${plain}`,
+          );
+        }, 90_000);
+        child.on('error', (e) => {
+          clearTimeout(timer);
+          finish(`社群运营方案生成失败：${e.message}。\n\n${plain}`);
+        });
+        child.on('close', () => {
+          clearTimeout(timer);
+          const text = out.trim();
+          finish(text || `AI 未产出内容，附原始数据：\n\n${plain}`);
+        });
+      });
+    };
+
+    return run().catch(
+      (e: unknown) =>
+        `社群运营方案生成出错：${e instanceof Error ? e.message : String(e)}。这条不影响其他功能，稍后可重试。`,
+    );
+  }
+
+  /**
+   * 节点 Q · 退款根因聚类（企微触发 + 每日编排）
+   * 聚类口径在 refund-cluster.ts 纯函数里（算数不进 LLM），这里只取数与拼装。
+   * 只提案：不自动通过/驳回退款、不改订单状态。
+   */
+  private genRefundCluster(binding: Binding, now: Date): Promise<string> {
+    const run = async (): Promise<string> => {
+      const today = todayBj(now);
+      const cutoffYmd = bjYmdPlus(now, -29); // 30 天窗口（含今天）
+
+      // 1. 退款率背景（看板口径，与逐笔聚类不同源，必须分开说）
+      let bgSec = '（暂缺）';
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.dashboard,
+          { range: '30d', date: today },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const txt = summarizeDashboard(cur.data);
+          if (txt) bgSec = txt;
+        }
+      } catch {
+        /* 跳过 */
+      }
+
+      // 2. 逐笔聚类
+      let clusterSec = '（暂缺）';
+      let sampleNote = '';
+      try {
+        const rows = await this.resolver.listRefundRows(100);
+        if (rows && rows.length) {
+          const r = clusterRefunds(rows, { cutoffYmd, windowDays: 30, topN: 8 });
+          sampleNote = `样本：最近 ${rows.length} 笔退款里落在近 30 天窗口内的 ${r.total} 笔（接口无日期区间参数，非全量）`;
+          if (r.total === 0) {
+            clusterSec = `近 30 天窗口内没有退款样本（已拉到 ${rows.length} 笔，均早于 ${cutoffYmd}）。`;
+          } else {
+            const cl: string[] = [];
+            // 一句话结论放最前，与摘要/降级话术共用同一个 describer（避免两处口径打架）
+            cl.push(describeRefundCluster(r));
+            cl.push(`笔均 ¥${((r.totalAmountFen || 0) / r.total / 100).toFixed(2)}`);
+            cl.push(
+              `未标注原因 ${r.unlabeled.count} 笔（${(r.unlabeled.share * 100).toFixed(1)}%）` +
+                (r.unlabeled.warning
+                  ? ' ⚠️ 超过三成，原因分布不可信，先把「退款原因」设成必填更值钱'
+                  : ''),
+            );
+            cl.push('按原因聚类（笔数降序，占比以窗口内为分母）：');
+            for (const c of r.clusters) {
+              cl.push(
+                `  · ${c.key} ${c.count} 笔 · ¥${((c.amountFen || 0) / 100).toFixed(2)}（笔均 ¥${((c.avgAmountFen || 0) / 100).toFixed(2)}）· 占 ${(c.share * 100).toFixed(1)}%`,
+              );
+              for (const s of c.samples) cl.push(`      原话：「${s}」`);
+            }
+            cl.push(
+              '按金额分档：' + r.amountBuckets.map((b) => `${b.key} ${b.count} 笔`).join(' · '),
+            );
+            if (r.sourceMix.length) {
+              cl.push('申请来源：' + r.sourceMix.map((s) => `${s.key} ${s.count} 笔`).join(' · '));
+            }
+            cl.push(
+              `重复退款：涉及用户 ${r.repeat.distinctUsers} 人，其中退过 2 笔以上 ${r.repeat.repeatedUsers} 人（单人最多 ${r.repeat.maxPerUser} 笔）`,
+            );
+            clusterSec = cl.join('\n');
+          }
+        }
+      } catch {
+        /* 跳过 */
+      }
+
+      const lines: string[] = [];
+      lines.push(`退款根因数据 · 基准日 ${today}（数值均为系统实读汇总，不含昵称/手机号）`);
+      lines.push('');
+      lines.push('【一、退款率背景（看板口径，近 30 天）】');
+      lines.push(bgSec);
+      lines.push('');
+      lines.push('【二、逐笔退款聚类（近 30 天窗口）】');
+      lines.push(clusterSec);
+      if (sampleNote) {
+        lines.push('');
+        lines.push(sampleNote);
+      }
+      lines.push('');
+      lines.push(
+        '说明：聚类按后台归一的「退款原因」归类，缺失原因记为「未标注原因」，不做推断归类；两条口径（看板退款率 / 逐笔聚类）来源不同，不可互相校验金额。本节点只提案，退款审批与订单状态仍须人工在后台操作。',
+      );
+
+      const plain = lines.join('\n');
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const plainFile = join(tmpDir, `_refund_${Date.now()}.txt`);
+      try {
+        writeFileSync(plainFile, plain, 'utf8');
+      } catch {
+        return `退款聚类数据已生成，但写入临时文件失败（磁盘权限）。原始数据：\n\n${plain}`;
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-refund-cluster.mjs');
+      if (!existsSync(script)) {
+        return `退款根因分析（原始数据，AI 脚本未找到）：\n\n${plain}`;
+      }
+
+      return new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = (m: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch (e) {
+          finish(
+            `退款根因分析生成启动失败：${e instanceof Error ? e.message : String(e)}。原始数据见上。`,
+          );
+          return;
+        }
+        let out = '';
+        child.stdout?.on('data', (b: Buffer) => {
+          out += b.toString('utf8');
+        });
+        child.stderr?.on('data', () => {
+          /* 脚本自会降级 */
+        });
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish(out.trim() || `退款根因分析生成超时（90 秒）。\n\n${plain}`);
+        }, 90_000);
+        child.on('error', (e) => {
+          clearTimeout(timer);
+          finish(`退款根因分析生成失败：${e.message}。\n\n${plain}`);
+        });
+        child.on('close', () => {
+          clearTimeout(timer);
+          const text = out.trim();
+          finish(text || `AI 未产出内容，附原始数据：\n\n${plain}`);
+        });
+      });
+    };
+
+    return run().catch(
+      (e: unknown) =>
+        `退款根因分析生成出错：${e instanceof Error ? e.message : String(e)}。这条不影响其他功能，稍后可重试。`,
+    );
+  }
+
   private genRiskRecon(binding: Binding, now: Date): Promise<string> {
     const run = async (): Promise<string> => {
       // 北京日期（本地分量，绝不用 toISOString 退一天）
-      const bjNow = new Date(now.getTime() + 8 * 3600 * 1000);
-      const yBj = new Date(bjNow.getTime() - 24 * 3600 * 1000);
-      const pad = (n: number): string => String(n).padStart(2, '0');
-      const yDate = `${yBj.getFullYear()}-${pad(yBj.getMonth() + 1)}-${pad(yBj.getDate())}`;
+      // 同上：bjYmdPlus 走 UTC 分量，不受容器 TZ 影响
+      const yDate = bjYmdPlus(now, -1);
       const fen2yuan = (fen: number): string => `¥${((fen || 0) / 100 || 0).toFixed(2)}`;
 
       // 1. 支付对账（核心）
