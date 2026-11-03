@@ -59,6 +59,7 @@ import { summarizeLeaderHealth, describeLeader, type LeaderHealthItem } from './
 import { computeHealthScore, weakestDimension, type HealthScoreInput } from './health-score';
 import { pickCommunityTargets, describeTargets, AMPLIFY_MIN_ORDERS } from './community-plan';
 import { clusterRefunds, describeRefundCluster } from './refund-cluster';
+import { preflight, describePreflight, type PreflightResult } from './preflight';
 
 /** 取首行非空文本，截断到 80 字，用于编排摘要的一行预览 */
 function firstLineOf(text: string): string {
@@ -76,6 +77,13 @@ export interface DailyNodeResult {
   title: string;
   text: string;
   ok: boolean;
+  /**
+   * 本次因「数据体检不通过」而跳过（不是失败，也不是没跑）。
+   *
+   * 必须与 ok=false 分开：ok=false 是要人去看的故障；skipped 是**预期的**省略，
+   * 混在一起会让摘要里出现一片 ❌，看起来像系统坏了。
+   */
+  skipped?: boolean;
 }
 
 /**
@@ -182,6 +190,13 @@ export class WecomChatService {
    * ⚠️ 一期单 API 实例 + 编排串行，所以这个字段安全；多实例部署时要改成按天落库。
    */
   private lastHealthBadge: string | null = null;
+
+  /**
+   * 最近一次编排前的数据体检结论（供摘要首段用）
+   *
+   * 与 lastHealthBadge 同理：每次 runDailyNodes 开头重算，不留上一轮的结论。
+   */
+  private lastPreflight: PreflightResult | null = null;
 
   constructor(
     private readonly resolver: NameResolverService,
@@ -455,7 +470,31 @@ export class WecomChatService {
     const out: DailyNodeResult[] = [];
     // 每天重新生成封面徽标：若本节点今天失败，宁可**没有**徽标，也不能挂昨天的旧分数
     this.lastHealthBadge = null;
+
+    // 先体检再跑：数据空壳时（没排餐 / 没订单）按判据跳过节点。
+    // 不体检的后果是每天推一堆「GMV -100%」「全员流失」的假告警，负责人几天后就不看了。
+    // 体检自身失败不阻断编排（catch 里按「全部未知」处理 ⇒ grade=ok ⇒ 照常跑）。
+    const pf = await this.preflightData(now, binding);
+    this.lastPreflight = pf;
+    const skip = new Set(pf.skipNodes);
+    if (skip.size) {
+      this.logger.warn(
+        `数据体检未通过（${pf.grade}），跳过 ${skip.size} 个节点：${pf.skipNodes.join(',')}`,
+      );
+    }
+
     for (const n of nodes) {
+      if (skip.has(n.key)) {
+        // 跳过**不是失败**：ok 仍为 true，另用 skipped 标记，避免摘要里出现一片 ❌
+        out.push({
+          key: n.key,
+          title: n.title,
+          text: '本次跳过（数据不足以支撑该分析）',
+          ok: true,
+          skipped: true,
+        });
+        continue;
+      }
       try {
         const text = await n.run();
         out.push({
@@ -474,6 +513,56 @@ export class WecomChatService {
       }
     }
     return out;
+  }
+
+  /**
+   * 数据体检：编排前先问一句「现在有东西可算吗」
+   *
+   * 三项独立取数，各自 try/catch —— 任一项失败只让该项留 null（「不知道」），
+   * **绝不当成 0**（那就是把接口抖动报成「今天一单没有」）。
+   * 三个口径都是纯只读，不碰订单/支付/配送。
+   */
+  private async preflightData(now: Date, binding: Binding): Promise<PreflightResult> {
+    const today = bjYmdPlus(now, 0);
+    const end = bjYmdPlus(now, 6);
+
+    let publishedCells: number | null = null;
+    let assignedCells: number | null = null;
+    let groupCount: number | null = null;
+    try {
+      const m = await this.resolver.getMealMatrix(today, end);
+      const s = m?.stats;
+      if (s) {
+        // 逐个判 typeof：字段缺失时留 null（不知道），不是 0（确证为空）
+        if (typeof s.publishedCells === 'number') publishedCells = s.publishedCells;
+        if (typeof s.assignedCells === 'number') assignedCells = s.assignedCells;
+        if (typeof s.groupCount === 'number') groupCount = s.groupCount;
+      }
+    } catch {
+      /* 静默：判据留 null，不因此降级 */
+    }
+
+    let couponDefs: number | null = null;
+    try {
+      const c = await this.resolver.listCouponDefs();
+      if (Array.isArray(c)) couponDefs = c.length;
+    } catch {
+      /* 静默 */
+    }
+
+    let orders7d: number | null = null;
+    try {
+      const r = await this.proxy.query(STATS_QCODE.dashboard, { range: '7d' }, binding);
+      if (r.code === 0 && r.data) {
+        const d = r.data as Record<string, unknown>;
+        const m = d?.metrics as Record<string, unknown> | undefined;
+        if (m && typeof m.orderCount === 'number') orders7d = m.orderCount;
+      }
+    } catch {
+      /* 静默 */
+    }
+
+    return preflight({ publishedCells, assignedCells, groupCount, couponDefs, orders7d });
   }
 
   /** 跑全部节点 + 组摘要 + 推送负责人企微；返回摘要以便试跑台直接展示 */
@@ -547,9 +636,26 @@ export class WecomChatService {
     lines.push(`【ABox AI 每日编排】${y}-${m}-${d} 09:00`);
     // 封面一行：今日经营健康度（由节点 O 在本次编排里写好；未跑/失败则不出这一行）
     if (this.lastHealthBadge) lines.push(this.lastHealthBadge);
-    lines.push(`共 ${results.length} 个分析节点已自动生成草稿（均须人工确认后执行）`);
+
+    const done = results.filter((r) => !r.skipped);
+    const omitted = results.filter((r) => r.skipped);
+    lines.push(
+      omitted.length
+        ? `本次执行 ${done.length} 个节点，跳过 ${omitted.length} 个（数据不足以支撑该分析）`
+        : `共 ${done.length} 个分析节点已自动生成草稿（均须人工确认后执行）`,
+    );
+
+    // 体检结论放在明细之前：负责人先看「今天该干什么」，再看各节点摘要。
+    // 降级时这一段是核心 —— 它把「为什么跳过」和「下一步动作」说清楚，
+    // 否则负责人看到节点少了只会以为系统坏了。
+    const pfText = this.lastPreflight ? describePreflight(this.lastPreflight) : '';
+    if (pfText) {
+      lines.push('');
+      lines.push(pfText);
+    }
+
     lines.push('');
-    for (const r of results) {
+    for (const r of done) {
       let mark = '✅';
       if (!r.ok) mark = '❌';
       else if (/高风险|需关注|需人工核|异常|超阈值/.test(r.text)) mark = '⚠️';

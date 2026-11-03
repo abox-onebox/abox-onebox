@@ -230,6 +230,28 @@ interface RawWithdrawalPage {
   list?: unknown[];
 }
 
+/**
+ * 排餐矩阵（admin/meal/matrix）—— 冷启动体检只看 stats
+ *
+ * 后端返回的是完整网格（dates × groups × cells），这里**只声明 stats**，
+ * 让「不需要的字段不存在于类型里」成为一道闸：想误用逐格明细也过不了编译。
+ */
+interface RawMealMatrix {
+  startDate?: string;
+  endDate?: string;
+  stats?: {
+    dateCount?: number;
+    groupCount?: number;
+    cellCount?: number;
+    /** 已排期格子数（含 pending 未上架） */
+    assignedCells?: number;
+    /** 其中已上架（active）的格子数 */
+    publishedCells?: number;
+    emptyCells?: number;
+    totalSold?: number;
+  };
+}
+
 /** C 端用户（admin/users）—— 流失预警与召回用，仅取判流失所需的精简字段 */
 interface RawUser {
   id: number;
@@ -467,6 +489,23 @@ export class NameResolverService {
   async getWithdrawals(tab = 'review'): Promise<RawWithdrawalPage | null> {
     return this.fetchJson<RawWithdrawalPage>(
       `/admin/finance/withdrawals?tab=${encodeURIComponent(tab)}&pageSize=50`,
+    );
+  }
+
+  /**
+   * 排餐矩阵（admin/meal/matrix）—— AI 每日编排的「冷启动体检」用。
+   *
+   * 只取 `stats`（格子计数），**不搬逐格数据**：判「未来几天有没有可售排餐」只需要
+   * assignedCells / publishedCells 两个数，搬 7 天 × N 楼群的明细纯属浪费上下文。
+   *
+   * ⚠️ 两个计数的语义必须分清（体检的提示语依赖它）：
+   *   assignedCells = 已排期格子数（含 pending 未上架）
+   *   publishedCells = 其中已上架（active）的格子数
+   * 「排了但没上架」≠「没排」—— 前者是漏了点上架，后者是没开始，负责人的下一步动作不同。
+   */
+  async getMealMatrix(startDate: string, endDate: string): Promise<RawMealMatrix | null> {
+    return this.fetchJson<RawMealMatrix>(
+      `/admin/meal/matrix?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`,
     );
   }
 
