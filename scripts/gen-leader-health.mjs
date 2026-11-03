@@ -118,10 +118,13 @@ async function main() {
   const date = bjYmd();
   let proposal;
   try {
+    // ⚠️ 超时 45s 而非 20s：该 prompt 输出长（近 1100 字），云端首 token 常需 20s 以上，
+    //    20s 会在「还没吐第一个 token」时被 abort，表现为 LLM_EMPTY 而非真正的拒答
+    //    （2026-11-03 实测：同一输入 20s 恒空、45s 正常出稿）。service 侧 spawn 超时 90s，留足余量。
     proposal = await callLLM({
       system: PROPOSAL_SYSTEM,
       user: plain,
-      timeoutMs: 20000,
+      timeoutMs: 45000,
       temperature: 0.3,
     });
     proposal = (proposal || '').trim();

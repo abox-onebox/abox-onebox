@@ -113,10 +113,12 @@ async function main() {
   const date = bjYmd();
   let proposal;
   try {
+    // ⚠️ 同 gen-leader-health：40s 而非 20s。云端首 token 延迟波动大，
+    //    20s 容易在「尚未吐字」时被 abort（报 LLM_EMPTY 假象）；service 侧 spawn 超时 90s。
     proposal = await callLLM({
       system: PROPOSAL_SYSTEM,
       user: plain,
-      timeoutMs: 20000,
+      timeoutMs: 40000,
       temperature: 0.3,
     });
     proposal = (proposal || '').trim();
