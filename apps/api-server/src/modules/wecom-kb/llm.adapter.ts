@@ -16,10 +16,13 @@
  */
 import { createWorkBuddyCloud } from '@tencent-ai/workbuddy-cloud-sdk';
 import { cloudPublicConfig } from './cloud-public-config';
+import { KB_DOCUMENTS } from './kb-source';
 
 const LLM_ASSIST_ENABLED = process.env.LLM_ASSIST_ENABLED !== 'false';
 const LLM_MODEL = process.env.LLM_MODEL ?? 'auto';
 const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? '8000');
+// RAG 检索开关：关闭后 retrieveKB 直接返回 ''（退回「无知识库」的 LLM 通用应答）。
+const KB_RETRIEVER_ENABLED = process.env.KB_RETRIEVER_ENABLED !== 'false';
 
 const SYSTEM_PROMPT = [
   '你是 ABox 一盒（北京巡礼之年科技有限公司）的微信企微智能客服助手。',
@@ -73,9 +76,188 @@ export async function callLLM(userText: string, kbContext = ''): Promise<string 
   }
 }
 
-/** 知识库检索占位：待 abox-kb 暴露查询接口后接入 RAG。 */
-export async function retrieveKB(_query: string): Promise<string> {
-  return '';
+/**
+ * 本地轻量 RAG 检索（AI 编排节点 D · 知识库增强）。
+ * 知识源：./kb-source.ts 内联的《ABox一盒PRDv2.1》原文（真实业务口径，随包部署）。
+ * 设计遵循原则零：任何失败一律返回 '' → 调用方回退到「无知识库」的 LLM 通用应答，绝不阻塞消息回路。
+ */
+type Chunk = { title: string; text: string };
+
+let CHUNK_CACHE: Chunk[] | null = null;
+function getChunks(): Chunk[] {
+  if (CHUNK_CACHE) return CHUNK_CACHE;
+  const chunks: Chunk[] = [];
+  for (const doc of KB_DOCUMENTS) {
+    const lines = doc.markdown.split(/\r?\n/);
+    let title = doc.name;
+    let buf: string[] = [];
+    const flush = () => {
+      const text = buf.join('\n').trim();
+      if (text) chunks.push({ title, text });
+      buf = [];
+    };
+    for (const line of lines) {
+      const m = /^(#{1,4})\s+(.+?)\s*$/.exec(line);
+      if (m) {
+        flush();
+        title = m[2].trim() || title;
+      }
+      buf.push(line);
+    }
+    flush();
+  }
+  CHUNK_CACHE = chunks;
+  return chunks;
+}
+
+const STOP_WORDS = new Set([
+  '的',
+  '了',
+  '吗',
+  '呢',
+  '吧',
+  '啊',
+  '呀',
+  '哦',
+  '是',
+  '我',
+  '你',
+  '他',
+  '她',
+  '它',
+  '我们',
+  '你们',
+  '这个',
+  '那个',
+  '一个',
+  '有',
+  '和',
+  '与',
+  '及',
+  '在',
+  '到',
+  '从',
+  '对',
+  '给',
+  '为',
+  '能',
+  '可以',
+  '应该',
+  '请',
+  '帮',
+  '想',
+  '要',
+  '知道',
+  '关于',
+  '查询',
+  '查看',
+  '看看',
+  '几',
+  '哪',
+  '哪天',
+  '什么时候',
+  '为什么',
+  '怎么',
+  '如何',
+  '什么',
+  '该',
+  '会',
+  '能',
+]);
+
+// 实义单字：bigram 漏配时的兜底（如「多少钱」→「钱」命中价格/金额句）。
+const SINGLE_KEYS = new Set([
+  '钱',
+  '价',
+  '退',
+  '款',
+  '团',
+  '佣',
+  '送',
+  '配',
+  '餐',
+  '菜',
+  '盒',
+  '盲',
+  '单',
+  '订',
+  '购',
+  '长',
+  '户',
+  '货',
+  '利',
+  '费',
+  '折',
+  '券',
+  '预',
+  '截',
+  '达',
+  '群',
+  '楼',
+  '栋',
+  '食',
+  '份',
+]);
+
+function tokenize(query: string): string[] {
+  const tokens: string[] = [];
+  const cleaned = query.replace(/[\s\p{P}]+/gu, '');
+  for (let i = 0; i < cleaned.length - 1; i++) {
+    const bg = cleaned.slice(i, i + 2);
+    if (/[一-鿿]{2}/.test(bg)) tokens.push(bg);
+  }
+  for (const ch of cleaned) {
+    if (/[一-鿿]/.test(ch) && SINGLE_KEYS.has(ch)) tokens.push(ch);
+  }
+  for (const w of query.toLowerCase().match(/[a-z0-9]+/g) || []) tokens.push(w);
+  return tokens.filter((t) => !STOP_WORDS.has(t));
+}
+
+function scoreChunk(chunk: Chunk, tokens: string[]): number {
+  if (!tokens.length) return 0;
+  let score = 0;
+  for (const t of tokens) {
+    if (chunk.title.includes(t)) score += 3;
+    let idx = chunk.text.indexOf(t);
+    while (idx !== -1) {
+      score += 1;
+      idx = chunk.text.indexOf(t, idx + t.length);
+    }
+  }
+  return score;
+}
+
+export async function retrieveKB(query: string): Promise<string> {
+  if (!KB_RETRIEVER_ENABLED) return '';
+  try {
+    const tokens = tokenize(query);
+    if (!tokens.length) return '';
+    const chunks = getChunks();
+    const scored = chunks
+      .map((c) => ({ c, s: scoreChunk(c, tokens) }))
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 5);
+    if (!scored.length) return '';
+    const LIMIT = 3500;
+    const MAX_BLOCK = 1400;
+    let out = '';
+    let used = 0;
+    for (const { c } of scored) {
+      let block = `【${c.title}】\n${c.text}`;
+      if (block.length > MAX_BLOCK) block = block.slice(0, MAX_BLOCK) + '\n…（截断）\n';
+      if (used + block.length + 2 > LIMIT) {
+        const remain = LIMIT - used - 2;
+        if (remain > 60) out += block.slice(0, remain) + '\n…（截断）\n';
+        break;
+      }
+      out += block + '\n\n';
+      used += block.length + 2;
+    }
+    return out.trim();
+  } catch {
+    return '';
+  }
 }
 
 export const isLlmAssistEnabled = (): boolean => LLM_ASSIST_ENABLED;
