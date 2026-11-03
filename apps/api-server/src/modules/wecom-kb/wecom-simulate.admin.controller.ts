@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Logger, Post, UseGuards } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { CurrentAdmin, Roles } from '../../common/decorators/auth.decorator';
@@ -87,6 +87,8 @@ export interface SimulateResult {
 @UseGuards(AdminGuard)
 @Roles('super_admin', 'admin')
 export class WecomSimulateController {
+  private readonly logger = new Logger(WecomSimulateController.name);
+
   constructor(
     private readonly chat: WecomChatService,
     private readonly svcToken: WecomSvcTokenService,
@@ -144,6 +146,40 @@ export class WecomSimulateController {
         unknown,
       };
     }
+  }
+
+  /**
+   * 手动「立即跑一次编排并推送负责人」（与每日 09:00 Cron 同链路）。
+   *
+   * ⚠️ **不 await**：完整编排要跑 12 个节点（各含 LLM 调用，单节点最长 45s），
+   *   全程同步等待会超过 nginx 的 60s 网关超时 → 调用方收到 504，但服务端其实跑完了。
+   *   故这里「点火即返回」，真正的成败由 `triggerOwnerPush` 写日志 +
+   *   把摘要推到负责人手机来确认（grep 服务器日志 `已推送摘要给` 即可看结果）。
+   *
+   * 这是「接通推送」验证环节唯一缺的那一步：负责人绑定就绪后，
+   * 调一次本端点，过 1~3 分钟看手机有没有收到，即可确认端到端打通。
+   */
+  @Post('orchestrate-now')
+  async orchestrateNow(): Promise<{ triggered: boolean; note: string }> {
+    void this.chat
+      .triggerOwnerPush()
+      .then((r) =>
+        this.logger.log(
+          '[orchestrate-now] 完成 pushed=' +
+            r.pushed +
+            ' reason=' +
+            (r.reason || '') +
+            ' digestLen=' +
+            r.digestLen,
+        ),
+      )
+      .catch((e) => this.logger.error('[orchestrate-now] 异常：' + (e as Error).message));
+    return {
+      triggered: true,
+      note:
+        '编排已在后台触发（与每日 09:00 自动推送同一条链路），预计 1~3 分钟后推送至负责人手机；' +
+        '成功与否可 grep 服务器日志 "已推送摘要给" 确认（pushed=成功 / reason=失败原因）。',
+    };
   }
 
   /**

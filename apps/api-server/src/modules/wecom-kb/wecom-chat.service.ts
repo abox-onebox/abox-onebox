@@ -315,18 +315,15 @@ export class WecomChatService {
       case 'genGrowthExperiment':
         return this.genGrowthExperiment(binding, now);
       case 'runOrchestrate':
-        // 走真实负责人绑定推送（而非会话键），这样试跑台也能实测「手机是否收到」。
-        try {
-          const r = await this.triggerOwnerPush();
-          if (r.pushed)
-            return (
-              `已触发一次真实编排推送（摘要 ${r.digestLen} 字），请查收手机端企微。\n` +
-              `（与每日 09:00 自动推送同一条链路）`
-            );
-          return '未能推送：' + (r.reason || '负责人绑定未就绪');
-        } catch (e) {
-          return '触发编排推送出错：' + (e instanceof Error ? e.message : String(e));
-        }
+        // 完整编排会跑过 nginx 60s 网关超时，故不在此 await（否则试跑台收到 504）。
+        // 改为后台触发：结果由 triggerOwnerPush 推到真实负责人手机 + 写日志。
+        void this.triggerOwnerPush().catch(() => {
+          /* 异常已在其内部记日志，这里不重复 */
+        });
+        return (
+          '已触发每日编排（与 09:00 同链路），预计 1~3 分钟后推送至负责人手机。\n' +
+          '本试跑不阻塞等待；可在服务器日志 grep "已推送摘要给" 看成败。'
+        );
       case 'genRiskRecon':
         return this.genRiskRecon(binding, now);
       case 'genChurnRecall':
