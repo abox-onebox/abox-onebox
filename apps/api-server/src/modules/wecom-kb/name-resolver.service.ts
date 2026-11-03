@@ -90,6 +90,15 @@ interface RawCouponDef {
   status?: string;
 }
 
+/** 供应商（含每日产能）—— 需求预测与产能预警用，取产能基线 */
+interface RawSupplier {
+  id: number;
+  name?: string | null;
+  status?: number;
+  statusLabel?: string | null;
+  capacityPerDay?: number | null;
+}
+
 /** 套餐模板全量（含菜品构成/被排次数/状态）—— 选品提案用，不复用 `RawTemplate` 的裁剪版 */
 interface RawTemplateItem {
   itemId: number;
@@ -256,6 +265,11 @@ export class NameResolverService {
    */
   async listCouponDefs(): Promise<RawCouponDef[] | null> {
     return this.fetchList<RawCouponDef>('/admin/coupon/defs?pageSize=200');
+  }
+
+  /** 供应商列表（含每日产能）。纯只读、复用 fetchList 与 admin token，零新增接口。产能基线缺失时返回空数组由调用方降级。 */
+  async listSuppliers(): Promise<RawSupplier[] | null> {
+    return this.fetchList<RawSupplier>('/admin/suppliers?pageSize=200');
   }
 
   /** 清缓存（执行完写操作后调，避免刚改的数据还是旧的） */

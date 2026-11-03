@@ -25,6 +25,7 @@ export type ChatIntent =
   | { kind: 'genMealProposal' }
   | { kind: 'genRecruitProposal' }
   | { kind: 'genCouponStrategy' }
+  | { kind: 'genDemandForecast' }
   | { kind: 'unknown'; raw: string };
 
 const RE_CONFIRM = /^(1|好|好的|好嘞|确认|确定|执行|对|是|可以|行|干吧|办吧|就这样|ok|yes)$/i;
@@ -98,6 +99,16 @@ export function parseIntent(raw: string, now: Date): ChatIntent {
   )
     return { kind: 'genCouponStrategy' };
 
+  // AI 编排节点 I · 需求预测与产能预警（企微触发）：认出「需求预测/产能预警/产销预测/备货预测」即走该节点。
+  // ⚠️ 必须带明确预测词（需求预测/产能预警/产能预测/产销预测/备货预测/备货建议），避免与统计问句「经营情况」混淆
+  //    （后者无这些词）；「日报」「选品提案」「招募提案」「发券策略」已在前面分支处理。
+  if (
+    /(生成|出|给我|来一份|我要|做|写|报一下|分析一下)?\s*(运营|本周|下周|每日|动态|智能)?\s*(需求预测|产能预警|产能预测|产销预测|备货预测|备货建议|产销建议)/i.test(
+      t,
+    )
+  )
+    return { kind: 'genDemandForecast' };
+
   if (/^(帮助|help|\?|？|菜单|能干什么|会什么|怎么用|使用说明)$/.test(t)) return { kind: 'help' };
 
   const d = parseMealDate(t, now);
@@ -147,6 +158,7 @@ export const CHAT_HELP = [
   '· 出选品提案：发「生成选品提案」（AI 基于近 30 天热销与套餐目录，给下周留用/试水/观察建议）',
   '· 出招募提案：发「生成招募提案」（AI 基于近 30 天楼栋销量与团长覆盖缺口，给招募优先级·话术草稿·新人赋能要点）',
   '· 出发券策略：发「生成发券策略」（AI 基于近 30 天留存与楼栋表现，给新客/沉睡/楼栋/复购四类券建议与预算，需人工确认后发放）',
+  '· 出需求预测：发「生成需求预测」（AI 基于近 30 天日级销量做周几规律与环比分解，预测未来 7 天并对照供应商日产能给预警，需人工确认）',
   '选好之后我只问缺的那几个参数，回 1 才真执行。',
   '',
   '直接说事，例如：',

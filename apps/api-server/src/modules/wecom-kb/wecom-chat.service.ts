@@ -253,6 +253,8 @@ export class WecomChatService {
         return this.genRecruitProposal(binding, now);
       case 'genCouponStrategy':
         return this.genCouponStrategy(binding, now);
+      case 'genDemandForecast':
+        return this.genDemandForecast(binding, now);
       default:
         return this.maybeLLMReply(text, binding);
     }
@@ -1206,6 +1208,370 @@ export class WecomChatService {
           } else
             finish(
               `发券策略生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
+            );
+        });
+      });
+    };
+    return run();
+  }
+
+  /**
+   * AI 编排节点 I · 需求预测与产能预警（企微触发）
+   * ------------------------------------------------------------------
+   * 复用既有取数链：dashboard(30d) 的日级序列 trend + buildingRank(30d) + dishHeat(30d) + 供应商日产能，
+   * 在 service 端**预计算**周几规律 / 近期动能 / 历史峰值 / 产能基线（LLM 不擅长精确算术，前置算好更稳），
+   * 再 spawn 独立脚本 `gen-demand-forecast.mjs` 产出 7 天预测 + 产能利用率 + 分楼栋/菜品预警 + 行动建议。
+   *
+   * 原则零保障（AI 可剥离、可降级，不影响发布与传统运营）：
+   *   · 纯增量分支，不动订单/支付/配送核心；
+   *   · 取数走既有 `proxy.query`（零新增 DI 依赖）+ `resolver.listSuppliers()`（产能基线）；
+   *   · 四数据源各自 try/catch：任一取不到都不中断；
+   *   · 脚本缺失/超时/异常 → 降级回显「原始数据」，绝不阻塞应答；
+   *   · 只产出草稿（releases/demand-forecast/），由人工确认后指导备料/排产/招募，绝不自动改产能或下单。
+   */
+  private genDemandForecast(binding: Binding, now: Date): Promise<string> {
+    const run = async (): Promise<string> => {
+      const today = bjTodayStr(now);
+      if (!today) return '取不到今天的日期，我先不动。稍后再试。';
+
+      const base = {
+        which: 'dashboard' as const,
+        range: '30d' as const,
+        endShift: -1,
+      } as StatsIntent;
+      const endDate = endDateOf(base, today);
+      const fen2yuan = (fen: number): string => `¥${((fen || 0) / 100).toFixed(2)}`;
+
+      const num = (v: unknown): number | undefined =>
+        typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+
+      // 1. 整体看板 + 日级趋势（趋势是需求预测的核心时序）
+      type TrendPt = { date?: string; orderCount?: number; quantity?: number; gmvFen?: number };
+      let metrics: Record<string, unknown> = {};
+      let trend: TrendPt[] = [];
+      let warnings: string[] = [];
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.dashboard,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const d = cur.data as Record<string, unknown>;
+          const m = d?.metrics as Record<string, unknown> | undefined;
+          if (m) metrics = m;
+          const tr = d?.trend;
+          if (Array.isArray(tr))
+            trend = tr
+              .map((p) => {
+                const pp = p as Record<string, unknown>;
+                return {
+                  date: typeof pp.date === 'string' ? pp.date : undefined,
+                  orderCount: num(pp.orderCount),
+                  quantity: num(pp.quantity) ?? num(pp.orderCount),
+                  gmvFen: num(pp.gmvFen),
+                };
+              })
+              .filter((p) => p.date);
+          const w = d?.warnings;
+          if (Array.isArray(w))
+            warnings = w.filter((x): x is string => typeof x === 'string' && x.trim() !== '');
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 2. 楼栋表现
+      type Bld = { id: number; name: string; gmvFen: number; orderCount: number; gmvShare: number };
+      let buildings: Bld[] = [];
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.buildingRank,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const rows = (cur.data as Record<string, unknown>)?.buildings;
+          if (Array.isArray(rows)) {
+            for (const r of rows) {
+              const rr = r as Record<string, unknown>;
+              const id = Number(rr.id);
+              if (!Number.isFinite(id)) continue;
+              buildings.push({
+                id,
+                name: typeof rr.name === 'string' && rr.name ? rr.name : `#${id}`,
+                gmvFen: num(rr.gmvFen) ?? 0,
+                orderCount: num(rr.orderCount) ?? 0,
+                gmvShare: num(rr.gmvShare) ?? 0,
+              });
+            }
+            buildings = buildings.slice(0, 5);
+          }
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 3. 菜品热度（用既有 summarize 文本，与 F 节点一致）
+      let dishText = '';
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.dishHeat,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const txt = summarizeDishHeat(cur.data);
+          if (txt) dishText = txt;
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 4. 供应商产能基线
+      type Sup = {
+        id: number;
+        name?: string | null;
+        status?: number;
+        capacityPerDay?: number | null;
+      };
+      let suppliers: Sup[] = [];
+      try {
+        const list = await this.resolver.listSuppliers();
+        if (list && list.length)
+          suppliers = list.map((s) => ({
+            id: Number(s.id),
+            name: s.name,
+            status: typeof s.status === 'number' ? s.status : undefined,
+            capacityPerDay: typeof s.capacityPerDay === 'number' ? s.capacityPerDay : null,
+          }));
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // ===== 预计算（service 端做算术，脚本只做解读）=====
+      const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+      const MON_FIRST = [1, 2, 3, 4, 5, 6, 0]; // getUTCDay: 0=周日
+      const wkSum = new Array(7).fill(0);
+      const wkCnt = new Array(7).fill(0);
+      for (const p of trend) {
+        if (p.date && p.quantity != null) {
+          const [y, m, d] = p.date.split('-').map(Number);
+          if (y && m && d) {
+            const wd = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay();
+            wkSum[wd] += p.quantity;
+            wkCnt[wd] += 1;
+          }
+        }
+      }
+      const wkAvg = wkSum.map((s, i) => (wkCnt[i] > 0 ? Math.round(s / wkCnt[i]) : 0));
+      let peakWk = 1;
+      let valleyWk = 1;
+      for (const i of MON_FIRST) {
+        if (wkAvg[i] > wkAvg[peakWk]) peakWk = i;
+        if (wkAvg[i] < wkAvg[valleyWk]) valleyWk = i;
+      }
+
+      const qtyOf = (p: TrendPt) => p.quantity ?? 0;
+      const last7 = trend.slice(-7);
+      const prev7 = trend.slice(-14, -7);
+      const avg = (arr: TrendPt[]) =>
+        arr.length ? Math.round(arr.reduce((s, p) => s + qtyOf(p), 0) / arr.length) : undefined;
+      const last7Avg = avg(last7);
+      const prev7Avg = avg(prev7);
+      let growth: number | undefined;
+      if (last7Avg != null && prev7Avg != null && prev7Avg > 0)
+        growth = Math.round(((last7Avg - prev7Avg) / prev7Avg) * 1000) / 10;
+
+      let peakQty = 0;
+      let peakDate = '';
+      for (const p of trend) {
+        const q = qtyOf(p);
+        if (q > peakQty) {
+          peakQty = q;
+          peakDate = p.date ?? '';
+        }
+      }
+
+      // 未来 7 天需求预测（service 端算，避免 LLM 算术误差）：周几规律 × 动量系数
+      const [ty, tm, td] = today.split('-').map(Number);
+      const overallAvg = trend.length
+        ? Math.round(trend.reduce((s, p) => s + qtyOf(p), 0) / trend.length)
+        : 0;
+      let momentum = 1;
+      if (overallAvg > 0 && last7Avg != null && last7Avg > 0)
+        momentum = Math.round((last7Avg / overallAvg) * 100) / 100;
+      momentum = Math.min(1.3, Math.max(0.7, momentum)); // 限制极端外推
+      const next7: { date: string; wd: number; est: number }[] = [];
+      for (let k = 0; k < 7; k++) {
+        const dt = new Date(Date.UTC(ty, tm - 1, td + k, 12, 0, 0));
+        const wd = dt.getUTCDay();
+        const dstr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(
+          dt.getUTCDate(),
+        ).padStart(2, '0')}`;
+        const est = wkCnt[wd] > 0 ? Math.round(wkAvg[wd] * momentum) : 0;
+        next7.push({ date: dstr, wd, est });
+      }
+      const fcTotal = next7.reduce((s, x) => s + x.est, 0);
+      const fcPeak = next7.reduce((m, x) => Math.max(m, x.est), 0);
+      const fcPeakDate = next7.reduce((a, b) => (a.est >= b.est ? a : b)).date;
+
+      const activeSuppliers = suppliers.filter((s) => s.status === 1);
+      const withCap = activeSuppliers.filter(
+        (s) => typeof s.capacityPerDay === 'number' && s.capacityPerDay! > 0,
+      );
+      const totalCapacity = withCap.reduce((s, x) => s + (x.capacityPerDay as number), 0);
+      const capacityMissing = totalCapacity <= 0;
+
+      // ===== 组装纯文本 =====
+      const lines: string[] = [];
+      lines.push('需求预测与产能预警数据 · 近30天（按出餐日）');
+      lines.push('');
+
+      if (trend.length) {
+        lines.push('【近30天日级需求(份)】');
+        for (const p of trend) lines.push(`${p.date}：${qtyOf(p)}`);
+        lines.push('');
+      }
+
+      lines.push('【周几规律(近30天平均份)】');
+      lines.push(MON_FIRST.map((i) => `${WEEK[i]} ${wkAvg[i]}`).join(' · '));
+      lines.push(`→ 峰值在${WEEK[peakWk]}，谷值在${WEEK[valleyWk]}`);
+      lines.push('');
+
+      const mom: string[] = [];
+      if (last7Avg != null) mom.push(`近7日均量 ${last7Avg} 份/日`);
+      if (prev7Avg != null) mom.push(`前7日均量 ${prev7Avg} 份/日`);
+      if (growth != null) mom.push(`环比 ${growth >= 0 ? '+' : ''}${growth}%`);
+      if (peakQty > 0) mom.push(`历史峰值日量 ${peakQty} 份（${peakDate}）`);
+      if (mom.length) {
+        lines.push('【近期动能】' + mom.join(' · '));
+        lines.push('');
+      }
+
+      if (next7.length) {
+        lines.push('【未来7天需求预测(测算)】');
+        lines.push(`动量系数 ≈ ${momentum}（近7日均量 ÷ 30日均量，>1 上行 / <1 下行）`);
+        lines.push('日期 · 周几 · 预计份数');
+        for (const x of next7) lines.push(`${x.date} · ${WEEK[x.wd]} · ${x.est}`);
+        lines.push(`→ 7日合计 ≈ ${fcTotal} 份 · 预测峰值日 ${fcPeakDate} ${fcPeak} 份`);
+        lines.push('');
+      }
+
+      if (buildings.length) {
+        lines.push('【楼栋 TOP ' + buildings.length + '】（按 GMV）');
+        buildings.forEach((b, i) => {
+          const bits: string[] = [];
+          bits.push(fen2yuan(b.gmvFen));
+          bits.push(`${b.orderCount} 单`);
+          if (b.gmvShare) bits.push(`${Math.round(b.gmvShare * 1000) / 10}%`);
+          lines.push(`${i + 1}. ${b.name}  ${bits.join(' · ')}`);
+        });
+        lines.push('');
+      }
+
+      if (dishText) {
+        lines.push('【菜品热度】');
+        lines.push(dishText);
+        lines.push('');
+      }
+
+      lines.push('【产能基线】');
+      if (capacityMissing) {
+        lines.push(
+          `供应商总数 ${suppliers.length} · 活跃 ${activeSuppliers.length} · 已配置日产能的活跃供应商 0`,
+        );
+        lines.push(
+          '→ 产能基线缺失（供应商 capacity_per_day 未配置），以下预警以「历史峰值日量」为参考阈值，需先补全产能配置再启用正式预警',
+        );
+        lines.push(
+          `【产能利用率(参考)】预测峰值日 ${fcPeak} 份 ÷ 历史峰值 ${peakQty} 份 ≈ ${
+            peakQty > 0 ? Math.round((fcPeak / peakQty) * 1000) / 10 : '—'
+          }%`,
+        );
+      } else {
+        lines.push(
+          `供应商总数 ${suppliers.length} · 活跃 ${activeSuppliers.length} · 已配置日产能的活跃供应商 ${withCap.length}`,
+        );
+        lines.push(`总日产能 = Σ 活跃供应商 capacity_per_day = ${totalCapacity} 份/日`);
+        const util = totalCapacity > 0 ? Math.round((fcPeak / totalCapacity) * 1000) / 10 : 0;
+        lines.push(
+          `【产能利用率(测算)】预测峰值日 ${fcPeak} 份 ÷ 总日产能 ${totalCapacity} 份 ≈ ${util}%`,
+        );
+      }
+      lines.push('（产能口径：供应商每日产能之和；业务逻辑见 meal.service 产能上限预留）');
+      lines.push('');
+
+      if (warnings.length) lines.push('【数据提示】' + warnings.join('；'));
+
+      if (!trend.length && !buildings.length && !dishText)
+        return '近 30 天日级销量、楼栋与菜品数据这次都没取到（可能权限不足或还没开团）。可在后台看板查看，或稍后重试。';
+
+      const plain = lines.join('\n');
+
+      // 写临时数据文件，交给脚本做 AI 预测 + 落盘
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const plainFile = join(tmpDir, `_df_${Date.now()}.txt`);
+      try {
+        writeFileSync(plainFile, plain, 'utf8');
+      } catch {
+        return `需求预测数据已生成，但写入临时文件失败（磁盘权限）。可在后台看板查看原始数据：\n\n${plain}`;
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-demand-forecast.mjs');
+      if (!existsSync(script)) {
+        return `需求预测（原始数据，AI 脚本未找到）：\n\n${plain}`;
+      }
+
+      return new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = (m: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch (e) {
+          finish(
+            `需求预测生成启动失败：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          );
+          return;
+        }
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish('需求预测生成超时（>90s）。原始数据已在后台看板，可稍后重试触发。');
+        }, 90_000);
+        let out = '';
+        let err = '';
+        child.stdout?.on('data', (d) => (out += String(d)));
+        child.stderr?.on('data', (d) => (err += String(d)));
+        child.on('error', (e) =>
+          finish(
+            `需求预测生成出错：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          ),
+        );
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          try {
+            unlinkSync(plainFile);
+          } catch {
+            /* noop */
+          }
+          if (out.trim()) finish(out.trim());
+          else
+            finish(
+              `需求预测生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
             );
         });
       });
