@@ -135,11 +135,11 @@ describe('reconFreshness — 有没有按时核', () => {
 describe('reconFreshnessTip — 人话', () => {
   it('never 明说「无告警 ≠ 已核过」', () => {
     const t = reconFreshnessTip('never', { expectedDate: '2026-10-28' });
-    expect(t).toContain('从未记录自动对账');
+    expect(t).toContain('从未记录对账执行');
     expect(t).toContain('无告警');
   });
 
-  it('stale 指出漏了哪一天', () => {
+  it('stale(默认/自动) 指出漏了哪一天', () => {
     const t = reconFreshnessTip('stale', {
       lastRunDate: '2026-10-26',
       expectedDate: '2026-10-28',
@@ -147,13 +147,35 @@ describe('reconFreshnessTip — 人话', () => {
     expect(t).toContain('2026-10-26');
     expect(t).toContain('2026-10-28');
     expect(t).toContain('漏跑');
+    expect(t).toContain('自动对账');
   });
 
-  it('fresh 说清已覆盖到哪天', () => {
+  it('stale(人工补跑) 不用「自动对账」措辞', () => {
+    const t = reconFreshnessTip('stale', {
+      lastRunDate: '2026-10-26',
+      expectedDate: '2026-10-28',
+      trigger: 'manual',
+    });
+    expect(t).toContain('人工补跑');
+    expect(t).not.toContain('自动对账');
+  });
+
+  it('fresh(自动) 说清已覆盖到哪天', () => {
     const t = reconFreshnessTip('fresh', {
       lastRunDate: '2026-10-28',
       expectedDate: '2026-10-28',
     });
     expect(t).toContain('已覆盖应核日期');
+    expect(t).toContain('自动对账');
+  });
+
+  it('fresh(人工补跑) 显示「人工补跑」', () => {
+    const t = reconFreshnessTip('fresh', {
+      lastRunDate: '2026-10-28',
+      expectedDate: '2026-10-28',
+      trigger: 'manual',
+    });
+    expect(t).toContain('人工补跑');
+    expect(t).not.toContain('自动对账');
   });
 });

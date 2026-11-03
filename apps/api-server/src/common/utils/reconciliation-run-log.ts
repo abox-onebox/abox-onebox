@@ -153,23 +153,36 @@ export function reconFreshness(
   return lastRunDate >= expectedDate ? 'fresh' : 'stale';
 }
 
-/** freshness 的人话（端上直接展示，不自己拼） */
+/**
+ * freshness 的人话（端上直接展示，不自己拼）
+ *
+ * ⚠️ 措辞随 `trigger` 切换：cron=定时**自动**对账、manual=**人工补跑**。
+ *   以前三分支都写死「自动对账」——人工补跑后页面仍说「最近一次自动对账」，
+ *   等于把运营主动做的事说成系统干的，误导排查（"为什么这天有两条"答不上来）。
+ *   不传 / 老数据 / 未知值时 fail-safe 默认「自动对账」，绝不抛错。
+ */
 export function reconFreshnessTip(
   freshness: ReconFreshness,
-  opt: { lastRunDate?: string | null; expectedDate: string } = { expectedDate: '' },
+  opt: {
+    lastRunDate?: string | null;
+    expectedDate: string;
+    trigger?: ReconRunTrigger | null;
+  } = { expectedDate: '' },
 ): string {
+  const noun = opt.trigger === 'manual' ? '人工补跑' : '自动对账';
   switch (freshness) {
     case 'never':
+      // never 没有「最近一次」，故不套 noun，只说「从未记录对账执行」
       return (
-        '**从未记录自动对账**：任务可能没注册、或进程重启后没恢复。' +
+        '**从未记录对账执行**：任务可能没注册、或进程重启后没恢复。' +
         '页面上的「无告警」不等于「已核过」，请先到「定时任务」页确认对账任务在跑'
       );
     case 'stale':
       return (
-        `最近一次自动对账是 ${opt.lastRunDate ?? '—'}，**没核到应核日期 ${opt.expectedDate}**` +
+        `最近一次${noun}是 ${opt.lastRunDate ?? '—'}，**没核到应核日期 ${opt.expectedDate}**` +
         ' —— 中间至少漏跑一天，请手动补跑或检查定时任务'
       );
     case 'fresh':
-      return `最近一次自动对账：${opt.lastRunDate ?? '—'}（已覆盖应核日期 ${opt.expectedDate}）`;
+      return `最近一次${noun}：${opt.lastRunDate ?? '—'}（已覆盖应核日期 ${opt.expectedDate}）`;
   }
 }

@@ -3674,8 +3674,10 @@ export class WecomChatService {
             );
           }
           if (r.lastRun) {
+            // 最近一次执行的触发方式：manual=人工补跑，否则默认自动（与 admin tip 同源）
+            const runNoun = r.lastRun.trigger === 'manual' ? '人工补跑' : '自动';
             lines.push(
-              `最近自动对账：${r.lastRun.freshness ?? '?'}（${r.lastRun.date ?? '无'}）` +
+              `最近${runNoun}对账：${r.lastRun.freshness ?? '?'}（${r.lastRun.date ?? '无'}）` +
                 `${r.lastRun.diffCount ? ` · 差异 ${r.lastRun.diffCount} 笔` : ''}`,
             );
           }

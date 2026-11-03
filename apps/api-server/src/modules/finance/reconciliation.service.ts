@@ -16,6 +16,7 @@ import {
   reconFreshness,
   reconFreshnessTip,
 } from '../../common/utils/reconciliation-run-log';
+import type { ReconRunTrigger } from '../../common/utils/reconciliation-run-log';
 import { normalizePage, paginate } from '../../common/utils/response';
 import { Order, PaymentLog, Refund } from '../../database/entities/order.entity';
 import { OperationLog } from '../../database/entities/system.entity';
@@ -368,6 +369,7 @@ export class ReconciliationService {
           channelSource?: string;
           billAvailable?: boolean;
           summary?: string;
+          trigger?: ReconRunTrigger;
         }
       | null
       | undefined;
@@ -384,7 +386,13 @@ export class ReconciliationService {
       billAvailable: Boolean(snap?.billAvailable),
       summary: String(snap?.summary ?? ''),
       freshness,
-      tip: reconFreshnessTip(freshness, { lastRunDate: lastDate, expectedDate }),
+      // 透传最近一次执行的触发方式（cron/manual），让 tip 措辞不再一律「自动对账」
+      trigger: (snap?.trigger as ReconRunTrigger | undefined) ?? undefined,
+      tip: reconFreshnessTip(freshness, {
+        lastRunDate: lastDate,
+        expectedDate,
+        trigger: snap?.trigger ?? null,
+      }),
     };
   }
 
@@ -561,7 +569,7 @@ export interface ReconciliationView {
    * 把这句话显示出来，否则运营拿 `logFen` 去和流水总数对，会发现对不上。
    */
   refundDroppedTip: string;
-  /** S5 · 最近一次**自动**对账（`never` = 从未跑过）；端上据此提示，不自己判 */
+  /** S5 · 最近一次对账（cron 自动 / manual 人工补跑，`never` = 从未跑过）；端上据此提示，不自己判 */
   lastRun: ReconLastRunView;
 }
 
@@ -583,6 +591,8 @@ export interface ReconLastRunView {
   /** 当时那一句结论（含「不含微信侧」） */
   summary: string;
   freshness: 'fresh' | 'stale' | 'never';
+  /** 最近一次执行的触发方式：cron=定时自动 / manual=人工补跑（决定 tip 措辞） */
+  trigger?: 'cron' | 'manual';
   /** 人话提示（端上原样展示） */
   tip: string;
 }

@@ -28,7 +28,7 @@ const page = ref(1);
 const pageSize = ref(20);
 const data = ref<ReconciliationView | null>(null);
 
-/** S5 · 「最近一次自动对账」提示条的语义色：漏跑与从未跑必须看得出来 */
+/** S5 · 「最近一次对账」提示条的语义色：漏跑与从未跑必须看得出来 */
 const lastRunType = computed<'success' | 'warning' | 'error' | 'info'>(() => {
   const r = data.value?.lastRun;
   if (!r) return 'info';
@@ -106,7 +106,7 @@ onMounted(() => {
     </el-alert>
 
     <!--
-      S5 · 最近一次自动对账
+      S5 · 最近一次对账（cron 自动 / manual 人工补跑）
       没有这块，「页面上看不到告警」会被当成「已核过且是平的」——
       而真实原因可能是任务压根没跑。故**三种状态都显示**，且 never/stale 用告警色。
     -->

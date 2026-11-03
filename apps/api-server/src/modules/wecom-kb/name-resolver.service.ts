@@ -164,7 +164,14 @@ interface RawReconcile {
     matchedCount?: number;
   };
   diffTypeStats?: { type: string; label: string; count: number }[];
-  lastRun?: { freshness?: string; date?: string; balanced?: boolean; diffCount?: number };
+  lastRun?: {
+    freshness?: string;
+    date?: string;
+    balanced?: boolean;
+    diffCount?: number;
+    /** 最近一次执行的触发方式：cron=定时自动 / manual=人工补跑（决定 AI 文案措辞） */
+    trigger?: 'cron' | 'manual';
+  };
   note?: string;
 }
 
