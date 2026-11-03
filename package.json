@@ -29,7 +29,8 @@
     "db:seed": "pnpm --filter api-server db:seed",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "docs:sync": "node scripts/sync-docs.mjs"
+    "docs:sync": "node scripts/sync-docs.mjs",
+    "gen:launch-pack": "node scripts/gen-launch-pack.mjs"
   },
   "devDependencies": {
     "@commitlint/cli": "^18.4.0",

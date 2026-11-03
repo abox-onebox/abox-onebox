@@ -664,6 +664,100 @@ export class WecomChatService {
     return { pushed: true, digestLen: digest.length };
   }
 
+  /**
+   * 触发「提审材料包」生成（AI 编排节点 C · 后台触发入口）
+   *
+   * C 节点脚本 scripts/gen-launch-pack.mjs 写完却无触发入口（无 CI、无企微、无定时），等同孤儿。
+   * 本方法补上「后台手动」入口，与 triggerOwnerPush 同构：resolve 仓库根 → spawn 脚本 → 读回生成的 md → 返回内容。
+   * 脚本自身已做「原则零」降级：gate.mjs 调用失败只标 ⚠️ 继续；读取失败也不抛错。
+   * ⚠️ 不传 date 时与脚本一致用 UTC 当日（对齐脚本内 new Date().toISOString().slice(0,10)）。
+   */
+  async genLaunchPack(opts: { date?: string; noGate?: boolean } = {}): Promise<{
+    ok: boolean;
+    path?: string;
+    content?: string;
+    stdout: string;
+  }> {
+    const repoRoot = this.resolveRepoRoot();
+    const outDir = this.pickWritableDir(repoRoot);
+    const script = join(repoRoot, 'scripts', 'gen-launch-pack.mjs');
+    if (!existsSync(script)) {
+      return { ok: false, stdout: '提审包脚本未找到：' + script };
+    }
+    const packDate = opts.date || new Date().toISOString().slice(0, 10);
+    const args = [script, '--out', outDir];
+    if (opts.date) args.push('--date', opts.date);
+    if (opts.noGate) args.push('--no-gate');
+
+    return new Promise<{ ok: boolean; path?: string; content?: string; stdout: string }>(
+      (resolve) => {
+        let settled = false;
+        const finish = (r: {
+          ok: boolean;
+          path?: string;
+          content?: string;
+          stdout: string;
+        }): void => {
+          if (!settled) {
+            settled = true;
+            resolve(r);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', args, { cwd: repoRoot, env: { ...process.env } });
+        } catch (e) {
+          finish({
+            ok: false,
+            stdout: '提审包启动失败：' + (e instanceof Error ? e.message : String(e)),
+          });
+          return;
+        }
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish({
+            ok: false,
+            stdout: '提审包生成超时（>120s），可能 gate.mjs 卡住，可加 --no-gate 重试',
+          });
+        }, 120_000);
+        let out = '';
+        let err = '';
+        child.stdout?.on('data', (d) => (out += String(d)));
+        child.stderr?.on('data', (d) => (err += String(d)));
+        child.on('error', (e) =>
+          finish({
+            ok: false,
+            stdout: '提审包执行错误：' + (e instanceof Error ? e.message : String(e)),
+          }),
+        );
+        child.on('close', () => {
+          clearTimeout(timer);
+          const file = join(outDir, `ABox一盒_提审包_${packDate}.md`);
+          let content: string | undefined;
+          let ok = false;
+          try {
+            if (existsSync(file)) {
+              content = readFileSync(file, 'utf8');
+              ok = true;
+            }
+          } catch {
+            /* 读回失败 */
+          }
+          finish({
+            ok,
+            path: existsSync(file) ? file : undefined,
+            content,
+            stdout: out + (err ? '\n[stderr]\n' + err : ''),
+          });
+        });
+      },
+    );
+  }
+
   private async resolveOwnerBinding(): Promise<{ userId: string; binding: Binding } | null> {
     const envId = (process.env.WECOM_OWNER_USERID || '').trim();
     let userId = envId;

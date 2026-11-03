@@ -38,6 +38,19 @@ class SimulateDto {
   grantedOps?: string[];
 }
 
+class GenLaunchPackDto {
+  /** 备案通过日期（YYYY-MM-DD）；不传则用 UTC 当日 */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  date?: string;
+
+  /** true = 跳过 gate.mjs --json 收集（容器里若 gate 卡顿可用；仅影响包内门禁清单快照） */
+  @IsOptional()
+  @IsBoolean()
+  noGate?: boolean;
+}
+
 /** 试跑结果：`reply` 是机器人要回的那段话，其余是给页面看的「这次以什么身份、按什么清单跑的」 */
 export interface SimulateResult {
   reply: string;
@@ -180,6 +193,32 @@ export class WecomSimulateController {
         '编排已在后台触发（与每日 09:00 自动推送同一条链路），预计 1~3 分钟后推送至负责人手机；' +
         '成功与否可 grep 服务器日志 "已推送摘要给" 确认（pushed=成功 / reason=失败原因）。',
     };
+  }
+
+  /**
+   * 手动生成「提审材料包」（AI 编排节点 C · 软建议，非阻塞）。
+   *
+   * 与 orchestrate-now 同构：直接 spawn `scripts/gen-launch-pack.mjs`（同步等结果，
+   * 脚本自身有 120s 超时兜底），返回生成的 markdown 内容 + 落盘路径 + 脚本 stdout。
+   * 需要 super_admin / admin。返回内容含「待人工终审」的合规清单草稿，不自动做任何合规动作。
+   */
+  @Post('gen-launch-pack')
+  async genLaunchPack(
+    @Body() dto: GenLaunchPackDto,
+    @CurrentAdmin() admin: JwtPayload,
+  ): Promise<{
+    ok: boolean;
+    path?: string;
+    content?: string;
+    stdout: string;
+    triggeredBy: string;
+  }> {
+    const who = admin?.username || 'admin#' + String(admin?.sub ?? '?');
+    const r = await this.chat.genLaunchPack({ date: dto.date, noGate: dto.noGate });
+    this.logger.log(
+      `[gen-launch-pack] ${who} ok=${r.ok} path=${r.path || '-'} noGate=${!!dto.noGate}`,
+    );
+    return { ...r, triggeredBy: who };
   }
 
   /**

@@ -107,6 +107,16 @@ const EXEMPT = [
   { method: 'POST', path: '/pay/notify', reason: '微信支付回调：服务端↔微信，端上永不需要入口' },
   { method: 'GET', path: '/wecom/kb/callback', reason: '企微回调（URL 验证）：服务端↔企微' },
   { method: 'POST', path: '/wecom/kb/callback', reason: '企微回调（事件推送）：服务端↔企微' },
+  {
+    method: 'POST',
+    path: '/admin/wecom-kb/orchestrate-now',
+    reason: '后台运维触发：手动点火「每日 09:00 编排推送」，供接通推送验证用，非用户功能、无页面是设计如此',
+  },
+  {
+    method: 'POST',
+    path: '/admin/wecom-kb/gen-launch-pack',
+    reason: '后台运维触发：手动生成「提审材料包」（AI 节点 C），备案通过前的一次性汇编工具，非用户功能、无页面是设计如此',
+  },
 ];
 
 /**
