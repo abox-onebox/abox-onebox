@@ -251,6 +251,8 @@ export class WecomChatService {
         return this.genMealProposal(binding, now);
       case 'genRecruitProposal':
         return this.genRecruitProposal(binding, now);
+      case 'genCouponStrategy':
+        return this.genCouponStrategy(binding, now);
       default:
         return this.maybeLLMReply(text, binding);
     }
@@ -845,6 +847,365 @@ export class WecomChatService {
           else
             finish(
               `招募提案生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
+            );
+        });
+      });
+    };
+    return run();
+  }
+
+  /**
+   * 节点 H · 动态发券策略提案。
+   *
+   * 复用既有取数链：dashboard(30d) + retention(30d) + buildingRank(30d) + 现有券种定义，
+   * 算出「用户分层（新客/沉睡可唤醒/复购）+ 楼栋表现 + 可复用券种」，
+   * 再 spawn 独立脚本 `gen-coupon-strategy.mjs` 产出四类券策略 + 预算 + 确认路径。
+   *
+   * 原则零保障（AI 可剥离、可降级，不影响发布与传统运营）：
+   *   · 纯增量分支，不动订单/支付/配送核心，也不碰确定性问答逻辑；
+   *   · 取数走既有 `proxy.query`（复用已验证链路，零新增 DI 依赖）+ `resolver.listCouponDefs()`；
+   *   · 四数据源各自 try/catch：任一取不到都不中断，拿得到的先算；
+   *   · 脚本缺失/超时/异常 → 降级回显「原始数据」，绝不阻塞应答；
+   *   · 只产出草稿（releases/coupon-strategy/），由人工确认后走后台批量发券（grant-batch，含 dryRun 试算）执行，绝不自动发券。
+   */
+  private genCouponStrategy(binding: Binding, now: Date): Promise<string> {
+    const run = async (): Promise<string> => {
+      const today = bjTodayStr(now);
+      if (!today) return '取不到今天的日期，我先不动。稍后再试。';
+
+      const base = {
+        which: 'dashboard' as const,
+        range: '30d' as const,
+        endShift: -1,
+      } as StatsIntent;
+      const endDate = endDateOf(base, today);
+      const fen2yuan = (fen: number): string => `¥${((fen || 0) / 100).toFixed(2)}`;
+
+      // 取数守卫：从 unknown 安全取数字；比率 → 百分比文本
+      const num = (v: unknown): number | undefined =>
+        typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+      const pct = (v: number | null | undefined): string =>
+        v == null || !Number.isFinite(v) ? '—' : `${(v * 100).toFixed(1)}%`;
+
+      // 1. 整体看板
+      type Dash = {
+        gmvFen?: number;
+        orderCount?: number;
+        quantity?: number;
+        avgOrderAmountFen?: number;
+        refundCount?: number;
+        refundRate?: number;
+        activeUserCount?: number;
+        activeLeaderCount?: number;
+        activeBuildingCount?: number;
+        repeatUserCount?: number;
+        repeatRate?: number;
+        grossProfitFen?: number;
+        commissionFen?: number;
+      };
+      let dash: Dash = {};
+      let warnings: string[] = [];
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.dashboard,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const m = (cur.data as Record<string, unknown>)?.metrics as
+            Record<string, unknown> | undefined;
+          if (m)
+            dash = {
+              gmvFen: num(m.gmvFen),
+              orderCount: num(m.orderCount),
+              quantity: num(m.quantity),
+              avgOrderAmountFen: num(m.avgOrderAmountFen),
+              refundCount: num(m.refundCount),
+              refundRate: num(m.refundRate),
+              activeUserCount: num(m.activeUserCount),
+              activeLeaderCount: num(m.activeLeaderCount),
+              activeBuildingCount: num(m.activeBuildingCount),
+              repeatUserCount: num(m.repeatUserCount),
+              repeatRate: num(m.repeatRate),
+              grossProfitFen: num(m.grossProfitFen),
+              commissionFen: num(m.commissionFen),
+            };
+          const w = (cur.data as Record<string, unknown>)?.warnings;
+          if (Array.isArray(w))
+            warnings = w.filter((x): x is string => typeof x === 'string' && x.trim() !== '');
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 2. 留存分层
+      type Ret = {
+        activeUserCount?: number;
+        newUserCount?: number;
+        returningUserCount?: number;
+        repeatUserCount?: number;
+        repeatRate?: number;
+        cohorts?: {
+          cohortStart?: string;
+          newUserCount?: number;
+          observable?: boolean;
+          retentionRate1?: number | null;
+        }[];
+      };
+      let ret: Ret = {};
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.retention,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const s = (cur.data as Record<string, unknown>)?.summary as
+            Record<string, unknown> | undefined;
+          if (s)
+            ret = {
+              activeUserCount: num(s.activeUserCount),
+              newUserCount: num(s.newUserCount),
+              returningUserCount: num(s.returningUserCount),
+              repeatUserCount: num(s.repeatUserCount),
+              repeatRate: num(s.repeatRate),
+            };
+          const cohorts = (cur.data as Record<string, unknown>)?.cohorts;
+          if (Array.isArray(cohorts))
+            ret.cohorts = cohorts
+              .map((c) => {
+                const cc = c as Record<string, unknown>;
+                return {
+                  cohortStart: typeof cc.cohortStart === 'string' ? cc.cohortStart : undefined,
+                  newUserCount: num(cc.newUserCount),
+                  observable: cc.observable === true,
+                  retentionRate1: num(cc.retentionRate1),
+                };
+              })
+              .filter((c) => c.newUserCount != null);
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 3. 楼栋表现
+      type Bld = { id: number; name: string; gmvFen: number; orderCount: number; gmvShare: number };
+      let buildings: Bld[] = [];
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.buildingRank,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const rows = (cur.data as Record<string, unknown>)?.buildings;
+          if (Array.isArray(rows)) {
+            for (const r of rows) {
+              const rr = r as Record<string, unknown>;
+              const id = Number(rr.id);
+              if (!Number.isFinite(id)) continue;
+              buildings.push({
+                id,
+                name: typeof rr.name === 'string' && rr.name ? rr.name : `#${id}`,
+                gmvFen: num(rr.gmvFen) ?? 0,
+                orderCount: num(rr.orderCount) ?? 0,
+                gmvShare: num(rr.gmvShare) ?? 0,
+              });
+            }
+            buildings = buildings.slice(0, 8);
+          }
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 4. 现有券种（接地：复用而非凭空造 id）
+      type Def = {
+        id: number;
+        name: string;
+        faceValueFen: number;
+        thresholdFen: number;
+        validityType?: string | null;
+        validDays?: number | null;
+        totalLimit?: number | null;
+        issuedCount?: number;
+        status?: string;
+      };
+      let defs: Def[] = [];
+      try {
+        const list = await this.resolver.listCouponDefs();
+        if (list && list.length)
+          defs = list.map((d) => ({
+            id: Number(d.id),
+            name: typeof d.name === 'string' ? d.name : '未命名',
+            faceValueFen: num(d.faceValueFen) ?? 0,
+            thresholdFen: num(d.thresholdFen) ?? 0,
+            validityType: d.validityType ?? null,
+            validDays: typeof d.validDays === 'number' ? d.validDays : null,
+            totalLimit: typeof d.totalLimit === 'number' ? d.totalLimit : null,
+            issuedCount: typeof d.issuedCount === 'number' ? d.issuedCount : 0,
+            status: d.status ?? 'unknown',
+          }));
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 组装纯文本（AI 只负责「说人话 + 给策略」）
+      const lines: string[] = [];
+      lines.push('经营与留存数据 · 近30天（按出餐日，单位已折算为元/人）');
+      lines.push('');
+
+      const d = dash;
+      const dashBits: string[] = [];
+      if (d.gmvFen != null) dashBits.push(`GMV ${fen2yuan(d.gmvFen)}`);
+      if (d.orderCount != null) dashBits.push(`${d.orderCount} 单`);
+      if (d.quantity != null) dashBits.push(`${d.quantity} 份`);
+      if (d.avgOrderAmountFen != null) dashBits.push(`客单价 ${fen2yuan(d.avgOrderAmountFen)}`);
+      if (d.activeUserCount != null) dashBits.push(`活跃 ${d.activeUserCount} 人`);
+      if (d.activeBuildingCount != null) dashBits.push(`楼栋 ${d.activeBuildingCount}`);
+      if (d.repeatUserCount != null)
+        dashBits.push(
+          d.repeatRate != null
+            ? `复购 ${d.repeatUserCount} 人（${pct(d.repeatRate)}）`
+            : `复购 ${d.repeatUserCount} 人`,
+        );
+      if (d.refundCount != null)
+        dashBits.push(
+          d.refundRate != null
+            ? `退款 ${d.refundCount} 单（${pct(d.refundRate)}）`
+            : `退款 ${d.refundCount} 单`,
+        );
+      if (dashBits.length) lines.push('【整体看板】' + dashBits.join(' · '));
+
+      const r = ret;
+      const retBits: string[] = [];
+      if (r.activeUserCount != null) retBits.push(`活跃 ${r.activeUserCount} 人`);
+      if (r.newUserCount != null) retBits.push(`新客 ${r.newUserCount} 人`);
+      if (r.returningUserCount != null) retBits.push(`回流 ${r.returningUserCount} 人`);
+      if (r.repeatUserCount != null) retBits.push(`复购 ${r.repeatUserCount} 人`);
+      if (r.repeatRate != null) retBits.push(`复购率 ${pct(r.repeatRate)}`);
+      if (retBits.length) lines.push('【留存分层】' + retBits.join(' · '));
+      // 派生：可唤醒沉睡用户 ≈ 活跃 - 复购
+      if (r.activeUserCount != null && r.repeatUserCount != null) {
+        lines.push(
+          `→ 可唤醒沉睡用户 ≈ 活跃 - 复购 = ${r.activeUserCount - r.repeatUserCount} 人（来过但未复购）`,
+        );
+      }
+      if (r.cohorts && r.cohorts.length) {
+        lines.push('按首单所在周分群：');
+        for (const c of r.cohorts.slice(-3)) {
+          const start = c.cohortStart ? c.cohortStart.slice(5) : '?';
+          const cnt = c.newUserCount ?? 0;
+          const tail = c.observable
+            ? c.retentionRate1 != null
+              ? `次周留 ${pct(c.retentionRate1)}`
+              : '次周留存无法计算'
+            : '窗口未走完，暂不给留存率';
+          lines.push(`· ${start} 那周：新客 ${cnt} 人，${tail}`);
+        }
+      }
+
+      if (buildings.length) {
+        lines.push('');
+        lines.push('【楼栋表现 TOP ' + buildings.length + '】');
+        buildings.forEach((b, i) => {
+          const bits: string[] = [];
+          bits.push(fen2yuan(b.gmvFen));
+          bits.push(`${b.orderCount} 单`);
+          if (b.gmvShare) bits.push(pct(b.gmvShare));
+          lines.push(`${i + 1}. ${b.name}  ${bits.join(' · ')}`);
+        });
+      }
+
+      if (defs.length) {
+        lines.push('');
+        lines.push('【现有券种（可复用，勿凭空造 id）】');
+        defs.forEach((c) => {
+          const v =
+            c.validityType === 'days' && c.validDays
+              ? `领取后${c.validDays}天`
+              : (c.validityType ?? '');
+          const th = c.thresholdFen > 0 ? `门槛${fen2yuan(c.thresholdFen)}` : '无门槛';
+          lines.push(
+            `#${c.id} ${c.name} 面额${fen2yuan(c.faceValueFen)} ${th} 有效期${v || '—'} 已发${c.issuedCount ?? 0} 状态${c.status ?? '?'}`,
+          );
+        });
+      }
+
+      if (warnings.length) {
+        lines.push('');
+        lines.push('【数据提示】' + warnings.join('；'));
+      }
+
+      if (!dashBits.length && !retBits.length && !buildings.length)
+        return '近 30 天经营与留存数据这次没取到（可能权限不足或还没开团）。可在后台看板查看，或稍后重试。';
+
+      const plain = lines.join('\n');
+
+      // 写临时数据文件，交给脚本做 AI 提案 + 落盘
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const plainFile = join(tmpDir, `_cs_${Date.now()}.txt`);
+      try {
+        writeFileSync(plainFile, plain, 'utf8');
+      } catch {
+        return `发券策略数据已生成，但写入临时文件失败（磁盘权限）。可在后台看板查看原始数据：\n\n${plain}`;
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-coupon-strategy.mjs');
+      if (!existsSync(script)) {
+        return `发券策略（原始数据，AI 脚本未找到）：\n\n${plain}`;
+      }
+
+      return new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = (m: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch (e) {
+          finish(
+            `发券策略生成启动失败：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          );
+          return;
+        }
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish('发券策略生成超时（>90s）。原始数据已在后台看板，可稍后重试触发。');
+        }, 90_000);
+        let out = '';
+        let err = '';
+        child.stdout?.on('data', (d) => (out += String(d)));
+        child.stderr?.on('data', (d) => (err += String(d)));
+        child.on('error', (e) =>
+          finish(
+            `发券策略生成出错：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          ),
+        );
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          if (out.trim()) {
+            try {
+              unlinkSync(plainFile);
+            } catch {
+              /* noop */
+            }
+            finish(out.trim());
+          } else
+            finish(
+              `发券策略生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
             );
         });
       });

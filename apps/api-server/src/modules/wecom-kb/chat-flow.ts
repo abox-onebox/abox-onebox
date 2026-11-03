@@ -24,6 +24,7 @@ export type ChatIntent =
   | { kind: 'genDailyReport' }
   | { kind: 'genMealProposal' }
   | { kind: 'genRecruitProposal' }
+  | { kind: 'genCouponStrategy' }
   | { kind: 'unknown'; raw: string };
 
 const RE_CONFIRM = /^(1|好|好的|好嘞|确认|确定|执行|对|是|可以|行|干吧|办吧|就这样|ok|yes)$/i;
@@ -87,6 +88,16 @@ export function parseIntent(raw: string, now: Date): ChatIntent {
   )
     return { kind: 'genRecruitProposal' };
 
+  // AI 编排节点 H · 动态发券策略（企微触发）：认出「发券策略/动态发券/发券方案/券策略」即走该节点。
+  // ⚠️ 必须带明确策略词（发券策略/动态发券/发券方案/券策略/发券提案/智能发券），避免与「代金券/优惠券/找 优惠券」
+  //    混淆（后者是操作目录检索，非 AI 提案）；「日报」「选品提案」「招募提案」已在前面分支处理。
+  if (
+    /(生成|出|给我|来一份|我要|做|写|报一下|分析一下)?\s*(运营|本周|下周|动态|智能)?\s*(发券策略|动态发券|发券方案|券策略|发券提案|智能发券)/i.test(
+      t,
+    )
+  )
+    return { kind: 'genCouponStrategy' };
+
   if (/^(帮助|help|\?|？|菜单|能干什么|会什么|怎么用|使用说明)$/.test(t)) return { kind: 'help' };
 
   const d = parseMealDate(t, now);
@@ -135,6 +146,7 @@ export const CHAT_HELP = [
   '· 出运营日报：发「生成今日日报」（AI 汇总近 7 天经营数据，给总览·亮点·风险·行动建议）',
   '· 出选品提案：发「生成选品提案」（AI 基于近 30 天热销与套餐目录，给下周留用/试水/观察建议）',
   '· 出招募提案：发「生成招募提案」（AI 基于近 30 天楼栋销量与团长覆盖缺口，给招募优先级·话术草稿·新人赋能要点）',
+  '· 出发券策略：发「生成发券策略」（AI 基于近 30 天留存与楼栋表现，给新客/沉睡/楼栋/复购四类券建议与预算，需人工确认后发放）',
   '选好之后我只问缺的那几个参数，回 1 才真执行。',
   '',
   '直接说事，例如：',

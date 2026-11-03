@@ -77,6 +77,19 @@ interface RawDish {
   name?: string | null;
 }
 
+/** 现有代金券券种（admin/coupon/defs）—— 发券策略提案接地，避免 AI 凭空造 id */
+interface RawCouponDef {
+  id: number;
+  name: string;
+  faceValueFen: number;
+  thresholdFen: number;
+  validityType?: string | null;
+  validDays?: number | null;
+  totalLimit?: number | null;
+  issuedCount?: number;
+  status?: string;
+}
+
 /** 套餐模板全量（含菜品构成/被排次数/状态）—— 选品提案用，不复用 `RawTemplate` 的裁剪版 */
 interface RawTemplateItem {
   itemId: number;
@@ -234,6 +247,15 @@ export class NameResolverService {
       if (list.length < pageSize) break;
     }
     return all;
+  }
+
+  /**
+   * 现有代金券券种定义（admin/coupon/defs）。
+   * 发券策略提案用它做接地：让 AI 知道「已有哪些券种可复用 / 哪些要新建」，不凭空造 id。
+   * 不带缓存（仅命令触发时取最新）。失败返回 null，上层跳过该视角即可。
+   */
+  async listCouponDefs(): Promise<RawCouponDef[] | null> {
+    return this.fetchList<RawCouponDef>('/admin/coupon/defs?pageSize=200');
   }
 
   /** 清缓存（执行完写操作后调，避免刚改的数据还是旧的） */
