@@ -121,6 +121,66 @@ interface RawTemplateFull {
   usedCount?: number;
 }
 
+/** 财务对账视图（admin/finance/reconciliation）—— 风控对账 AI 用，仅读 summary 与差异分布 */
+interface RawReconcile {
+  date?: string;
+  anchorLabel?: string;
+  channel?: { source?: string; billAvailable?: boolean; note?: string };
+  summary?: {
+    balanced?: boolean;
+    diffCount?: number;
+    diffFen?: number;
+    orderFen?: number;
+    logFen?: number;
+    refundFen?: number;
+    netFen?: number;
+    orderCount?: number;
+    logCount?: number;
+    refundCount?: number;
+    matchedCount?: number;
+  };
+  diffTypeStats?: { type: string; label: string; count: number }[];
+  lastRun?: { freshness?: string; date?: string; balanced?: boolean; diffCount?: number };
+  note?: string;
+}
+
+/** 退款审批列表（admin/finance/refunds）—— 风控对账 AI 用，仅读 summary */
+interface RawRefundPage {
+  summary?: {
+    pendingCount?: number;
+    pendingAmountFen?: number;
+    approvedCount?: number;
+    refundedCount?: number;
+    refundedAmountFen?: number;
+    rejectedCount?: number;
+  };
+  list?: unknown[];
+}
+
+/** 应付未出单异常（admin/supplier-shares/exceptions）—— 风控对账 AI 用，仅读 summary */
+interface RawShareException {
+  date?: string;
+  summary?: {
+    count?: number;
+    supplierCount?: number;
+    itemCount?: number;
+    byReason?: Record<string, number>;
+  };
+  list?: unknown[];
+}
+
+/** 提现审批列表（admin/finance/withdrawals）—— 风控对账 AI 用，仅读 summary */
+interface RawWithdrawalPage {
+  summary?: {
+    pendingCount?: number;
+    pendingAmountFen?: number;
+    approvedCount?: number;
+    approvedAmountFen?: number;
+    frozenByWithdrawFen?: number;
+  };
+  list?: unknown[];
+}
+
 /** 后台统一响应外壳（具名类型：写成 `as typeof body` 会被收窄成 null 而报 TS2339） */
 interface ListEnvelope {
   code?: number;
@@ -178,6 +238,46 @@ export class NameResolverService {
       return list;
     } catch (e) {
       this.logger.error(`列表接口请求未送达：${path} ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * 取后台接口的原始 data 对象（对账/退款/应付/提现等返回「对象」而非「数组」）。
+   * 复用 svcToken + 60s 续期 + 统一错误日志，失败即返回 null，不抛异常打断对话。
+   * ⚠️ 容忍两种外壳：① 统一响应外壳 {code,message,data}；② 直接返回对象（未包裹）。
+   */
+  private async fetchJson<T>(path: string): Promise<T | null> {
+    const token = await this.svcToken.get();
+    if (!token) return null;
+    const url = this.base() + this.prefix() + path;
+    try {
+      const resp = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+      });
+      const text = await resp.text();
+      let body: unknown = null;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        this.logger.error(`接口返回非 JSON：${path}`);
+        return null;
+      }
+      const obj = (body && typeof body === 'object' ? body : null) as {
+        code?: number;
+        data?: unknown;
+      } | null;
+      const data = obj && 'code' in obj ? (obj.code === 0 ? obj.data : null) : body;
+      if (data === null || data === undefined) {
+        this.logger.error(
+          `接口失败或为空：${path} code=${obj && 'code' in obj ? obj.code : 'N/A'}`,
+        );
+        return null;
+      }
+      return data as T;
+    } catch (e) {
+      this.logger.error(`接口请求未送达：${path} ${(e as Error).message}`);
       return null;
     }
   }
@@ -270,6 +370,34 @@ export class NameResolverService {
   /** 供应商列表（含每日产能）。纯只读、复用 fetchList 与 admin token，零新增接口。产能基线缺失时返回空数组由调用方降级。 */
   async listSuppliers(): Promise<RawSupplier[] | null> {
     return this.fetchList<RawSupplier>('/admin/suppliers?pageSize=200');
+  }
+
+  /** 微信支付对账（本地三头）：admin/finance/reconciliation?date=Y（date 为支付日，默认服务端取今日） */
+  async getReconciliation(date: string): Promise<RawReconcile | null> {
+    return this.fetchJson<RawReconcile>(
+      `/admin/finance/reconciliation?date=${encodeURIComponent(date)}`,
+    );
+  }
+
+  /** 退款审批列表：admin/finance/refunds?tab=pending（待审批积压，运营风控关注点） */
+  async getRefunds(tab = 'pending'): Promise<RawRefundPage | null> {
+    return this.fetchJson<RawRefundPage>(
+      `/admin/finance/refunds?tab=${encodeURIComponent(tab)}&pageSize=50`,
+    );
+  }
+
+  /** 应付未出单异常：admin/supplier-shares/exceptions?date=Y（date 必填，出餐日） */
+  async getShareExceptions(date: string): Promise<RawShareException | null> {
+    return this.fetchJson<RawShareException>(
+      `/admin/supplier-shares/exceptions?date=${encodeURIComponent(date)}`,
+    );
+  }
+
+  /** 提现审批列表：admin/finance/withdrawals?tab=review（待审批积压，资金风控关注点） */
+  async getWithdrawals(tab = 'review'): Promise<RawWithdrawalPage | null> {
+    return this.fetchJson<RawWithdrawalPage>(
+      `/admin/finance/withdrawals?tab=${encodeURIComponent(tab)}&pageSize=50`,
+    );
   }
 
   /** 清缓存（执行完写操作后调，避免刚改的数据还是旧的） */

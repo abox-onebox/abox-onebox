@@ -257,6 +257,8 @@ export class WecomChatService {
         return this.genDemandForecast(binding, now);
       case 'genGrowthExperiment':
         return this.genGrowthExperiment(binding, now);
+      case 'genRiskRecon':
+        return this.genRiskRecon(binding, now);
       default:
         return this.maybeLLMReply(text, binding);
     }
@@ -1876,6 +1878,199 @@ export class WecomChatService {
           else
             finish(
               `增长实验生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
+            );
+        });
+      });
+    };
+    return run();
+  }
+
+  /**
+   * 节点 K · 风控对账体检（企微触发）
+   *
+   * 复用现有 svc token（operator 角色已在 FINANCE_VIEW_ROLES 内）直连四个**只读**财务端点，
+   * 各自独立 try/catch：任一取数失败都不阻断其余，缺失即标「暂缺」—— 原则零（可剥离、可降级）。
+   * 后端预汇总成纯文本，脚本侧只做 AI 解读；**绝不自动平账 / 调账 / 批退款 / 批提现**（人-only）。
+   * 基准日取「昨日」（最近一个已闭合的支付日/出餐日），更贴近「今天该看什么」。
+   */
+  private genRiskRecon(binding: Binding, now: Date): Promise<string> {
+    const run = async (): Promise<string> => {
+      // 北京日期（本地分量，绝不用 toISOString 退一天）
+      const bjNow = new Date(now.getTime() + 8 * 3600 * 1000);
+      const yBj = new Date(bjNow.getTime() - 24 * 3600 * 1000);
+      const pad = (n: number): string => String(n).padStart(2, '0');
+      const yDate = `${yBj.getFullYear()}-${pad(yBj.getMonth() + 1)}-${pad(yBj.getDate())}`;
+      const fen2yuan = (fen: number): string => `¥${((fen || 0) / 100 || 0).toFixed(2)}`;
+      const num = (v: unknown): number | undefined =>
+        typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+
+      // 1. 支付对账（核心）
+      let recon = '（暂缺）';
+      try {
+        const r = await this.resolver.getReconciliation(yDate);
+        if (r) {
+          const s = r.summary ?? {};
+          const lines: string[] = [];
+          lines.push(`支付日 ${r.date ?? yDate}（${r.anchorLabel ?? '支付日'}）`);
+          lines.push(
+            `渠道：${r.channel?.source === 'bill' ? '已接入微信账单' : '本地三头核对（未接入微信账单，billAvailable=' + String(r.channel?.billAvailable ?? false) + '）'}`,
+          );
+          lines.push(
+            `对账结论：${s.balanced ? '本地三头已平' : '存在不平'}` +
+              `${s.diffCount ? ` · 差异 ${s.diffCount} 笔` : ''}` +
+              (s.diffFen ? ` · 差额 ${fen2yuan(s.diffFen)}` : ''),
+          );
+          lines.push(
+            `金额：订单侧 ${fen2yuan(s.orderFen ?? 0)} / 流水侧 ${fen2yuan(s.logFen ?? 0)} / 当日退款 ${fen2yuan(s.refundFen ?? 0)} / 净入账 ${fen2yuan(s.netFen ?? 0)}`,
+          );
+          lines.push(
+            `笔数：订单 ${s.orderCount ?? 0} · 流水 ${s.logCount ?? 0} · 退款 ${s.refundCount ?? 0} · 逐笔匹配 ${s.matchedCount ?? 0}`,
+          );
+          if (Array.isArray(r.diffTypeStats) && r.diffTypeStats.length) {
+            const hit = r.diffTypeStats.filter((d) => (d.count ?? 0) > 0);
+            lines.push(
+              '差异类型：' +
+                (hit.length ? hit.map((d) => `${d.label} ${d.count}`).join('、') : '无'),
+            );
+          }
+          if (r.lastRun) {
+            lines.push(
+              `最近自动对账：${r.lastRun.freshness ?? '?'}（${r.lastRun.date ?? '无'}）` +
+                `${r.lastRun.diffCount ? ` · 差异 ${r.lastRun.diffCount} 笔` : ''}`,
+            );
+          }
+          if (r.note) lines.push('口径说明：' + r.note);
+          recon = lines.join('\n');
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 2. 退款积压 / 异常（D40）
+      let refund = '（暂缺）';
+      try {
+        const r = await this.resolver.getRefunds('pending');
+        if (r && r.summary) {
+          const s = r.summary;
+          refund = `待审批 ${s.pendingCount ?? 0} 笔 · 金额 ${fen2yuan(s.pendingAmountFen ?? 0)}（已通过 ${s.approvedCount ?? 0} · 已退款 ${s.refundedCount ?? 0} 笔 ${fen2yuan(s.refundedAmountFen ?? 0)} · 已驳回 ${s.rejectedCount ?? 0}）`;
+        }
+      } catch {
+        /* 跳过 */
+      }
+
+      // 3. 应付未出单异常（S9）
+      let share = '（暂缺）';
+      try {
+        const r = await this.resolver.getShareExceptions(yDate);
+        if (r && r.summary) {
+          const s = r.summary;
+          const reasons =
+            s.byReason && Object.keys(s.byReason).length
+              ? Object.entries(s.byReason)
+                  .map(([k, v]) => `${k}:${v}`)
+                  .join('、')
+              : '无';
+          share = `未出单 ${s.count ?? 0} 项 · 涉及供应商 ${s.supplierCount ?? 0} · 商品 ${s.itemCount ?? 0} · 原因分布 ${reasons}`;
+        }
+      } catch {
+        /* 跳过 */
+      }
+
+      // 4. 提现待审批（D45）
+      let withdraw = '（暂缺）';
+      try {
+        const r = await this.resolver.getWithdrawals('review');
+        if (r && r.summary) {
+          const s = r.summary;
+          withdraw = `待审批 ${s.pendingCount ?? 0} 笔 · 金额 ${fen2yuan(s.pendingAmountFen ?? 0)}（已批准 ${s.approvedCount ?? 0} 笔 ${fen2yuan(s.approvedAmountFen ?? 0)} · 提现占用冻结 ${fen2yuan(s.frozenByWithdrawFen ?? 0)}）`;
+        }
+      } catch {
+        /* 跳过 */
+      }
+
+      const lines: string[] = [];
+      lines.push(`风控对账体检数据 · 基准日 ${yDate}（数值均为系统实读，已汇总）`);
+      lines.push('');
+      lines.push('【一、支付对账（本地三头）】');
+      lines.push(recon);
+      lines.push('');
+      lines.push('【二、退款积压 / 异常（D40）】');
+      lines.push(refund);
+      lines.push('');
+      lines.push('【三、应付未出单异常（S9）】');
+      lines.push(share);
+      lines.push('');
+      lines.push('【四、提现待审批（D45）】');
+      lines.push(withdraw);
+      lines.push('');
+      lines.push(
+        '说明：以上为系统实读汇总，差异需人工逐笔核对；一期未接入微信账单，本地三头平不代表与微信对平。',
+      );
+
+      const plain = lines.join('\n');
+
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const plainFile = join(tmpDir, `_rr_${Date.now()}.txt`);
+      try {
+        writeFileSync(plainFile, plain, 'utf8');
+      } catch {
+        return `风控对账数据已生成，但写入临时文件失败（磁盘权限）。可在后台看板查看原始数据：\n\n${plain}`;
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-risk-recon.mjs');
+      if (!existsSync(script)) {
+        return `风控对账（原始数据，AI 脚本未找到）：\n\n${plain}`;
+      }
+
+      return new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = (m: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch (e) {
+          finish(
+            `风控对账生成启动失败：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          );
+          return;
+        }
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish('风控对账生成超时（>90s）。原始数据已在后台看板，可稍后重试触发。');
+        }, 90_000);
+        let out = '';
+        let err = '';
+        child.stdout?.on('data', (d) => (out += String(d)));
+        child.stderr?.on('data', (d) => (err += String(d)));
+        child.on('error', (e) =>
+          finish(
+            `风控对账生成出错：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          ),
+        );
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          try {
+            unlinkSync(plainFile);
+          } catch {
+            /* noop */
+          }
+          if (out.trim()) finish(out.trim());
+          else
+            finish(
+              `风控对账生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
             );
         });
       });
