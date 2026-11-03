@@ -54,14 +54,38 @@ interface RawGroup {
   statusLabel?: string | null;
 }
 
-/** 在职团长清单行（admin/leaders 名册，status=1）—— 招募缺口计算用 */
+/**
+ * 在职团长清单行（admin/leaders?view=roster 名册，status=1）
+ * —— 招募缺口（节点 G）与团长健康度（节点 N）共用。
+ *
+ * ⚠️ 只声明「用得到」的字段：`phoneMasked` / `realName` / `nickname` / `openidTail`
+ *   虽然接口有返回，这里**刻意不取**——个人身份不进 AI 数据流（隐私红线）。
+ * ⚠️ `totalCommissionFen` 也刻意不接：它是 `ab_team_leader.total_commission` 的统计快照，
+ *   `balance` 列从不更新（恒 0），拿它判「团长手上还有多少钱」会算出假亏损。
+ *   钱的口径一律走财务端点（节点 K）。
+ */
 interface RawLeader {
   id: number;
   buildingId: number;
   buildingName: string | null;
+  /** 所属楼群 id / 名称（健康度按楼群算覆盖率用） */
+  groupId?: number | null;
+  groupName?: string | null;
   level: string;
   status: number;
   monthOrders: number;
+  /** 累计完成份数（健康度的「老团长/新团长」区分） */
+  totalOrders?: number;
+  /** 已转正的被推荐人数量（升级第二条件） */
+  invitedFormalCount?: number;
+  /** 他名下最近一次产生订单的时间（BJ ISO；无单为 null） */
+  lastOrderAt?: string | null;
+  /** 收款三要素是否齐全（缺一项提不了现 → 卡点） */
+  payoutBound?: boolean;
+  /** 已签协议版本 */
+  agreeVersion?: string | null;
+  /** 任命时间（判「新上任」用，避免把刚任命的人算成流失） */
+  createdAt?: string | null;
 }
 
 interface RawTemplate {

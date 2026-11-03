@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { spawn } from 'child_process';
-import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
+import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync } from 'fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'path';
 import { isAfterCutoff } from '../../common/utils/time';
@@ -10,7 +10,6 @@ import { NameResolverService, GroupResolve, ItemResolve } from './name-resolver.
 import { WecomBindingService } from './wecom-binding.service';
 import { WecomSvcTokenService } from './wecom-svc-token.service';
 import { WecomTokenService } from './wecom-token.service';
-import { WecomBinding } from './wecom-binding.entity';
 import { bjYmdPlus, parseMealDate } from './name-match';
 import { parseIntent, isConfirm, isCancel } from './chat-flow';
 import {
@@ -56,6 +55,8 @@ import {
 } from './stats-summary';
 import { summarizeData } from './result-summary';
 import { callLLM, retrieveKB, isLlmAssistEnabled } from './llm.adapter';
+import { summarizeLeaderHealth, describeLeader, type LeaderHealthItem } from './leader-health';
+import { computeHealthScore, weakestDimension, type HealthScoreInput } from './health-score';
 
 /** 取首行非空文本，截断到 80 字，用于编排摘要的一行预览 */
 function firstLineOf(text: string): string {
@@ -167,6 +168,18 @@ function dateLabel(date: string, now: Date): string {
 export class WecomChatService {
   private readonly logger = new Logger(WecomChatService.name);
   private readonly sessions = new Map<string, Session>();
+
+  /**
+   * 每日编排封面用的健康度徽标（如「经营健康度：72/100 黄色 · 需关注（较上次 +4）」）。
+   *
+   * 为什么用实例字段而不是把 `composeDigest` 改成 async：
+   *   摘要要同步拼出来（试跑台直接拿返回值），让摘要去反解析节点文本里的分数更脆
+   *   （文案一改就失效）。所以由节点 O 自己把徽标写好，摘要只负责读。
+   * ⚠️ 每次 `runDailyNodes` 开头必须清空 —— 今天节点失败就该没有徽标，
+   *   绝不能挂着昨天的分数出现在今天的封面（那是最容易骗到人的一种错）。
+   * ⚠️ 一期单 API 实例 + 编排串行，所以这个字段安全；多实例部署时要改成按天落库。
+   */
+  private lastHealthBadge: string | null = null;
 
   constructor(
     private readonly resolver: NameResolverService,
@@ -290,6 +303,10 @@ export class WecomChatService {
         return this.genRiskRecon(binding, now);
       case 'genChurnRecall':
         return this.genChurnRecall(binding, now);
+      case 'genLeaderHealth':
+        return this.genLeaderHealth(binding, now);
+      case 'genHealthScore':
+        return this.genHealthScore(binding, now);
       default:
         return this.maybeLLMReply(text, binding);
     }
@@ -418,8 +435,18 @@ export class WecomChatService {
         title: '用户流失预警召回',
         run: () => this.genChurnRecall(binding, now),
       },
+      {
+        key: 'leader',
+        title: '团长健康度与留存',
+        run: () => this.genLeaderHealth(binding, now),
+      },
+      // 总分放最后一个跑：它要读对账/留存/团长覆盖，先让前面的节点把数据准备好
+      // （但它是**独立取数**的，不依赖上面节点的文本 —— 节点失败不会连锁影响分数）
+      { key: 'health', title: '经营健康度总分', run: () => this.genHealthScore(binding, now) },
     ];
     const out: DailyNodeResult[] = [];
+    // 每天重新生成封面徽标：若本节点今天失败，宁可**没有**徽标，也不能挂昨天的旧分数
+    this.lastHealthBadge = null;
     for (const n of nodes) {
       try {
         const text = await n.run();
@@ -510,6 +537,8 @@ export class WecomChatService {
     const d = String(now.getDate()).padStart(2, '0');
     const lines: string[] = [];
     lines.push(`【ABox AI 每日编排】${y}-${m}-${d} 09:00`);
+    // 封面一行：今日经营健康度（由节点 O 在本次编排里写好；未跑/失败则不出这一行）
+    if (this.lastHealthBadge) lines.push(this.lastHealthBadge);
     lines.push(`共 ${results.length} 个分析节点已自动生成草稿（均须人工确认后执行）`);
     lines.push('');
     for (const r of results) {
@@ -1414,7 +1443,6 @@ export class WecomChatService {
 
       // 1. 整体看板 + 日级趋势（趋势是需求预测的核心时序）
       type TrendPt = { date?: string; orderCount?: number; quantity?: number; gmvFen?: number };
-      let metrics: Record<string, unknown> = {};
       let trend: TrendPt[] = [];
       let warnings: string[] = [];
       try {
@@ -1425,8 +1453,6 @@ export class WecomChatService {
         );
         if (cur.code === 0 && cur.data) {
           const d = cur.data as Record<string, unknown>;
-          const m = d?.metrics as Record<string, unknown> | undefined;
-          if (m) metrics = m;
           const tr = d?.trend;
           if (Array.isArray(tr))
             trend = tr
@@ -2349,6 +2375,633 @@ export class WecomChatService {
     return run();
   }
 
+  /**
+   * AI 编排节点 N · 团长健康度与流失风险（企微触发）
+   * ------------------------------------------------------------------
+   * 与节点 G 的分工：**G 负责招（缺口在哪），N 负责养（招来的人有没有掉队）**。
+   * 数据只用 `resolver.listLeaders()`（`admin/leaders?view=roster&status=1`）一次取全，
+   * 分档判据全部走纯函数 `leader-health.ts`（有单测，阈值改错会被拦下）。
+   *
+   * 原则零保障（AI 可剥离、可降级，不影响发布与传统运营）：
+   *   · 全段包在大 try 内，楼群覆盖另起 try/catch：一是失败不影响另一段，不整机失败；
+   *   · **不取姓名/手机号/nickname/openid**，输出用「楼栋名 + 团长#id」定位；
+   *   · **不读佣金余额**（`total_commission` 是快照、`balance` 列恒 0，会算出假亏损），
+   *     钱的口径归节点 K；
+   *   · 脚本缺失/超时/异常 → 降级为回显原始汇总，不阻塞应答；
+   *   · 只提案不执行：停职/换人/改佣金必须人工在后台做，本节点绝不写库；
+   *   · 已并入 L 每日编排（仅分析推送）。
+   */
+  private genLeaderHealth(_binding: Binding, now: Date): Promise<string> {
+    const run = async (): Promise<string> => {
+      const bjNow = new Date(now.getTime() + 8 * 3600 * 1000);
+      const pad = (n: number): string => String(n).padStart(2, '0');
+      const today = `${bjNow.getFullYear()}-${pad(bjNow.getMonth() + 1)}-${pad(bjNow.getDate())}`;
+      const nowMs = now.getTime();
+
+      const BAND_LABEL: Record<string, string> = {
+        new: '新上任（<7 天，不参与流失判定）',
+        healthy: '健康（7 天内有出单）',
+        watch: '待唤醒（8~14 天无单）',
+        dormant: '沉睡（>14 天无单）',
+        never: '从未出单（有任职、无任何订单记录）',
+      };
+
+      let rosterSec = '（暂缺）';
+      let dormantSec = '（暂缺）';
+      let blockSec = '（暂缺）';
+      let promoteSec = '（暂缺）';
+      let coverSec = '（暂缺）';
+      let items: LeaderHealthItem[] = [];
+      let total = 0;
+
+      // 1. 名册汇总 + 三张清单
+      try {
+        const rows = await this.resolver.listLeaders();
+        if (rows && rows.length) {
+          const { items: judged, totals } = summarizeLeaderHealth(rows, nowMs);
+          items = judged;
+          total = totals.total;
+
+          const lines: string[] = [];
+          lines.push(
+            `在职团长 ${totals.total} 人 · 覆盖楼栋 ${new Set(items.map((i) => i.buildingName ?? '?')).size} 个`,
+          );
+          for (const band of ['new', 'healthy', 'watch', 'dormant', 'never']) {
+            const n = totals.byBand[band as keyof typeof totals.byBand] ?? 0;
+            lines.push(`  · ${BAND_LABEL[band]}：${n} 人`);
+          }
+          lines.push(
+            `本月单量分布：0 单 ${totals.orderBuckets['0']} 人 · 1-20 单 ${totals.orderBuckets['1-20']} 人 · ` +
+              `21-60 单 ${totals.orderBuckets['21-60']} 人 · 61-100 单 ${totals.orderBuckets['61-100']} 人 · ` +
+              `100 单以上 ${totals.orderBuckets['100+']} 人`,
+          );
+          lines.push(
+            `卡点：未绑收款 ${totals.payoutUnbound} 人 · 协议待补签 ${totals.agreementStale} 人 · ` +
+              `「沉睡且带卡点」（最该先打电话）${totals.blockedAndSilent} 人`,
+          );
+          rosterSec = lines.join('\n');
+
+          // 沉睡 / 从未出单清单（never 排最前：从没出过单比久未出单更急）
+          const silent = items
+            .filter((i) => i.band === 'dormant' || i.band === 'never')
+            .sort((a, b) => (b.silentDays ?? 9999) - (a.silentDays ?? 9999));
+          dormantSec = silent.length
+            ? silent
+                .slice(0, 10)
+                .map((i) => '  · ' + describeLeader(i))
+                .join('\n') + (silent.length > 10 ? `\n  … 另有 ${silent.length - 10} 人` : '')
+            : '  无（所有在职团长 14 天内都出过单）';
+
+          // 卡点清单
+          const blocked = items.filter((i) => i.blockers.length > 0);
+          blockSec = blocked.length
+            ? blocked
+                .slice(0, 10)
+                .map((i) => '  · ' + describeLeader(i))
+                .join('\n') + (blocked.length > 10 ? `\n  … 另有 ${blocked.length - 10} 人` : '')
+            : '  无（收款与协议都已齐备）';
+
+          // 近晋级（推一把就能升级，最划算的激励抓手）
+          const near = items.filter(
+            (i) =>
+              i.gapToNextLevel && i.gapToNextLevel.orders <= 10 && i.gapToNextLevel.referrals <= 1,
+          );
+          promoteSec = near.length
+            ? near
+                .slice(0, 8)
+                .map((i) => '  · ' + describeLeader(i))
+                .join('\n') + (near.length > 8 ? `\n  … 另有 ${near.length - 8} 人` : '')
+            : '  无（暂无人接近下一等级门槛）';
+        } else if (rows && rows.length === 0) {
+          rosterSec = '在职团长 0 人（尚未任命任何团长）';
+          dormantSec = '  无';
+          blockSec = '  无';
+          promoteSec = '  无';
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 2. 楼群覆盖（在营楼群里有多少已经有团长）
+      try {
+        const groups = await this.resolver.listGroups();
+        if (groups && groups.length) {
+          const activeGroups = groups.filter((g) => g.status === undefined || g.status === 1);
+          // 团长 roster 只带 groupName（纯函数刻意没留 groupId），按名字对齐即可
+          const coveredNames = new Set(
+            activeGroups
+              .filter((g) => items.some((i) => i.groupName != null && i.groupName === g.name))
+              .map((g) => g.name),
+          );
+          const rate = activeGroups.length
+            ? Math.round((coveredNames.size / activeGroups.length) * 1000) / 10
+            : null;
+          coverSec =
+            `在营楼群 ${activeGroups.length} 个 · 已有团长 ${coveredNames.size} 个 · 覆盖率 ` +
+            (rate == null ? '暂缺' : `${rate}%`) +
+            (activeGroups.length - coveredNames.size > 0
+              ? ` · 缺口 ${activeGroups.length - coveredNames.size} 个楼群（招募优先级见节点 G）`
+              : '');
+        }
+      } catch {
+        /* 跳过 */
+      }
+
+      const lines: string[] = [];
+      lines.push(`团长健康度数据 · 基准日 ${today}（系统实读；不含姓名/手机号等个人信息）`);
+      lines.push('');
+      lines.push('【一、在职团长名册汇总】');
+      lines.push(rosterSec);
+      lines.push('');
+      lines.push('【二、沉睡与从未出单清单（按沉默时长降序，最多 10 条）】');
+      lines.push(dormantSec);
+      lines.push('');
+      lines.push('【三、卡点清单（未绑收款 / 协议待补签）】');
+      lines.push(blockSec);
+      lines.push('');
+      lines.push('【四、近晋级清单（差 ≤10 单且 ≤1 人转正）】');
+      lines.push(promoteSec);
+      lines.push('');
+      lines.push('【五、楼群覆盖】');
+      lines.push(coverSec);
+      lines.push('');
+      lines.push(
+        `说明：分档阈值 —— 新上任 <7 天不参与流失判定；7 天内健康；8~14 天待唤醒；>14 天沉睡；` +
+          `有任职但无任何订单记录为「从未出单」。共判定 ${total} 人。` +
+          `停职/换人/改佣金须人工在后台操作，本节点只提案不执行。`,
+      );
+
+      const plain = lines.join('\n');
+
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const plainFile = join(tmpDir, `_leader_${Date.now()}.txt`);
+      try {
+        writeFileSync(plainFile, plain, 'utf8');
+      } catch {
+        return `团长健康度数据已生成，但写入临时文件失败（磁盘权限）。可在后台团长管理查看原始数据：\n\n${plain}`;
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-leader-health.mjs');
+      if (!existsSync(script)) {
+        return `团长健康度（原始数据，AI 脚本未找到）：\n\n${plain}`;
+      }
+
+      return new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = (m: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch (e) {
+          finish(
+            `团长健康度生成启动失败：${e instanceof Error ? e.message : String(e)}。可在后台团长管理查看原始数据。`,
+          );
+          return;
+        }
+
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish('团长健康度生成超时（>90s）。原始数据已在后台团长管理，可稍后重试触发。');
+        }, 90_000);
+        let out = '';
+        let err = '';
+        child.stdout?.on('data', (d) => (out += String(d)));
+        child.stderr?.on('data', (d) => (err += String(d)));
+        child.on('error', (e) =>
+          finish(
+            `团长健康度生成出错：${e instanceof Error ? e.message : String(e)}。可在后台团长管理查看原始数据。`,
+          ),
+        );
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          try {
+            unlinkSync(plainFile);
+          } catch {
+            /* noop */
+          }
+          if (out.trim()) finish(out.trim());
+          else
+            finish(
+              `团长健康度生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台团长管理查看原始数据。`,
+            );
+        });
+      });
+    };
+    return run();
+  }
+
+  /**
+   * AI 编排节点 O · 经营健康度总分（Health Score）
+   * ------------------------------------------------------------------
+   * 把「散在七个节点里的判断」收成一个数与一个红黄绿，作为每日 09:00 推送的封面。
+   * 五个维度各 20 分（增长 / 留存 / 资金 / 履约 / 组织），判据全在纯函数
+   * `health-score.ts`（有单测）。
+   *
+   * 三条设计取舍：
+   *   ① **独立取数，不读其它节点的文本**：节点互相依赖会让一次失败连锁扣分，
+   *      而 AI 文案里抽数字最容易出错。这里只读接口原始数。
+   *   ② **缺数据不计分母**：某维取不到就不进分母（总分按已测维度折算），
+   *      并把「已测 N/5 维、缺哪几维」原样印出来。宁可少说，也不给一个假分的低分。
+   *   ③ **只分析不执行**：分数低只影响封面颜色与建议，绝不触发任何写操作。
+   *
+   * 原则零：全段大 try，各数据源独立 try/catch；脚本缺失/超时即回显原始打分；
+   * 历史分写盘失败只影响「较上次」，不影响今日结论。
+   */
+  private genHealthScore(binding: Binding, now: Date): Promise<string> {
+    const run = async (): Promise<string> => {
+      const today = bjTodayStr(now);
+      if (!today) return '取不到今天的日期，我先不动。稍后再试。';
+      const bjNow = new Date(now.getTime() + 8 * 3600 * 1000);
+      const yBj = new Date(bjNow.getTime() - 24 * 3600 * 1000);
+      const pad = (n: number): string => String(n).padStart(2, '0');
+      const yDate = `${yBj.getFullYear()}-${pad(yBj.getMonth() + 1)}-${pad(yBj.getDate())}`;
+      const nowMs = now.getTime();
+
+      // 与节点 E 日报同口径：近 7 天，截止最近一个闭合日
+      const base = { which: 'dashboard' as const, range: '7d' as const, endShift: -1 };
+      const endDate = endDateOf(base, today);
+      const prevEnd = prevEndDateOf(base, endDate);
+
+      const input: HealthScoreInput = {};
+      const num = (v: unknown): number | null =>
+        typeof v === 'number' && Number.isFinite(v) ? v : null;
+      const metricsOf = (data: unknown): Record<string, unknown> | null => {
+        const d = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+        const m = d?.metrics;
+        return m && typeof m === 'object' ? (m as Record<string, unknown>) : null;
+      };
+      const deltaRate = (cur: number | null, prev: number | null): number | null => {
+        if (cur == null || prev == null || prev <= 0) return null;
+        return (cur - prev) / prev;
+      };
+      const pct = (v: number): string => `${(v * 100).toFixed(1)}%`;
+
+      // 1. 经营看板（增长维 + 履约维的退款率）
+      let boardSec = '（暂缺）';
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.dashboard,
+          { range: '7d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const m = metricsOf(cur.data);
+          const board = summarizeDashboard(cur.data);
+          const parts: string[] = [];
+          if (board) parts.push(board);
+          const prev = await this.proxy.query(
+            STATS_QCODE.dashboard,
+            { range: '7d', date: prevEnd },
+            binding,
+          );
+          const pm = prev.code === 0 ? metricsOf(prev.data) : null;
+          if (m) {
+            input.gmvDeltaRate = deltaRate(num(m.gmvFen), num(pm?.gmvFen));
+            input.orderDeltaRate = deltaRate(num(m.orderCount), num(pm?.orderCount));
+            input.refundRate = num(m.refundRate);
+          }
+          if (pm) {
+            const cmp = compareDashboard(cur.data, prev.data).join('\n').trim();
+            if (cmp) parts.push(cmp);
+          }
+          boardSec = parts.length ? parts.join('\n') : '（看板结构认不出）';
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 2. 留存（复购率 + cohort 次周留存）
+      let retainSec = '（暂缺）';
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.retention,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const d = cur.data as {
+            summary?: { repeatRate?: number; repeatUserCount?: number; newUserCount?: number };
+            cohorts?: Array<{
+              newUserCount?: number;
+              retainedWeek1?: number | null;
+              observable?: boolean;
+            }>;
+          };
+          const s = d.summary ?? {};
+          input.repeatRate = num(s.repeatRate);
+          // 次周留存用「可观测 cohort 的加权留存」，比均值稳（小 cohort 不放大噪声）
+          const obs = (d.cohorts ?? []).filter(
+            (c) => c.observable && c.retainedWeek1 != null && Number(c.newUserCount) > 0,
+          );
+          if (obs.length) {
+            const retained = obs.reduce((a, c) => a + Number(c.retainedWeek1 ?? 0), 0);
+            const baseUsers = obs.reduce((a, c) => a + Number(c.newUserCount ?? 0), 0);
+            input.week1Retention = baseUsers > 0 ? retained / baseUsers : null;
+          }
+          const lines: string[] = [];
+          if (input.repeatRate != null) lines.push(`近 30 天复购率 ${pct(input.repeatRate)}`);
+          if (input.week1Retention != null)
+            lines.push(
+              `可观测 cohort 加权次周留存 ${pct(input.week1Retention)}（${obs.length} 个 cohort）`,
+            );
+          if (!lines.length) lines.push('（留存数据暂缺）');
+          retainSec = lines.join(' · ');
+        }
+      } catch {
+        /* 跳过 */
+      }
+
+      // 3. 资金（对账平衡 + 退款积压 + 提现积压）
+      let cashSec = '（暂缺）';
+      try {
+        const lines: string[] = [];
+        const recon = await this.resolver.getReconciliation(yDate);
+        if (recon?.summary) {
+          input.reconBalanced = Boolean(recon.summary.balanced);
+          lines.push(
+            `支付日 ${recon.date ?? yDate}：${recon.summary.balanced ? '本地三头已平' : '存在不平'}` +
+              (recon.summary.diffCount ? ` · 差异 ${recon.summary.diffCount} 笔` : ''),
+          );
+        }
+        const refunds = await this.resolver.getRefunds('pending');
+        if (refunds?.summary) {
+          input.refundPendingCount = num(refunds.summary.pendingCount);
+          lines.push(`退款待审批 ${refunds.summary.pendingCount ?? 0} 笔`);
+        }
+        const withdrawals = await this.resolver.getWithdrawals('review');
+        if (withdrawals?.summary) {
+          input.withdrawPendingCount = num(withdrawals.summary.pendingCount);
+          lines.push(`提现待审批 ${withdrawals.summary.pendingCount ?? 0} 笔`);
+        }
+        if (lines.length) cashSec = lines.join(' · ');
+      } catch {
+        /* 跳过 */
+      }
+
+      // 4. 履约（应付未出单异常）
+      let fulfillSec = '（暂缺）';
+      try {
+        const ex = await this.resolver.getShareExceptions(yDate);
+        if (ex?.summary) {
+          input.shareExceptionCount = num(ex.summary.count);
+          fulfillSec =
+            `出餐日 ${yDate} 应付未出单异常 ${ex.summary.count ?? 0} 项` +
+            (ex.summary.supplierCount ? ` · 涉及供应商 ${ex.summary.supplierCount}` : '');
+          if (input.refundRate != null) fulfillSec += ` · 近 7 天退款率 ${pct(input.refundRate)}`;
+        }
+      } catch {
+        /* 跳过 */
+      }
+
+      // 5. 组织（团长覆盖 + 团长活跃）
+      let orgSec = '（暂缺）';
+      try {
+        const lines: string[] = [];
+        const rows = await this.resolver.listLeaders();
+        if (rows && rows.length) {
+          const { totals } = summarizeLeaderHealth(rows, nowMs);
+          input.activeLeaderRate = totals.total > 0 ? totals.byBand.healthy / totals.total : null;
+          lines.push(
+            `在职团长 ${totals.total} 人 · 近 7 天有出单 ${totals.byBand.healthy} 人` +
+              (input.activeLeaderRate != null ? `（活跃率 ${pct(input.activeLeaderRate)}）` : ''),
+          );
+          const groups = await this.resolver.listGroups();
+          if (groups && groups.length) {
+            const activeGroups = groups.filter((g) => g.status === undefined || g.status === 1);
+            const covered = activeGroups.filter((g) =>
+              rows.some((r) => r.groupName != null && r.groupName === g.name),
+            );
+            input.leaderCoverageRate = activeGroups.length
+              ? covered.length / activeGroups.length
+              : null;
+            lines.push(
+              `楼群覆盖 ${covered.length}/${activeGroups.length}` +
+                (input.leaderCoverageRate != null ? `（${pct(input.leaderCoverageRate)}）` : ''),
+            );
+          }
+        } else if (rows && rows.length === 0) {
+          lines.push('在职团长 0 人（尚未任命）');
+        }
+        if (lines.length) orgSec = lines.join(' · ');
+      } catch {
+        /* 跳过 */
+      }
+
+      const result = computeHealthScore(input);
+
+      // 历史分（趋势）：写盘失败不影响今日结论
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const prevScore = this.readPrevHealthScore(tmpDir, endDate);
+      if (result.score != null) this.appendHealthScore(tmpDir, endDate, result.score);
+
+      const gradeZh =
+        result.grade === 'green'
+          ? '绿色'
+          : result.grade === 'yellow'
+            ? '黄色'
+            : result.grade === 'red'
+              ? '红色'
+              : '—';
+      const gradeNote =
+        result.grade === 'green'
+          ? '健康'
+          : result.grade === 'yellow'
+            ? '需关注'
+            : result.grade === 'red'
+              ? '高风险'
+              : '未评级';
+      let deltaText = '';
+      if (result.score != null && prevScore != null) {
+        const d = result.score - prevScore.score;
+        deltaText = ` · 较上次（${prevScore.date.slice(5)} · ${prevScore.score} 分）${d === 0 ? '持平' : d > 0 ? `+${d}` : `${d}`}`;
+      }
+
+      const lines: string[] = [];
+      lines.push(`经营健康度总分 · 基准窗口截止 ${endDate}（五维各 20 分，共 100）`);
+      lines.push('');
+      if (result.score == null) {
+        lines.push('总分：未能计算（五个维度全部取不到数据）');
+      } else {
+        lines.push(`总分：${result.score} / 100 · ${gradeZh}（${gradeNote}）${deltaText}`);
+        lines.push(
+          `已测 ${result.measuredWeight / 20}/5 维 · 满分口径 ${result.measuredWeight} 分` +
+            (result.missing.length ? ` · 缺失：${result.missing.join('、')}（不计入分母）` : ''),
+        );
+      }
+      lines.push('');
+      lines.push('【一、分维得分】');
+      for (const d of result.dimensions) {
+        const verdict = d.measured
+          ? d.score / d.max >= 0.8
+            ? '良好'
+            : d.score / d.max >= 0.6
+              ? '中性'
+              : d.score / d.max >= 0.4
+                ? '偏弱'
+                : '偏差'
+          : '数据暂缺';
+        lines.push(`  · ${d.label} ${d.measured ? `${d.score}/20` : '—/20'}（${verdict}）`);
+      }
+      const weak = weakestDimension(result.dimensions);
+      if (weak) lines.push(`  · 当前最短板：${weak.label}（${weak.score}/20）`);
+      lines.push('');
+      lines.push('【二、经营看板（近 7 天，含环比）】');
+      lines.push(boardSec);
+      lines.push('');
+      lines.push('【三、留存】');
+      lines.push(retainSec);
+      lines.push('');
+      lines.push('【四、资金】');
+      lines.push(cashSec);
+      lines.push('');
+      lines.push('【五、履约】');
+      lines.push(fulfillSec);
+      lines.push('');
+      lines.push('【六、组织（团长）】');
+      lines.push(orgSec);
+      lines.push('');
+      lines.push(
+        '说明：分维阈值与等级线（≥80 绿 / ≥60 黄 / <60 红）由系统纯函数判定；' +
+          '缺失维度不计入分母，故「已测维度数」必须一并转述。分数只用于判断优先级，不触发任何自动操作。',
+      );
+
+      const plain = lines.join('\n');
+
+      // 封面徽标（供 composeDigest 使用）
+      this.lastHealthBadge =
+        result.score == null
+          ? '经营健康度：未能计算（数据缺失）'
+          : `经营健康度：${result.score}/100 · ${gradeZh}（${gradeNote}）${deltaText}`;
+
+      const plainFile = join(tmpDir, `_health_${Date.now()}.txt`);
+      try {
+        writeFileSync(plainFile, plain, 'utf8');
+      } catch {
+        return `经营健康度已算出，但写入临时文件失败（磁盘权限）。原始打分：\n\n${plain}`;
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-health-score.mjs');
+      if (!existsSync(script)) {
+        return `经营健康度（原始打分，AI 脚本未找到）：\n\n${plain}`;
+      }
+
+      return new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = (m: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch (e) {
+          finish(
+            `经营健康度解读启动失败：${e instanceof Error ? e.message : String(e)}。原始打分：\n\n${plain}`,
+          );
+          return;
+        }
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish('经营健康度解读超时（>90s）。原始打分：\n\n' + plain);
+        }, 90_000);
+        let out = '';
+        let err = '';
+        child.stdout?.on('data', (d) => (out += String(d)));
+        child.stderr?.on('data', (d) => (err += String(d)));
+        child.on('error', (e) =>
+          finish(
+            `经营健康度解读出错：${e instanceof Error ? e.message : String(e)}。原始打分：\n\n${plain}`,
+          ),
+        );
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          try {
+            unlinkSync(plainFile);
+          } catch {
+            /* noop */
+          }
+          if (out.trim()) finish(out.trim());
+          else
+            finish(
+              `经营健康度解读未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n\n原始打分：\n${plain}`,
+            );
+        });
+      });
+    };
+    return run();
+  }
+
+  /**
+   * 读上一份健康度分数（严格取「日期早于今天」的最大一条）。
+   * 任何异常都返回 null：没有趋势只是少半句话，不该让整段结论失败。
+   */
+  private readPrevHealthScore(dir: string, date: string): { date: string; score: number } | null {
+    try {
+      const p = join(dir, 'health-score-history.json');
+      if (!existsSync(p)) return null;
+      const raw = JSON.parse(readFileSync(p, 'utf8')) as unknown;
+      if (!Array.isArray(raw)) return null;
+      const rows = raw.filter(
+        (r): r is { date: string; score: number } =>
+          Boolean(r) &&
+          typeof (r as { date?: unknown }).date === 'string' &&
+          typeof (r as { score?: unknown }).score === 'number',
+      );
+      const older = rows.filter((r) => r.date < date).sort((a, b) => (a.date < b.date ? 1 : -1));
+      return older[0] ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 追加当日分数（同日覆盖），只留最近 90 条；失败静默（不影响结论） */
+  private appendHealthScore(dir: string, date: string, score: number): void {
+    try {
+      const p = join(dir, 'health-score-history.json');
+      let rows: Array<{ date: string; score: number }> = [];
+      if (existsSync(p)) {
+        const raw = JSON.parse(readFileSync(p, 'utf8')) as unknown;
+        if (Array.isArray(raw)) {
+          rows = raw.filter(
+            (r): r is { date: string; score: number } =>
+              Boolean(r) &&
+              typeof (r as { date?: unknown }).date === 'string' &&
+              typeof (r as { score?: unknown }).score === 'number',
+          );
+        }
+      }
+      const next = [...rows.filter((r) => r.date !== date), { date, score }]
+        .sort((a, b) => (a.date < b.date ? -1 : 1))
+        .slice(-90);
+      writeFileSync(p, JSON.stringify(next, null, 2), 'utf8');
+    } catch {
+      /* 趋势不可用，不影响今日结论 */
+    }
+  }
+
   private genRiskRecon(binding: Binding, now: Date): Promise<string> {
     const run = async (): Promise<string> => {
       // 北京日期（本地分量，绝不用 toISOString 退一天）
@@ -2357,8 +3010,6 @@ export class WecomChatService {
       const pad = (n: number): string => String(n).padStart(2, '0');
       const yDate = `${yBj.getFullYear()}-${pad(yBj.getMonth() + 1)}-${pad(yBj.getDate())}`;
       const fen2yuan = (fen: number): string => `¥${((fen || 0) / 100 || 0).toFixed(2)}`;
-      const num = (v: unknown): number | undefined =>
-        typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 
       // 1. 支付对账（核心）
       let recon = '（暂缺）';

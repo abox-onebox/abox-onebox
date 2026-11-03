@@ -165,3 +165,65 @@ describe('chatErrorText', () => {
     expect(chatErrorText(99999)).toContain('没说原因');
   });
 });
+
+/**
+ * 节点 N（团长健康度）与 O（经营健康度）的意图分流
+ *
+ * 这里最要紧的不是「能认出来」，而是**不抢别人的话**：
+ *   · M 的证据词里有「留存预警」，若不先判 N，「团长留存预警」会被当成用户流失；
+ *   · O 的证据词里有「健康度」，若不先判 N，「团长健康度」会变成全局经营分；
+ *   · O 的证据词广，不能把「经营情况」（统计问答）和「风控对账」抢走。
+ */
+describe('parseIntent · 节点 N / O 分流', () => {
+  const kindOf = (s: string): string => parseIntent(s, now).kind;
+
+  it('认团长健康度（多种说法）', () => {
+    for (const s of [
+      '生成团长健康度',
+      '团长流失预警',
+      '看团长掉队情况',
+      '团长活跃度分析',
+      '养团长方案',
+      '团长体检',
+    ]) {
+      expect(kindOf(s)).toBe('genLeaderHealth');
+    }
+  });
+
+  it('★「团长留存预警」必须归团长（N），不能被 M 的「留存预警」截走', () => {
+    expect(kindOf('团长留存预警')).toBe('genLeaderHealth');
+  });
+
+  it('认经营健康度（多种说法）', () => {
+    for (const s of ['生成经营健康度', '健康度总分', '健康分多少', '经营体检', '体检报告']) {
+      expect(kindOf(s)).toBe('genHealthScore');
+    }
+  });
+
+  it('★「团长健康度」归 N，「经营健康度」归 O（同一个词不串台）', () => {
+    expect(kindOf('团长健康度')).toBe('genLeaderHealth');
+    expect(kindOf('经营健康度')).toBe('genHealthScore');
+  });
+
+  it('负控：已有的九个节点全部没被新正则抢走', () => {
+    expect(kindOf('生成流失预警')).toBe('genChurnRecall');
+    expect(kindOf('生成招募提案')).toBe('genRecruitProposal');
+    expect(kindOf('生成招募页 双十一暖冬团')).toBe('genCampaign');
+    expect(kindOf('生成风控对账')).toBe('genRiskRecon');
+    expect(kindOf('今日日报')).toBe('genDailyReport');
+    expect(kindOf('生成选品提案')).toBe('genMealProposal');
+    expect(kindOf('生成发券策略')).toBe('genCouponStrategy');
+    expect(kindOf('生成需求预测')).toBe('genDemandForecast');
+    expect(kindOf('生成增长实验')).toBe('genGrowthExperiment');
+    expect(kindOf('跑每日编排')).toBe('runOrchestrate');
+  });
+
+  it('负控：「经营情况」是统计问答，不许被健康度抢走', () => {
+    expect(kindOf('经营情况')).not.toBe('genHealthScore');
+  });
+
+  it('负控：排套餐/查单这些日常动作不受影响', () => {
+    expect(kindOf('给量子大厦 A 座上明天的 A 套餐')).toBe('assign');
+    expect(kindOf('今天多少单')).toBe('orders');
+  });
+});
