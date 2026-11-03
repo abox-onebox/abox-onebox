@@ -288,6 +288,8 @@ export class WecomChatService {
         return this.runAndPushForUser(userId, binding);
       case 'genRiskRecon':
         return this.genRiskRecon(binding, now);
+      case 'genChurnRecall':
+        return this.genChurnRecall(binding, now);
       default:
         return this.maybeLLMReply(text, binding);
     }
@@ -411,6 +413,11 @@ export class WecomChatService {
       },
       { key: 'growth', title: 'A/B 增长实验', run: () => this.genGrowthExperiment(binding, now) },
       { key: 'risk', title: '风控对账体检', run: () => this.genRiskRecon(binding, now) },
+      {
+        key: 'churn',
+        title: '用户流失预警召回',
+        run: () => this.genChurnRecall(binding, now),
+      },
     ];
     const out: DailyNodeResult[] = [];
     for (const n of nodes) {
@@ -2049,6 +2056,299 @@ export class WecomChatService {
    * 后端预汇总成纯文本，脚本侧只做 AI 解读；**绝不自动平账 / 调账 / 批退款 / 批提现**（人-only）。
    * 基准日取「昨日」（最近一个已闭合的支付日/出餐日），更贴近「今天该看什么」。
    */
+  /**
+   * AI 编排节点 M · 用户流失预警与智能召回（企微触发）
+   * ------------------------------------------------------------------
+   * 复用 `resolver.listUsers()` 拉全量用户的「下单次数/最近下单日/状态/绑楼」做逐户流失分群，
+   * 叠加 D50 留存统计（整体背景）与现有券种（召回券接地），交给 `gen-churn-recall.mjs`
+   * 做 AI 召回方案 + 落盘。
+   *
+   * 原则零保障（AI 可剥离、可降级，不影响发布与传统运营）：
+   *   · 全段包在大 try 内，且各数据源各自 try/catch：任一失败只跳过该段，不整机失败；
+   *   · 只取聚合计数 / 分布，绝不把个人昵称·手机号·openid 喂给 LLM（隐私红线）；
+   *   · 脚本缺失/启动失败/超时/异常 → 降级为「直接回显原始汇总」，不阻塞应答；
+   *   · 只提案不执行：召回券由人工在后台发，绝不自动发券 / 改用户状态 / 代绑楼；
+   *   · 触发方式为企微命令，且已并入 L 每日编排（仅分析推送）。
+   */
+  private genChurnRecall(binding: Binding, now: Date): Promise<string> {
+    const run = async (): Promise<string> => {
+      // 北京日期（本地分量，绝不用 toISOString 退一天）
+      const bjNow = new Date(now.getTime() + 8 * 3600 * 1000);
+      const pad = (n: number): string => String(n).padStart(2, '0');
+      const endDate = `${bjNow.getFullYear()}-${pad(bjNow.getMonth() + 1)}-${pad(bjNow.getDate())}`;
+      const RECENCY_THRESHOLD = 14; // 周一周盒：>14 天未下单 = 已错过 ≥2 周，判流失风险
+      const nowMs = now.getTime();
+      const daysBetween = (s: string | null): number | null => {
+        if (!s) return null;
+        const d = new Date(s.includes('T') ? s : s.replace(' ', 'T'));
+        if (!Number.isFinite(d.getTime())) return null;
+        return Math.floor((nowMs - d.getTime()) / 86400000);
+      };
+
+      // 1. 全量用户流失分群
+      let userSec = '（暂缺）';
+      let seg: {
+        total: number;
+        normal: number;
+        unbound: number;
+        blacklist: number;
+        canceled: number;
+        neverOrdered: number;
+        silentRisk: number;
+        recentActive: number;
+        unknownRecency: number;
+        repeatUsers: number;
+        avgOrdered: number;
+        buckets: Record<string, number>;
+      } | null = null;
+      try {
+        const users = await this.resolver.listUsers();
+        if (users && users.length) {
+          let normal = 0,
+            unbound = 0,
+            blacklist = 0,
+            canceled = 0;
+          let neverOrdered = 0,
+            silentRisk = 0,
+            recentActive = 0,
+            unknownRecency = 0,
+            repeatUsers = 0,
+            orderedSum = 0,
+            orderedN = 0;
+          const buckets: Record<string, number> = {
+            '15-30天': 0,
+            '31-60天': 0,
+            '61-90天': 0,
+            '90天以上': 0,
+          };
+          for (const u of users) {
+            const st = typeof u.status === 'number' ? u.status : -1;
+            if (st === 1) normal++;
+            else if (st === 2) blacklist++;
+            else if (st === 3) canceled++;
+            if (st === 1 && u.buildingId == null) unbound++;
+            const oc = Number(u.orderCount ?? 0);
+            if (st === 1) {
+              if (oc <= 0) {
+                neverOrdered++;
+                continue;
+              }
+              orderedSum += oc;
+              orderedN++;
+              if (oc >= 2) repeatUsers++;
+              const rec = daysBetween(u.lastOrderAt ?? null);
+              if (rec == null) {
+                unknownRecency++;
+              } else if (rec > RECENCY_THRESHOLD) {
+                silentRisk++;
+                if (rec <= 30) buckets['15-30天']++;
+                else if (rec <= 60) buckets['31-60天']++;
+                else if (rec <= 90) buckets['61-90天']++;
+                else buckets['90天以上']++;
+              } else {
+                recentActive++;
+              }
+            }
+          }
+          seg = {
+            total: users.length,
+            normal,
+            unbound,
+            blacklist,
+            canceled,
+            neverOrdered,
+            silentRisk,
+            recentActive,
+            unknownRecency,
+            repeatUsers,
+            avgOrdered: orderedN ? Number((orderedSum / orderedN).toFixed(2)) : 0,
+            buckets,
+          };
+          const lines: string[] = [];
+          lines.push(
+            `扫描用户 ${seg.total} 人 · 正常 ${seg.normal} · 黑名单 ${seg.blacklist} · 已注销 ${seg.canceled}`,
+          );
+          lines.push(`未绑楼（下不了单）：${seg.unbound} 人`);
+          lines.push(`已下单用户中：`);
+          lines.push(`  · 从未下单（含未绑楼导致的下不了单）：${seg.neverOrdered} 人`);
+          lines.push(
+            `  · 流失风险（> ${RECENCY_THRESHOLD} 天未下单）：${seg.silentRisk} 人 · 其中 ${unknownRecency} 人最近下单日缺失`,
+          );
+          lines.push(`  · 近期活跃（≤ ${RECENCY_THRESHOLD} 天）：${seg.recentActive} 人`);
+          lines.push(
+            `  · 复购用户（≥2 单）：${seg.repeatUsers} 人 · 已下单人均 ${seg.avgOrdered} 单`,
+          );
+          if (seg.silentRisk > 0) {
+            lines.push(
+              '  流失风险按沉默时长分布：' +
+                Object.entries(seg.buckets)
+                  .map(([k, v]) => `${k} ${v}`)
+                  .join('、'),
+            );
+          }
+          userSec = lines.join('\n');
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 2. D50 留存（整体背景）
+      let retainSec = '（暂缺）';
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.retention,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const d = cur.data as {
+            summary?: {
+              activeUserCount?: number;
+              newUserCount?: number;
+              returningUserCount?: number;
+              repeatUserCount?: number;
+              repeatRate?: number;
+            };
+            cohorts?: Array<{
+              cohortStart?: string;
+              newUserCount?: number;
+              retainedWeek1?: number | null;
+              retentionRate1?: number | null;
+              observable?: boolean;
+            }>;
+          };
+          const s = d.summary ?? {};
+          const lines: string[] = [];
+          lines.push(
+            `近 30 天：活跃 ${s.activeUserCount ?? '?'} · 新客 ${s.newUserCount ?? '?'} · 回流 ${s.returningUserCount ?? '?'} · 复购 ${s.repeatUserCount ?? '?'} · 复购率 ${s.repeatRate != null ? (s.repeatRate * 100).toFixed(1) + '%' : '?'}`,
+          );
+          const obs = (d.cohorts ?? []).filter((c) => c.observable && c.retentionRate1 != null);
+          if (obs.length) {
+            lines.push(
+              '可观测 cohort 次周留存：' +
+                obs
+                  .map(
+                    (c) =>
+                      `${c.cohortStart?.slice(5) ?? '?'} ${(Number(c.retentionRate1) * 100).toFixed(0)}%(${c.retainedWeek1 ?? '?'}/${c.newUserCount ?? '?'})`,
+                  )
+                  .join('、'),
+            );
+          } else {
+            lines.push('可观测 cohort 次周留存：暂无可观测样本（观察窗口未走完）');
+          }
+          retainSec = lines.join('\n');
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 3. 现有券种（召回券接地，避免 AI 凭空造 id）
+      let couponSec = '（暂缺）';
+      try {
+        const defs = await this.resolver.listCouponDefs();
+        if (defs && defs.length) {
+          couponSec = defs
+            .slice(0, 10)
+            .map(
+              (c) =>
+                `  · #${c.id} ${c.name} 面额¥${((c.faceValueFen || 0) / 100).toFixed(2)} 门槛¥${((c.thresholdFen || 0) / 100).toFixed(2)}（${c.status ?? '?'})`,
+            )
+            .join('\n');
+        }
+      } catch {
+        /* 跳过 */
+      }
+
+      const lines: string[] = [];
+      lines.push(
+        `用户流失预警与召回数据 · 基准日 ${endDate}（数值均为系统实读汇总，已脱敏，不含个人信息）`,
+      );
+      lines.push('');
+      lines.push('【一、全量用户流失分群】');
+      lines.push(userSec);
+      lines.push('');
+      lines.push('【二、D50 留存背景（近 30 天）】');
+      lines.push(retainSec);
+      lines.push('');
+      lines.push('【三、现有可复用券种（召回券接地用）】');
+      lines.push(couponSec);
+      lines.push('');
+      lines.push(
+        '说明：以上为系统实读汇总；个人昵称/手机号/openid 未进入本数据。召回券需人工在后台发放，本节点不自动发券。',
+      );
+
+      const plain = lines.join('\n');
+
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const plainFile = join(tmpDir, `_churn_${Date.now()}.txt`);
+      try {
+        writeFileSync(plainFile, plain, 'utf8');
+      } catch {
+        return `用户流失预警数据已生成，但写入临时文件失败（磁盘权限）。可在后台用户管理查看原始数据：\n\n${plain}`;
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-churn-recall.mjs');
+      if (!existsSync(script)) {
+        return `用户流失预警（原始数据，AI 脚本未找到）：\n\n${plain}`;
+      }
+
+      return new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = (m: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch (e) {
+          finish(
+            `用户流失预警生成启动失败：${e instanceof Error ? e.message : String(e)}。可在后台用户管理查看原始数据。`,
+          );
+          return;
+        }
+
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish('用户流失预警生成超时（>90s）。原始数据已在后台用户管理，可稍后重试触发。');
+        }, 90_000);
+        let out = '';
+        let err = '';
+        child.stdout?.on('data', (d) => (out += String(d)));
+        child.stderr?.on('data', (d) => (err += String(d)));
+        child.on('error', (e) =>
+          finish(
+            `用户流失预警生成出错：${e instanceof Error ? e.message : String(e)}。可在后台用户管理查看原始数据。`,
+          ),
+        );
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          try {
+            unlinkSync(plainFile);
+          } catch {
+            /* noop */
+          }
+          if (out.trim()) finish(out.trim());
+          else
+            finish(
+              `用户流失预警生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台用户管理查看原始数据。`,
+            );
+        });
+      });
+    };
+    return run();
+  }
+
   private genRiskRecon(binding: Binding, now: Date): Promise<string> {
     const run = async (): Promise<string> => {
       // 北京日期（本地分量，绝不用 toISOString 退一天）

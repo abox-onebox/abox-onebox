@@ -181,6 +181,17 @@ interface RawWithdrawalPage {
   list?: unknown[];
 }
 
+/** C 端用户（admin/users）—— 流失预警与召回用，仅取判流失所需的精简字段 */
+interface RawUser {
+  id: number;
+  status?: number;
+  statusLabel?: string;
+  orderCount?: number;
+  /** 最近下单日（HTTP JSON 序列化为字符串，service 端用 new Date 解析；可能为 null） */
+  lastOrderAt?: string | null;
+  buildingId?: number | null;
+}
+
 /** 后台统一响应外壳（具名类型：写成 `as typeof body` 会被收窄成 null 而报 TS2339） */
 interface ListEnvelope {
   code?: number;
@@ -398,6 +409,59 @@ export class NameResolverService {
     return this.fetchJson<RawWithdrawalPage>(
       `/admin/finance/withdrawals?tab=${encodeURIComponent(tab)}&pageSize=50`,
     );
+  }
+
+  /**
+   * C 端用户名录（admin/users）—— 流失预警与召回用。
+   *
+   * 只取判流失所需的精简字段（id/status/orderCount/lastOrderAt/buildingId），不搬昵称/手机号等 PII。
+   * 分页拉全（pageSize=100，最多 20 页 = 2000 人，超过即截断，防死循环），
+   * 每页各自独立 try/catch：首屏失败返回 null；中途某页失败保留已攒到的，宁缺毋滥。
+   * 复用 svcToken + fetchJson，零新增接口。operator 令牌已在 user-admin 角色内，纯读可达。
+   */
+  async listUsers(): Promise<RawUser[] | null> {
+    const all: RawUser[] = [];
+    const pageSize = 100;
+    for (let page = 1; page <= 20; page++) {
+      let body: unknown = null;
+      try {
+        body = await this.fetchJson<unknown>(`/admin/users?pageSize=${pageSize}&page=${page}`);
+      } catch {
+        if (page === 1) return null;
+        break;
+      }
+      if (body == null) {
+        if (page === 1) return null;
+        break;
+      }
+      // 兼容两种返回形态：① 分页对象 {list:[...]}；② 裸数组 [...]
+      const arr = Array.isArray(body)
+        ? body
+        : Array.isArray((body as { list?: unknown[] }).list)
+          ? (body as { list: unknown[] }).list
+          : [];
+      if (!arr.length) break;
+      for (const raw of arr) {
+        const u = raw as Record<string, unknown>;
+        const id = Number(u.id);
+        if (!Number.isFinite(id) || id <= 0) continue;
+        all.push({
+          id,
+          status: typeof u.status === 'number' ? u.status : undefined,
+          statusLabel: typeof u.statusLabel === 'string' ? u.statusLabel : undefined,
+          orderCount: typeof u.orderCount === 'number' ? u.orderCount : 0,
+          lastOrderAt:
+            u.lastOrderAt == null
+              ? null
+              : typeof u.lastOrderAt === 'string'
+                ? u.lastOrderAt
+                : String(u.lastOrderAt),
+          buildingId: u.buildingId == null ? null : Number(u.buildingId),
+        });
+      }
+      if (arr.length < pageSize) break;
+    }
+    return all;
   }
 
   /** 清缓存（执行完写操作后调，避免刚改的数据还是旧的） */
