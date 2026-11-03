@@ -315,7 +315,18 @@ export class WecomChatService {
       case 'genGrowthExperiment':
         return this.genGrowthExperiment(binding, now);
       case 'runOrchestrate':
-        return this.runAndPushForUser(userId, binding);
+        // 走真实负责人绑定推送（而非会话键），这样试跑台也能实测「手机是否收到」。
+        try {
+          const r = await this.triggerOwnerPush();
+          if (r.pushed)
+            return (
+              `已触发一次真实编排推送（摘要 ${r.digestLen} 字），请查收手机端企微。\n` +
+              `（与每日 09:00 自动推送同一条链路）`
+            );
+          return '未能推送：' + (r.reason || '负责人绑定未就绪');
+        } catch (e) {
+          return '触发编排推送出错：' + (e instanceof Error ? e.message : String(e));
+        }
       case 'genRiskRecon':
         return this.genRiskRecon(binding, now);
       case 'genChurnRecall':
@@ -565,19 +576,24 @@ export class WecomChatService {
     return preflight({ publishedCells, assignedCells, groupCount, couponDefs, orders7d });
   }
 
-  /** 跑全部节点 + 组摘要 + 推送负责人企微；返回摘要以便试跑台直接展示 */
-  async runAndPushForUser(userId: string, binding: Binding): Promise<string> {
+  /** 跑全部节点 + 组摘要 + 推送负责人企微；返回摘要与「推送是否真成功」以便上层判断 */
+  async runAndPushForUser(
+    userId: string,
+    binding: Binding,
+  ): Promise<{ digest: string; pushed: boolean }> {
     const now = new Date();
     const results = await this.runDailyNodes(binding, now);
     const digest = this.composeDigest(results, now);
+    let pushed = false;
     try {
       await this.tokenSvc.sendText(userId, digest);
+      pushed = true;
     } catch (e) {
       this.logger.error(
         'AI 编排推送失败（摘要仍已生成）：' + (e instanceof Error ? e.message : String(e)),
       );
     }
-    return digest;
+    return { digest, pushed };
   }
 
   @Cron('0 9 * * *', { name: 'ai-daily-orchestrate', timeZone: 'Asia/Shanghai' })
@@ -586,11 +602,62 @@ export class WecomChatService {
       const resolved = await this.resolveOwnerBinding();
       if (!resolved) return;
       const { userId, binding } = resolved;
-      const digest = await this.runAndPushForUser(userId, binding);
-      this.logger.log('AI 每日编排完成，已推送摘要给 ' + userId + '（' + digest.length + ' 字）');
+      const { digest, pushed } = await this.runAndPushForUser(userId, binding);
+      this.logger.log(
+        'AI 每日编排完成，已推送摘要给 ' +
+          userId +
+          '（' +
+          digest.length +
+          ' 字，推送' +
+          (pushed ? '成功' : '失败') +
+          '）',
+      );
     } catch (e) {
       this.logger.error('AI 每日编排异常：' + (e instanceof Error ? e.message : String(e)));
     }
+  }
+
+  /**
+   * 手动（试跑台 / 调试）触发「真实负责人推送」。
+   *
+   * 与每日 09:00 Cron 走同一条 `resolveOwnerBinding → runAndPushForUser` 链路，
+   * 唯一区别是它把结果回传给调用方（试跑台要展示「推没推成功」）。
+   *
+   * ⚠️ 为什么试跑台的「跑一次编排」要走这里、而不是用会话键：
+   *    会话键（`sim:...`）不是真实企微 userid，`sendText` 必然被企业微信拒收，
+   *    永远验不了「手机到底收没收到」。故试跑台直接推给**真实负责人**，
+   *    这样在备案 / 回调还没通时也能完成「推送到达」这一环的实测。
+   */
+  async triggerOwnerPush(): Promise<{ pushed: boolean; reason?: string; digestLen: number }> {
+    const resolved = await this.resolveOwnerBinding();
+    if (!resolved) {
+      return {
+        pushed: false,
+        reason: '未找到负责人绑定（无 WECOM_OWNER_USERID，后台绑定表里也没有 owner 级绑定）',
+        digestLen: 0,
+      };
+    }
+    const { userId, binding } = resolved;
+    const { digest, pushed } = await this.runAndPushForUser(userId, binding);
+    this.logger.log(
+      '手动触发编排完成，已推送摘要给 ' +
+        userId +
+        '（' +
+        digest.length +
+        ' 字，推送' +
+        (pushed ? '成功' : '失败') +
+        '）',
+    );
+    if (!pushed) {
+      return {
+        pushed: false,
+        reason:
+          '编排已生成摘要，但企业微信下发失败（重点查 WECOM_CORP_ID / WECOM_AGENT_ID / WECOM_SECRET 是否配置，' +
+          '以及该 userid 是否是应用可见范围内的成员）',
+        digestLen: digest.length,
+      };
+    }
+    return { pushed: true, digestLen: digest.length };
   }
 
   private async resolveOwnerBinding(): Promise<{ userId: string; binding: Binding } | null> {
