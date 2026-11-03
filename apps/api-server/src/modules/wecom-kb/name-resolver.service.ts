@@ -370,7 +370,7 @@ export class NameResolverService {
 
   async listGroups(force = false): Promise<RawGroup[] | null> {
     if (!force && this.fresh(this.groups)) return this.groups!.items;
-    const list = await this.fetchList<RawGroup>('/admin/building-groups?pageSize=200');
+    const list = await this.fetchList<RawGroup>('/admin/building-groups?pageSize=100');
     if (!list) return null;
     this.groups = { at: Date.now(), items: list };
     return list;
@@ -378,7 +378,7 @@ export class NameResolverService {
 
   async listBuildings(force = false): Promise<RawBuilding[] | null> {
     if (!force && this.fresh(this.buildings)) return this.buildings!.items;
-    const list = await this.fetchList<RawBuilding>('/admin/buildings?pageSize=200');
+    const list = await this.fetchList<RawBuilding>('/admin/buildings?pageSize=100');
     if (!list) return null;
     this.buildings = { at: Date.now(), items: list };
     return list;
@@ -401,7 +401,7 @@ export class NameResolverService {
    */
   async listTemplatesFull(force = false): Promise<RawTemplateFull[] | null> {
     if (!force && this.fresh(this.templatesFull)) return this.templatesFull!.items;
-    const list = await this.fetchList<RawTemplateFull>('/admin/meal/templates?pageSize=200');
+    const list = await this.fetchList<RawTemplateFull>('/admin/meal/templates?pageSize=100');
     if (!list) return null;
     this.templatesFull = { at: Date.now(), items: list };
     return list;
@@ -446,12 +446,12 @@ export class NameResolverService {
    * 不带缓存（仅命令触发时取最新）。失败返回 null，上层跳过该视角即可。
    */
   async listCouponDefs(): Promise<RawCouponDef[] | null> {
-    return this.fetchList<RawCouponDef>('/admin/coupon/defs?pageSize=200');
+    return this.fetchList<RawCouponDef>('/admin/coupon/defs?pageSize=100');
   }
 
   /** 供应商列表（含每日产能）。纯只读、复用 fetchList 与 admin token，零新增接口。产能基线缺失时返回空数组由调用方降级。 */
   async listSuppliers(): Promise<RawSupplier[] | null> {
-    return this.fetchList<RawSupplier>('/admin/suppliers?pageSize=200');
+    return this.fetchList<RawSupplier>('/admin/suppliers?pageSize=100');
   }
 
   /** 微信支付对账（本地三头）：admin/finance/reconciliation?date=Y（date 为支付日，默认服务端取今日） */
