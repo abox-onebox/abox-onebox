@@ -255,6 +255,8 @@ export class WecomChatService {
         return this.genCouponStrategy(binding, now);
       case 'genDemandForecast':
         return this.genDemandForecast(binding, now);
+      case 'genGrowthExperiment':
+        return this.genGrowthExperiment(binding, now);
       default:
         return this.maybeLLMReply(text, binding);
     }
@@ -1572,6 +1574,308 @@ export class WecomChatService {
           else
             finish(
               `需求预测生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
+            );
+        });
+      });
+    };
+    return run();
+  }
+
+  private genGrowthExperiment(binding: Binding, now: Date): Promise<string> {
+    const run = async (): Promise<string> => {
+      const today = bjTodayStr(now);
+      if (!today) return '取不到今天的日期，我先不动。稍后再试。';
+
+      const base = {
+        which: 'dashboard' as const,
+        range: '30d' as const,
+        endShift: -1,
+      } as StatsIntent;
+      const endDate = endDateOf(base, today);
+      const fen2yuan = (fen: number): string => `¥${((fen || 0) / 100).toFixed(2)}`;
+      const num = (v: unknown): number | undefined =>
+        typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+
+      // 1. 整体经营基线（dashboard 原始指标，供 AI 设计 lift 度量）
+      let metrics: Record<string, unknown> = {};
+      let warnings: string[] = [];
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.dashboard,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const d = cur.data as Record<string, unknown>;
+          const m = d?.metrics as Record<string, unknown> | undefined;
+          if (m) metrics = m;
+          const w = d?.warnings;
+          if (Array.isArray(w))
+            warnings = w.filter((x): x is string => typeof x === 'string' && x.trim() !== '');
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 2. 楼栋表现（自然 A/B 候选 + 差异分析）
+      type Bld = {
+        id: number;
+        name: string;
+        gmvFen: number;
+        orderCount: number;
+        gmvShare: number;
+        userCount?: number;
+      };
+      let buildings: Bld[] = [];
+      try {
+        const cur = await this.proxy.query(
+          STATS_QCODE.buildingRank,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) {
+          const rows = (cur.data as Record<string, unknown>)?.buildings;
+          if (Array.isArray(rows)) {
+            for (const r of rows) {
+              const rr = r as Record<string, unknown>;
+              const id = Number(rr.id);
+              if (!Number.isFinite(id)) continue;
+              buildings.push({
+                id,
+                name: typeof rr.name === 'string' && rr.name ? rr.name : `#${id}`,
+                gmvFen: num(rr.gmvFen) ?? 0,
+                orderCount: num(rr.orderCount) ?? 0,
+                gmvShare: num(rr.gmvShare) ?? 0,
+                userCount: num(rr.userCount),
+              });
+            }
+            buildings = buildings.slice(0, 8);
+          }
+        }
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 3. 套餐模板全量（人气分层，识别可试变体的头部套餐）
+      let tpls: {
+        id: number;
+        name: string;
+        priceFen?: number;
+        statusText?: string;
+        kind?: string;
+        usedCount?: number;
+      }[] = [];
+      try {
+        const list = await this.resolver.listTemplatesFull();
+        if (list && list.length)
+          tpls = list.map((t) => ({
+            id: Number(t.id),
+            name: t.name ?? `套餐#${t.id}`,
+            priceFen: typeof t.priceFen === 'number' ? t.priceFen : undefined,
+            statusText: t.statusText,
+            kind: t.kind,
+            usedCount: typeof t.usedCount === 'number' ? t.usedCount : undefined,
+          }));
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // 4. 现有券种（可复用杠杆，不凭空造 id）
+      type Coupon = {
+        id: number;
+        name: string;
+        faceValueFen: number;
+        thresholdFen: number;
+        status?: string;
+      };
+      let coupons: Coupon[] = [];
+      try {
+        const list = await this.resolver.listCouponDefs();
+        if (list && list.length)
+          coupons = list.map((c) => ({
+            id: Number(c.id),
+            name: c.name,
+            faceValueFen: num(c.faceValueFen) ?? 0,
+            thresholdFen: num(c.thresholdFen) ?? 0,
+            status: typeof c.status === 'string' ? c.status : undefined,
+          }));
+      } catch {
+        /* 跳过该视角 */
+      }
+
+      // ===== 预计算（service 端做算术，脚本只做解读）=====
+      // 楼栋差异：GMV 极差与客单价(测算)区间，识别自然 A/B 候选
+      let bldStat = '';
+      if (buildings.length) {
+        const gmvSorted = [...buildings].sort((a, b) => b.gmvFen - a.gmvFen);
+        const maxG = gmvSorted[0];
+        const minG = gmvSorted[gmvSorted.length - 1];
+        const ratio = minG.gmvFen > 0 ? Math.round((maxG.gmvFen / minG.gmvFen) * 10) / 10 : 0;
+        const perOrder = buildings
+          .filter((b) => b.orderCount > 0)
+          .map((b) => b.gmvFen / b.orderCount);
+        const minPO = perOrder.length ? Math.round(Math.min(...perOrder)) : 0;
+        const maxPO = perOrder.length ? Math.round(Math.max(...perOrder)) : 0;
+        bldStat = `楼栋数 ${buildings.length} · GMV 最高 ${maxG.name}（${fen2yuan(
+          maxG.gmvFen,
+        )}）/ 最低 ${minG.name}（${fen2yuan(minG.gmvFen)}）· 极差 ≈ ${ratio} 倍 · 楼均客单价(测算)区间 ${fen2yuan(
+          minPO,
+        )} ~ ${fen2yuan(maxPO)}`;
+      }
+
+      // 套餐人气分层：头部 vs 长尾，识别可试变体的对象
+      let tplStat = '';
+      if (tpls.length) {
+        const withCnt = tpls.filter((t) => typeof t.usedCount === 'number');
+        const sorted = [...withCnt].sort((a, b) => (b.usedCount ?? 0) - (a.usedCount ?? 0));
+        const top = sorted.slice(0, 3);
+        const tail = sorted.slice(-3);
+        if (top.length && tail.length && (tail[0].usedCount ?? 0) > 0) {
+          const spread = (top[0].usedCount ?? 0) / Math.max(1, tail[0].usedCount ?? 0);
+          tplStat = `套餐数 ${tpls.length} · 头部人气 ${top
+            .map((t) => `${t.name}(${t.usedCount})`)
+            .join('、')} · 长尾 ${tail
+            .map((t) => `${t.name}(${t.usedCount})`)
+            .join('、')} · 头部/长尾人气差 ≈ ${Math.round(spread)} 倍`;
+        } else if (top.length) {
+          tplStat = `套餐数 ${tpls.length} · 人气最高 ${top
+            .map((t) => `${t.name}(${t.usedCount ?? '—'})`)
+            .join('、')}`;
+        }
+      }
+
+      // ===== 组装纯文本 =====
+      const lines: string[] = [];
+      lines.push('A/B 增长实验设计数据 · 近30天（按出餐日，数值均为测算/观察）');
+      lines.push('');
+
+      if (Object.keys(metrics).length) {
+        lines.push('【近30天整体经营基线】');
+        for (const [k, v] of Object.entries(metrics)) {
+          if (typeof v === 'number') lines.push(`· ${k}: ${v}`);
+          else if (typeof v === 'string') lines.push(`· ${k}: ${v}`);
+        }
+        lines.push('');
+      }
+
+      if (buildings.length) {
+        lines.push('【楼栋表现 TOP ' + buildings.length + '】（按 GMV）');
+        buildings.forEach((b, i) => {
+          const bits: string[] = [fen2yuan(b.gmvFen), `${b.orderCount} 单`];
+          if (b.gmvShare) bits.push(`${Math.round(b.gmvShare * 1000) / 10}%`);
+          if (b.userCount != null) bits.push(`${b.userCount} 人`);
+          lines.push(`${i + 1}. ${b.name}  ${bits.join(' · ')}`);
+        });
+        lines.push('');
+        lines.push('【楼栋差异(测算)】' + bldStat);
+        lines.push('');
+      }
+
+      if (tpls.length) {
+        lines.push('【套餐模板（含被排次数 · 人气代理）】');
+        tpls.slice(0, 10).forEach((t) => {
+          const bits: string[] = [];
+          if (t.priceFen != null) bits.push(fen2yuan(t.priceFen));
+          if (t.kind) bits.push(`类型:${t.kind}`);
+          if (t.statusText) bits.push(t.statusText);
+          bits.push(`被排${t.usedCount ?? '—'}次`);
+          lines.push(`#${t.id} ${t.name}  ${bits.join(' · ')}`);
+        });
+        lines.push('');
+        if (tplStat) {
+          lines.push('【套餐人气分层(测算)】' + tplStat);
+          lines.push('');
+        }
+      }
+
+      if (coupons.length) {
+        lines.push('【现有券种（可复用杠杆，勿凭空造 id）】');
+        coupons.forEach((c) => {
+          lines.push(
+            `#${c.id} ${c.name} · 面额 ${fen2yuan(c.faceValueFen)} · 门槛 ${fen2yuan(
+              c.thresholdFen,
+            )} · ${c.status ?? '状态未知'}`,
+          );
+        });
+        lines.push('');
+      }
+
+      lines.push('【可测杠杆说明（无需改代码）】');
+      lines.push('· 文案位：招募页/朋友圈/社群话术（节点 B 已可生成草稿）可做图文/话术变体');
+      lines.push('· 套餐：现有套餐模板可做「头部套餐图文变体」「价格锚点」对照');
+      lines.push('· 券：复用上面「现有券种」#id 做面额/门槛/有效期变体（须经后台批量发券确认）');
+      lines.push('· 楼栋：选「规模相近但表现差」的两栋楼做对照（见楼栋差异）');
+      lines.push('');
+
+      if (warnings.length) lines.push('【数据提示】' + warnings.join('；'));
+
+      if (!Object.keys(metrics).length && !buildings.length && !tpls.length && !coupons.length)
+        return '近 30 天的经营基线、楼栋、套餐与券种数据这次都没取到（可能权限不足或还没开团）。可在后台看板查看，或稍后重试。';
+
+      const plain = lines.join('\n');
+
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const plainFile = join(tmpDir, `_ge_${Date.now()}.txt`);
+      try {
+        writeFileSync(plainFile, plain, 'utf8');
+      } catch {
+        return `增长实验数据已生成，但写入临时文件失败（磁盘权限）。可在后台看板查看原始数据：\n\n${plain}`;
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-growth-experiment.mjs');
+      if (!existsSync(script)) {
+        return `增长实验（原始数据，AI 脚本未找到）：\n\n${plain}`;
+      }
+
+      return new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = (m: string): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch (e) {
+          finish(
+            `增长实验生成启动失败：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          );
+          return;
+        }
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish('增长实验生成超时（>90s）。原始数据已在后台看板，可稍后重试触发。');
+        }, 90_000);
+        let out = '';
+        let err = '';
+        child.stdout?.on('data', (d) => (out += String(d)));
+        child.stderr?.on('data', (d) => (err += String(d)));
+        child.on('error', (e) =>
+          finish(
+            `增长实验生成出错：${e instanceof Error ? e.message : String(e)}。可在后台看板查看原始数据。`,
+          ),
+        );
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          try {
+            unlinkSync(plainFile);
+          } catch {
+            /* noop */
+          }
+          if (out.trim()) finish(out.trim());
+          else
+            finish(
+              `增长实验生成未成功（退出码 ${code}）。${err ? '\n' + err.slice(0, 400) : ''}\n可在后台看板查看原始数据。`,
             );
         });
       });
