@@ -55,6 +55,9 @@ function build(opts: { code?: number; data?: unknown } = {}): {
     svc: new WecomChatService(
       resolver as unknown as NameResolverService,
       proxy as unknown as OpProxyService,
+      null as never,
+      null as never,
+      null as never,
     ),
     calls,
   };

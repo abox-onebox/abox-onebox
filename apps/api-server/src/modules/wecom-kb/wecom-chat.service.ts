@@ -4,8 +4,13 @@ import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'path';
 import { isAfterCutoff } from '../../common/utils/time';
+import { Cron } from '@nestjs/schedule';
 import { OpProxyService, Binding } from './op-proxy.service';
 import { NameResolverService, GroupResolve, ItemResolve } from './name-resolver.service';
+import { WecomBindingService } from './wecom-binding.service';
+import { WecomSvcTokenService } from './wecom-svc-token.service';
+import { WecomTokenService } from './wecom-token.service';
+import { WecomBinding } from './wecom-binding.entity';
 import { bjYmdPlus, parseMealDate } from './name-match';
 import { parseIntent, isConfirm, isCancel } from './chat-flow';
 import {
@@ -18,6 +23,7 @@ import {
 import {
   allItems,
   canExec,
+  execTierOf,
   codeOfPath,
   displayName,
   find,
@@ -50,6 +56,24 @@ import {
 } from './stats-summary';
 import { summarizeData } from './result-summary';
 import { callLLM, retrieveKB, isLlmAssistEnabled } from './llm.adapter';
+
+/** 取首行非空文本，截断到 80 字，用于编排摘要的一行预览 */
+function firstLineOf(text: string): string {
+  const line = (text || '')
+    .split('\n')
+    .map((s) => s.trim())
+    .find((s) => s.length > 0);
+  if (!line) return '（无内容）';
+  return line.length > 80 ? line.slice(0, 80) + '…' : line;
+}
+
+/** 全自动编排单节点结果 */
+export interface DailyNodeResult {
+  key: string;
+  title: string;
+  text: string;
+  ok: boolean;
+}
 
 /**
  * 人话 → 后台操作 的编排（「说一句话就干活」这一层的核心）
@@ -147,6 +171,9 @@ export class WecomChatService {
   constructor(
     private readonly resolver: NameResolverService,
     private readonly proxy: OpProxyService,
+    private readonly bindingSvc: WecomBindingService,
+    private readonly svcTokenSvc: WecomSvcTokenService,
+    private readonly tokenSvc: WecomTokenService,
   ) {}
 
   private getSession(userId: string): Session | undefined {
@@ -257,6 +284,8 @@ export class WecomChatService {
         return this.genDemandForecast(binding, now);
       case 'genGrowthExperiment':
         return this.genGrowthExperiment(binding, now);
+      case 'runOrchestrate':
+        return this.runAndPushForUser(userId, binding);
       case 'genRiskRecon':
         return this.genRiskRecon(binding, now);
       default:
@@ -358,6 +387,133 @@ export class WecomChatService {
         }
       });
     });
+  }
+
+  /**
+   * 全自动编排（人仅兜底）· 每日 09:00 自动跑全部分析节点（见 dailyOrchestrate 的 @Cron）。
+   *
+   * 设计边界（原则零守住）：
+   *   · 只跑「分析与提案」节点，零写操作 —— 发券/退款/调账/改套餐/招募发布均不在此自动执行；
+   *   · 每个节点失败只标 ❌ 并继续，不阻断其余节点（降级不扩散）；
+   *   · 结果推送到负责人企微，人只在 ⚠️/❌ 时兜底介入；
+   *   · 复用既有 genXxx（各自取数/落盘/降级已分别验证），不新增任何写接口调用。
+   */
+  async runDailyNodes(binding: Binding, now: Date): Promise<DailyNodeResult[]> {
+    const nodes: { key: string; title: string; run: () => Promise<string> }[] = [
+      { key: 'daily', title: '运营日报', run: () => this.genDailyReport(binding, now) },
+      { key: 'meal', title: '选品提案', run: () => this.genMealProposal(binding, now) },
+      { key: 'recruit', title: '团长招募赋能', run: () => this.genRecruitProposal(binding, now) },
+      { key: 'coupon', title: '动态发券策略', run: () => this.genCouponStrategy(binding, now) },
+      {
+        key: 'demand',
+        title: '需求预测与产能预警',
+        run: () => this.genDemandForecast(binding, now),
+      },
+      { key: 'growth', title: 'A/B 增长实验', run: () => this.genGrowthExperiment(binding, now) },
+      { key: 'risk', title: '风控对账体检', run: () => this.genRiskRecon(binding, now) },
+    ];
+    const out: DailyNodeResult[] = [];
+    for (const n of nodes) {
+      try {
+        const text = await n.run();
+        out.push({
+          key: n.key,
+          title: n.title,
+          text: typeof text === 'string' ? text : String(text),
+          ok: true,
+        });
+      } catch (e) {
+        out.push({
+          key: n.key,
+          title: n.title,
+          text: '执行异常：' + (e instanceof Error ? e.message : String(e)),
+          ok: false,
+        });
+      }
+    }
+    return out;
+  }
+
+  /** 跑全部节点 + 组摘要 + 推送负责人企微；返回摘要以便试跑台直接展示 */
+  async runAndPushForUser(userId: string, binding: Binding): Promise<string> {
+    const now = new Date();
+    const results = await this.runDailyNodes(binding, now);
+    const digest = this.composeDigest(results, now);
+    try {
+      await this.tokenSvc.sendText(userId, digest);
+    } catch (e) {
+      this.logger.error(
+        'AI 编排推送失败（摘要仍已生成）：' + (e instanceof Error ? e.message : String(e)),
+      );
+    }
+    return digest;
+  }
+
+  @Cron('0 9 * * *', { name: 'ai-daily-orchestrate', timeZone: 'Asia/Shanghai' })
+  async dailyOrchestrate(): Promise<void> {
+    try {
+      const resolved = await this.resolveOwnerBinding();
+      if (!resolved) return;
+      const { userId, binding } = resolved;
+      const digest = await this.runAndPushForUser(userId, binding);
+      this.logger.log('AI 每日编排完成，已推送摘要给 ' + userId + '（' + digest.length + ' 字）');
+    } catch (e) {
+      this.logger.error('AI 每日编排异常：' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  private async resolveOwnerBinding(): Promise<{ userId: string; binding: Binding } | null> {
+    const envId = (process.env.WECOM_OWNER_USERID || '').trim();
+    let userId = envId;
+    if (!userId) {
+      const owners = (await this.bindingSvc.list()).filter((b) => b.tier === 'owner');
+      userId = owners[0]?.userId ?? '';
+    }
+    if (!userId) {
+      this.logger.warn('未找到负责人绑定（无 WECOM_OWNER_USERID 也无 owner 级绑定），跳过今日编排');
+      return null;
+    }
+    const wb = await this.bindingSvc.get(userId);
+    if (!wb) {
+      this.logger.warn('负责人绑定不存在 userId=' + userId + '，跳过今日编排');
+      return null;
+    }
+    const tier = wb.tier === 'owner' ? 'owner' : 'staff';
+    const grantedOps = wb.grantedOps || [];
+    const execTier = execTierOf(tier, grantedOps);
+    const svcToken = await this.svcTokenSvc.get(execTier);
+    const execToken = svcToken ?? wb.operatorToken ?? null;
+    if (!execToken) {
+      this.logger.warn('负责人执行令牌缺失（svc token 与 operatorToken 均为空），跳过今日编排');
+      return null;
+    }
+    const binding: Binding = {
+      operatorName: wb.operatorName,
+      operatorToken: execToken,
+      approverToken: wb.approverToken,
+      tier,
+      grantedOps,
+    };
+    return { userId, binding };
+  }
+
+  private composeDigest(results: DailyNodeResult[], now: Date): string {
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const lines: string[] = [];
+    lines.push(`【ABox AI 每日编排】${y}-${m}-${d} 09:00`);
+    lines.push(`共 ${results.length} 个分析节点已自动生成草稿（均须人工确认后执行）`);
+    lines.push('');
+    for (const r of results) {
+      let mark = '✅';
+      if (!r.ok) mark = '❌';
+      else if (/高风险|需关注|需人工核|异常|超阈值/.test(r.text)) mark = '⚠️';
+      lines.push(`${mark} ${r.title}：${firstLineOf(r.text)}`);
+    }
+    lines.push('');
+    lines.push('— 完整草稿已落盘后台；在企微回复「生成X」可查看/确认。AI 草稿，执行前请人工复核。');
+    return lines.join('\n');
   }
 
   /**

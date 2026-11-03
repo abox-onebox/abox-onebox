@@ -70,7 +70,16 @@ function makeSvc(data: unknown = DASH): {
     execCatalog: jest.fn(),
   };
   const resolver = { resolveGroup: jest.fn(), resolveItem: jest.fn() };
-  return { svc: new WecomChatService(resolver as never, proxy as never), calls };
+  return {
+    svc: new WecomChatService(
+      resolver as never,
+      proxy as never,
+      null as never,
+      null as never,
+      null as never,
+    ),
+    calls,
+  };
 }
 
 describe('统计问答 · 权限', () => {

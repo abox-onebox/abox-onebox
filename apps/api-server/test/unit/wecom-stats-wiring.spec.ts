@@ -80,7 +80,13 @@ function makeSvc(handler: (code: string, params: Record<string, string>) => unkn
   };
   // resolver 在统计路径上完全用不到，给个空壳即可（用到就会抛错，反而是好事）
   const resolver = { resolveGroup: jest.fn(), resolveItem: jest.fn() };
-  const svc = new WecomChatService(resolver as never, proxy as never);
+  const svc = new WecomChatService(
+    resolver as never,
+    proxy as never,
+    null as never,
+    null as never,
+    null as never,
+  );
   return { svc, calls, execCatalog };
 }
 
@@ -143,7 +149,13 @@ describe('统计问句 · 接线', () => {
       execCatalog: jest.fn(),
     };
     const resolver = { resolveGroup: jest.fn(), resolveItem: jest.fn() };
-    const svc = new WecomChatService(resolver as never, proxy as never);
+    const svc = new WecomChatService(
+      resolver as never,
+      proxy as never,
+      null as never,
+      null as never,
+      null as never,
+    );
 
     const out = await svc.reply('u5', '经营情况', BINDING);
     expect(out).toContain('GMV ¥12,345.67'); // 本期照常给
@@ -189,7 +201,13 @@ describe('统计问句 · 接线', () => {
       execCatalog: jest.fn(),
     };
     const resolver = { resolveGroup: jest.fn(), resolveItem: jest.fn() };
-    const svc = new WecomChatService(resolver as never, proxy as never);
+    const svc = new WecomChatService(
+      resolver as never,
+      proxy as never,
+      null as never,
+      null as never,
+      null as never,
+    );
     const out = await svc.reply('u9', '经营情况', BINDING);
     expect(out).toContain('没查到');
   });

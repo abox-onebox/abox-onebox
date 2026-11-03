@@ -28,6 +28,7 @@ export type ChatIntent =
   | { kind: 'genDemandForecast' }
   | { kind: 'genGrowthExperiment' }
   | { kind: 'genRiskRecon' }
+  | { kind: 'runOrchestrate' }
   | { kind: 'unknown'; raw: string };
 
 const RE_CONFIRM = /^(1|好|好的|好嘞|确认|确定|执行|对|是|可以|行|干吧|办吧|就这样|ok|yes)$/i;
@@ -131,6 +132,9 @@ export function parseIntent(raw: string, now: Date): ChatIntent {
   )
     return { kind: 'genRiskRecon' };
 
+  if (/^(跑每日编排|一键编排|生成每日编排|每日编排|自动编排|跑编排|每日编排报告)$/.test(t))
+    return { kind: 'runOrchestrate' };
+
   if (/^(帮助|help|\?|？|菜单|能干什么|会什么|怎么用|使用说明)$/.test(t)) return { kind: 'help' };
 
   const d = parseMealDate(t, now);
@@ -182,6 +186,7 @@ export const CHAT_HELP = [
   '· 出发券策略：发「生成发券策略」（AI 基于近 30 天留存与楼栋表现，给新客/沉睡/楼栋/复购四类券建议与预算，需人工确认后发放）',
   '· 出需求预测：发「生成需求预测」（AI 基于近 30 天日级销量做周几规律与环比分解，预测未来 7 天并对照供应商日产能给预警，需人工确认）',
   '· 出增长实验：发「生成增长实验」（AI 基于近 30 天楼栋/套餐/券种数据，设计 1~2 个可回滚的 A/B 增长实验方案，需人工确认后执行）',
+  '· 跑每日编排：发「跑每日编排」（AI 自动跑全部分析节点生成草稿并推送摘要；仅分析不执行，须人工确认）',
   '· 出风控对账：发「生成风控对账」（AI 基于本地三头对账差异 + 退款积压 + 应付未出单 + 提现待审批，给风控体检报告与人工处置建议，需人工确认后处置）',
   '选好之后我只问缺的那几个参数，回 1 才真执行。',
   '',
