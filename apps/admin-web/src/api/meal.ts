@@ -330,6 +330,8 @@ export type LaunchDraftGenResult =
       rows: LaunchDraftRow[];
       blocked: LaunchDraftBlocked[];
       needsNewTemplate: string[];
+      /** 被判越界而剔除的原因（最多 5 条）；空数组 = 没有越界 */
+      dropped: string[];
     }
   | { ok: false; message: string };
 

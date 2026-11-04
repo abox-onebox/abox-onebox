@@ -208,6 +208,13 @@ export type LaunchDraftGenResult =
       rows: LaunchDraftRow[];
       blocked: LaunchDraftBlocked[];
       needsNewTemplate: string[];
+      /**
+       * 脚本判为越界而剔除的条目原因（最多 5 条）。空数组 = 没有越界。
+       *
+       * 必须透传：越界时页面只显示「AI 未给」，而真实原因是「AI 给了但 ID 不在白名单」——
+       * 两者该采取的行动完全不同（前者换模型/重试，后者查数据同步）。丢弃 = 静默误导。
+       */
+      dropped: string[];
     }
   | { ok: false; message: string };
 
@@ -1427,13 +1434,24 @@ export class WecomChatService {
     const mode = typeof payload.mode === 'string' ? payload.mode : null;
 
     const need = Array.isArray(payload.needsNewTemplate) ? payload.needsNewTemplate : [];
+    // ⚠️ 上限不能是 5：脚本会把「每个未覆盖楼群一条」的覆盖度文案也算进来，
+    //    5 个楼群正好把 LLM 自报的那句「为什么排不了」挤出上限（2026-11-04 生产实测：
+    //    「提案是零食、模板全是正餐」被 5 条「AI 未给」挤掉，页面误报成 AI 没干活）。
+    //    脚本侧已改为「LLM 自报优先」，这里再留 8 条余量，让两个来源都露得出来。
     const needsNewTemplate = need
-      .slice(0, 5)
+      .slice(0, 8)
       .map((n) => {
         const r = n && typeof n === 'object' ? (n as Record<string, unknown>).reason : n;
         return typeof r === 'string' ? r : String(r);
       })
       .filter((s) => s.length > 0);
+
+    // 越界剔除原因：只取 why 文案（不回传原始 draft，避免把 LLM 的臆造 ID 再散出去）
+    const droppedRaw = Array.isArray(payload.dropped) ? payload.dropped : [];
+    const dropped = droppedRaw
+      .slice(0, 5)
+      .map((d) => (d && typeof d === 'object' ? (d as Record<string, unknown>).why : ''))
+      .filter((s): s is string => typeof s === 'string' && s.length > 0);
 
     if (res.rows.length) {
       // 存成「待确认」：只在这里存、只在**同一通道**的 confirm 里消费，别处不许读
@@ -1451,6 +1469,7 @@ export class WecomChatService {
       rows: res.rows,
       blocked: res.blocked,
       needsNewTemplate,
+      dropped,
     };
   }
 

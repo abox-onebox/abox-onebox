@@ -42,7 +42,9 @@ function parseArgs(argv) {
 
 /** 多候选可写目录（与 gen-meal-proposal.mjs 同源逻辑） */
 function pickWritableDir() {
-  const repoRoot = existsSync(join(__dirname, '..', 'scripts')) ? resolve(__dirname, '..') : process.cwd();
+  const repoRoot = existsSync(join(__dirname, '..', 'scripts'))
+    ? resolve(__dirname, '..')
+    : process.cwd();
   const candidates = [
     join(repoRoot, 'releases', 'launch-draft'),
     join(repoRoot, 'data', 'uploads', 'launch-draft'),
@@ -86,7 +88,13 @@ function readInput(plainFile) {
       structured: true,
     };
   } catch {
-    return { mealDate: '', buildingGroups: [], templates: [], proposalText: raw, structured: false };
+    return {
+      mealDate: '',
+      buildingGroups: [],
+      templates: [],
+      proposalText: raw,
+      structured: false,
+    };
   }
 }
 
@@ -120,7 +128,10 @@ function validateDraft(input, rawDraft) {
     const bg = Number(d?.buildingGroupId);
     const sm = Number(d?.setMealId);
     if (mealDate !== input.mealDate) {
-      dropped.push({ draft: d, why: `mealDate「${mealDate}」≠ 本次排期「${input.mealDate}」（逐日排）` });
+      dropped.push({
+        draft: d,
+        why: `mealDate「${mealDate}」≠ 本次排期「${input.mealDate}」（逐日排）`,
+      });
       continue;
     }
     if (!bgIds.has(bg)) {
@@ -139,17 +150,26 @@ function validateDraft(input, rawDraft) {
   for (const d of drafts) byBg.set(d.buildingGroupId, d);
   const finalDrafts = [...byBg.values()].sort((a, b) => a.buildingGroupId - b.buildingGroupId);
 
+  // ⚠️ 顺序有讲究：**LLM 自报的缺模板必须排在覆盖度统计之前**。
+  //   覆盖度是「每个未覆盖楼群一条」的模板化文案（5 个楼群就是 5 条），
+  //   而 LLM 自报的那句往往**唯一说明「为什么排不了」**（例如「提案是零食、候选模板全是正餐」）。
+  //   2026-11-04 生产实测：顺序反过来时 LLM 的解释排第 6 位，被服务层 slice(0,5) 截掉，
+  //   后台页面只剩 5 条「AI 未给或全部越界」—— 把「模板类型不匹配」误报成「AI 没干活」。
+  // 透传 LLM 自报的缺模板
+  if (Array.isArray(rawDraft?.needsNewTemplate)) {
+    for (const n of rawDraft.needsNewTemplate)
+      needsNewTemplate.push({ reason: String(n?.reason ?? n) });
+  }
   // 覆盖度：哪些候选楼群没排到 → 提示（不自动补，交人判断）
   const covered = new Set(finalDrafts.map((d) => d.buildingGroupId));
   for (const bg of input.buildingGroups) {
     const id = Number(bg?.id);
     if (Number.isFinite(id) && !covered.has(id)) {
-      needsNewTemplate.push({ buildingGroupId: id, reason: `楼群「${bg?.name || id}」未排到套餐（AI 未给或全部越界）` });
+      needsNewTemplate.push({
+        buildingGroupId: id,
+        reason: `楼群「${bg?.name || id}」未排到套餐（AI 未给或全部越界）`,
+      });
     }
-  }
-  // 透传 LLM 自报的缺模板
-  if (Array.isArray(rawDraft?.needsNewTemplate)) {
-    for (const n of rawDraft.needsNewTemplate) needsNewTemplate.push({ reason: String(n?.reason ?? n) });
   }
 
   return { drafts: finalDrafts, dropped, needsNewTemplate };
@@ -190,7 +210,9 @@ function buildUserPrompt(input) {
 
 /** --no-llm 确定性 stub：给每个楼群取「usedCount 最高」的模板（跑通链路用，不代表真实决策） */
 function stubDraft(input) {
-  const sorted = [...input.templates].sort((a, b) => Number(b?.usedCount ?? 0) - Number(a?.usedCount ?? 0));
+  const sorted = [...input.templates].sort(
+    (a, b) => Number(b?.usedCount ?? 0) - Number(a?.usedCount ?? 0),
+  );
   const best = sorted[0];
   const drafts = input.buildingGroups.map((b) => ({
     mealDate: input.mealDate,
@@ -311,6 +333,18 @@ function selftest() {
     ],
   });
   check('去重：同楼群只留 1 条', dup.drafts.length === 1);
+
+  // 顺序：LLM 自报的缺模板必须排在覆盖度文案之前 —— 否则会被下游展示上限截掉，
+  // 把「模板类型不匹配」误报成「AI 没给」（2026-11-04 生产实测）。
+  const ordered = validateDraft(input, {
+    drafts: [],
+    needsNewTemplate: [{ reason: '提案是零食、候选模板全是正餐' }],
+  });
+  check(
+    '顺序：LLM 自报理由排在覆盖度条目前',
+    ordered.needsNewTemplate.length === 3 &&
+      ordered.needsNewTemplate[0].reason === '提案是零食、候选模板全是正餐',
+  );
 
   process.stdout.write(`\n--selftest: ${passed} passed, ${failed} failed --\n`);
   process.exit(failed === 0 ? 0 : 1);

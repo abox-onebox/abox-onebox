@@ -126,6 +126,20 @@
       </ul>
     </el-alert>
 
+    <!-- ─────────────── 被剔除的越界条目 ─────────────── -->
+    <el-alert
+      v-if="droppedReasons.length"
+      class="notice"
+      type="warning"
+      :closable="false"
+      show-icon
+      title="有草稿被判为越界已剔除（AI 给的 ID 不在当前候选集里）"
+    >
+      <ul class="needs">
+        <li v-for="(s, i) in droppedReasons" :key="i">{{ s }}</li>
+      </ul>
+    </el-alert>
+
     <!-- ─────────────── 执行结果 ─────────────── -->
     <template v-if="results.length">
       <h3 class="sub-title">
@@ -199,6 +213,8 @@ const confirming = ref(false);
 const rows = ref<DraftRowView[]>([]);
 const blocked = ref<LaunchDraftBlocked[]>([]);
 const needsNewTemplate = ref<string[]>([]);
+/** 越界剔除原因：与「AI 未给」是两回事，必须分开显示 */
+const droppedReasons = ref<string[]>([]);
 const results = ref<LaunchConfirmRowResult[]>([]);
 
 /** `null` = 还没生成过（不显示占位模式提示） */
@@ -283,6 +299,7 @@ async function generate(): Promise<void> {
       rows.value = [];
       blocked.value = [];
       needsNewTemplate.value = [];
+      droppedReasons.value = [];
       realMode.value = null;
       return;
     }
@@ -292,6 +309,7 @@ async function generate(): Promise<void> {
     }));
     blocked.value = r.blocked;
     needsNewTemplate.value = r.needsNewTemplate;
+    droppedReasons.value = r.dropped ?? [];
     realMode.value = r.mode;
 
     if (!rows.value.length) {
