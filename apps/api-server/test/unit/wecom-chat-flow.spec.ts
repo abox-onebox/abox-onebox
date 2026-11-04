@@ -285,3 +285,45 @@ describe('chatIntent · 社群运营 / 退款根因', () => {
     expect(kindOf('生成团长健康度')).toBe('genLeaderHealth');
   });
 });
+
+/**
+ * AI 编排节点 R · 开团草稿（#1 自动开团闭环 批 2）
+ *
+ * 最要紧的一条负面判据：**「开团草稿」不能被 `assign` 抢走**。
+ * assign 是「真执行」语义（会追问参数、回 1 才动手），而这里只要一张草稿。
+ * 一旦被抢走，同事想「先看看草稿」就会变成一次排餐指令 —— 这类误判代价是真实排期。
+ */
+describe('开团草稿（节点 R）', () => {
+  const kindOf = (s: string): string => parseIntent(s, now).kind;
+
+  it('认常见的几种说法', () => {
+    for (const s of ['生成开团草稿', '开团草稿', '排餐草稿', '上架草稿', '出开团方案']) {
+      expect(kindOf(s)).toBe('genLaunchDraft');
+    }
+  });
+
+  it('带日期时解析出排期日（逐日排）', () => {
+    const i = parseIntent('明天开团草稿', now);
+    expect(i.kind).toBe('genLaunchDraft');
+    if (i.kind === 'genLaunchDraft') expect(i.date).toBe('2026-11-02');
+  });
+
+  it('不带日期时交给服务层默认明日（此处为 null）', () => {
+    const i = parseIntent('开团草稿', now);
+    expect(i.kind).toBe('genLaunchDraft');
+    if (i.kind === 'genLaunchDraft') expect(i.date).toBeNull();
+  });
+
+  it('负控：真排餐指令仍归 assign，不被草稿抢走', () => {
+    expect(kindOf('给量子大厦A座上明天的A套餐')).toBe('assign');
+    expect(kindOf('明天排餐')).toBe('assign');
+  });
+
+  it('负控：选品提案仍归 F', () => {
+    expect(kindOf('生成选品提案')).toBe('genMealProposal');
+  });
+
+  it('负控：查单仍归 orders', () => {
+    expect(kindOf('今天多少单')).toBe('orders');
+  });
+});

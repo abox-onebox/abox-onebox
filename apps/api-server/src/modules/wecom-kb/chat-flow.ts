@@ -33,6 +33,7 @@ export type ChatIntent =
   | { kind: 'genHealthScore' }
   | { kind: 'genCommunityPlan' }
   | { kind: 'genRefundCluster' }
+  | { kind: 'genLaunchDraft'; date: string | null }
   | { kind: 'runOrchestrate' }
   | { kind: 'unknown'; raw: string };
 
@@ -192,6 +193,20 @@ export function parseIntent(raw: string, now: Date): ChatIntent {
   )
     return { kind: 'genCommunityPlan' };
 
+  // AI 编排节点 R · 开团草稿（企微触发 · #1 自动开团闭环批 2）
+  // 认出「开团草稿 / 排餐草稿 / 上架草稿」即走该节点：AI 把选品结论落成「哪天哪个楼群用哪个套餐」
+  // 的**结构化草稿**，带真实 ID、只出草稿不写库。
+  // ⚠️ 必须早于后面的「套餐/排餐/上架 → assign」判定：那句是**真执行**语义（会问参数、回 1 才动手），
+  //   而这里只要草稿。若不前置，「明天的开团草稿」会被 assign 截走当成排餐指令。
+  if (
+    /(生成|出|给我|来一份|我要|做|排一下)?\s*(今日|明日|明天|后天|本周)?\s*(开团草稿|排餐草稿|上架草稿|开团方案)/i.test(
+      t,
+    )
+  ) {
+    const ld = parseMealDate(t, now);
+    return { kind: 'genLaunchDraft', date: ld.date };
+  }
+
   if (/^(跑每日编排|一键编排|生成每日编排|每日编排|自动编排|跑编排|每日编排报告)$/.test(t))
     return { kind: 'runOrchestrate' };
 
@@ -253,6 +268,7 @@ export const CHAT_HELP = [
   '· 出经营健康度：发「生成经营健康度」（AI 把增长/留存/资金/履约/组织五维各 20 分收成一个 0~100 分与红黄绿，给三条优先动作；只分析不执行）',
   '· 出社群排期：发「生成社群运营」（AI 按放量/维持/唤醒/沉默四档给出一周社群排期、分档话术与朋友圈文案；不发群不发券，须人工执行）',
   '· 出退款根因：发「生成退款根因」（AI 对近 30 天退款逐笔聚类，给原因占比、金额分档、重复退款与整改建议；不审批不退款）',
+  '· 出开团草稿：发「生成开团草稿」（AI 把选品结论落成「哪个楼群用哪个套餐」的结构化草稿，ID 只从真实模板/楼群取；只出草稿不写库）',
   '选好之后我只问缺的那几个参数，回 1 才真执行。',
   '',
   '直接说事，例如：',

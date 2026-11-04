@@ -3,7 +3,14 @@ import { spawn } from 'child_process';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync } from 'fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'path';
-import { isAfterCutoff, todayBj } from '../../common/utils/time';
+import { isAfterCutoff, todayBj, tomorrowBj } from '../../common/utils/time';
+import {
+  isLaunchCandidateEnabled,
+  isMealTemplate,
+  launchDraftText,
+  revalidateLaunchDraft,
+  type LaunchDraftRecheckCtx,
+} from '../../common/utils/launch-draft';
 import { Cron } from '@nestjs/schedule';
 import { OpProxyService, Binding } from './op-proxy.service';
 import { NameResolverService, GroupResolve, ItemResolve } from './name-resolver.service';
@@ -336,6 +343,8 @@ export class WecomChatService {
         return this.genCommunityPlan(binding, now);
       case 'genRefundCluster':
         return this.genRefundCluster(binding, now);
+      case 'genLaunchDraft':
+        return this.genLaunchDraft(binding, now, intent.date);
       default:
         return this.maybeLLMReply(text, binding);
     }
@@ -1158,6 +1167,197 @@ export class WecomChatService {
             );
         });
       });
+    };
+    return run();
+  }
+
+  /**
+   * AI 编排节点 R · 开团草稿（企微触发 · #1 自动开团闭环 批 2）
+   * ------------------------------------------------------------------
+   * 同事发「生成开团草稿」即触发：把选品结论落地成
+   * 「哪一天 × 哪个楼群 × 用哪个套餐模板」的**结构化草稿**，带真实 ID，只出草稿。
+   *
+   * 为什么需要它：F 选品提案是自由文本，而排餐上架 API 只吃真实 ID
+   * （`setMealId` / `buildingGroupId`）。中间这层「文本 → 结构化」的断裂由
+   * `gen-launch-draft.mjs` 在**候选集白名单**内补齐，杜绝 LLM 编造 ID。
+   *
+   * 三道护栏（生成与执行分离）：
+   *   ① 组候选集时就只放**启用**的楼群 + **启用且 kind=meal** 的模板
+   *     —— 生产库 `ab_set_meal` 里混着 `fmcg`（预包装快消品）套餐，必须先滤掉；
+   *   ② 脚本内白名单（防编造 ID）；
+   *   ③ 生成回来后**用实时数据再复核一遍**（`revalidateLaunchDraft`）
+   *     —— 防「生成那几秒里模板/楼群被停用」这种快照失效。
+   *
+   * 口径（2026-11-04 定）：逐日排（不指定日期时默认**明日**）· 楼群 1~2 个 · 企微优先。
+   * 只产草稿：不写库、不调任何写接口、**不注册进每日编排**（祝总禁自动任务）。
+   */
+  private genLaunchDraft(binding: Binding, now: Date, dateArg?: string | null): Promise<string> {
+    const run = async (): Promise<string> => {
+      const mealDate = dateArg || tomorrowBj(now);
+      if (!mealDate) return '取不到日期，我先不动。稍后再试。';
+
+      // 命令触发要实时口径，故 force=true（不吃 60s 缓存）
+      const [groupsRaw, tplsRaw] = await Promise.all([
+        this.resolver.listGroups(true).catch(() => null),
+        this.resolver.listTemplatesFull(true).catch(() => null),
+      ]);
+      if (!groupsRaw || groupsRaw.length === 0)
+        return '取不到楼群清单（可能权限不足），没法出开团草稿。可在后台「套餐编排」页查看。';
+      if (!tplsRaw || tplsRaw.length === 0)
+        return '取不到套餐模板库，没法出开团草稿。请先在后台「套餐编排」建好模板。';
+
+      const groups = groupsRaw.filter((g) => isLaunchCandidateEnabled(g.status));
+      const templates = tplsRaw.filter(
+        (t) => isMealTemplate(t) && isLaunchCandidateEnabled(t.status),
+      );
+      if (groups.length === 0) return '现在没有启用中的楼群，没法开团。';
+      if (templates.length === 0)
+        return '模板库里没有「启用中的餐盒套餐」（可能只有预包装品或都已停用），没法开团。';
+
+      // 选品依据：近 30 天菜品热度（与节点 F 同源）。取不到也不影响出草稿 ——
+      // 候选集自带 usedCount，AI 仍可据此挑「常驻锚点」。
+      let proposalText = '';
+      try {
+        const today = todayBj(now);
+        if (today) {
+          const base = { which: 'dashboard', range: '30d', endShift: -1 } as StatsIntent;
+          const endDate = endDateOf(base, today);
+          const cur = await this.proxy.query(
+            STATS_QCODE.dishHeat,
+            { range: '30d', date: endDate },
+            binding,
+          );
+          if (cur.code === 0 && cur.data) proposalText = summarizeDishHeat(cur.data) || '';
+        }
+      } catch {
+        /* 热度取不到就空着 */
+      }
+
+      const input = {
+        mealDate,
+        buildingGroups: groups.map((g) => ({ id: Number(g.id), name: g.name || `楼群#${g.id}` })),
+        templates: templates.map((t) => ({
+          id: Number(t.id),
+          name: t.name || `套餐#${t.id}`,
+          kind: 'meal',
+          price: typeof t.priceFen === 'number' ? (t.priceFen / 100).toFixed(2) : '',
+          usedCount: typeof t.usedCount === 'number' ? t.usedCount : 0,
+          items: (t.items ?? []).map((i) => (typeof i.name === 'string' ? i.name : `#${i.itemId}`)),
+        })),
+        proposalText,
+      };
+
+      const repoRoot = this.resolveRepoRoot();
+      const tmpDir = this.pickWritableDir(repoRoot);
+      const plainFile = join(tmpDir, `_ld_${Date.now()}.json`);
+      try {
+        writeFileSync(plainFile, JSON.stringify(input), 'utf8');
+      } catch {
+        return '开团草稿的候选集写不进临时文件（磁盘权限），这次先不出。';
+      }
+
+      const script = join(repoRoot, 'scripts', 'gen-launch-draft.mjs');
+      if (!existsSync(script)) {
+        try {
+          unlinkSync(plainFile);
+        } catch {
+          /* noop */
+        }
+        return (
+          `开团草稿脚本未找到（${script}），这次先不出。` +
+          `候选集共 ${groups.length} 个楼群 / ${templates.length} 个套餐，可在后台手工排。`
+        );
+      }
+
+      const out = await new Promise<string | null>((resolve) => {
+        let settled = false;
+        const finish = (m: string | null): void => {
+          if (!settled) {
+            settled = true;
+            resolve(m);
+          }
+        };
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = spawn('node', [script, '--plain-file', plainFile], {
+            cwd: repoRoot,
+            env: { ...process.env },
+          });
+        } catch {
+          finish(null);
+          return;
+        }
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          finish(null);
+        }, 60_000);
+        let buf = '';
+        child.stdout?.on('data', (d) => (buf += String(d)));
+        // stderr 不阻塞：脚本的失败说明已在 stdout 的 JSON 里，这里只是别让它撑爆缓冲区
+        child.stderr?.on('data', () => undefined);
+        child.on('error', () => finish(null));
+        child.on('close', () => {
+          clearTimeout(timer);
+          finish(buf.trim() ? buf.trim() : null);
+        });
+      });
+
+      try {
+        unlinkSync(plainFile);
+      } catch {
+        /* noop */
+      }
+
+      if (!out)
+        return '开团草稿生成没成功（超时或脚本报错），这次先不出。可在后台「套餐编排」页手工排。';
+
+      let payload: Record<string, unknown> | null = null;
+      try {
+        const parsed: unknown = JSON.parse(out);
+        payload = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+      } catch {
+        payload = null;
+      }
+      if (!payload)
+        return `开团草稿生成出来了但没法解析，这次先不出。原始输出：\n${out.slice(0, 400)}`;
+      if (payload.ok === false) {
+        const msg = typeof payload.message === 'string' ? payload.message : '未知原因';
+        return `开团草稿没生成：${msg}`;
+      }
+
+      // 第三道护栏：用**实时**模板/楼群复核（第二次 force 拉取，补「快照失效」）
+      const [groupsLive, tplsLive] = await Promise.all([
+        this.resolver.listGroups(true).catch(() => null),
+        this.resolver.listTemplatesFull(true).catch(() => null),
+      ]);
+      const ctx: LaunchDraftRecheckCtx = {
+        mealDate,
+        groups: groupsLive && groupsLive.length ? groupsLive : groups,
+        templates: tplsLive && tplsLive.length ? tplsLive : templates,
+      };
+      const res = revalidateLaunchDraft(payload, ctx);
+      const mode = typeof payload.mode === 'string' ? payload.mode : undefined;
+      const lines = [launchDraftText(res, { mealDate, mode })];
+
+      const need = Array.isArray(payload.needsNewTemplate) ? payload.needsNewTemplate : [];
+      if (need.length) {
+        lines.push('');
+        lines.push('AI 自报还缺这些（不自动建模板，需你确认）：');
+        for (const n of need.slice(0, 5)) {
+          const r = n && typeof n === 'object' ? (n as Record<string, unknown>).reason : n;
+          lines.push(`· ${typeof r === 'string' ? r : String(r)}`);
+        }
+      }
+
+      if (res.rows.length) {
+        lines.push('');
+        lines.push('要真排上去，请到后台「套餐编排」按此草稿建分配再上架（执行链路尚未接入）。');
+      }
+      return lines.join('\n');
     };
     return run();
   }
