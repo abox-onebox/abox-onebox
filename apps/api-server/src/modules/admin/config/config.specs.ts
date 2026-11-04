@@ -160,6 +160,14 @@ export const CONFIG_GROUPS: Array<{ group: string; label: string; description: s
       '另 1 项为策略标识（非数值）。保留展示是为了留下口径记录，' +
       '避免「这个参数到底定的是多少」只能翻代码。',
   },
+  {
+    group: 'compliance',
+    label: '124 号令合规公示',
+    description:
+      '《食品安全法》124 号令 + 预包装食品标签（GB 7718）要求：主页显著位置公示备案信息、' +
+      '销售页展示预包装标签。本组是**公司级备案信息**的配置来源，端上「资质与标签公示」' +
+      '（`/api/v1/ai-cs/compliance/124`）读取此处。⚠️ 备案编号等务必填真实值，缺省为空占位。',
+  },
 ];
 
 /**
@@ -749,6 +757,68 @@ export const CONFIG_SPECS: ConfigSpec[] = [
       '策略标识（非数值）：`residual` = 经营毛利为**结果值** ' +
       '（售价 − 成本合计 − 佣金），不预设固定毛利。',
     consumedBy: '仅作口径记录 —— 计算逻辑落在 `shared-utils/src/biz.ts` 的 `calcSettlement()`',
+  },
+
+  // ------------------------------------------------------------ compliance 124 号令合规公示
+  {
+    key: 'compliance.subjectName',
+    group: 'compliance',
+    label: '经营主体名称',
+    type: 'text',
+    impact: 'service',
+    wiring: 'live',
+    description:
+      '124 号令公示块中的「经营主体」。缺省兜底为「北京巡礼之年科技有限公司」，运营须核对此处与营业执照一致。',
+    maxLength: 128,
+    fallbackValue: '北京巡礼之年科技有限公司',
+    consumedBy: '`AiCsService.getComplianceBlock()` → GET /api/v1/ai-cs/compliance/124 公示块',
+  },
+  {
+    key: 'compliance.filingNo',
+    group: 'compliance',
+    label: '仅销售预包装食品备案编号',
+    type: 'text',
+    impact: 'service',
+    wiring: 'live',
+    description:
+      '《食品安全法》备案编号。⚠️ 种子内为空占位，上线前必须填入真实备案编号（营业执照「仅销售预包装食品」备案）。',
+    maxLength: 64,
+    consumedBy: '`AiCsService.getComplianceBlock()` → GET /api/v1/ai-cs/compliance/124 公示块',
+  },
+  {
+    key: 'compliance.creditCode',
+    group: 'compliance',
+    label: '统一社会信用代码',
+    type: 'text',
+    impact: 'service',
+    wiring: 'live',
+    description: '经营主体统一社会信用代码（18 位）。缺省为空占位，运营须补全。',
+    maxLength: 32,
+    consumedBy: '`AiCsService.getComplianceBlock()` → GET /api/v1/ai-cs/compliance/124 公示块',
+  },
+  {
+    key: 'compliance.businessScope',
+    group: 'compliance',
+    label: '经营范围（含仅销售预包装食品）',
+    type: 'text',
+    impact: 'service',
+    wiring: 'live',
+    description:
+      '营业执照经营范围，须含「仅销售预包装食品」。缺省兜底为「食品销售（仅销售预包装食品）」。',
+    maxLength: 256,
+    fallbackValue: '食品销售（仅销售预包装食品）',
+    consumedBy: '`AiCsService.getComplianceBlock()` → GET /api/v1/ai-cs/compliance/124 公示块',
+  },
+  {
+    key: 'compliance.filingDate',
+    group: 'compliance',
+    label: '备案日期',
+    type: 'text',
+    impact: 'service',
+    wiring: 'live',
+    description: '仅销售预包装食品备案完成日期（YYYY-MM-DD）。缺省为空占位，运营须补全。',
+    maxLength: 10,
+    consumedBy: '`AiCsService.getComplianceBlock()` → GET /api/v1/ai-cs/compliance/124 公示块',
   },
 ];
 

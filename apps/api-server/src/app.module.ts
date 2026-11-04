@@ -34,6 +34,8 @@ import { OperationRequestModule } from './modules/admin/operation-request/operat
 import { DashboardModule } from './modules/admin/dashboard/dashboard.module';
 // 阶段 B · 企业微信对话机器人（KB 助手移动化）：独立模块，无跨模块依赖
 import { WecomKbModule } from './modules/wecom-kb/wecom-kb.module';
+// 阶段 D · C 端智能客服 + 124 号令合规公示层（消费者侧，免登录）
+import { AiCsModule } from './modules/ai-cs/ai-cs.module';
 // 后台 · 媒体上传（图片 · 供应商照片墙等通用端点）
 import { MediaModule } from './modules/media/media.module';
 import { TasksModule } from './tasks/tasks.module';
@@ -79,6 +81,8 @@ import { HealthController } from './health/health.controller';
     DashboardModule,
     // 阶段 B · 企业微信对话机器人（KB 助手移动化）
     WecomKbModule,
+    // 阶段 D · C 端智能客服 + 124 号令合规公示层
+    AiCsModule,
     // 后台 · 媒体上传（独立模块，STORAGE_PROVIDER 由全局 ProvidersModule 提供）
     MediaModule,
 

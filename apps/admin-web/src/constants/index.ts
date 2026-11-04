@@ -411,6 +411,15 @@ export const ADMIN_NAV = [
         module: 'ai-insight',
         icon: 'star',
       },
+      // C 端智能客服预览（D · #44 · 2026-11-04 新增）：只读预览消费者端可见的
+      //   124 号令公示与规则问答，供运营核对文案；不另建「组合」入口（无写动作）。
+      {
+        path: '/stats/ai-cs',
+        title: '智能客服预览',
+        page: '—',
+        module: 'ai-cs',
+        icon: 'message',
+      },
     ],
   },
   {

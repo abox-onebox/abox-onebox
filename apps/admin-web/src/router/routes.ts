@@ -291,6 +291,12 @@ export const routes: RouteRecordRaw[] = [
         name: 'StatsAiInsight',
         component: () => import('@/views/stats/ai-insight.vue'),
       },
+      // C 端智能客服预览（D · #44）：只读预览消费者端可见的公示与问答
+      {
+        path: 'stats/ai-cs',
+        name: 'StatsAiCs',
+        component: () => import('@/views/stats/ai-cs.vue'),
+      },
 
       // 系统管理 M37 · P36
       {
