@@ -8,7 +8,9 @@ import {
   isLaunchCandidateEnabled,
   isMealTemplate,
   launchDraftText,
+  planLaunchConfirm,
   revalidateLaunchDraft,
+  type LaunchConfirmPending,
   type LaunchDraftRecheckCtx,
 } from '../../common/utils/launch-draft';
 import { Cron } from '@nestjs/schedule';
@@ -199,6 +201,17 @@ export class WecomChatService {
   private lastHealthBadge: string | null = null;
 
   /**
+   * 待确认的开团草稿（键 = 操作人）。
+   *
+   * 为什么放内存而不是建表：草稿只是「一次确认的事」，当日有效、确认即消费；
+   * 建表要 DDL + 迁移 + parity 门禁，收益（跨实例共享）在单 API 实例下为零。
+   * ⚠️ 代价说清楚：**进程重启 / 换实例会丢掉待确认草稿**。真发生时的表现是
+   *    「回确认开团 → 说没有待确认的草稿」，用户重新生成一次即可（不静默排错）。
+   *    这与 `order-timeline` 的进程单例假设同源（一期单 API 实例）。
+   */
+  private launchDrafts = new Map<string, LaunchConfirmPending>();
+
+  /**
    * 最近一次编排前的数据体检结论（供摘要首段用）
    *
    * 与 lastHealthBadge 同理：每次 runDailyNodes 开头重算，不留上一轮的结论。
@@ -344,7 +357,9 @@ export class WecomChatService {
       case 'genRefundCluster':
         return this.genRefundCluster(binding, now);
       case 'genLaunchDraft':
-        return this.genLaunchDraft(binding, now, intent.date);
+        return this.genLaunchDraft(userId, binding, now, intent.date);
+      case 'confirmLaunchDraft':
+        return this.confirmLaunchDraft(userId, binding, intent.picks, now);
       default:
         return this.maybeLLMReply(text, binding);
     }
@@ -1191,7 +1206,12 @@ export class WecomChatService {
    * 口径（2026-11-04 定）：逐日排（不指定日期时默认**明日**）· 楼群 1~2 个 · 企微优先。
    * 只产草稿：不写库、不调任何写接口、**不注册进每日编排**（祝总禁自动任务）。
    */
-  private genLaunchDraft(binding: Binding, now: Date, dateArg?: string | null): Promise<string> {
+  private genLaunchDraft(
+    userId: string,
+    binding: Binding,
+    now: Date,
+    dateArg?: string | null,
+  ): Promise<string> {
     const run = async (): Promise<string> => {
       const mealDate = dateArg || tomorrowBj(now);
       if (!mealDate) return '取不到日期，我先不动。稍后再试。';
@@ -1354,12 +1374,170 @@ export class WecomChatService {
       }
 
       if (res.rows.length) {
+        // 存成「待确认」：只在这里存、只在 confirmLaunchDraft 里消费，别处不许读
+        this.launchDrafts.set(userId, { mealDate, day: todayBj(now) || '', rows: res.rows });
         lines.push('');
-        lines.push('要真排上去，请到后台「套餐编排」按此草稿建分配再上架（执行链路尚未接入）。');
+        lines.push(
+          '回「确认开团」我就按这份真排（默认全排）；只想排其中几条，回「确认开团 1,3」。' +
+            '（草稿只在今天有效。）',
+        );
       }
       return lines.join('\n');
     };
     return run();
+  }
+
+  /**
+   * 排一个「日 × 楼群 × 套餐」：**建分配 → 再上架**，两步都不省。
+   *
+   * ⚠️ 这是全仓唯一的两步写入口：单条排餐（`execAssign`）与开团草稿多行确认
+   *   （`confirmLaunchDraft`）都走这里。**别再手写一遍** —— 只建不起用 =
+   *   后台看得到、手机买不到，回一句「已排上」就是谎报成功。
+   *
+   * ⚠️ 不抛异常：失败以 `{ok:false, stage}` 返回。多行确认时抛异常会让后面的行
+   *   整批丢掉，而「部分成功」是必须如实报的真实状态。
+   */
+  private async createAndPublish(
+    p: { mealDate: string; buildingGroupId: number; setMealId: number },
+    binding: Binding,
+    nl: string,
+  ): Promise<
+    | { ok: true; assignmentId: number }
+    | {
+        ok: false;
+        stage: 'create' | 'no_id' | 'publish';
+        code: number;
+        message: string;
+        assignmentId?: number;
+      }
+  > {
+    const created = await this.proxy.exec(
+      'assign_meal',
+      {
+        mealDate: p.mealDate,
+        buildingGroupId: String(p.buildingGroupId),
+        setMealId: String(p.setMealId),
+      },
+      binding,
+      nl,
+    );
+    this.resolver.invalidate();
+
+    if (created.code !== 0) {
+      return {
+        ok: false,
+        stage: 'create',
+        code: created.code,
+        message: String(created.message ?? ''),
+      };
+    }
+
+    const raw = (created.data ?? {}) as Record<string, unknown>;
+    const idNum = Number(raw.id ?? raw.assignmentId ?? NaN);
+    if (!Number.isFinite(idNum) || idNum <= 0) {
+      return {
+        ok: false,
+        stage: 'no_id',
+        code: created.code,
+        message: String(created.message ?? ''),
+      };
+    }
+
+    const pub = await this.proxy.exec(
+      'publish_assignment',
+      { id: String(idNum), action: 'publish' },
+      binding,
+      nl,
+    );
+    if (pub.code !== 0) {
+      return {
+        ok: false,
+        stage: 'publish',
+        code: pub.code,
+        message: String(pub.message ?? ''),
+        assignmentId: idNum,
+      };
+    }
+    return { ok: true, assignmentId: idNum };
+  }
+
+  /**
+   * AI 编排节点 R · 确认开团（企微 · #1 自动开团闭环 批 3）
+   * ------------------------------------------------------------------
+   * 唯一会**真写排期**的 AI 入口：把待确认草稿逐条 `createAndPublish`。
+   *
+   * 四道闸全部在纯函数 `planLaunchConfirm` 里（有效期 / 权限 / 截单 / 挑条），
+   * 这里只负责「执行 + 说人话」—— 判据不放服务层，否则没有单测拦得住。
+   *
+   * 口径（2026-11-04 用户定）：逐条可勾选、默认全选 · 只给 owner（admin 角色令牌）
+   * · 草稿**当日 24:00** 失效。
+   *
+   * ⚠️ 部分成功必须如实报：绝不把「3 条成功 2 条」说成「办好了」。
+   */
+  private async confirmLaunchDraft(
+    userId: string,
+    binding: Binding,
+    picks: number[] | null,
+    now: Date,
+  ): Promise<string> {
+    const pending = this.launchDrafts.get(userId) ?? null;
+    const plan = planLaunchConfirm({
+      pending,
+      today: todayBj(now) || '',
+      afterCutoff: pending ? isAfterCutoff(pending.mealDate, now) : false,
+      tier: binding.tier === 'owner' ? 'owner' : 'staff',
+      picks,
+    });
+
+    if (!plan.ok) {
+      // 过期 / 已截单 / 无草稿：清掉，免得同一份烂草稿被反复确认
+      if (plan.code === 'expired' || plan.code === 'cutoff' || plan.code === 'no_pending') {
+        this.launchDrafts.delete(userId);
+      }
+      return plan.detail;
+    }
+
+    // 先删再执行：宁可「执行到一半失败」，也不要「点了两次排两遍」
+    this.launchDrafts.delete(userId);
+
+    const okLines: string[] = [];
+    const failLines: string[] = [];
+    for (const r of plan.rows) {
+      const res = await this.createAndPublish(
+        { mealDate: r.mealDate, buildingGroupId: r.buildingGroupId, setMealId: r.setMealId },
+        binding,
+        `确认开团 ${r.buildingGroupName} ${r.setMealName}`,
+      );
+      if (res.ok) {
+        okLines.push(`✅ ${r.buildingGroupName} → ${r.setMealName}：已上架，用户能下单`);
+        continue;
+      }
+      if (res.stage === 'publish') {
+        failLines.push(
+          `⚠️ ${r.buildingGroupName}：分配建好了（#${res.assignmentId}），但**上架没成功**：` +
+            `${chatErrorText(res.code, res.message)} —— 手机上还买不到，请在后台点一下上架`,
+        );
+      } else if (res.stage === 'no_id') {
+        failLines.push(
+          `⚠️ ${r.buildingGroupName}：分配建好了但后台没回执 id，上架没做，请后台看一眼`,
+        );
+      } else {
+        failLines.push(
+          `❌ ${r.buildingGroupName}：没排上 —— ${chatErrorText(res.code, res.message)}`,
+        );
+      }
+    }
+
+    const head =
+      failLines.length === 0
+        ? `办好了 ${okLines.length} 条：`
+        : `排了 ${plan.rows.length} 条：成功 ${okLines.length}、失败 ${failLines.length}`;
+    const tail =
+      failLines.length === 0
+        ? '今晚 24 点前都能改；要改就再说一句楼群 + 新套餐。'
+        : '失败的那几条没排上，可以单独再说一次；成功的已经生效。';
+
+    return [head, ...okLines, ...failLines, '', tail].join('\n');
   }
 
   /**
@@ -4591,37 +4769,19 @@ export class WecomChatService {
       return `${dateLabel(date, now)} 已经截单了（出餐日 0 点截单，也就是前一天夜里 24 点）。\n这天排不了，换一天吧。`;
     }
 
-    const created = await this.proxy.exec(
-      'assign_meal',
-      {
-        mealDate: date,
-        buildingGroupId: String(d.groupId),
-        setMealId: String(d.mealId),
-      },
+    const r = await this.createAndPublish(
+      { mealDate: date, buildingGroupId: Number(d.groupId), setMealId: Number(d.mealId) },
       binding,
       nl,
     );
-    this.resolver.invalidate();
 
-    if (created.code !== 0) {
-      return `没排上：${chatErrorText(created.code, created.message)}`;
-    }
-
-    const raw = (created.data ?? {}) as Record<string, unknown>;
-    const idNum = Number(raw.id ?? raw.assignmentId ?? NaN);
-    if (!Number.isFinite(idNum) || idNum <= 0) {
-      return `分配建好了，但后台没回执 id，我不敢往下上架 —— 请让负责人在后台看一眼「${d.groupName} ${dateLabel(date, now)}」。`;
-    }
-
-    const pub = await this.proxy.exec(
-      'publish_assignment',
-      { id: String(idNum), action: 'publish' },
-      binding,
-      nl,
-    );
-    if (pub.code !== 0) {
+    if (!r.ok) {
+      if (r.stage === 'create') return `没排上：${chatErrorText(r.code, r.message)}`;
+      if (r.stage === 'no_id') {
+        return `分配建好了，但后台没回执 id，我不敢往下上架 —— 请让负责人在后台看一眼「${d.groupName} ${dateLabel(date, now)}」。`;
+      }
       return [
-        `「${d.groupName}」的分配建好了（#${idNum}），但**上架没成功**：${chatErrorText(pub.code, pub.message)}`,
+        `「${d.groupName}」的分配建好了（#${r.assignmentId}），但**上架没成功**：${chatErrorText(r.code, r.message)}`,
         '现在手机上还买不到，请让负责人在后台点一下上架。',
       ].join('\n');
     }

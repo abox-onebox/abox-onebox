@@ -1,7 +1,10 @@
 import {
   launchDraftText,
+  planLaunchConfirm,
   revalidateLaunchDraft,
+  type LaunchConfirmPending,
   type LaunchDraftRecheckCtx,
+  type LaunchDraftRow,
 } from '../../src/common/utils/launch-draft';
 
 /**
@@ -198,5 +201,109 @@ describe('launchDraftText —— 展示文本', () => {
     expect(txt).toContain('没排出可用草稿');
     expect(txt).toContain('已拦截 1 条');
     expect(txt).toContain('占位模式');
+  });
+});
+
+/**
+ * 批 3 · 确认开团的四道闸
+ *
+ * 这是**唯一会真写线上排期**的入口，判据必须一条条钉死：
+ * 越权、隔天草稿、已截单、点错序号 —— 每一种都不能靠「服务层里写个 if」兜着。
+ */
+function row(n: number): LaunchDraftRow {
+  return {
+    mealDate: '2026-11-05',
+    buildingGroupId: n,
+    buildingGroupName: `楼群${n}`,
+    setMealId: 7,
+    setMealName: '牛肉双拼',
+    priceFen: 2580,
+    usedCount: 86,
+    reason: '热销',
+  };
+}
+
+const PENDING: LaunchConfirmPending = {
+  mealDate: '2026-11-05',
+  day: '2026-11-04',
+  rows: [row(1), row(2), row(3)],
+};
+
+const base = {
+  pending: PENDING,
+  today: '2026-11-04',
+  afterCutoff: false,
+  tier: 'owner' as const,
+  picks: null as number[] | null,
+};
+
+describe('planLaunchConfirm —— 必不报：合法确认要放行', () => {
+  it('默认全排：picks=null 时三条全给', () => {
+    const p = planLaunchConfirm(base);
+    expect(p.ok).toBe(true);
+    if (p.ok) expect(p.rows.map((r) => r.buildingGroupId)).toEqual([1, 2, 3]);
+  });
+
+  it('挑条：picks=[1,3] 只给第 1、3 条，且保持草稿原序', () => {
+    const p = planLaunchConfirm({ ...base, picks: [3, 1] });
+    expect(p.ok).toBe(true);
+    if (p.ok) expect(p.rows.map((r) => r.buildingGroupId)).toEqual([1, 3]);
+  });
+
+  it('空数组按「全排」处理（与 null 同义，不让人白点一次）', () => {
+    const p = planLaunchConfirm({ ...base, picks: [] });
+    expect(p.ok).toBe(true);
+    if (p.ok) expect(p.rows).toHaveLength(3);
+  });
+});
+
+describe('planLaunchConfirm —— 必报：越权/过期/截单/越界全拦', () => {
+  it('没有待确认草稿 → no_pending', () => {
+    const p = planLaunchConfirm({ ...base, pending: null });
+    expect(p.ok).toBe(false);
+    if (!p.ok) expect(p.code).toBe('no_pending');
+  });
+
+  it('草稿行数为 0 也当没有 → no_pending', () => {
+    const p = planLaunchConfirm({ ...base, pending: { ...PENDING, rows: [] } });
+    expect(p.ok).toBe(false);
+    if (!p.ok) expect(p.code).toBe('no_pending');
+  });
+
+  it('同事（staff）不能确认 → forbidden', () => {
+    const p = planLaunchConfirm({ ...base, tier: 'staff' });
+    expect(p.ok).toBe(false);
+    if (!p.ok) {
+      expect(p.code).toBe('forbidden');
+      expect(p.detail).toContain('负责人');
+    }
+  });
+
+  it('隔天草稿 → expired（当日 24:00 失效）', () => {
+    const p = planLaunchConfirm({ ...base, today: '2026-11-05' });
+    expect(p.ok).toBe(false);
+    if (!p.ok) expect(p.code).toBe('expired');
+  });
+
+  it('已过截单 → cutoff', () => {
+    const p = planLaunchConfirm({ ...base, afterCutoff: true });
+    expect(p.ok).toBe(false);
+    if (!p.ok) expect(p.code).toBe('cutoff');
+  });
+
+  it('序号越界 → bad_pick，且点出是哪几条', () => {
+    const p = planLaunchConfirm({ ...base, picks: [1, 9] });
+    expect(p.ok).toBe(false);
+    if (!p.ok) {
+      expect(p.code).toBe('bad_pick');
+      expect(p.badPicks).toEqual([9]);
+      expect(p.detail).toContain('9');
+    }
+  });
+
+  it('★ 判据顺序：无权限的人不该看到「草稿已过期」这种内部状态', () => {
+    const p = planLaunchConfirm({ ...base, tier: 'staff', today: '2026-11-06' });
+    expect(p.ok).toBe(false);
+    if (!p.ok) expect(p.code).toBe('forbidden');
   });
 });

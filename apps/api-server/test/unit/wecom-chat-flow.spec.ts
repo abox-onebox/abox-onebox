@@ -327,3 +327,47 @@ describe('开团草稿（节点 R）', () => {
     expect(kindOf('今天多少单')).toBe('orders');
   });
 });
+
+/**
+ * 「确认开团」= 唯一会真写线上排期的一句话（#1 批 3）。
+ *
+ * 最要紧的两条负面判据：
+ *   ① 裸「确认」「1」**仍归原有 confirm** —— 那是单条排餐草稿的确认语义，
+ *      抢走会让老流程失效（同事回 1 却被告知「没有待确认的事」）；
+ *   ② 生成类说法不能被它抢走，否则「想先看草稿」变成「直接开团」。
+ */
+describe('确认开团（节点 R · 写库）', () => {
+  const kindOf = (s: string): string => parseIntent(s, now).kind;
+  const picksOf = (s: string): number[] | null => {
+    const i = parseIntent(s, now);
+    expect(i.kind).toBe('confirmLaunchDraft');
+    return i.kind === 'confirmLaunchDraft' ? i.picks : null;
+  };
+
+  it('裸「确认开团」⇒ 全排（picks=null）', () => {
+    expect(picksOf('确认开团')).toBeNull();
+  });
+
+  it('「确认开团 1,3」⇒ 只排第 1、3 条', () => {
+    expect(picksOf('确认开团 1,3')).toEqual([1, 3]);
+    expect(picksOf('确认开团 1、3')).toEqual([1, 3]);
+  });
+
+  it('冒号/空格容错', () => {
+    expect(picksOf('确认开团：2')).toEqual([2]);
+    expect(picksOf('  确认开团  2  ')).toEqual([2]);
+  });
+
+  it('负控：裸「确认」「1」仍归 confirm（不抢老流程）', () => {
+    expect(kindOf('确认')).toBe('confirm');
+    expect(kindOf('1')).toBe('confirm');
+  });
+
+  it('负控：生成开团草稿仍归 genLaunchDraft，不被确认抢走', () => {
+    expect(kindOf('生成开团草稿')).toBe('genLaunchDraft');
+  });
+
+  it('负控：真排餐指令仍归 assign', () => {
+    expect(kindOf('给量子大厦A座上明天的A套餐')).toBe('assign');
+  });
+});

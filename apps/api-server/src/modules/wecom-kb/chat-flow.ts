@@ -34,6 +34,7 @@ export type ChatIntent =
   | { kind: 'genCommunityPlan' }
   | { kind: 'genRefundCluster' }
   | { kind: 'genLaunchDraft'; date: string | null }
+  | { kind: 'confirmLaunchDraft'; picks: number[] | null }
   | { kind: 'runOrchestrate' }
   | { kind: 'unknown'; raw: string };
 
@@ -60,6 +61,19 @@ export function parseIntent(raw: string, now: Date): ChatIntent {
 
   if (isConfirm(t)) return { kind: 'confirm' };
   if (isCancel(t)) return { kind: 'cancel' };
+
+  // AI 编排节点 R · 确认开团（企微 · #1 批 3）：**唯一会真写排期**的一句话。
+  // 必须早于 genLaunchDraft（「确认开团」不含「草稿」，但早判一次更清楚），
+  // 也必须早于 assign —— 否则会被当成「新排一条」而重新问日期/套餐。
+  // 挑条：`确认开团 1,3` ⇒ picks=[1,3]；`确认开团` ⇒ picks=null（全排）。
+  const confirmLaunch = /^确认开团\s*[:：]?\s*(.*)$/.exec(t);
+  if (confirmLaunch) {
+    const rest = confirmLaunch[1] || '';
+    const nums = (rest.match(/\d+/g) || [])
+      .map((s) => Number(s))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    return { kind: 'confirmLaunchDraft', picks: nums.length ? nums : null };
+  }
 
   // AI 编排节点 B · 文案与素材生成（企微触发）：认出「生成招募页/文案 + 需求」即走该节点。
   // ⚠️ 必须早于后面的 orders/assign 判定 —— 需求里若误带「套餐/订单」等词也不应被截走。
@@ -269,6 +283,7 @@ export const CHAT_HELP = [
   '· 出社群排期：发「生成社群运营」（AI 按放量/维持/唤醒/沉默四档给出一周社群排期、分档话术与朋友圈文案；不发群不发券，须人工执行）',
   '· 出退款根因：发「生成退款根因」（AI 对近 30 天退款逐笔聚类，给原因占比、金额分档、重复退款与整改建议；不审批不退款）',
   '· 出开团草稿：发「生成开团草稿」（AI 把选品结论落成「哪个楼群用哪个套餐」的结构化草稿，ID 只从真实模板/楼群取；只出草稿不写库）',
+  '· 执行开团：草稿出来后发「确认开团」才真排（只排其中几条：发「确认开团 1,3」；仅负责人可用，草稿当天有效）',
   '选好之后我只问缺的那几个参数，回 1 才真执行。',
   '',
   '直接说事，例如：',

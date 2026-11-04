@@ -302,3 +302,95 @@ export function launchDraftText(
   lines.push('这是草稿，没有写库、也不会自动上架线上排期。');
   return lines.join('\n');
 }
+
+// ---------------------------------------------------------------- 确认开团（批 3）
+
+/**
+ * 确认开团前要过的四道闸（2026-11-04 定的口径）：
+ *   ① 有没有待确认的草稿；
+ *   ② 权限：真写排期只给负责人（企微层 `tier=owner`，对应 admin 角色令牌）；
+ *   ③ 有效期：**草稿只在生成当天有效**（当日 24:00 失效，逐日排）；
+ *   ④ 业务截单：出餐日 0 点后不许排；
+ * 外加挑条：`picks` 为空 = 全排（默认全选），给定序号越界要如实拒绝而不是静默少排。
+ *
+ * ⚠️ 为什么抽成纯函数：这几条判据若写在服务层，全仓没有一条单测拦得住
+ *   （本仓 `order.service` 无单测就是前车之鉴）。放在这里，越权/过期/越界都能被钉死。
+ *
+ * ⚠️ 判据顺序有讲究：**先判权、再谈数据**。让无权限的人看到「草稿已过期」这种
+ *   内部状态是没有必要的暴露。
+ */
+export type LaunchConfirmBlockCode = 'no_pending' | 'forbidden' | 'expired' | 'cutoff' | 'bad_pick';
+
+export interface LaunchConfirmPending {
+  mealDate: string;
+  /** 生成日（北京日）。草稿只在生成当天有效 */
+  day: string;
+  rows: LaunchDraftRow[];
+}
+
+export type LaunchConfirmPlan =
+  | { ok: true; rows: LaunchDraftRow[] }
+  | { ok: false; code: LaunchConfirmBlockCode; detail: string; badPicks?: number[] };
+
+export function planLaunchConfirm(input: {
+  pending: LaunchConfirmPending | null | undefined;
+  /** 今天（北京日） */
+  today: string;
+  /** 出餐日是否已过截单（调用方用 `isAfterCutoff` 算好传进来，本函数不碰时钟） */
+  afterCutoff: boolean;
+  tier: 'owner' | 'staff';
+  /** 1-based 序号；`null` = 全排 */
+  picks: number[] | null;
+}): LaunchConfirmPlan {
+  const { pending, today, afterCutoff, tier, picks } = input;
+
+  if (!pending || !Array.isArray(pending.rows) || pending.rows.length === 0) {
+    return {
+      ok: false,
+      code: 'no_pending',
+      detail: '现在没有待确认的开团草稿。先说「生成开团草稿」，我把草稿给你看。',
+    };
+  }
+
+  if (tier !== 'owner') {
+    return {
+      ok: false,
+      code: 'forbidden',
+      detail: '开团会真改线上排期，这个动作只给负责人。请把草稿转给负责人，让他回「确认开团」。',
+    };
+  }
+
+  if (pending.day !== today) {
+    return {
+      ok: false,
+      code: 'expired',
+      detail: `这份草稿是 ${pending.day || '更早'} 生成的，已过期（草稿只在生成当天有效）。请重新说「生成开团草稿」。`,
+    };
+  }
+
+  if (afterCutoff) {
+    return {
+      ok: false,
+      code: 'cutoff',
+      detail: `${pending.mealDate} 已经截单（出餐日 0 点截单），这天排不了。请换一天重新生成草稿。`,
+    };
+  }
+
+  const all = pending.rows;
+  if (picks === null || picks.length === 0) {
+    return { ok: true, rows: all };
+  }
+
+  const badPicks = picks.filter((i) => !Number.isInteger(i) || i < 1 || i > all.length);
+  if (badPicks.length > 0) {
+    return {
+      ok: false,
+      code: 'bad_pick',
+      detail: `没有第 ${badPicks.join('、')} 条（这份草稿只有 ${all.length} 条）。回「确认开团」全排，或「确认开团 1,3」挑着排。`,
+      badPicks,
+    };
+  }
+
+  const picked = new Set(picks);
+  return { ok: true, rows: all.filter((_, idx) => picked.has(idx + 1)) };
+}
