@@ -44,6 +44,7 @@
           <el-button type="primary" :loading="broadcasting" @click="pushBroadcast">
             推送本周播报
           </el-button>
+          <el-button :loading="recalling" @click="openRecall">生成唤醒方案</el-button>
           <el-button :loading="loading" @click="reload">刷新</el-button>
         </div>
       </div>
@@ -185,6 +186,36 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 复购 / 流失唤醒方案（#C） -->
+    <el-dialog v-model="recallVisible" title="复购 / 流失唤醒方案" width="600px">
+      <div v-if="recallData" class="recall">
+        <p class="recall__note">{{ recallData.rangeNote }}</p>
+        <el-table :data="recallData.segments" size="small" border>
+          <el-table-column label="档位" width="120">
+            <template #default="{ row }">{{
+              row.segment === 'repurchase' ? '复购客' : '流失客'
+            }}</template>
+          </el-table-column>
+          <el-table-column label="命中人数" width="110" prop="count" />
+          <el-table-column label="券方案" min-width="280">
+            <template #default="{ row }">
+              {{ row.coupon.name }} · ¥{{ (row.coupon.faceValueFen / 100).toFixed(0) }}（门槛¥{{
+                (row.coupon.thresholdFen / 100).toFixed(0)
+              }}）· {{ row.coupon.validDays }} 天有效
+            </template>
+          </el-table-column>
+        </el-table>
+        <p class="recall__tip">确认后将建券种并批量发券（幂等），同时把摘要推给负责人企微。</p>
+      </div>
+      <template #footer>
+        <el-button @click="recallVisible = false">关闭</el-button>
+        <el-button :loading="recalling" @click="runRecall(true)">试算发放</el-button>
+        <el-button type="primary" :loading="recalling" @click="runRecall(false)">
+          确认发放
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -202,6 +233,13 @@ import {
   type InsightDetail,
   type InsightListItem,
 } from '@/api/ai-insight';
+import {
+  recallPreview,
+  recallConfirm,
+  type RecallPreview,
+  type RecallSegment,
+  type RecallSegmentResult,
+} from '@/api/recall-campaign';
 
 /**
  * AI 台账（`/stats/ai-insight`）
@@ -291,6 +329,51 @@ async function pushBroadcast(): Promise<void> {
 async function pushFromPreview(): Promise<void> {
   previewVisible.value = false;
   await pushBroadcast();
+}
+
+/** 复购 / 流失唤醒方案（#C） */
+const recalling = ref(false);
+const recallVisible = ref(false);
+const recallData = ref<RecallPreview | null>(null);
+
+const SEGMENT_LABEL: Record<RecallSegment, string> = { repurchase: '复购客', churn: '流失客' };
+
+/** 预览圈人结果（不写库） */
+async function openRecall(): Promise<void> {
+  recalling.value = true;
+  try {
+    recallData.value = await recallPreview();
+    recallVisible.value = true;
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '生成唤醒方案失败');
+  } finally {
+    recalling.value = false;
+  }
+}
+
+/** dryRun=true 试算；false 真实发券 */
+async function runRecall(dryRun: boolean): Promise<void> {
+  if (!recallData.value) return;
+  const segments = recallData.value.segments.map((s) => s.segment);
+  recalling.value = true;
+  try {
+    const r = await recallConfirm(segments, dryRun);
+    const summary = r.segments
+      .map(
+        (s: RecallSegmentResult) =>
+          `${SEGMENT_LABEL[s.segment]}：发券 ${s.grantedCount} 张（跳过 ${s.skippedCount}）`,
+      )
+      .join('；');
+    if (dryRun) ElMessage.success(`试算完成：${summary}`);
+    else if (r.reason) ElMessage.warning(`发放完成但有提醒：${r.reason}（${summary}）`);
+    else ElMessage.success(`已发放并知会负责人：${summary}`);
+    recallVisible.value = false;
+    await reload();
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '发放失败');
+  } finally {
+    recalling.value = false;
+  }
 }
 
 const modeText = computed(() => {
@@ -481,5 +564,15 @@ onMounted(() => {
   margin: 0;
   max-height: 50vh;
   overflow: auto;
+}
+.recall__note {
+  color: $c-text-weak;
+  font-size: $fs-caption;
+  margin: 0 0 $space-3;
+}
+.recall__tip {
+  color: $c-text-weak;
+  font-size: $fs-caption;
+  margin: $space-3 0 0;
 }
 </style>

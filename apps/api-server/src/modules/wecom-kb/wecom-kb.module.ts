@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { CouponModule } from '../coupon/coupon.module';
 import { WecomKbController } from './wecom-kb.controller';
 import { WecomKbService } from './wecom-kb.service';
 import { WecomCryptoService } from './wecom-crypto.service';
@@ -14,8 +15,10 @@ import { WecomOpsAdminController } from './wecom-ops.admin.controller';
 import { WecomSimulateController } from './wecom-simulate.admin.controller';
 import { LaunchDraftAdminController } from './launch-draft.admin.controller';
 import { AiInsightAdminController } from './ai-insight.admin.controller';
+import { RecallCampaignAdminController } from './recall-campaign.admin.controller';
 import { WecomBinding } from './wecom-binding.entity';
 import { AiInsightService } from './ai-insight.service';
+import { RecallCampaignService } from './recall-campaign.service';
 import { AiInsight } from '../../database/entities';
 
 /**
@@ -26,7 +29,7 @@ import { AiInsight } from '../../database/entities';
  * 不阻塞启动（与「生产禁 mock」等硬闸解耦，因为这是功能模块不是安全模型开关）。
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([WecomBinding, AiInsight])],
+  imports: [TypeOrmModule.forFeature([WecomBinding, AiInsight]), CouponModule],
   controllers: [
     WecomKbController,
     WecomBindingAdminController,
@@ -36,6 +39,8 @@ import { AiInsight } from '../../database/entities';
     LaunchDraftAdminController,
     // AI 台账（ab_ai_insight）：15 个 AI 节点的产出可回看/可标记
     AiInsightAdminController,
+    // 复购 / 流失主动唤醒闭环（#C）：复用 CouponService 批量发券 + 负责人企微知会
+    RecallCampaignAdminController,
   ],
   providers: [
     WecomKbService,
@@ -48,6 +53,8 @@ import { AiInsight } from '../../database/entities';
     WecomChatService,
     // AI 产出留档（ab_ai_insight）：WecomChatService 写、后台台账页读
     AiInsightService,
+    // 复购 / 流失主动唤醒（#C）
+    RecallCampaignService,
   ],
   exports: [WecomBindingService],
 })
