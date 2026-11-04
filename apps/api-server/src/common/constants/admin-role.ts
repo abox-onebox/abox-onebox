@@ -28,6 +28,11 @@ export const ADMIN_MENU_KEYS = [
   '/meal/matrix',
   '/meal/edit',
   '/meal/template',
+  // 开团草稿（#1 自动开团闭环 · 批 4）：AI 出草稿 + 人一键确认。
+  // ⚠️ 与 `ADMIN_NAV` 必须成对出现，否则表现为「授权了但侧边栏没有」（nav:consistency 会拦）。
+  //   `operator` 会被下面那条「非 /system/ 全部可见」的派生规则带进来 —— 这是**故意**的：
+  //   看草稿无害，真执行由控制器 `@Roles('super_admin','admin')` 拦。
+  '/meal/launch-draft',
   '/order/list',
   '/order/detail',
   // M5-1：配送单管理（D61/D62）—— 跑批对已存在的配送单**不覆盖**（保护人工录入的

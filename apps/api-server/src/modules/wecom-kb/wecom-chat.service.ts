@@ -10,8 +10,11 @@ import {
   launchDraftText,
   planLaunchConfirm,
   revalidateLaunchDraft,
+  type LaunchConfirmBlockCode,
   type LaunchConfirmPending,
+  type LaunchDraftBlocked,
   type LaunchDraftRecheckCtx,
+  type LaunchDraftRow,
 } from '../../common/utils/launch-draft';
 import { Cron } from '@nestjs/schedule';
 import { OpProxyService, Binding } from './op-proxy.service';
@@ -182,6 +185,51 @@ function dateLabel(date: string, now: Date): string {
   if (date === dayAfter) return `后天（${md}）`;
   return date;
 }
+
+/**
+ * 后台（admin-web）通道的开团草稿槽位键。
+ *
+ * ⚠️ 与企微的「按 userid 一槽」不同：后台页是**共享运营面**，任一管理员打开
+ *   看到的都该是同一份草稿（祝总生成 → 运营确认是真实用法）。故用固定键，
+ *   而不是 `admin#<sub>`。
+ * ⚠️ 后台与企微**不共享**槽位：企微生成的草稿要在企微确认。这是刻意的 ——
+ *   两个通道的执行身份不同（企微走 owner 服务账号，后台走管理员令牌），
+ *   混用会让审计里「谁干的」说不清。
+ */
+export const ADMIN_LAUNCH_DRAFT_KEY = 'admin';
+
+/** 生成开团草稿的结构化结果（企微只取文本，后台页取结构） */
+export type LaunchDraftGenResult =
+  | {
+      ok: true;
+      mealDate: string;
+      /** 脚本自报的生成方式：`llm` = 真模型，`stub` = 占位（--no-llm） */
+      mode: string | null;
+      rows: LaunchDraftRow[];
+      blocked: LaunchDraftBlocked[];
+      needsNewTemplate: string[];
+    }
+  | { ok: false; message: string };
+
+/** 确认开团时单行的执行结果（部分成功必须逐行如实呈现） */
+export interface LaunchConfirmRowResult {
+  /** 1-based 序号，与页面上的行号一致 */
+  index: number;
+  buildingGroupId: number;
+  buildingGroupName: string;
+  setMealId: number;
+  setMealName: string;
+  ok: boolean;
+  /** 只建起分配、没上架成功时也有值 —— 这种「半截」状态必须能被看见 */
+  assignmentId?: number;
+  stage?: 'create' | 'no_id' | 'publish';
+  /** 人话错误（已过 `chatErrorText`），页面可直接展示 */
+  errorText?: string;
+}
+
+export type LaunchConfirmRunResult =
+  | { ok: false; code: LaunchConfirmBlockCode; detail: string }
+  | { ok: true; rows: LaunchConfirmRowResult[] };
 
 @Injectable()
 export class WecomChatService {
@@ -1206,6 +1254,210 @@ export class WecomChatService {
    * 口径（2026-11-04 定）：逐日排（不指定日期时默认**明日**）· 楼群 1~2 个 · 企微优先。
    * 只产草稿：不写库、不调任何写接口、**不注册进每日编排**（祝总禁自动任务）。
    */
+  private async buildLaunchDraft(
+    binding: Binding,
+    now: Date,
+    dateArg: string | null | undefined,
+    pendingKey: string,
+  ): Promise<LaunchDraftGenResult> {
+    const mealDate = dateArg || tomorrowBj(now);
+    if (!mealDate) return { ok: false, message: '取不到日期，我先不动。稍后再试。' };
+
+    // 命令触发要实时口径，故 force=true（不吃 60s 缓存）
+    const [groupsRaw, tplsRaw] = await Promise.all([
+      this.resolver.listGroups(true).catch(() => null),
+      this.resolver.listTemplatesFull(true).catch(() => null),
+    ]);
+    if (!groupsRaw || groupsRaw.length === 0)
+      return {
+        ok: false,
+        message: '取不到楼群清单（可能权限不足），没法出开团草稿。可在后台「套餐编排」页查看。',
+      };
+    if (!tplsRaw || tplsRaw.length === 0)
+      return {
+        ok: false,
+        message: '取不到套餐模板库，没法出开团草稿。请先在后台「套餐编排」建好模板。',
+      };
+
+    const groups = groupsRaw.filter((g) => isLaunchCandidateEnabled(g.status));
+    const templates = tplsRaw.filter(
+      (t) => isMealTemplate(t) && isLaunchCandidateEnabled(t.status),
+    );
+    if (groups.length === 0) return { ok: false, message: '现在没有启用中的楼群，没法开团。' };
+    if (templates.length === 0)
+      return {
+        ok: false,
+        message: '模板库里没有「启用中的餐盒套餐」（可能只有预包装品或都已停用），没法开团。',
+      };
+
+    // 选品依据：近 30 天菜品热度（与节点 F 同源）。取不到也不影响出草稿 ——
+    // 候选集自带 usedCount，AI 仍可据此挑「常驻锚点」。
+    let proposalText = '';
+    try {
+      const today = todayBj(now);
+      if (today) {
+        const base = { which: 'dashboard', range: '30d', endShift: -1 } as StatsIntent;
+        const endDate = endDateOf(base, today);
+        const cur = await this.proxy.query(
+          STATS_QCODE.dishHeat,
+          { range: '30d', date: endDate },
+          binding,
+        );
+        if (cur.code === 0 && cur.data) proposalText = summarizeDishHeat(cur.data) || '';
+      }
+    } catch {
+      /* 热度取不到就空着 */
+    }
+
+    const input = {
+      mealDate,
+      buildingGroups: groups.map((g) => ({ id: Number(g.id), name: g.name || `楼群#${g.id}` })),
+      templates: templates.map((t) => ({
+        id: Number(t.id),
+        name: t.name || `套餐#${t.id}`,
+        kind: 'meal',
+        price: typeof t.priceFen === 'number' ? (t.priceFen / 100).toFixed(2) : '',
+        usedCount: typeof t.usedCount === 'number' ? t.usedCount : 0,
+        items: (t.items ?? []).map((i) => (typeof i.name === 'string' ? i.name : `#${i.itemId}`)),
+      })),
+      proposalText,
+    };
+
+    const repoRoot = this.resolveRepoRoot();
+    const tmpDir = this.pickWritableDir(repoRoot);
+    const plainFile = join(tmpDir, `_ld_${Date.now()}.json`);
+    try {
+      writeFileSync(plainFile, JSON.stringify(input), 'utf8');
+    } catch {
+      return { ok: false, message: '开团草稿的候选集写不进临时文件（磁盘权限），这次先不出。' };
+    }
+
+    const script = join(repoRoot, 'scripts', 'gen-launch-draft.mjs');
+    if (!existsSync(script)) {
+      try {
+        unlinkSync(plainFile);
+      } catch {
+        /* noop */
+      }
+      return {
+        ok: false,
+        message:
+          `开团草稿脚本未找到（${script}），这次先不出。` +
+          `候选集共 ${groups.length} 个楼群 / ${templates.length} 个套餐，可在后台手工排。`,
+      };
+    }
+
+    const out = await new Promise<string | null>((resolve) => {
+      let settled = false;
+      const finish = (m: string | null): void => {
+        if (!settled) {
+          settled = true;
+          resolve(m);
+        }
+      };
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn('node', [script, '--plain-file', plainFile], {
+          cwd: repoRoot,
+          env: { ...process.env },
+        });
+      } catch {
+        finish(null);
+        return;
+      }
+      const timer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* noop */
+        }
+        finish(null);
+      }, 60_000);
+      let buf = '';
+      child.stdout?.on('data', (d) => (buf += String(d)));
+      // stderr 不阻塞：脚本的失败说明已在 stdout 的 JSON 里，这里只是别让它撑爆缓冲区
+      child.stderr?.on('data', () => undefined);
+      child.on('error', () => finish(null));
+      child.on('close', () => {
+        clearTimeout(timer);
+        finish(buf.trim() ? buf.trim() : null);
+      });
+    });
+
+    try {
+      unlinkSync(plainFile);
+    } catch {
+      /* noop */
+    }
+
+    if (!out)
+      return {
+        ok: false,
+        message: '开团草稿生成没成功（超时或脚本报错），这次先不出。可在后台「套餐编排」页手工排。',
+      };
+
+    let payload: Record<string, unknown> | null = null;
+    try {
+      const parsed: unknown = JSON.parse(out);
+      payload = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      payload = null;
+    }
+    if (!payload)
+      return {
+        ok: false,
+        message: `开团草稿生成出来了但没法解析，这次先不出。原始输出：\n${out.slice(0, 400)}`,
+      };
+    if (payload.ok === false) {
+      const msg = typeof payload.message === 'string' ? payload.message : '未知原因';
+      return { ok: false, message: `开团草稿没生成：${msg}` };
+    }
+
+    // 第三道护栏：用**实时**模板/楼群复核（第二次 force 拉取，补「快照失效」）
+    const [groupsLive, tplsLive] = await Promise.all([
+      this.resolver.listGroups(true).catch(() => null),
+      this.resolver.listTemplatesFull(true).catch(() => null),
+    ]);
+    const ctx: LaunchDraftRecheckCtx = {
+      mealDate,
+      groups: groupsLive && groupsLive.length ? groupsLive : groups,
+      templates: tplsLive && tplsLive.length ? tplsLive : templates,
+    };
+    const res = revalidateLaunchDraft(payload, ctx);
+    const mode = typeof payload.mode === 'string' ? payload.mode : null;
+
+    const need = Array.isArray(payload.needsNewTemplate) ? payload.needsNewTemplate : [];
+    const needsNewTemplate = need
+      .slice(0, 5)
+      .map((n) => {
+        const r = n && typeof n === 'object' ? (n as Record<string, unknown>).reason : n;
+        return typeof r === 'string' ? r : String(r);
+      })
+      .filter((s) => s.length > 0);
+
+    if (res.rows.length) {
+      // 存成「待确认」：只在这里存、只在**同一通道**的 confirm 里消费，别处不许读
+      this.launchDrafts.set(pendingKey, {
+        mealDate,
+        day: todayBj(now) || '',
+        rows: res.rows,
+      });
+    }
+
+    return {
+      ok: true,
+      mealDate,
+      mode,
+      rows: res.rows,
+      blocked: res.blocked,
+      needsNewTemplate,
+    };
+  }
+
+  /**
+   * 企微「生成开团草稿」的**文本外壳**：核心在 `buildLaunchDraft`，这里只排版。
+   * 后台页取的是同一份结构化结果 —— 两个通道共用一条生成链路，不存在第二套判据。
+   */
   private genLaunchDraft(
     userId: string,
     binding: Binding,
@@ -1213,169 +1465,23 @@ export class WecomChatService {
     dateArg?: string | null,
   ): Promise<string> {
     const run = async (): Promise<string> => {
-      const mealDate = dateArg || tomorrowBj(now);
-      if (!mealDate) return '取不到日期，我先不动。稍后再试。';
+      const r = await this.buildLaunchDraft(binding, now, dateArg, userId);
+      if (!r.ok) return r.message;
 
-      // 命令触发要实时口径，故 force=true（不吃 60s 缓存）
-      const [groupsRaw, tplsRaw] = await Promise.all([
-        this.resolver.listGroups(true).catch(() => null),
-        this.resolver.listTemplatesFull(true).catch(() => null),
-      ]);
-      if (!groupsRaw || groupsRaw.length === 0)
-        return '取不到楼群清单（可能权限不足），没法出开团草稿。可在后台「套餐编排」页查看。';
-      if (!tplsRaw || tplsRaw.length === 0)
-        return '取不到套餐模板库，没法出开团草稿。请先在后台「套餐编排」建好模板。';
+      const lines = [
+        launchDraftText(
+          { rows: r.rows, blocked: r.blocked },
+          { mealDate: r.mealDate, mode: r.mode ?? undefined },
+        ),
+      ];
 
-      const groups = groupsRaw.filter((g) => isLaunchCandidateEnabled(g.status));
-      const templates = tplsRaw.filter(
-        (t) => isMealTemplate(t) && isLaunchCandidateEnabled(t.status),
-      );
-      if (groups.length === 0) return '现在没有启用中的楼群，没法开团。';
-      if (templates.length === 0)
-        return '模板库里没有「启用中的餐盒套餐」（可能只有预包装品或都已停用），没法开团。';
-
-      // 选品依据：近 30 天菜品热度（与节点 F 同源）。取不到也不影响出草稿 ——
-      // 候选集自带 usedCount，AI 仍可据此挑「常驻锚点」。
-      let proposalText = '';
-      try {
-        const today = todayBj(now);
-        if (today) {
-          const base = { which: 'dashboard', range: '30d', endShift: -1 } as StatsIntent;
-          const endDate = endDateOf(base, today);
-          const cur = await this.proxy.query(
-            STATS_QCODE.dishHeat,
-            { range: '30d', date: endDate },
-            binding,
-          );
-          if (cur.code === 0 && cur.data) proposalText = summarizeDishHeat(cur.data) || '';
-        }
-      } catch {
-        /* 热度取不到就空着 */
-      }
-
-      const input = {
-        mealDate,
-        buildingGroups: groups.map((g) => ({ id: Number(g.id), name: g.name || `楼群#${g.id}` })),
-        templates: templates.map((t) => ({
-          id: Number(t.id),
-          name: t.name || `套餐#${t.id}`,
-          kind: 'meal',
-          price: typeof t.priceFen === 'number' ? (t.priceFen / 100).toFixed(2) : '',
-          usedCount: typeof t.usedCount === 'number' ? t.usedCount : 0,
-          items: (t.items ?? []).map((i) => (typeof i.name === 'string' ? i.name : `#${i.itemId}`)),
-        })),
-        proposalText,
-      };
-
-      const repoRoot = this.resolveRepoRoot();
-      const tmpDir = this.pickWritableDir(repoRoot);
-      const plainFile = join(tmpDir, `_ld_${Date.now()}.json`);
-      try {
-        writeFileSync(plainFile, JSON.stringify(input), 'utf8');
-      } catch {
-        return '开团草稿的候选集写不进临时文件（磁盘权限），这次先不出。';
-      }
-
-      const script = join(repoRoot, 'scripts', 'gen-launch-draft.mjs');
-      if (!existsSync(script)) {
-        try {
-          unlinkSync(plainFile);
-        } catch {
-          /* noop */
-        }
-        return (
-          `开团草稿脚本未找到（${script}），这次先不出。` +
-          `候选集共 ${groups.length} 个楼群 / ${templates.length} 个套餐，可在后台手工排。`
-        );
-      }
-
-      const out = await new Promise<string | null>((resolve) => {
-        let settled = false;
-        const finish = (m: string | null): void => {
-          if (!settled) {
-            settled = true;
-            resolve(m);
-          }
-        };
-        let child: ReturnType<typeof spawn>;
-        try {
-          child = spawn('node', [script, '--plain-file', plainFile], {
-            cwd: repoRoot,
-            env: { ...process.env },
-          });
-        } catch {
-          finish(null);
-          return;
-        }
-        const timer = setTimeout(() => {
-          try {
-            child.kill('SIGKILL');
-          } catch {
-            /* noop */
-          }
-          finish(null);
-        }, 60_000);
-        let buf = '';
-        child.stdout?.on('data', (d) => (buf += String(d)));
-        // stderr 不阻塞：脚本的失败说明已在 stdout 的 JSON 里，这里只是别让它撑爆缓冲区
-        child.stderr?.on('data', () => undefined);
-        child.on('error', () => finish(null));
-        child.on('close', () => {
-          clearTimeout(timer);
-          finish(buf.trim() ? buf.trim() : null);
-        });
-      });
-
-      try {
-        unlinkSync(plainFile);
-      } catch {
-        /* noop */
-      }
-
-      if (!out)
-        return '开团草稿生成没成功（超时或脚本报错），这次先不出。可在后台「套餐编排」页手工排。';
-
-      let payload: Record<string, unknown> | null = null;
-      try {
-        const parsed: unknown = JSON.parse(out);
-        payload = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
-      } catch {
-        payload = null;
-      }
-      if (!payload)
-        return `开团草稿生成出来了但没法解析，这次先不出。原始输出：\n${out.slice(0, 400)}`;
-      if (payload.ok === false) {
-        const msg = typeof payload.message === 'string' ? payload.message : '未知原因';
-        return `开团草稿没生成：${msg}`;
-      }
-
-      // 第三道护栏：用**实时**模板/楼群复核（第二次 force 拉取，补「快照失效」）
-      const [groupsLive, tplsLive] = await Promise.all([
-        this.resolver.listGroups(true).catch(() => null),
-        this.resolver.listTemplatesFull(true).catch(() => null),
-      ]);
-      const ctx: LaunchDraftRecheckCtx = {
-        mealDate,
-        groups: groupsLive && groupsLive.length ? groupsLive : groups,
-        templates: tplsLive && tplsLive.length ? tplsLive : templates,
-      };
-      const res = revalidateLaunchDraft(payload, ctx);
-      const mode = typeof payload.mode === 'string' ? payload.mode : undefined;
-      const lines = [launchDraftText(res, { mealDate, mode })];
-
-      const need = Array.isArray(payload.needsNewTemplate) ? payload.needsNewTemplate : [];
-      if (need.length) {
+      if (r.needsNewTemplate.length) {
         lines.push('');
         lines.push('AI 自报还缺这些（不自动建模板，需你确认）：');
-        for (const n of need.slice(0, 5)) {
-          const r = n && typeof n === 'object' ? (n as Record<string, unknown>).reason : n;
-          lines.push(`· ${typeof r === 'string' ? r : String(r)}`);
-        }
+        for (const s of r.needsNewTemplate) lines.push(`· ${s}`);
       }
 
-      if (res.rows.length) {
-        // 存成「待确认」：只在这里存、只在 confirmLaunchDraft 里消费，别处不许读
-        this.launchDrafts.set(userId, { mealDate, day: todayBj(now) || '', rows: res.rows });
+      if (r.rows.length) {
         lines.push('');
         lines.push(
           '回「确认开团」我就按这份真排（默认全排）；只想排其中几条，回「确认开团 1,3」。' +
@@ -1474,13 +1580,13 @@ export class WecomChatService {
    *
    * ⚠️ 部分成功必须如实报：绝不把「3 条成功 2 条」说成「办好了」。
    */
-  private async confirmLaunchDraft(
-    userId: string,
+  private async runLaunchConfirm(
+    pendingKey: string,
     binding: Binding,
     picks: number[] | null,
     now: Date,
-  ): Promise<string> {
-    const pending = this.launchDrafts.get(userId) ?? null;
+  ): Promise<LaunchConfirmRunResult> {
+    const pending = this.launchDrafts.get(pendingKey) ?? null;
     const plan = planLaunchConfirm({
       pending,
       today: todayBj(now) || '',
@@ -1492,52 +1598,119 @@ export class WecomChatService {
     if (!plan.ok) {
       // 过期 / 已截单 / 无草稿：清掉，免得同一份烂草稿被反复确认
       if (plan.code === 'expired' || plan.code === 'cutoff' || plan.code === 'no_pending') {
-        this.launchDrafts.delete(userId);
+        this.launchDrafts.delete(pendingKey);
       }
-      return plan.detail;
+      return { ok: false, code: plan.code, detail: plan.detail };
     }
 
     // 先删再执行：宁可「执行到一半失败」，也不要「点了两次排两遍」
-    this.launchDrafts.delete(userId);
+    this.launchDrafts.delete(pendingKey);
 
-    const okLines: string[] = [];
-    const failLines: string[] = [];
-    for (const r of plan.rows) {
+    const rows: LaunchConfirmRowResult[] = [];
+    for (let i = 0; i < plan.rows.length; i += 1) {
+      const r = plan.rows[i];
       const res = await this.createAndPublish(
         { mealDate: r.mealDate, buildingGroupId: r.buildingGroupId, setMealId: r.setMealId },
         binding,
         `确认开团 ${r.buildingGroupName} ${r.setMealName}`,
       );
+      const base = {
+        // 本次执行里的第几条（勾选 2、4 时这里是 1、2 —— 页面另有楼群/套餐名可辨）
+        index: i + 1,
+        buildingGroupId: r.buildingGroupId,
+        buildingGroupName: r.buildingGroupName,
+        setMealId: r.setMealId,
+        setMealName: r.setMealName,
+      };
       if (res.ok) {
-        okLines.push(`✅ ${r.buildingGroupName} → ${r.setMealName}：已上架，用户能下单`);
+        rows.push({ ...base, ok: true, assignmentId: res.assignmentId });
         continue;
       }
-      if (res.stage === 'publish') {
+      rows.push({
+        ...base,
+        ok: false,
+        assignmentId: res.assignmentId,
+        stage: res.stage,
+        errorText: chatErrorText(res.code, res.message),
+      });
+    }
+
+    return { ok: true, rows };
+  }
+
+  /**
+   * 企微「确认开团」的**文本外壳**：执行在 `runLaunchConfirm`，这里只说人话。
+   * 后台页取的是同一份结构化结果 —— 一条执行链路，两副面孔。
+   */
+  private async confirmLaunchDraft(
+    userId: string,
+    binding: Binding,
+    picks: number[] | null,
+    now: Date,
+  ): Promise<string> {
+    const r = await this.runLaunchConfirm(userId, binding, picks, now);
+    if (!r.ok) return r.detail;
+
+    const okLines: string[] = [];
+    const failLines: string[] = [];
+    for (const x of r.rows) {
+      if (x.ok) {
+        okLines.push(`✅ ${x.buildingGroupName} → ${x.setMealName}：已上架，用户能下单`);
+        continue;
+      }
+      if (x.stage === 'publish') {
         failLines.push(
-          `⚠️ ${r.buildingGroupName}：分配建好了（#${res.assignmentId}），但**上架没成功**：` +
-            `${chatErrorText(res.code, res.message)} —— 手机上还买不到，请在后台点一下上架`,
+          `⚠️ ${x.buildingGroupName}：分配建好了（#${x.assignmentId}），但**上架没成功**：` +
+            `${x.errorText} —— 手机上还买不到，请在后台点一下上架`,
         );
-      } else if (res.stage === 'no_id') {
+      } else if (x.stage === 'no_id') {
         failLines.push(
-          `⚠️ ${r.buildingGroupName}：分配建好了但后台没回执 id，上架没做，请后台看一眼`,
+          `⚠️ ${x.buildingGroupName}：分配建好了但后台没回执 id，上架没做，请后台看一眼`,
         );
       } else {
-        failLines.push(
-          `❌ ${r.buildingGroupName}：没排上 —— ${chatErrorText(res.code, res.message)}`,
-        );
+        failLines.push(`❌ ${x.buildingGroupName}：没排上 —— ${x.errorText}`);
       }
     }
 
     const head =
       failLines.length === 0
         ? `办好了 ${okLines.length} 条：`
-        : `排了 ${plan.rows.length} 条：成功 ${okLines.length}、失败 ${failLines.length}`;
+        : `排了 ${r.rows.length} 条：成功 ${okLines.length}、失败 ${failLines.length}`;
     const tail =
       failLines.length === 0
         ? '今晚 24 点前都能改；要改就再说一句楼群 + 新套餐。'
         : '失败的那几条没排上，可以单独再说一次；成功的已经生效。';
 
     return [head, ...okLines, ...failLines, '', tail].join('\n');
+  }
+
+  /**
+   * 后台页专用 · 生成开团草稿（只读，不写库）。
+   *
+   * 与企微走**同一条** `buildLaunchDraft` 链路，只是待确认槽位用 `ADMIN_LAUNCH_DRAFT_KEY`。
+   * 之所以不在后台另写一套：候选集过滤（`kind=meal` / 启用 / 白名单 / 实时复核）
+   * 一旦分叉，就会出现「企微排得对、后台排错」这种最难查的偏差。
+   */
+  async generateLaunchDraftForAdmin(
+    binding: Binding,
+    now: Date,
+    dateArg?: string | null,
+  ): Promise<LaunchDraftGenResult> {
+    return this.buildLaunchDraft(binding, now, dateArg, ADMIN_LAUNCH_DRAFT_KEY);
+  }
+
+  /**
+   * 后台页专用 · 确认开团（**唯一真写排期的口子之一**，另一个是企微命令）。
+   *
+   * ⚠️ 复用 `runLaunchConfirm`：四道闸（有效期/权限/截单/挑条）与「先删再执行」
+   *   都在那里，这里不重复判定 —— 重复写一遍判据，迟早在某一边漏掉一条。
+   */
+  async confirmLaunchDraftForAdmin(
+    binding: Binding,
+    picks: number[] | null,
+    now: Date,
+  ): Promise<LaunchConfirmRunResult> {
+    return this.runLaunchConfirm(ADMIN_LAUNCH_DRAFT_KEY, binding, picks, now);
   }
 
   /**

@@ -36,6 +36,13 @@ export const routes: RouteRecordRaw[] = [
         name: 'MealTemplate',
         component: () => import('@/views/meal/template.vue'),
       },
+      // 开团草稿（#1 自动开团闭环 · 批 4）—— AI 出草稿、人一键确认；
+      // 与企微「生成开团草稿 / 确认开团」是同一批服务端方法，后台只是兜底入口。
+      {
+        path: 'meal/launch-draft',
+        name: 'MealLaunchDraft',
+        component: () => import('@/views/meal/launch-draft.vue'),
+      },
 
       // 订单中心 M32 · P30–P31
       { path: 'order/list', name: 'OrderList', component: () => import('@/views/order/list.vue') },

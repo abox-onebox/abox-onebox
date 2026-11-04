@@ -12,6 +12,7 @@ import { WecomChatService } from './wecom-chat.service';
 import { WecomBindingAdminController } from './wecom-binding.admin.controller';
 import { WecomOpsAdminController } from './wecom-ops.admin.controller';
 import { WecomSimulateController } from './wecom-simulate.admin.controller';
+import { LaunchDraftAdminController } from './launch-draft.admin.controller';
 import { WecomBinding } from './wecom-binding.entity';
 
 /**
@@ -28,6 +29,8 @@ import { WecomBinding } from './wecom-binding.entity';
     WecomBindingAdminController,
     WecomOpsAdminController,
     WecomSimulateController,
+    // 开团草稿后台页（#1 批 4）：路径是 `admin/meal/*`，但复用本模块的 WecomChatService —— 见该文件头注
+    LaunchDraftAdminController,
   ],
   providers: [
     WecomKbService,

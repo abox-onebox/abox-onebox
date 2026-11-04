@@ -36,10 +36,20 @@ const entry = (patch: Partial<CatalogEntry>): CatalogEntry => ({
 });
 
 describe('op-policy · 目录规模', () => {
-  it('目录覆盖全部后台端点（137 条，与生成器自证一致）', () => {
-    expect(ADMIN_ENDPOINT_COUNT).toBe(137);
-    expect(allItems().length).toBe(137);
-    expect(Object.keys(ADMIN_CATALOG).length).toBe(137);
+  /**
+   * 这里**刻意不写死条数**（2026-11-04 修正）。
+   *
+   * 原先是 `expect(ADMIN_ENDPOINT_COUNT).toBe(137)` —— 那是把常量与字面量比，
+   * 每加一个后台端点都得改一次测试，改的人只会照着报错数字填，等于**训练自己忽略它**。
+   * 而「目录与源码是否同步」本来就是 `wecom:catalog` 门禁的职责（它重新解析源码再比对）。
+   *
+   * 保留下来的是**真正的交叉校验**：常量 vs 实际展开后的条目 vs 字典键数，
+   * 三者不等就说明生成器少写/多写了条目 —— 这才是有价值的判据。
+   */
+  it('常量、展开条目、字典键数三者一致（漂移由 wecom:catalog 门禁把守）', () => {
+    expect(ADMIN_ENDPOINT_COUNT).toBeGreaterThan(0);
+    expect(allItems().length).toBe(ADMIN_ENDPOINT_COUNT);
+    expect(Object.keys(ADMIN_CATALOG).length).toBe(ADMIN_ENDPOINT_COUNT);
   });
 
   it('每条都能定位到源码位置（否则改端点后无从核对漂移）', () => {
@@ -50,7 +60,7 @@ describe('op-policy · 目录规模', () => {
 });
 
 describe('op-policy · 负责人拥有全部权限', () => {
-  it('★ 137 个端点对 owner 全部可执行（这是本功能的核心诉求）', () => {
+  it('★ 全部端点对 owner 都可执行（这是本功能的核心诉求）', () => {
     const blocked = allItems().filter((it) => !canExec('owner', it.entry).ok);
     expect(blocked.map((b) => b.code)).toEqual([]);
   });
@@ -174,7 +184,7 @@ describe('op-policy · 检索与展示', () => {
 
   it('模块分组总数等于目录规模', () => {
     const sum = modules('owner').reduce((a, m) => a + m.total, 0);
-    expect(sum).toBe(137);
+    expect(sum).toBe(ADMIN_ENDPOINT_COUNT);
   });
 
   it('模块名取路径第 2 段', () => {

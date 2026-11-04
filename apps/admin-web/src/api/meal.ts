@@ -289,3 +289,77 @@ export function fetchDistributionCenterOptions(): Promise<{
     '/admin/meal/distribution-centers',
   );
 }
+
+/* ───────────────────────── 开团草稿（#1 自动开团闭环 · 批 4） ───────────────────────── */
+
+/**
+ * 开团草稿 —— AI 出的「哪个楼群 × 哪天 × 用哪个套餐」建议。
+ *
+ * ⚠️ 草稿里的 `setMealId` / `buildingGroupId` **只可能来自真实候选集**：
+ *    脚本层白名单 + 服务端展示前实时复核（模板停用、楼群停用、`kind=fmcg` 都会被拦）。
+ *    所以本页不需要再校验一遍 ID 合法性 —— 需要校验的是**人**：看一眼再点确认。
+ */
+export interface LaunchDraftRow {
+  mealDate: string;
+  buildingGroupId: number;
+  buildingGroupName: string;
+  setMealId: number;
+  setMealName: string;
+  /** 价格（分）。页面用 `fenToYuan` 转元展示 */
+  priceFen: number;
+  /** 模板被引用过几次 —— AI 挑「常驻锚点」的依据之一 */
+  usedCount: number;
+  /** AI 给出的理由（可能为空串） */
+  reason: string;
+}
+
+/** 被拦下的候选（模板停用 / 楼群停用 / 类型不符 / 重复楼群 …），逐条带人话原因 */
+export interface LaunchDraftBlocked {
+  buildingGroupId: number | null;
+  setMealId: number | null;
+  code: string;
+  detail: string;
+}
+
+export type LaunchDraftGenResult =
+  | {
+      ok: true;
+      mealDate: string;
+      /** `llm` = 真模型产出；`stub` = 占位（脚本 --no-llm）；`null` = 脚本没报 */
+      mode: string | null;
+      rows: LaunchDraftRow[];
+      blocked: LaunchDraftBlocked[];
+      needsNewTemplate: string[];
+    }
+  | { ok: false; message: string };
+
+/** 确认开团时逐行的执行结果 —— 部分成功必须逐行看得见 */
+export interface LaunchConfirmRowResult {
+  index: number;
+  buildingGroupId: number;
+  buildingGroupName: string;
+  setMealId: number;
+  setMealName: string;
+  ok: boolean;
+  /** 只建起分配、没上架成功时也有值（「半截」状态） */
+  assignmentId?: number;
+  stage?: 'create' | 'no_id' | 'publish';
+  errorText?: string;
+}
+
+export type LaunchConfirmRunResult =
+  { ok: false; code: string; detail: string } | { ok: true; rows: LaunchConfirmRowResult[] };
+
+/** 生成开团草稿（只读，不写库）。不传日期 = 明日 */
+export function generateLaunchDraft(payload: { mealDate?: string }): Promise<LaunchDraftGenResult> {
+  return http.post<LaunchDraftGenResult>('/admin/meal/launch-draft', payload);
+}
+
+/**
+ * 确认开团（**真写排期**：逐条 `assign → publish`）。
+ *
+ * `picks` 是 1-based 行号；不传 = 全排。
+ */
+export function confirmLaunchDraft(payload: { picks?: number[] }): Promise<LaunchConfirmRunResult> {
+  return http.post<LaunchConfirmRunResult>('/admin/meal/launch-draft/confirm', payload);
+}

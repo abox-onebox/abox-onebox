@@ -126,6 +126,16 @@ export const ADMIN_NAV = [
         module: 'M31-04',
         icon: 'template',
       },
+      // 开团草稿（#1 自动开团闭环 · 批 4）。原型无对应页 ⇒ `page` 记 `—`，不编造原型号；
+      // `module` 记接口（AI 编排节点 R 的后台落点）。入口必须同时进服务端
+      // `ADMIN_MENU_KEYS`，否则侧边栏永远不出现该项（`nav:consistency` 门禁会拦）。
+      {
+        path: '/meal/launch-draft',
+        title: '开团草稿',
+        page: '—',
+        module: 'AI-R',
+        icon: 'star',
+      },
     ],
   },
   {
