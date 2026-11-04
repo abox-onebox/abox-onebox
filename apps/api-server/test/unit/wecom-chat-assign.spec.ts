@@ -67,6 +67,7 @@ function build(opts: {
       null as never,
       null as never,
       null as never,
+      { record: async () => undefined } as never,
     ),
     calls,
   };

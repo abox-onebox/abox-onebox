@@ -107,6 +107,12 @@ export const ADMIN_MENU_KEYS = [
   '/stats/retention',
   // D77 页面停留（2026-10-30）：匿名埋点的读侧，与看板同类 —— 授权了就必须有入口
   '/stats/page-duration',
+  // AI 台账（2026-11-04）：15 个 AI 节点的产出可回看/标记。
+  //   `AiInsightAdminController` 是 `@Roles('super_admin','admin','operator')`，
+  //   与前端 `ADMIN_NAV` 的「数据」组同向；operator 经派生规则（非 /system/）自动可见。
+  //   ⚠️ 刻意**不给 finance / viewer**：台账含全平台经营分析结论（选品/发券/流失），
+  //      比看板原始指标更进一步，窄角色不应看到「AI 建议怎么调整经营」。
+  '/stats/ai-insight',
   '/system/config',
   '/system/admin-user',
   '/system/role',

@@ -392,6 +392,16 @@ export const ADMIN_NAV = [
         module: 'M36-05',
         icon: 'clock',
       },
+      // AI 台账（2026-11-04 新增）：15 个 AI 节点的产出留档。
+      // ⚠️ 与「开团草稿」不同 —— 那一页会真写排期，这一页**只读 + 标记**，
+      //    所以放在「数据」组而不是「组合」组：它是看结论的地方，不是干活的地方。
+      {
+        path: '/stats/ai-insight',
+        title: 'AI 台账',
+        page: '—',
+        module: 'ai-insight',
+        icon: 'star',
+      },
     ],
   },
   {

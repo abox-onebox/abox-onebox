@@ -278,6 +278,12 @@ export const routes: RouteRecordRaw[] = [
         name: 'StatsPageDuration',
         component: () => import('@/views/stats/page-duration.vue'),
       },
+      // AI 台账（2026-11-04 · ab_ai_insight）：15 个 AI 节点的产出可回看/可标记
+      {
+        path: 'stats/ai-insight',
+        name: 'StatsAiInsight',
+        component: () => import('@/views/stats/ai-insight.vue'),
+      },
 
       // 系统管理 M37 · P36
       {

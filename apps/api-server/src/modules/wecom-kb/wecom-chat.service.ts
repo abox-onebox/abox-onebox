@@ -16,12 +16,14 @@ import {
   type LaunchDraftRecheckCtx,
   type LaunchDraftRow,
 } from '../../common/utils/launch-draft';
+import { looksLikeRealOutput, pickInsightTitle } from '../../common/utils/ai-insight';
 import { Cron } from '@nestjs/schedule';
 import { OpProxyService, Binding } from './op-proxy.service';
 import { NameResolverService, GroupResolve, ItemResolve } from './name-resolver.service';
 import { WecomBindingService } from './wecom-binding.service';
 import { WecomSvcTokenService } from './wecom-svc-token.service';
 import { WecomTokenService } from './wecom-token.service';
+import { AiInsightService } from './ai-insight.service';
 import { bjYmdPlus, parseMealDate } from './name-match';
 import { parseIntent, isConfirm, isCancel } from './chat-flow';
 import {
@@ -119,6 +121,29 @@ export interface DailyNodeResult {
  */
 
 const SESSION_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * 每日编排的节点 key → AI 台账的 kind。
+ *
+ * ⚠️ **两处必须用同一套 kind**：企微里说「生成选品提案」走 `reply()` 的 switch，
+ * 每日 09:00 自动编排走 `runDailyNodes` —— 两条路径都会写台账。
+ * 若一边用 `meal`（节点 key）、一边用 `meal-proposal`（脚本名），台账里同一个节点
+ * 会分裂成两种类型，按 kind 筛选就会漏掉一半，而**没有任何报错**。
+ */
+const NODE_INSIGHT_KIND: Record<string, string> = {
+  daily: 'daily-report',
+  meal: 'meal-proposal',
+  recruit: 'recruit-proposal',
+  coupon: 'coupon-strategy',
+  demand: 'demand-forecast',
+  growth: 'growth-experiment',
+  risk: 'risk-recon',
+  churn: 'churn-recall',
+  leader: 'leader-health',
+  health: 'health-score',
+  community: 'community-plan',
+  refund: 'refund-cluster',
+};
 
 interface Draft {
   groupId?: number;
@@ -279,6 +304,12 @@ export class WecomChatService {
     private readonly bindingSvc: WecomBindingService,
     private readonly svcTokenSvc: WecomSvcTokenService,
     private readonly tokenSvc: WecomTokenService,
+    /**
+     * AI 产出留档（`ab_ai_insight`）。
+     * ⚠️ 它的 `record()` **永不抛异常** —— 留档是旁路，不得让 AI 回复陪葬。
+     *    故这里调用一律不包 try/catch（包了反而会掩盖「record 本该吞异常」这个契约）。
+     */
+    private readonly aiInsight: AiInsightService,
   ) {}
 
   private getSession(userId: string): Session | undefined {
@@ -376,22 +407,38 @@ export class WecomChatService {
       case 'confirm':
         return '现在没有等你确认的事。';
       case 'genCampaign':
-        return this.genCampaign(intent.brief);
+        return this.captureInsight('campaign', '招募文案与素材', binding, () =>
+          this.genCampaign(intent.brief),
+        );
       case 'genDailyReport':
-        return this.genDailyReport(binding, now);
+        return this.captureInsight('daily-report', '运营日报', binding, () =>
+          this.genDailyReport(binding, now),
+        );
       case 'genMealProposal':
-        return this.genMealProposal(binding, now);
+        return this.captureInsight('meal-proposal', '选品提案', binding, () =>
+          this.genMealProposal(binding, now),
+        );
       case 'genRecruitProposal':
-        return this.genRecruitProposal(binding, now);
+        return this.captureInsight('recruit-proposal', '招募提案', binding, () =>
+          this.genRecruitProposal(binding, now),
+        );
       case 'genCouponStrategy':
-        return this.genCouponStrategy(binding, now);
+        return this.captureInsight('coupon-strategy', '发券策略', binding, () =>
+          this.genCouponStrategy(binding, now),
+        );
       case 'genDemandForecast':
-        return this.genDemandForecast(binding, now);
+        return this.captureInsight('demand-forecast', '需求预测', binding, () =>
+          this.genDemandForecast(binding, now),
+        );
       case 'genGrowthExperiment':
-        return this.genGrowthExperiment(binding, now);
+        return this.captureInsight('growth-experiment', '增长实验', binding, () =>
+          this.genGrowthExperiment(binding, now),
+        );
       case 'runOrchestrate':
         // 完整编排会跑过 nginx 60s 网关超时，故不在此 await（否则试跑台收到 504）。
         // 改为后台触发：结果由 triggerOwnerPush 推到真实负责人手机 + 写日志。
+        // ⚠️ 编排的留档在 `runAndPushForUser` 内部完成（它是唯一知道各节点结果的地方），
+        //    不在这里记 —— 这里只有「已触发」三个字，记下来是噪声。
         void this.triggerOwnerPush().catch(() => {
           /* 异常已在其内部记日志，这里不重复 */
         });
@@ -400,24 +447,85 @@ export class WecomChatService {
           '本试跑不阻塞等待；可在服务器日志 grep "已推送摘要给" 看成败。'
         );
       case 'genRiskRecon':
-        return this.genRiskRecon(binding, now);
+        return this.captureInsight('risk-recon', '风控对账', binding, () =>
+          this.genRiskRecon(binding, now),
+        );
       case 'genChurnRecall':
-        return this.genChurnRecall(binding, now);
+        return this.captureInsight('churn-recall', '流失预警与召回', binding, () =>
+          this.genChurnRecall(binding, now),
+        );
       case 'genLeaderHealth':
-        return this.genLeaderHealth(binding, now);
+        return this.captureInsight('leader-health', '团长健康度', binding, () =>
+          this.genLeaderHealth(binding, now),
+        );
       case 'genHealthScore':
-        return this.genHealthScore(binding, now);
+        return this.captureInsight('health-score', '经营健康度', binding, () =>
+          this.genHealthScore(binding, now),
+        );
       case 'genCommunityPlan':
-        return this.genCommunityPlan(binding, now);
+        return this.captureInsight('community-plan', '社群运营排期', binding, () =>
+          this.genCommunityPlan(binding, now),
+        );
       case 'genRefundCluster':
-        return this.genRefundCluster(binding, now);
+        return this.captureInsight('refund-cluster', '退款根因', binding, () =>
+          this.genRefundCluster(binding, now),
+        );
       case 'genLaunchDraft':
-        return this.genLaunchDraft(userId, binding, now, intent.date);
+        return this.captureInsight(
+          'launch-draft',
+          '开团草稿',
+          binding,
+          () => this.genLaunchDraft(userId, binding, now, intent.date),
+          { mealDateArg: intent.date ?? null },
+        );
       case 'confirmLaunchDraft':
+        // 不入台账：这是**执行**不是生成（结论已由 genLaunchDraft 留档），
+        // 执行本身由操作日志负责。
         return this.confirmLaunchDraft(userId, binding, intent.picks, now);
       default:
         return this.maybeLLMReply(text, binding);
     }
+  }
+
+  /**
+   * 跑一次 AI 生成，顺手留一份档，再**原样**返回文本。
+   *
+   * ## 为什么在 `reply()` 的 switch 外面包，而不进 15 个节点的方法体
+   * 15 个节点各自 100~300 行，每个内部都有多条 `return '失败提示'`。在各方法体里
+   * 找「成功那一处」加留档，等于要逐个精读并判断哪条 return 算成功 —— 改错一处
+   * 就静默丢档或误存失败提示，且 15 次改动 = 15 个回归面。包在 switch 这一层，
+   * 判据收敛到一处、可单测（`looksLikeRealOutput`），且**对节点逻辑零侵入**。
+   *
+   * ## 为什么失败提示不留档
+   * 「取不到数据，稍后再试」不是 AI 的判断，是链路故障。把它记进台账会让
+   * 「AI 建议了几次 / 采纳率」永久失真（分母混入失败）。判据见
+   * `common/utils/ai-insight.ts`（有单测，双侧样本）。
+   *
+   * ## 契约
+   * - `run()` 抛异常 → **不捕获**，原样上抛（外层 `genXxx` 各自有全段 try，异常语义不变）
+   * - `record()` 不抛（其内部已吞并记 error 日志）⇒ 这里不需要 try/catch
+   * - 返回值与不包这层时**逐字相同** ⇒ 企微侧行为零变更
+   */
+  private async captureInsight(
+    kind: string,
+    fallbackTitle: string,
+    binding: Binding,
+    run: () => Promise<string>,
+    input?: Record<string, unknown>,
+  ): Promise<string> {
+    const t0 = Date.now();
+    const text = await run();
+    if (looksLikeRealOutput(text)) {
+      await this.aiInsight.record({
+        kind,
+        title: pickInsightTitle(text, fallbackTitle),
+        content: text,
+        source: 'chat',
+        actorName: binding.operatorName ?? null,
+        meta: { elapsedMs: Date.now() - t0, input },
+      });
+    }
+    return text;
   }
 
   /**
@@ -584,12 +692,25 @@ export class WecomChatService {
       }
       try {
         const text = await n.run();
+        const plain = typeof text === 'string' ? text : String(text);
         out.push({
           key: n.key,
           title: n.title,
-          text: typeof text === 'string' ? text : String(text),
+          text: plain,
           ok: true,
         });
+        // 每日编排是**无人值守**路径：推完就只剩一行「推了 N 字」日志。
+        // 逐节点留档后，负责人事后能对着「那天的编号」复盘 AI 当时到底怎么判断的。
+        // 与 chat 路径共用 `captureInsight` 的同一套判据（`looksLikeRealOutput`）。
+        if (looksLikeRealOutput(plain)) {
+          await this.aiInsight.record({
+            kind: NODE_INSIGHT_KIND[n.key] ?? n.key,
+            title: pickInsightTitle(plain, n.title),
+            content: plain,
+            source: 'cron',
+            meta: { input: { node: n.key, ranAt: now.toISOString() } },
+          });
+        }
       } catch (e) {
         out.push({
           key: n.key,
@@ -1715,7 +1836,42 @@ export class WecomChatService {
     now: Date,
     dateArg?: string | null,
   ): Promise<LaunchDraftGenResult> {
-    return this.buildLaunchDraft(binding, now, dateArg, ADMIN_LAUNCH_DRAFT_KEY);
+    const res = await this.buildLaunchDraft(binding, now, dateArg, ADMIN_LAUNCH_DRAFT_KEY);
+
+    // 留档：这里**按结构化结果判「有没有结论」**，不用 `looksLikeRealOutput` 的文本启发式。
+    // 原因：「0 条 + 明确原因」正是最该留档的一种结论 —— 2026-11-04 就因为把原因挤出了
+    // 展示上限（`slice(0,5)`），页面看起来像「AI 没干活」。若按文本长度判，这段结论太短，
+    // 会被判成「失败」而不留档，等于第二次丢掉同一个东西。
+    // 失败（ok:false）也记：它是链路故障的证据，不是噪声。
+    if (res.ok) {
+      const hasConclusion =
+        res.rows.length > 0 || res.needsNewTemplate.length > 0 || res.dropped.length > 0;
+      if (hasConclusion) {
+        await this.aiInsight.record({
+          kind: 'launch-draft',
+          title:
+            `${res.mealDate} 开团草稿：可排 ${res.rows.length} 条` +
+            (res.needsNewTemplate.length ? ` · 受阻/提示 ${res.needsNewTemplate.length} 条` : ''),
+          content: launchDraftText(res, { mealDate: res.mealDate, mode: res.mode ?? undefined }),
+          source: 'admin',
+          actorName: binding.operatorName ?? null,
+          meta: {
+            mode: res.mode ?? undefined,
+            input: { mealDate: res.mealDate, dateArg: dateArg ?? null },
+          },
+        });
+      }
+    } else {
+      await this.aiInsight.record({
+        kind: 'launch-draft',
+        title: '开团草稿生成失败',
+        content: `# 开团草稿生成失败\n\n${res.message}`,
+        source: 'admin',
+        actorName: binding.operatorName ?? null,
+        meta: { input: { dateArg: dateArg ?? null } },
+      });
+    }
+    return res;
   }
 
   /**

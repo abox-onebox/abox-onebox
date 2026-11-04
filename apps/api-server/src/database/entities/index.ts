@@ -1,5 +1,5 @@
 /**
- * 实体统一出口（35 张表）
+ * 实体统一出口（37 张表）
  *
  * 依据：《数据库 ER 设计 v2.1》+《表结构评审意见 v1.0》（P0-1 ~ P0-6、P1-4、P2-1、P2-5、P2-6）
  *   + 2026-09-15 增补：`ab_withdraw` 提现申请单（M2 · 数据层缺口补齐）
@@ -7,6 +7,7 @@
  *   + 2026-10-20 增补：`ab_page_track` 页面停留埋点（U15 · 匿名聚合 · 只增表）
  *   + 2026-10-26 增补：`ab_sales_pause` 全局停售区间（W1 · 刻意不走 `ab_config`：其 60s 缓存会让停售不立刻生效）
  *   + 2026-10-29 增补：`ab_delivery_proof` 配送送达凭证（Q3 · 挂配送单而非订单 · 只增表）
+ *   + 2026-11-04 增补：`ab_ai_insight` AI 产出留档（15 个 AI 节点的结论从「生成即消失」变为可回看 · 只增表）
  *
  * 用户与角色域（4）：User / TeamLeader / Building / LeaderInvite
  * 楼群域（1）：BuildingGroup
@@ -18,7 +19,7 @@
  * 券域（2）：CouponDef / UserCoupon（独立券系统 · 2026-10-23）
  * 系统域（9）：AdminUser / OperationLog / SysConfig / Message / MessageTemplate / OperationRequest（阶段3 新增） / OpBlocklist / PageTrack（U15 新增） / SalesPause（W1 新增）
  *
- * ⚠️ 合计以 `ALL_ENTITIES` 为准（当前 35 张）—— `schema:parity` 是权威对账器，
+ * ⚠️ 合计以 `ALL_ENTITIES` 为准（当前 37 张）—— `schema:parity` 是权威对账器，
  *    上面分类注释只是人读的索引，别拿它当计数真源。
  */
 export * from './user.entity';
@@ -31,6 +32,7 @@ export * from './finance.entity';
 export * from './withdraw.entity';
 export * from './coupon.entity';
 export * from './system.entity';
+export * from './ai-insight.entity';
 
 import { User } from './user.entity';
 import { TeamLeader, LeaderInvite } from './leader.entity';
@@ -65,6 +67,7 @@ import {
   PageTrack,
   SalesPause,
 } from './system.entity';
+import { AiInsight } from './ai-insight.entity';
 
 /**
  * 企微绑定表（`ab_wecom_binding`）的实体住在功能模块里，不在本目录。
@@ -117,4 +120,5 @@ export const ALL_ENTITIES = [
   PageTrack,
   SalesPause,
   WecomBinding,
+  AiInsight,
 ];

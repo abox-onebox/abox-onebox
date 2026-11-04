@@ -56,10 +56,21 @@ function scan(catalog) {
     const params = Array.isArray(entry?.params) ? entry.params : [];
 
     // DTO 没解析出字段：机器人只能收一整段 JSON，无法逐参数判
+    //
+    // ⚠️ 两种成因**症状完全一样**，这里把两种都写出来，否则后来人只会去猜：
+    //   ① DTO 类忘了 `export` —— 生成器只认 `/^export\s+class\s+(\w+)\b/`；
+    //      这种情况是**真缺陷**（参数本来能引导，被一个 `export` 挡住了）。
+    //      2026-11-04 实测：`ai-insight` / `launch-draft` 共 3 个端点栽在这上面。
+    //   ② 压根没写 DTO 类，`@Body()` 直接用内联对象类型（如 `{ opCode?: string }`）——
+    //      当前仅 `post_admin_opblocklist` 一处，且两个字段全可选、无必填参数可引导，
+    //      故判定为**可接受**，不为它硬造一个 DTO。
+    //    分辨方法：去控制器看 `@Body()` 的类型是不是 `XxxDto` 类名。
     if (params.some((p) => p.name === '*')) {
       skipped.push({
         code,
-        detail: `${entry.method} ${entry.path} 的入参 DTO 未解析出字段（*）`,
+        detail:
+          `${entry.method} ${entry.path} 的入参 DTO 未解析出字段（*）` +
+          ` —— 查控制器：DTO 类是否漏了 \`export\`，或 \`@Body()\` 用了内联对象类型`,
       });
       continue;
     }
@@ -71,7 +82,8 @@ function scan(catalog) {
         violations.push({
           kind: 'NO_HINT',
           code,
-          detail: `${entry.method} ${entry.path} 的必填参数 \`${p.name}\` 提示为空或非中文` +
+          detail:
+            `${entry.method} ${entry.path} 的必填参数 \`${p.name}\` 提示为空或非中文` +
             (p.hint ? `（当前是：${String(p.hint).slice(0, 40)}）` : ''),
         });
       }
@@ -123,9 +135,22 @@ function selftest() {
   );
 }
 
-/** 找第一个带中文 hint 的必填参数（作为注入缺陷的样本） */
+/**
+ * 找第一个带中文 hint 的必填参数（作为注入缺陷的样本）。
+ *
+ * ⚠️ **必须与 `scan()` 的跳过条件完全一致**（`params.some(p => p.name === '*')`）。
+ *    被跳过的端点整段不参与检查，拿它当注入样本 ⇒ 抹掉 hint 也不会报 ⇒
+ *    自证恒假红，且报的是「这条检查抓不到问得看不懂」这种**指向错误**的结论。
+ *
+ *    2026-11-04 实测踩到：新增的 `post_admin_aiinsight_id_decide` 因 DTO 未 `export`
+ *    而被标成入参 `*`，恰好排在目录第一位 —— 旧版取样命中它的 `id` 参数，
+ *    抹掉 hint 后 `scan()` 直接跳过整端点，自证失败。
+ *    （同批根因还导致 3 个端点「入参未解析」，已在控制器 DTO 上补 `export` 修掉。）
+ */
 function findFirstRequired(catalog) {
   for (const [code, entry] of Object.entries(catalog)) {
+    // 与 scan() 同步：入参未解析（`*`）的端点会被整段跳过，不可作为样本
+    if ((entry?.params ?? []).some((p) => p.name === '*')) continue;
     for (const p of entry?.params ?? []) {
       if (p.required && p.name !== '*' && hasChinese(p.hint)) {
         return { code, param: p };
@@ -174,7 +199,9 @@ function main() {
   if (violations.length > 0) {
     console.error('\n[FAIL] 下列必填参数机器人问出来是看不懂的（用户不知道填什么）：');
     for (const v of violations) console.error(`  · ${v.code}：${v.detail}`);
-    console.error('\n修法：给 DTO 字段补 `@ApiProperty({ description })`、给路径参数补 `@ApiParam`。');
+    console.error(
+      '\n修法：给 DTO 字段补 `@ApiProperty({ description })`、给路径参数补 `@ApiParam`。',
+    );
     console.error('（描述写中文，别再写成模板字符串之外的东西 —— 生成器已支持模板与跨行。）');
     process.exit(1);
   }

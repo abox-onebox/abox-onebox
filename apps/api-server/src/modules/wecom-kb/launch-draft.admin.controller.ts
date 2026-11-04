@@ -57,7 +57,7 @@ import type { Binding } from './op-proxy.service';
  * 它是**启动即崩**，且 `tsc --noEmit` 完全看不出来（类型层面完全合法）——
  * 本次是 `route:audit` 门禁在 ts-node 里加载控制器时才抓到的。
  */
-class GenerateLaunchDraftDto {
+export class GenerateLaunchDraftDto {
   /** 出餐日 YYYY-MM-DD；不传 = 明日 */
   @IsOptional()
   @IsString()
@@ -65,7 +65,7 @@ class GenerateLaunchDraftDto {
   mealDate?: string;
 }
 
-class ConfirmLaunchDraftDto {
+export class ConfirmLaunchDraftDto {
   /** 1-based 行号（可多选）；不传/空 = 全排 */
   @IsOptional()
   @IsArray()

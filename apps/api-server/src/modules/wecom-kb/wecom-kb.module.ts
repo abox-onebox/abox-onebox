@@ -13,7 +13,10 @@ import { WecomBindingAdminController } from './wecom-binding.admin.controller';
 import { WecomOpsAdminController } from './wecom-ops.admin.controller';
 import { WecomSimulateController } from './wecom-simulate.admin.controller';
 import { LaunchDraftAdminController } from './launch-draft.admin.controller';
+import { AiInsightAdminController } from './ai-insight.admin.controller';
 import { WecomBinding } from './wecom-binding.entity';
+import { AiInsightService } from './ai-insight.service';
+import { AiInsight } from '../../database/entities';
 
 /**
  * 企业微信对话机器人（KB 助手移动化 · 路线 B）
@@ -23,7 +26,7 @@ import { WecomBinding } from './wecom-binding.entity';
  * 不阻塞启动（与「生产禁 mock」等硬闸解耦，因为这是功能模块不是安全模型开关）。
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([WecomBinding])],
+  imports: [TypeOrmModule.forFeature([WecomBinding, AiInsight])],
   controllers: [
     WecomKbController,
     WecomBindingAdminController,
@@ -31,6 +34,8 @@ import { WecomBinding } from './wecom-binding.entity';
     WecomSimulateController,
     // 开团草稿后台页（#1 批 4）：路径是 `admin/meal/*`，但复用本模块的 WecomChatService —— 见该文件头注
     LaunchDraftAdminController,
+    // AI 台账（ab_ai_insight）：15 个 AI 节点的产出可回看/可标记
+    AiInsightAdminController,
   ],
   providers: [
     WecomKbService,
@@ -41,6 +46,8 @@ import { WecomBinding } from './wecom-binding.entity';
     WecomSvcTokenService,
     NameResolverService,
     WecomChatService,
+    // AI 产出留档（ab_ai_insight）：WecomChatService 写、后台台账页读
+    AiInsightService,
   ],
   exports: [WecomBindingService],
 })
