@@ -277,6 +277,31 @@ export class CreateSetMealTemplateDto {
 }
 
 /**
+ * #A 供给侧 AI 建模板 · 生成草稿入参
+ *
+ * 只收「提案原文 + 模板类型」，候选菜品集由服务端实时拉取（避免前端传 itemId 被篡改）。
+ * 真正的 itemId 校验发生在脚本 `gen-meal-template.mjs` 与确认时的 `revalidateMealTemplateDraft` 两道闸。
+ */
+export class GenerateTemplateDraftDto {
+  @ApiPropertyOptional({
+    description: '选品提案原文 / 业务目标（自由文本）；缺省则由 AI 基于现有菜品库即兴发挥',
+    example: '本周主推红烧牛肉与宫保鸡丁，配清爽素菜与例汤',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  proposalText?: string;
+
+  @ApiPropertyOptional({
+    description: '模板类型：meal 饭类 / fmcg 快消品（默认 meal）',
+    example: 'meal',
+  })
+  @IsOptional()
+  @IsIn(['meal', 'fmcg'], { message: "kind 需为 'meal' 或 'fmcg'" })
+  kind?: 'meal' | 'fmcg';
+}
+
+/**
  * D7b 编辑套餐模板（M5-15 新增）
  *
  * ## 为什么必须有

@@ -18,6 +18,7 @@ import {
   CopyAssignmentsDto,
   CreateAssignmentDto,
   CreateSetMealTemplateDto,
+  GenerateTemplateDraftDto,
   ItemOptionQueryDto,
   MealMatrixQueryDto,
   PublishAssignmentDto,
@@ -147,6 +148,36 @@ export class MealAdminController {
   })
   createTemplate(@Body() dto: CreateSetMealTemplateDto, @CurrentAdmin('sub') operatorId: number) {
     return this.mealAdmin.createTemplate(dto, operatorId);
+  }
+
+  // ------------------------------------------------------------ #A 供给侧 AI 建模板
+
+  @Post('template-draft/generate')
+  @OperationLog({ module: 'meal', action: 'AI 生成模板草稿' })
+  @ApiOperation({
+    summary: '#A AI 生成套餐模板草稿（仅草稿，不入库）',
+    description:
+      '把选品提案 + 实时菜品库交给 AI 生成可入库的模板草稿；候选 itemId 由服务端实时拉取并白名单校验，' +
+      '杜绝 LLM 编造 ID。返回草稿列表（含每项菜品名便于人工核对），需经确认端点人工入库。',
+  })
+  generateTemplateDraft(@Body() dto: GenerateTemplateDraftDto) {
+    return this.mealAdmin.generateTemplateDraft(dto);
+  }
+
+  @Post('template-draft/confirm')
+  @Roles('super_admin', 'admin')
+  @OperationLog({ module: 'meal', action: 'AI 模板草稿确认入库' })
+  @ApiOperation({
+    summary: '#A 确认某条 AI 模板草稿入库（人工闸，仅负责人）',
+    description:
+      '对生成结果做一次「实时复核」（菜品可能已在生成后下架 / 改名），通过后调 D7 入库，' +
+      '并记一笔 AI 台账（kind=meal_template）。这是 AI 出方案、人执行的最后一关。',
+  })
+  confirmTemplateDraft(
+    @Body() dto: CreateSetMealTemplateDto,
+    @CurrentAdmin('sub') operatorId: number,
+  ) {
+    return this.mealAdmin.confirmTemplateDraft(dto, operatorId);
   }
 
   /**

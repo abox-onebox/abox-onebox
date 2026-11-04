@@ -43,6 +43,13 @@ export const routes: RouteRecordRaw[] = [
         name: 'MealLaunchDraft',
         component: () => import('@/views/meal/launch-draft.vue'),
       },
+      // AI 模板草稿（#A 供给侧建模板）—— 把选品提案落成可入库模板，人工确认后由 D7 写库；
+      // 解「自动开团恒 0 条」的供给侧缺口。
+      {
+        path: 'meal/template-draft',
+        name: 'MealTemplateDraft',
+        component: () => import('@/views/meal/template-draft.vue'),
+      },
 
       // 订单中心 M32 · P30–P31
       { path: 'order/list', name: 'OrderList', component: () => import('@/views/order/list.vue') },

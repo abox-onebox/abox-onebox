@@ -15,6 +15,13 @@ import {
   toBjIso,
   todayBj,
 } from '../../common/utils/time';
+import {
+  generateMealTemplateDraft,
+  revalidateMealTemplateDraft,
+  type MealTemplateDraft,
+  type MealTemplateGenResult,
+} from '../../common/utils/meal-template';
+import { AiInsightService } from '../wecom-kb/ai-insight.service';
 import { Building, BuildingGroup } from '../../database/entities/building.entity';
 import { DistributionCenter } from '../../database/entities/finance.entity';
 import { MealAssignment, SetMeal, SetMealItem } from '../../database/entities/meal.entity';
@@ -23,6 +30,7 @@ import {
   CopyAssignmentsDto,
   CreateAssignmentDto,
   CreateSetMealTemplateDto,
+  GenerateTemplateDraftDto,
   MATRIX_MAX_DAYS,
   MealMatrixQueryDto,
   SET_MEAL_COMPOSITION_RULE,
@@ -147,6 +155,7 @@ export class MealAdminService {
     @InjectRepository(Building) private readonly buildingRepo: Repository<Building>,
     private readonly bizConfig: BizConfigService,
     private readonly dataSource: DataSource,
+    private readonly aiInsight: AiInsightService,
   ) {}
 
   // ==========================================================================
@@ -714,6 +723,105 @@ export class MealAdminService {
       `新建套餐模板 #${saved.id}「${dto.name}」· ${plan.length} 项 · 成本 ¥${costPrice}`,
     );
     return this.templateView(saved, plan, dishMap);
+  }
+
+  // ==========================================================================
+  // #A · 供给侧 AI 建模板（草稿生成 + 确认入库）
+  // ==========================================================================
+
+  /**
+   * #A 生成套餐模板草稿：拉取实时在售菜品作白名单，交脚本让 AI 产出草稿。
+   * **不写库**；返回草稿（每项附带菜品名便于人工核对）+ 落败原因 + 提示。
+   */
+  async generateTemplateDraft(dto: GenerateTemplateDraftDto) {
+    const kind = dto.kind ?? 'meal';
+    const dishes = await this.itemRepo.find({ where: { status: 1 } });
+    const existing = await this.setMealRepo.find({ select: ['id', 'name'] });
+
+    const input = {
+      proposalText: dto.proposalText ?? '',
+      kind,
+      dishes: dishes.map((d) => ({
+        id: d.id,
+        name: d.name,
+        category: (d as { category?: string }).category ?? '',
+        costPrice: String(d.costPrice ?? ''),
+        status: d.status,
+      })),
+      existingTemplates: existing.map((t) => ({ id: t.id, name: t.name ?? undefined })),
+    };
+
+    const result: MealTemplateGenResult = await generateMealTemplateDraft(input);
+
+    // 回显时把 itemId 解析成菜品名，省去前端再查
+    const nameById = new Map<number, string>();
+    for (const d of dishes) nameById.set(d.id, d.name);
+
+    const drafts = (result.drafts ?? []).map((d: MealTemplateDraft) => ({
+      ...d,
+      items: d.items.map((it) => ({ ...it, name: nameById.get(it.itemId) ?? `#${it.itemId}` })),
+    }));
+
+    return {
+      ok: result.ok,
+      kind: result.kind,
+      mode: result.mode,
+      drafts,
+      dropped: result.dropped ?? [],
+      notes: result.notes ?? [],
+      message: result.message,
+      generatedAt: result.generatedAt,
+      dishCount: dishes.length,
+    };
+  }
+
+  /**
+   * #A 确认入库：先以实时菜品集复核（防生成后菜品下架 / 改名），通过则调 D7 入库并记 AI 台账。
+   * 这是「AI 出方案、人执行」的最后一关；controller 已把端点限制为负责人角色。
+   */
+  async confirmTemplateDraft(dto: CreateSetMealTemplateDto, operatorId: number) {
+    const liveDishes = await this.itemRepo.find({ select: ['id', 'status'] });
+    const existing = await this.setMealRepo.find({ select: ['id', 'name'] });
+    const existingNames = new Set(
+      existing
+        .map((t) =>
+          String(t.name ?? '')
+            .trim()
+            .toLowerCase(),
+        )
+        .filter(Boolean),
+    );
+
+    const check = revalidateMealTemplateDraft(dto as unknown as MealTemplateDraft, {
+      dishes: liveDishes,
+      existingNames,
+    });
+    if (!check.ok) {
+      throw new BizException(
+        ErrorCode.PARAM_INVALID,
+        `模板草稿复核未通过：${check.blocked.detail}`,
+      );
+    }
+
+    const saved = await this.createTemplate(dto, operatorId);
+
+    // 记 AI 台账（kind=meal_template）；record 永不抛错，不影响主流程
+    await this.aiInsight.record({
+      kind: 'meal_template',
+      title: `AI 模板入库：${dto.name}`,
+      content: JSON.stringify({
+        name: dto.name,
+        kind: dto.kind ?? 'meal',
+        price: dto.price,
+        items: dto.items,
+        confirmedBy: operatorId,
+      }),
+      source: 'admin',
+      actorId: operatorId,
+      meta: { mode: 'admin_confirm', payload: { templateId: (saved as { id?: number }).id } },
+    });
+
+    return saved;
   }
 
   // ==========================================================================

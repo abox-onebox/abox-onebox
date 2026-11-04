@@ -33,6 +33,9 @@ export const ADMIN_MENU_KEYS = [
   //   `operator` 会被下面那条「非 /system/ 全部可见」的派生规则带进来 —— 这是**故意**的：
   //   看草稿无害，真执行由控制器 `@Roles('super_admin','admin')` 拦。
   '/meal/launch-draft',
+  // AI 模板草稿（#A 供给侧建模板）：AI 出草稿 + 人确认入库（写库由控制器 @Roles 限负责人）。
+  // 与 ADMIN_NAV 成对出现，否则侧边栏不显示（nav:consistency 会拦）。
+  '/meal/template-draft',
   '/order/list',
   '/order/detail',
   // M5-1：配送单管理（D61/D62）—— 跑批对已存在的配送单**不覆盖**（保护人工录入的

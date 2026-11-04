@@ -365,3 +365,63 @@ export function generateLaunchDraft(payload: { mealDate?: string }): Promise<Lau
 export function confirmLaunchDraft(payload: { picks?: number[] }): Promise<LaunchConfirmRunResult> {
   return http.post<LaunchConfirmRunResult>('/admin/meal/launch-draft/confirm', payload);
 }
+
+// ==========================================================================
+// #A · 供给侧 AI 建模板（草稿生成 → 人工确认入库）
+// ==========================================================================
+
+/** #A 模板草稿 · 单个商品项（已带菜品名，便于前端直显） */
+export interface TemplateDraftItemView {
+  itemId: number;
+  slot: number;
+  name: string;
+}
+
+/** #A 模板草稿 · 一条 */
+export interface TemplateDraftView {
+  name: string;
+  kind: 'meal' | 'fmcg';
+  price?: number;
+  items: TemplateDraftItemView[];
+  reason: string;
+}
+
+/** #A 生成草稿返回 */
+export interface MealTemplateGenResult {
+  ok: boolean;
+  kind: string;
+  mode: string;
+  drafts: TemplateDraftView[];
+  dropped: Array<{ draft: unknown; why: string }>;
+  notes: string[];
+  message?: string;
+  generatedAt?: string;
+  /** 实时在售候选菜品数（用于提示候选池大小） */
+  dishCount?: number;
+}
+
+/** #A 确认入库入参（与 D7 同构） */
+export interface ConfirmTemplateDraftPayload {
+  name: string;
+  kind?: 'meal' | 'fmcg';
+  price?: number;
+  oneLiner?: string;
+  description?: string;
+  items: Array<{ itemId: number; slot: number }>;
+}
+
+/** 生成套餐模板草稿（只读，不写库） */
+export function generateTemplateDraft(payload: {
+  proposalText?: string;
+  kind?: 'meal' | 'fmcg';
+}): Promise<MealTemplateGenResult> {
+  return http.post<MealTemplateGenResult>('/admin/meal/template-draft/generate', payload);
+}
+
+/**
+ * 确认某条 AI 模板草稿入库（**真写模板库**，仅负责人可调用）。
+ * 服务端会再做一次实时复核（菜品可能已在生成后下架 / 改名）。
+ */
+export function confirmTemplateDraft(payload: ConfirmTemplateDraftPayload): Promise<unknown> {
+  return http.post<unknown>('/admin/meal/template-draft/confirm', payload);
+}

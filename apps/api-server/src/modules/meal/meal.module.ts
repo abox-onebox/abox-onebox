@@ -8,6 +8,8 @@ import { MealAssignment, SetMeal, SetMealItem } from '../../database/entities/me
 import { Order } from '../../database/entities/order.entity';
 import { Item, Supplier } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
+import { AiInsight } from '../../database/entities';
+import { AiInsightService } from '../wecom-kb/ai-insight.service';
 import { HomeController, InviteController } from './meal.controller';
 import { MealAdminController } from './meal-admin.controller';
 import { MealAdminService } from './meal-admin.service';
@@ -38,10 +40,11 @@ import { MealService } from './meal.service';
       TeamLeader,
       Order,
       User,
+      AiInsight,
     ]),
   ],
   controllers: [HomeController, InviteController, MealAdminController],
-  providers: [MealService, MealAdminService],
-  exports: [MealService, MealAdminService],
+  providers: [MealService, MealAdminService, AiInsightService],
+  exports: [MealService, MealAdminService, AiInsightService],
 })
 export class MealModule {}

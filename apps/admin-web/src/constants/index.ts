@@ -136,6 +136,15 @@ export const ADMIN_NAV = [
         module: 'AI-R',
         icon: 'star',
       },
+      // AI 模板草稿（#A 供给侧建模板）。原型无对应页 ⇒ `page` 记 `—`；`module` 记接口（AI 节点 #A）。
+      // 入口须同时进服务端 `ADMIN_MENU_KEYS`，否则 `nav:consistency` 门禁会拦。
+      {
+        path: '/meal/template-draft',
+        title: 'AI 模板草稿',
+        page: '—',
+        module: 'AI-A',
+        icon: 'template',
+      },
     ],
   },
   {
