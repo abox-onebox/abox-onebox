@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
-import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 import { AdminGuard } from '../../common/guards/admin.guard';
@@ -58,6 +58,17 @@ export class DecideInsightDto {
   status!: string;
 }
 
+export class BroadcastWeeklyDto {
+  /**
+   * 仅生成并预览摘要，不真正推送企微。默认 false（真实推送）。
+   * 后台「预览」按钮走 true，便于上线前验证文案而不惊动负责人。
+   */
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  dryRun?: boolean;
+}
+
 /**
  * 后台 · AI 台账（`ab_ai_insight`）
  * ==================================================================
@@ -111,6 +122,34 @@ export class AiInsightAdminController {
   @Get('kinds')
   async kinds(): Promise<{ list: Array<{ kind: string; count: number }> }> {
     return { list: await this.svc.kinds() };
+  }
+
+  /**
+   * 生成「本周 AI 播报」并主动推送给负责人企微（手动/事件触发，**不建 cron**）。
+   *
+   * `dryRun=true` 只产出摘要不推送，供后台「预览」用。
+   * 权限沿用台账页：super_admin / admin / operator 均可触发（推送只是复述台账内容，不写业务数据）。
+   */
+  @Post('broadcast-weekly')
+  async broadcastWeekly(
+    @Body() dto: BroadcastWeeklyDto,
+    @CurrentAdmin() admin: JwtPayload | undefined,
+  ): Promise<{
+    pushed: boolean;
+    reason?: string;
+    digest: string;
+    digestLen: number;
+    sentAt: string | null;
+    rangeFrom: string;
+    rangeTo: string;
+    total: number;
+    byKind: Record<string, number>;
+    byStatus: Record<string, number>;
+  }> {
+    return this.svc.broadcastWeekly({
+      dryRun: dto.dryRun ?? false,
+      actorName: admin?.username ?? null,
+    });
   }
 
   /** 详情（含全文与 meta） */

@@ -40,6 +40,10 @@
         </el-select>
         <div class="toolbar__right">
           <span class="hint">共 {{ total }} 条</span>
+          <el-button :loading="broadcasting" @click="previewBroadcast">预览本周播报</el-button>
+          <el-button type="primary" :loading="broadcasting" @click="pushBroadcast">
+            推送本周播报
+          </el-button>
           <el-button :loading="loading" @click="reload">刷新</el-button>
         </div>
       </div>
@@ -163,6 +167,24 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- 本周播报预览（dryRun，不推送） -->
+    <el-dialog v-model="previewVisible" title="本周 AI 播报预览" width="560px">
+      <div v-if="previewResult" class="preview">
+        <div class="preview__meta">
+          <span>{{ previewResult.rangeFrom }} ~ {{ previewResult.rangeTo }}</span>
+          <span>· 共 {{ previewResult.total }} 条</span>
+          <span v-if="previewResult.pushed === false" class="preview__dry">· 仅预览（未推送）</span>
+        </div>
+        <pre class="preview__content">{{ previewResult.digest }}</pre>
+      </div>
+      <template #footer>
+        <el-button @click="previewVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="broadcasting" @click="pushFromPreview">
+          确认推送给负责人企微
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -171,10 +193,12 @@ import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import {
+  broadcastWeekly,
   decideInsight,
   getInsight,
   listInsightKinds,
   listInsights,
+  type BroadcastWeeklyResult,
   type InsightDetail,
   type InsightListItem,
 } from '@/api/ai-insight';
@@ -228,6 +252,46 @@ const kindOptions = ref<Array<{ value: string; label: string }>>([]);
 
 const drawer = ref(false);
 const detail = ref<InsightDetail | null>(null);
+
+/** 本周播报：预览 / 推送状态 */
+const broadcasting = ref(false);
+const previewVisible = ref(false);
+const previewResult = ref<BroadcastWeeklyResult | null>(null);
+
+/** 预览（dryRun，不推送）：把摘要算出来给用户看，确认后再真推 */
+async function previewBroadcast(): Promise<void> {
+  broadcasting.value = true;
+  try {
+    const r = await broadcastWeekly(true);
+    previewResult.value = r;
+    previewVisible.value = true;
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '预览失败');
+  } finally {
+    broadcasting.value = false;
+  }
+}
+
+/** 真推送（后台按钮直接推） */
+async function pushBroadcast(): Promise<void> {
+  broadcasting.value = true;
+  try {
+    const r = await broadcastWeekly(false);
+    if (r.pushed) ElMessage.success(`已推送本周播报（覆盖 ${r.total} 条 AI 产出）`);
+    else ElMessage.warning(`推送未成功：${r.reason ?? '未知原因'}`);
+    await reload();
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '推送失败');
+  } finally {
+    broadcasting.value = false;
+  }
+}
+
+/** 从预览弹窗确认推送 */
+async function pushFromPreview(): Promise<void> {
+  previewVisible.value = false;
+  await pushBroadcast();
+}
 
 const modeText = computed(() => {
   const m = detail.value?.meta;
@@ -395,5 +459,27 @@ onMounted(() => {
   margin-top: $space-3;
   display: flex;
   gap: $space-2;
+}
+.preview__meta {
+  color: $c-text-weak;
+  font-size: $fs-caption;
+  margin-bottom: $space-2;
+}
+.preview__dry {
+  color: $c-warning;
+}
+.preview__content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: $font-family-base;
+  font-size: $fs-caption;
+  line-height: 1.75;
+  background: $c-surface-2;
+  border: 1px solid $c-border;
+  border-radius: $radius-sm;
+  padding: $space-3 $space-4;
+  margin: 0;
+  max-height: 50vh;
+  overflow: auto;
 }
 </style>

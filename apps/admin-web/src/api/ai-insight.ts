@@ -87,3 +87,21 @@ export function decideInsight(
 ): Promise<{ id: number; status: string }> {
   return http.post(`/admin/ai-insight/${id}/decide`, { status });
 }
+
+/** 本周 AI 播报：聚合台账并主动推送负责人企微。`dryRun=true` 只预览不推送 */
+export interface BroadcastWeeklyResult {
+  pushed: boolean;
+  reason?: string;
+  digest: string;
+  digestLen: number;
+  sentAt: string | null;
+  rangeFrom: string;
+  rangeTo: string;
+  total: number;
+  byKind: Record<string, number>;
+  byStatus: Record<string, number>;
+}
+
+export function broadcastWeekly(dryRun = false): Promise<BroadcastWeeklyResult> {
+  return http.post('/admin/ai-insight/broadcast-weekly', { dryRun });
+}

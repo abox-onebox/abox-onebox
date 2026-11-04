@@ -5,6 +5,10 @@ import { Repository } from 'typeorm';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { ErrorCode } from '../../common/constants/error-code';
 import { AiInsight } from '../../database/entities';
+import { now, todayBj, addDays, bjDateTime, toBjIso } from '../../common/utils/time';
+import { buildWeeklyDigest } from '../../common/utils/weekly-digest';
+import { WecomTokenService } from './wecom-token.service';
+import { WecomBindingService } from './wecom-binding.service';
 
 /** 一次 AI 生成的留档入参 */
 export interface RecordInsightInput {
@@ -63,7 +67,11 @@ type DecidableStatus = (typeof DECIDABLE)[number];
 export class AiInsightService {
   private readonly logger = new Logger(AiInsightService.name);
 
-  constructor(@InjectRepository(AiInsight) private readonly repo: Repository<AiInsight>) {}
+  constructor(
+    @InjectRepository(AiInsight) private readonly repo: Repository<AiInsight>,
+    private readonly tokenSvc: WecomTokenService,
+    private readonly bindingSvc: WecomBindingService,
+  ) {}
 
   /**
    * 记一条 AI 产出。**永不抛异常**（见类注释）。
@@ -180,5 +188,126 @@ export class AiInsightService {
       .orderBy('count', 'DESC')
       .getRawMany()) as Array<{ kind: string; count: string | number }>;
     return rows.map((r) => ({ kind: r.kind, count: Number(r.count) }));
+  }
+
+  /** 取某时刻之后的全部留档（周播报聚合用；不分页、不过滤，调用方自己裁剪） */
+  async listSince(since: Date): Promise<AiInsight[]> {
+    return this.repo
+      .createQueryBuilder('t')
+      .where('t.createdAt >= :since', { since })
+      .orderBy('t.createdAt', 'DESC')
+      .getMany();
+  }
+
+  /**
+   * 解析负责人 userid（与 `WecomChatService.resolveOwnerBinding` 同口径，但只取 userid）：
+   * 优先 `WECOM_OWNER_USERID` 环境变量，否则取绑定表里第一个 owner 级绑定。
+   * 找不到返回 null（调用方据此判「无法外推」）。
+   */
+  private async resolveOwnerUserId(): Promise<string | null> {
+    const envId = (process.env.WECOM_OWNER_USERID || '').trim();
+    if (envId) return envId;
+    try {
+      const owners = (await this.bindingSvc.list()).filter((b) => b.tier === 'owner');
+      return owners[0]?.userId ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 生成「本周 AI 播报」并主动推送给负责人企微（手动/事件触发，**不建 cron**，遵守禁自动定时铁律）。
+   *
+   * 流程：算本周一 00:00 北京 → 拉取本周全部留档 → 聚合 → 推送 → 把本次播报本身回写台账（记忆）。
+   * `dryRun=true` 只产出摘要不推送，供后台「预览」用，便于上线前验证文案。
+   *
+   * ⚠️ 聚合时剔除 `ai-weekly-broadcast` 自身，避免「播报记录」被计入下一周的播报（自指膨胀）。
+   * ⚠️ 推送失败不抛错（旁路）：摘要已生成，`pushed=false` + `reason` 透传给调用方。
+   */
+  async broadcastWeekly(
+    opts: {
+      dryRun?: boolean;
+      actorName?: string | null;
+    } = {},
+  ): Promise<{
+    pushed: boolean;
+    reason?: string;
+    digest: string;
+    digestLen: number;
+    sentAt: string | null;
+    rangeFrom: string;
+    rangeTo: string;
+    total: number;
+    byKind: Record<string, number>;
+    byStatus: Record<string, number>;
+  }> {
+    const at = now();
+    const rangeTo = todayBj(at);
+    const [y, m, d] = rangeTo.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    const diffToMon = (dt.getUTCDay() + 6) % 7; // 周一=0
+    const rangeFrom = addDays(rangeTo, -diffToMon);
+    const since = bjDateTime(rangeFrom, 0, 0); // 本周一 00:00 北京
+
+    const all = await this.listSince(since);
+    const rows = all
+      .filter((r) => r.kind !== 'ai-weekly-broadcast')
+      .map((r) => ({ kind: r.kind, status: r.status, title: r.title }));
+
+    const { digest, total, byKind, byStatus } = buildWeeklyDigest(rows, rangeFrom, rangeTo);
+    const sentAt = toBjIso(new Date());
+
+    if (opts.dryRun) {
+      return {
+        pushed: false,
+        digest,
+        digestLen: digest.length,
+        sentAt,
+        rangeFrom,
+        rangeTo,
+        total,
+        byKind,
+        byStatus,
+      };
+    }
+
+    let pushed = false;
+    let reason: string | undefined;
+    try {
+      const userId = await this.resolveOwnerUserId();
+      if (!userId) {
+        reason = '未找到负责人绑定（无 WECOM_OWNER_USERID，后台绑定表里也没有 owner 级绑定）';
+      } else {
+        const r = await this.tokenSvc.sendText(userId, digest);
+        pushed = r.ok;
+        if (!pushed)
+          reason = `企业微信下发失败${r.errcode ? ' errcode=' + r.errcode : ''}${r.errmsg ? ' ' + r.errmsg : ''}`;
+      }
+    } catch (e) {
+      reason = e instanceof Error ? e.message : String(e);
+    }
+
+    // 记忆：把本次播报回写台账（source=admin），便于追溯推送节奏；不抛错（旁路）
+    await this.record({
+      kind: 'ai-weekly-broadcast',
+      title: `本周 AI 播报（${rangeFrom}~${rangeTo}）· 共 ${total} 条${pushed ? ' · 已推送' : ' · 未推送'}`,
+      content: digest,
+      source: 'admin',
+      actorName: opts.actorName ?? null,
+      meta: { mode: 'admin_broadcast', payload: { rangeFrom, rangeTo, total, pushed } },
+    });
+
+    return {
+      pushed,
+      reason,
+      digest,
+      digestLen: digest.length,
+      sentAt,
+      rangeFrom,
+      rangeTo,
+      total,
+      byKind,
+      byStatus,
+    };
   }
 }
