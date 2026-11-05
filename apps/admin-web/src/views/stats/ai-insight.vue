@@ -549,7 +549,7 @@ onMounted(() => {
   margin-bottom: $space-2;
 }
 .preview__dry {
-  color: $c-warning;
+  color: $c-warn-fg;
 }
 .preview__content {
   white-space: pre-wrap;
