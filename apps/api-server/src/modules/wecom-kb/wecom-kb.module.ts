@@ -56,6 +56,6 @@ import { AiInsight } from '../../database/entities';
     // 复购 / 流失主动唤醒（#C）
     RecallCampaignService,
   ],
-  exports: [WecomBindingService],
+  exports: [WecomBindingService, AiInsightService],
 })
 export class WecomKbModule {}
