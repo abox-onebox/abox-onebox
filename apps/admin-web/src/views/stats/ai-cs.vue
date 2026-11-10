@@ -26,6 +26,9 @@
           <el-descriptions-item label="经营主体">{{
             compliance.filing.subjectName || '—'
           }}</el-descriptions-item>
+          <el-descriptions-item label="经营场所地址">{{
+            compliance.filing.businessAddress || '（待补全）'
+          }}</el-descriptions-item>
           <el-descriptions-item label="备案编号">{{
             compliance.filing.filingNo || '（待补全）'
           }}</el-descriptions-item>

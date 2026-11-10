@@ -801,6 +801,18 @@ export const CONFIG_SPECS: ConfigSpec[] = [
     consumedBy: '`AiCsService.getComplianceBlock()` → GET /api/v1/ai-cs/compliance/124 公示块',
   },
   {
+    key: 'compliance.businessAddress',
+    group: 'compliance',
+    label: '经营场所地址',
+    type: 'text',
+    impact: 'service',
+    wiring: 'live',
+    description:
+      '124 号令第二十条 / 总局 2021 年第 40 号公告：网络销售预包装食品须在主页面显著位置公示「经营者名称、经营场所地址、备案编号」。此处填营业执照「住所」逐字原文，缺省为空占位，上线前必须补全。',
+    maxLength: 256,
+    consumedBy: '`AiCsService.getComplianceBlock()` → GET /api/v1/ai-cs/compliance/124 公示块',
+  },
+  {
     key: 'compliance.filingNo',
     group: 'compliance',
     label: '仅销售预包装食品备案编号',

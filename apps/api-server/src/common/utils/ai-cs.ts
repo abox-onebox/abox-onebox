@@ -30,6 +30,8 @@ export type CsIntent =
 export interface ComplianceData {
   /** 经营主体名称 */
   subjectName: string;
+  /** 经营场所地址（营业执照「住所」逐字原文） */
+  businessAddress: string;
   /** 仅销售预包装食品备案编号 */
   filingNo: string;
   /** 统一社会信用代码 */

@@ -38,6 +38,7 @@ export class AiCsService {
   async getComplianceBlock(): Promise<ComplianceBlock> {
     const data: ComplianceData = {
       subjectName: await this.configValue('compliance.subjectName', '北京巡礼之年科技有限公司'),
+      businessAddress: await this.configValue('compliance.businessAddress', ''),
       filingNo: await this.configValue('compliance.filingNo', ''),
       creditCode: await this.configValue('compliance.creditCode', ''),
       businessScope: await this.configValue(

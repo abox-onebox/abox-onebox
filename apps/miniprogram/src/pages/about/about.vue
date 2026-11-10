@@ -20,6 +20,10 @@
           <text class="row__v">{{ text(block.filing.subjectName) }}</text>
         </view>
         <view class="row">
+          <text class="row__k">经营场所地址</text>
+          <text class="row__v">{{ text(block.filing.businessAddress) }}</text>
+        </view>
+        <view class="row">
           <text class="row__k">统一社会信用代码</text>
           <text class="row__v">{{ text(block.filing.creditCode) }}</text>
         </view>

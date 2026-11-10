@@ -5,6 +5,7 @@ import { http } from './request';
 /** 124 号令公示块：公司级备案信息 + 预包装标签必含字段 */
 export interface ComplianceFiling {
   subjectName: string;
+  businessAddress: string;
   filingNo: string;
   creditCode: string;
   businessScope: string;

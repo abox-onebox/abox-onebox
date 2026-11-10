@@ -10,6 +10,7 @@ import {
 
 const COMPLIANCE: ComplianceData = {
   subjectName: '测试主体有限公司',
+  businessAddress: '北京市昌平区测试路 1 号',
   filingNo: 'BJ-FOOD-12345',
   creditCode: '91110108XXXXXXXXXX',
   businessScope: '食品销售（仅销售预包装食品）',
@@ -51,6 +52,7 @@ describe('ai-cs · 规则命中 FAQ + 124 号令合规层', () => {
   it('buildComplianceBlock：含公司备案信息 + 标签字段 schema', () => {
     const block = buildComplianceBlock(COMPLIANCE);
     expect(block.filing.subjectName).toBe('测试主体有限公司');
+    expect(block.filing.businessAddress).toBe('北京市昌平区测试路 1 号');
     expect(block.filing.filingNo).toBe('BJ-FOOD-12345');
     expect(Array.isArray(block.labelFields)).toBe(true);
     expect(block.labelFields.length).toBe(LABEL_FIELDS.length);
