@@ -230,7 +230,7 @@ export function buildComplianceBlock(data: ComplianceData): ComplianceBlock {
     title: 'ABox 一盒 · 资质与标签公示',
     filing: data,
     labelFields: LABEL_FIELDS,
-    note: '依据《食品安全法》及预包装食品标签（GB 7718）要求公示；具体商品标签值以商品页为准。',
+    note: '依据《食品安全法》及预包装食品标签（GB 7718）要求公示；具体标签值以盒内单品实物标签为准。',
   };
 }
 

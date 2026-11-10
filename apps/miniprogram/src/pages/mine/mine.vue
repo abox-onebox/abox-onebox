@@ -153,6 +153,14 @@
           ><text class="abi abi-16">{{ I.chev }}</text></text
         >
       </view>
+      <view class="menu__item" hover-class="menu__item--hover" @tap="goAbout">
+        <text class="menu__label"
+          ><text class="abi abi-16">{{ I.info }}</text> 关于我们与证照公示</text
+        >
+        <text class="menu__arrow"
+          ><text class="abi abi-16">{{ I.chev }}</text></text
+        >
+      </view>
       <view class="menu__item" hover-class="menu__item--hover" @tap="showSettings">
         <text class="menu__label"
           ><text class="abi abi-16">{{ I.gear }}</text> 设置</text
@@ -225,7 +233,6 @@ import { fenToYuanText } from '@/utils/format';
 import { useUserStore } from '@/stores/user';
 import { clearAuthStorage } from '@/utils/storage';
 import { navigateTo, switchTab } from '@/utils/router';
-import { AGREEMENT_OPERATOR } from '@/constants/agreements';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 import type { CustomerServiceMode } from '@abox/shared-types';
 
@@ -517,7 +524,9 @@ const settingsActions = computed(() => [
   csEntryText.value,
   '用户协议',
   '隐私政策',
-  '关于 ABox 一盒',
+  // ⭐ 2026-11-10：原「关于 ABox 一盒」两行弹窗升级为原生页（含 124 号令公示），
+  //    与菜单区「关于我们与证照公示」指向同一页，两处叫法保持一致。
+  '关于我们与证照公示',
   '账号注销',
 ]);
 
@@ -528,7 +537,7 @@ function showSettings(): void {
       if (tapIndex === 0) goSupport();
       else if (tapIndex === 1) goAgreement('user');
       else if (tapIndex === 2) goAgreement('privacy');
-      else if (tapIndex === 3) showAbout();
+      else if (tapIndex === 3) goAbout();
       else if (tapIndex === 4) goAccountCancel();
     },
   });
@@ -555,13 +564,16 @@ function goAccountCancel(): void {
  * ⚠️ **不显示 App 版本号**：此前手写的 `v1.0.0` 与 `manifest.json` 的 `versionName: 0.1.0`
  *    **互相矛盾**（手写数字漂移）。端上取不到唯一真源时先不显示，不再制造第二处真相。
  */
-function showAbout(): void {
-  uni.showModal({
-    title: '关于 ABox 一盒',
-    content: `${AGREEMENT_OPERATOR}\n办公楼预定制团体组合 · 由团长送到工位`,
-    showCancel: false,
-    confirmText: '知道了',
-  });
+/**
+ * 关于我们 + 证照公示（2026-11-10）
+ *
+ * ⭐ 用户裁定：入口落在「我的 → 关于我们」，**首页保持不动**。
+ *    菜单区与「设置」弹窗第 4 项共用本函数，跳同一个原生页，
+ *    一次点击即可看到完整公示，不藏进三级路径。
+ *    原 `uni.showModal` 的两行介绍已迁入 `pages/about/about.vue`，信息不丢。
+ */
+function goAbout(): void {
+  navigateTo('/pages/about/about');
 }
 
 function clearLocal(): void {
