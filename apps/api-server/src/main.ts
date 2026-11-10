@@ -12,6 +12,7 @@ import { resolve } from 'path';
 
 import { AppModule } from './app.module';
 import { requestIdMiddleware } from './common/middleware/request-id.middleware';
+import { createWecomRawBodyMiddleware } from './common/middleware/wecom-raw-body.middleware';
 import { isProductionRuntime, judgeProdMock } from './common/utils/prod-mock-gate';
 import { clockShiftMs, isClockShifted, now, toBjIso } from './common/utils/time';
 
@@ -198,6 +199,22 @@ async function bootstrap() {
   // 请求链路 ID（《接口规范》§1.2）：优先沿用 X-Request-Id，缺省服务端生成
   app.use(requestIdMiddleware);
   app.use(securityHeaders);
+
+  /**
+   * ⭐ 企业微信回调的原始 XML 报文（2026-11-10 生产实测收口）
+   *
+   * `WecomKbController` 读 `req.rawBody` 验签，但线上实测 POST 一律报
+   * 「缺少 Encrypt 节点」——两个原因叠加：① 该端点是不带 /api/v1 的**裸路径**，
+   * `AppModule.configure()` 的 `forRoutes('*')` 展开后只覆盖 /api/v1/*，够不着它；
+   * ② `request-body.middleware.ts` 只注册 json/urlencoded，XML 不被解析。
+   * 症状极具迷惑性：GET 握手（URL 校验）能过、POST 消息永远收不到。
+   *
+   * ⚠️ 必须挂在 `app.init()` 之前：`init()` 里才跑 configure() 与 registerRouter()，
+   *    早于此处的 app.use 才能排在它们前面读到原始流（nest-application.js:90-99）。
+   *    中间件内部自己精确判路径，对全部其他接口只多一次字符串比较。
+   * 详见 `common/middleware/wecom-raw-body.middleware.ts` 头注释。
+   */
+  app.use(createWecomRawBodyMiddleware());
 
   const corsOrigin = corsOriginOf(cfg);
   app.enableCors({

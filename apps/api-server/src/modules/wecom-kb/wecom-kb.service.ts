@@ -10,6 +10,34 @@ import { execTierOf } from './op-policy';
 import { parseCommand, Intent, HELP_TEXT } from './command-parser';
 
 /**
+ * 从企业微信 XML 取标签内容，**自动剥掉 CDATA**（2026-11-10 生产实测收口）
+ *
+ * ⚠️ 企微回调报文所有字段都是 CDATA 包裹的（官方《加解密方案说明》示例）：
+ *      <xml><ToUserName><![CDATA[wx...]]></ToUserName>
+ *           <Encrypt><![CDATA[RypEvHKD8...]]></Encrypt></xml>
+ *    解密后的明文消息体同样：
+ *           <FromUserName><![CDATA[zhangsan]]></FromUserName>
+ *           <Content><![CDATA[生成开团草稿]]></Content>
+ *
+ * 旧实现直接返回 `<![CDATA[RypEvHKD8...]]>`，后果是**静默全链路失效**：
+ *   · 签名用这个串去算 SHA1 ⇒ 与企微的 msg_signature 恒不相等 ⇒ 全部「签名不符，丢弃」；
+ *   · 侥幸过了签名，Base64 解码 `<![CDATA[` 也解不出密文 ⇒ 解密抛错；
+ *   · 解密后 fromUser / content 带 CDATA 外壳 ⇒ 认不到人、指令解析全废。
+ * 三类故障都不报 500，只打一条 WARN，极易被当成「企微没推消息」。
+ *
+ * 同时兼容**不带** CDATA 的字段（如 `<MsgId>12345</MsgId>`、某些事件里的
+ * 纯数字字段），以及标签缺失（返回 ''）。首尾空白一律 trim：Encrypt 是
+ * Base64、Content 是指令，两者带换行都只会坏事。
+ */
+export function wecomXmlTag(xml: string, tag: string): string {
+  const m = new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)</' + tag + '>').exec(xml || '');
+  if (!m) return '';
+  const raw = m[1].trim();
+  const cdata = /^<!\[CDATA\[([\s\S]*?)\]\]>$/.exec(raw);
+  return cdata ? cdata[1].trim() : raw;
+}
+
+/**
  * 编排：企业微信回调 → 验签解密 → 解析指令 → 取令牌绑定 → 调 op 代理 → 异步下发结果
  *
  * 关键设计：
@@ -232,8 +260,8 @@ export class WecomKbService implements OnModuleInit {
     }
   }
 
+  /** 走同一份实现，单测也直接复用 `wecomXmlTag`，避免「探针另写一份正则」的假绿 */
   private xmlTag(xml: string, tag: string): string {
-    const m = new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)</' + tag + '>').exec(xml || '');
-    return m ? m[1] : '';
+    return wecomXmlTag(xml, tag);
   }
 }
