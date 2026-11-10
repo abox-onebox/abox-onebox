@@ -17,6 +17,9 @@
  *   - itemId 必须取自菜品白名单且 status=1（杜绝 LLM 编造 ID / 选已下架菜）
  *   - 饭类(kind='meal')：恰好覆盖档位 {1,2,3,4}（主件/辅品/素品/附品）各一道，禁 slot=5
  *   - 快消(kind='fmcg')：任意档位 1–5、≥1 件
+ *   - ⭐ 品类隔离（2026-11-10）：`fmcg` 候选池只放 `category` 为空的独立预包装单品，
+ *     `meal` 只放 `category` 非空的现做菜。判据与服务端 `dishFitsKind()` 同源。
+ *     当前只跑快消品，混进现做菜 = 「仅销售预包装食品备案」下实际制售，属资质混用。
  *   - name 非空且不与 existingTemplates 重名
  *
  * 原则零保障（AI 可剥离）：--no-llm 用确定性 stub 走通全链路；LLM 失败/解析失败
@@ -124,6 +127,23 @@ function dishMap(list) {
   return m;
 }
 
+/**
+ * `ab_item.category` 非空 = 现做菜；空 / null = 独立预包装快消单品。
+ * ⚠️ 与服务端 `common/utils/meal-template.ts` 的 `isCookedDish()` 逐字同源：
+ *    两边漂移会造成「生成时拦了、确认时又放行」。
+ */
+function isCookedCategory(category) {
+  return category != null && String(category).trim() !== '';
+}
+
+/** 候选池按品类隔离 —— 生成时就不给 LLM 看见另一品类的 id */
+function filterDishesByKind(dishes, kind) {
+  const cooked = kind !== 'fmcg';
+  return (Array.isArray(dishes) ? dishes : []).filter(
+    (d) => isCookedCategory(d?.category) === cooked,
+  );
+}
+
 function normName(n) {
   return String(n || '')
     .trim()
@@ -136,8 +156,7 @@ function normName(n) {
  * 返回 { drafts, dropped, notes }。
  */
 function validateTemplateDraft(input, rawDraft) {
-  const dishes = dishMap(input.dishes);
-  const dishIds = idSet(input.dishes);
+  const allIds = idSet(input.dishes);
   const existingNames = new Set(
     (input.existingTemplates || []).map((t) => normName(t?.name)).filter(Boolean),
   );
@@ -154,6 +173,9 @@ function validateTemplateDraft(input, rawDraft) {
   for (const d of rawList) {
     const name = String(d?.name || '').trim();
     const kind = d?.kind === 'fmcg' ? 'fmcg' : input.kind === 'fmcg' ? 'fmcg' : 'meal';
+    // 每条草稿按**自己的 kind**取候选池：LLM 即便把 kind 写错，也拿不到另一品类的 id
+    const dishes = dishMap(filterDishesByKind(input.dishes, kind));
+    const dishIds = idSet(filterDishesByKind(input.dishes, kind));
     const items = Array.isArray(d?.items) ? d.items : [];
 
     // ① 名称
@@ -177,7 +199,10 @@ function validateTemplateDraft(input, rawDraft) {
       const itemId = Number(it?.itemId);
       const slot = Number(it?.slot);
       if (!Number.isFinite(itemId) || !dishIds.has(itemId)) {
-        dropped.push({ draft: d, why: `模板「${name}」含编造/不在候选库的 itemId=${it?.itemId}` });
+        const why = allIds.has(itemId)
+          ? `模板「${name}」含品类不符的单品 #${itemId}（${kind} 模板不能混用另一品类）`
+          : `模板「${name}」含编造/不在候选库的 itemId=${it?.itemId}`;
+        dropped.push({ draft: d, why });
         itemBad = true;
         break;
       }
@@ -237,13 +262,13 @@ function validateTemplateDraft(input, rawDraft) {
 }
 
 function buildSystemPrompt(input) {
-  const dishLines = input.dishes
+  const kind = input.kind === 'fmcg' ? 'fmcg' : 'meal';
+  const dishLines = filterDishesByKind(input.dishes, kind)
     .map(
       (t) =>
         `- id=${t.id} 名=${t.name || ''} 品类=${t.category || ''} 供价=${t.costPrice || ''} 状态=${t.status === 1 ? '在售' : '下架'}`,
     )
     .join('\n');
-  const kind = input.kind === 'fmcg' ? 'fmcg' : 'meal';
   const ruleText =
     kind === 'meal'
       ? '饭类套餐：必须恰好包含档位 1=主件、2=辅品、3=素品、4=附品 各一道（共 4 项，禁止 slot=5 主食档）。'
@@ -273,8 +298,8 @@ function buildUserPrompt(input) {
 
 /** --no-llm 确定性 stub：给饭类挑 4 个在售菜分slot 1–4；快消挑最多 3 个分slot 1–3（跑通链路用，不代表真实决策） */
 function stubDraft(input) {
-  const onSale = input.dishes.filter((d) => d.status === 1);
   const kind = input.kind === 'fmcg' ? 'fmcg' : 'meal';
+  const onSale = filterDishesByKind(input.dishes, kind).filter((d) => d.status === 1);
   if (onSale.length === 0) return { drafts: [], notes: ['候选菜品库为空，stub 无法生成'] };
   if (kind === 'meal') {
     if (onSale.length < 4)
@@ -376,6 +401,10 @@ function selftest() {
       { id: 103, name: '清炒时蔬', category: '素菜', costPrice: '2.0', status: 1 },
       { id: 104, name: '紫菜蛋汤', category: '汤品', costPrice: '1.5', status: 1 },
       { id: 199, name: '下架菜', category: '主荤', costPrice: '9.0', status: 0 },
+      // 独立预包装快消单品：生产库里 category 为 NULL，服务端下发 ''
+      { id: 201, name: '康师傅冰红茶', category: '', costPrice: '3.0', status: 1 },
+      { id: 202, name: '旺旺雪饼', category: '', costPrice: '4.0', status: 1 },
+      { id: 203, name: '达利园蛋黄派', category: '', costPrice: '5.0', status: 1 },
     ],
     existingTemplates: [{ id: 7, name: '牛肉双拼' }],
     structured: true,
@@ -397,7 +426,7 @@ function selftest() {
       {
         name: '快消组合',
         kind: 'fmcg',
-        items: [{ itemId: 101, slot: 1 }],
+        items: [{ itemId: 201, slot: 1 }],
       },
     ],
   });
@@ -462,7 +491,7 @@ function selftest() {
   // 快消：任意档位 ≥1 件即可（slot=3 单品合法）
   const fmcgOk = validateTemplateDraft(
     { ...input, kind: 'fmcg' },
-    { drafts: [{ name: '单品', kind: 'fmcg', items: [{ itemId: 103, slot: 3 }] }] },
+    { drafts: [{ name: '单品', kind: 'fmcg', items: [{ itemId: 201, slot: 3 }] }] },
   );
   check('快消：单品 slot=3 合法', fmcgOk.drafts.length === 1 && fmcgOk.dropped.length === 0);
 
@@ -482,6 +511,83 @@ function selftest() {
     ],
   });
   check('重复商品项：剔除', dup.drafts.length === 0 && dup.dropped.length === 1);
+
+  // ---- 品类隔离（2026-11-10）----
+  // 判据自证：先看候选池真的被切成两半（防止过滤函数恒返回全部 / 恒返回空）
+  const cookedPool = filterDishesByKind(input.dishes, 'meal');
+  const fmcgPool = filterDishesByKind(input.dishes, 'fmcg');
+  check(
+    '品类隔离自证：meal 池 5 个现做菜 / fmcg 池 3 个快消单品',
+    cookedPool.length === 5 &&
+      fmcgPool.length === 3 &&
+      cookedPool.every((d) => d.id < 200) &&
+      fmcgPool.every((d) => d.id >= 200),
+  );
+
+  // 必报：快消模板混入现做菜（旧版会放行，正是本次要堵的资质混用）
+  const mixedFmcg = validateTemplateDraft(
+    { ...input, kind: 'fmcg' },
+    { drafts: [{ name: '混入现做菜', kind: 'fmcg', items: [{ itemId: 101, slot: 1 }] }] },
+  );
+  check(
+    '必报：fmcg 模板混入现做菜 → 剔除',
+    mixedFmcg.drafts.length === 0 &&
+      mixedFmcg.dropped.length === 1 &&
+      mixedFmcg.dropped[0].why.includes('品类不符'),
+  );
+
+  // 必报：饭类模板混入快消单品（反向也要堵，将来开双档才不会串）
+  const mixedMeal = validateTemplateDraft(
+    { ...input, kind: 'meal' },
+    {
+      drafts: [
+        {
+          name: '混入快消品',
+          kind: 'meal',
+          items: [
+            { itemId: 101, slot: 1 },
+            { itemId: 102, slot: 2 },
+            { itemId: 103, slot: 3 },
+            { itemId: 201, slot: 4 },
+          ],
+        },
+      ],
+    },
+  );
+  check('必报：meal 模板混入快消单品 → 剔除', mixedMeal.drafts.length === 0);
+
+  // 必不报：纯快消多件组合仍放行（别把判据做成恒红）
+  const pureFmcg = validateTemplateDraft(
+    { ...input, kind: 'fmcg' },
+    {
+      drafts: [
+        {
+          name: '纯快消组合',
+          kind: 'fmcg',
+          items: [
+            { itemId: 201, slot: 1 },
+            { itemId: 202, slot: 2 },
+            { itemId: 203, slot: 5 },
+          ],
+        },
+      ],
+    },
+  );
+  check('必不报：纯快消 3 件（含 slot=5）放行', pureFmcg.drafts.length === 1);
+
+  // stub 路径也不许再取到红烧肉（线上 PROVIDER_MODE=mock 实测曾按 id 取到现做菜）
+  const stubFmcg = stubDraft({ ...input, kind: 'fmcg' });
+  check(
+    '必不报：fmcg stub 只取快消单品，不含现做菜',
+    stubFmcg.drafts.length === 1 && stubFmcg.drafts[0].items.every((it) => it.itemId >= 200),
+  );
+
+  // 提示词候选库同样隔离：不给 LLM 看见另一品类的 id
+  const sysFmcg = buildSystemPrompt({ ...input, kind: 'fmcg' });
+  check(
+    '提示词：fmcg 候选库不含现做菜、含快消单品',
+    sysFmcg.includes('id=201') && !sysFmcg.includes('id=101') && !sysFmcg.includes('红烧牛肉'),
+  );
 
   process.stdout.write(`\n--selftest: ${passed} passed, ${failed} failed --\n`);
   process.exit(failed === 0 ? 0 : 1);

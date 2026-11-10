@@ -219,6 +219,14 @@ export class Item {
   @Column({ type: 'varchar', length: 512, nullable: true })
   description?: string | null;
 
+  /**
+   * 预包装食品标签（GB 7718 逐品具体值，124 号令第二十条）。
+   * `fmcg` 单品逐个登记；`meal`（现做菜）留空 ⇒ 端上整段自动隐藏，双轨天然成立。
+   * ⚠️ 下发前一律过 `normalizeLabelInfo()`，不要把原始 JSON 串丢给端上。
+   */
+  @Column({ name: 'label_info', type: 'json', nullable: true })
+  labelInfo?: Record<string, string> | null;
+
   @Column({
     name: 'cost_price',
     type: 'decimal',

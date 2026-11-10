@@ -11,6 +11,7 @@ import type {
 } from '@abox/shared-types';
 import { OrderStatus } from '@abox/shared-types';
 import { LeaderStatus } from '@abox/shared-types';
+import { normalizeLabelInfo } from '../../common/utils/label-info';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
@@ -360,6 +361,7 @@ export class MealService {
         category: dish?.category ?? SLOT_LABEL[i.slot] ?? null,
         imageUrl: dish?.imageUrl ?? null,
         description: dish?.description ?? null,
+        labelInfo: normalizeLabelInfo(dish?.labelInfo),
         supplierName: supMap.get(i.supplierId)?.name ?? null,
         // 端上「来自：X」点击后跳溯源页并**按 id 定位**（name 无唯一约束，不按名定位）
         supplierId: i.supplierId,

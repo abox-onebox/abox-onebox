@@ -161,6 +161,14 @@ export const CONFIG_GROUPS: Array<{ group: string; label: string; description: s
       '避免「这个参数到底定的是多少」只能翻代码。',
   },
   {
+    group: 'catalog',
+    label: '在售品类与开团',
+    description:
+      '控制哪些套餐品类**允许进入开团候选**（企微「生成开团草稿」与后台同链路）。' +
+      '当前只跑快消品；将来中午开盒饭，把「启用套餐品类」改成 `fmcg,meal` 即可，无需改代码、无需发版。' +
+      '⚠️ 改动立即生效，但只影响**新生成的草稿**，已排期的不回溯。',
+  },
+  {
     group: 'compliance',
     label: '124 号令合规公示',
     description:
@@ -757,6 +765,25 @@ export const CONFIG_SPECS: ConfigSpec[] = [
       '策略标识（非数值）：`residual` = 经营毛利为**结果值** ' +
       '（售价 − 成本合计 − 佣金），不预设固定毛利。',
     consumedBy: '仅作口径记录 —— 计算逻辑落在 `shared-utils/src/biz.ts` 的 `calcSettlement()`',
+  },
+
+  // ------------------------------------------------------------ catalog 在售品类
+  {
+    key: 'catalog.activeKinds',
+    group: 'catalog',
+    label: '启用套餐品类',
+    type: 'text',
+    impact: 'master',
+    wiring: 'live',
+    description:
+      '逗号分隔，可选值 `fmcg`（预包装快消品）/ `meal`（饭类套餐）。' +
+      '缺省 `fmcg` = 当前只跑快消品；填 `fmcg,meal` = 中午盒饭 + 下午快消品两档都开放。' +
+      '⚠️ 未知值会被忽略；整项留空或全写错时回落 `fmcg`（不 fail-open 放出未开放的盒饭档）。',
+    maxLength: 64,
+    fallbackValue: 'fmcg',
+    consumedBy:
+      '`WecomChatService.buildLaunchDraft()` 组候选集 + `revalidateLaunchDraft()` 实时复核；' +
+      '后台「AI 模板草稿」页的 UI 缺省值同口径（不构成业务闸门）',
   },
 
   // ------------------------------------------------------------ compliance 124 号令合规公示

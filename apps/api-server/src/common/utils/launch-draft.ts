@@ -5,9 +5,12 @@
  *   · 脚本那层用的是「生成那一刻的快照」候选集，只防 **LLM 编造 ID**（编个 999 的模板）。
  *   · 这一层用的是**实时**模板与楼群（调用方重新拉取），补的是 **快照失效**：
  *     这几秒里模板被停用 / 楼群被停用 / 该楼群当天已被排过。
- *   · 并额外拦掉 `kind !== 'meal'` 的模板 —— 生产库实测 `ab_set_meal` 里混着
- *     `fmcg`（预包装快消品）套餐，id 合法、状态正常，但**绝不该进餐盒开团**。
+ *   · 并额外拦掉**不属于当前启用品类**的模板 —— 生产库里 `meal`（饭类套餐）与
+ *     `fmcg`（预包装快消品）共存，id 合法、状态正常，但只有后台
+ *     `catalog.activeKinds` 列明的品类可进开团草稿。
  *     ⚠️ 脚本侧只看 id、看不到 kind，这个洞只有这一层能堵。
+ *   · 启用品类**由配置驱动**（缺省 `fmcg`）：将来中午开盒饭，把配置改成
+ *     `fmcg,meal` 即可，零代码。判据里不许再写死任何一个 kind 字面量。
  *
  * 两层都留着是有意的纵深防御，不是「同一条判据写两遍」：
  *   脚本管「编造」，这里管「失效 + 类型错配 + 冲突」。
@@ -28,7 +31,7 @@ export interface LaunchDraftTemplateRef {
   id: number;
   name?: string | null;
   status?: number | null;
-  /** `meal` = 餐盒套餐；`fmcg` = 预包装快消品（不可开团） */
+  /** `meal` = 饭类套餐；`fmcg` = 预包装快消品。是否可开团由 `activeKinds` 决定 */
   kind?: string | null;
   priceFen?: number | null;
   usedCount?: number | null;
@@ -39,6 +42,8 @@ export interface LaunchDraftRecheckCtx {
   mealDate: string;
   groups: LaunchDraftGroupRef[];
   templates: LaunchDraftTemplateRef[];
+  /** 当前启用品类（调用方读 `catalog.activeKinds`）；缺省回落 `['fmcg']` */
+  activeKinds?: MealKind[];
 }
 
 export type LaunchDraftBlockCode =
@@ -75,6 +80,33 @@ export interface LaunchDraftRecheckResult {
   blocked: LaunchDraftBlocked[];
 }
 
+/** 套餐品类（真源：`ab_set_meal.kind`） */
+export type MealKind = 'meal' | 'fmcg';
+
+/**
+ * 缺省启用品类：**当前只跑快消品**（2026-11-10 用户裁定）。
+ * 将来中午开盒饭改后台配置即可，不改本文件。
+ */
+export const DEFAULT_ACTIVE_KINDS: readonly MealKind[] = ['fmcg'];
+
+/**
+ * 解析后台配置 `catalog.activeKinds`（逗号分隔，如 `fmcg,meal`）。
+ * 空值 / 全非法 ⇒ 回落缺省；大小写与空白都容忍；未知值丢弃（绝不 fail-open）。
+ *
+ * ⚠️「回落缺省」而不是「回落全部」：配置写错时宁可只开快消品，
+ *    也不能把还没开放的盒饭档放出去。
+ */
+export function parseActiveKinds(raw: string | null | undefined): MealKind[] {
+  if (raw == null || raw.trim() === '') return [...DEFAULT_ACTIVE_KINDS];
+  const allowed = new Set<MealKind>(['meal', 'fmcg']);
+  const out: MealKind[] = [];
+  for (const part of raw.split(',')) {
+    const k = part.trim().toLowerCase() as MealKind;
+    if (allowed.has(k) && !out.includes(k)) out.push(k);
+  }
+  return out.length ? out : [...DEFAULT_ACTIVE_KINDS];
+}
+
 const ENABLED = 1;
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -95,9 +127,17 @@ export function isLaunchCandidateEnabled(status: number | null | undefined): boo
   return Number(status) === ENABLED;
 }
 
-/** 是否是「餐盒套餐」。`fmcg`（预包装快消品）同样存在 `ab_set_meal` 里，但不可开团。 */
-export function isMealTemplate(t: LaunchDraftTemplateRef): boolean {
-  return (t?.kind ?? 'meal').toString().toLowerCase() === 'meal';
+/**
+ * 是否属于**当前启用品类**。
+ * ⚠️ 不是「是不是盒饭」—— `fmcg` 是当前唯一启用品类，`meal` 反而不启用。
+ *    `kind` 缺省按 `meal` 处理（与实体列缺省一致），不猜。
+ */
+export function isActiveTemplate(
+  t: LaunchDraftTemplateRef,
+  activeKinds: readonly MealKind[] = DEFAULT_ACTIVE_KINDS,
+): boolean {
+  const kind = (t?.kind ?? 'meal').toString().toLowerCase() as MealKind;
+  return activeKinds.includes(kind);
 }
 
 /**
@@ -110,6 +150,8 @@ export function revalidateLaunchDraft(
 ): LaunchDraftRecheckResult {
   const rows: LaunchDraftRow[] = [];
   const blocked: LaunchDraftBlocked[] = [];
+
+  const activeKinds = ctx.activeKinds?.length ? ctx.activeKinds : DEFAULT_ACTIVE_KINDS;
 
   const groupById = new Map<number, LaunchDraftGroupRef>();
   for (const g of ctx.groups ?? []) {
@@ -227,13 +269,15 @@ export function revalidateLaunchDraft(
       });
       continue;
     }
-    if (!isMealTemplate(tpl)) {
-      const kind = String(tpl.kind);
+    if (!isActiveTemplate(tpl, activeKinds)) {
+      const kind = String(tpl.kind ?? 'meal');
       blocked.push({
         buildingGroupId: bgId,
         setMealId: smId,
         code: 'template_kind_mismatch',
-        detail: `模板「${tpl.name || '#' + smId}」是「${kind}」（非餐盒套餐），不能用于开团`,
+        detail:
+          `模板「${tpl.name || '#' + smId}」是「${kind}」，` +
+          `不在当前启用品类（${activeKinds.join('、')}）里，不能用于开团`,
       });
       continue;
     }

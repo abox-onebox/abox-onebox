@@ -59,6 +59,7 @@ function build(opts: { code?: number; data?: unknown } = {}): {
       null as never,
       null as never,
       { record: async () => undefined } as never,
+      { getRaw: async () => null } as never,
     ),
     calls,
   };

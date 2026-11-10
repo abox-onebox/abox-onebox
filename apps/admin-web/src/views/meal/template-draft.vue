@@ -186,7 +186,9 @@ const failure = ref('');
 const realMode = ref<string | null>(null);
 const lastSaved = ref('');
 
-const kind = ref<'meal' | 'fmcg'>('meal');
+// 缺省跟随 `catalog.activeKinds`（当前只跑快消品）；运营仍可手动切到 meal 提前备模板。
+// 真正的放行判据在后端，UI 缺省值不构成业务闸门。
+const kind = ref<'meal' | 'fmcg'>('fmcg');
 const proposalText = ref('');
 
 const auth = useAuthStore();

@@ -6,8 +6,12 @@
  *   · 这一层用的是**实时**菜品集（调用方重新拉取），补的是 **快照失效**：
  *     这几秒里某菜被下架 / 被改名，生成时合法的草稿，确认时可能已不合法。
  *
- * 两层都留着是有意的纵深防御：脚本管「编造」，这里管「失效 + 构成 + 重名」。
+ * 两层都留着是有意的纵深防御：脚本管「编造」，这里管「失效 + 构成 + 重名 + 品类隔离」。
  * 纯函数、零 IO —— 便于单测钉死；调用方不许把这里的判断再写一遍。
+ *
+ * ⭐ 2026-11-10 加「品类隔离」：当前只跑预包装快消品，`fmcg` 模板里混进现做菜
+ *    （`ab_item.category` 非空）就等于「仅销售预包装食品备案」下实际制售，属资质混用。
+ *    判据以**单品品类**为准，不靠模板名猜；将来开盒饭两类共存也不冲突。
  */
 
 import { spawn } from 'node:child_process';
@@ -19,8 +23,13 @@ import { tmpdir } from 'node:os';
 export interface MealTemplateGenInput {
   proposalText: string;
   kind: 'meal' | 'fmcg';
-  /** 在售菜品白名单（id + name + status） */
-  dishes: Array<{ id: number; name?: string | null; status?: number | null }>;
+  /** 在售单品白名单（id + name + status + category；category 用于品类隔离） */
+  dishes: Array<{
+    id: number;
+    name?: string | null;
+    status?: number | null;
+    category?: string | null;
+  }>;
   /** 现有模板名（用于重名检测） */
   existingTemplates?: Array<{ id: number; name?: string }>;
 }
@@ -61,7 +70,30 @@ const SLOT_LABEL: Record<number, string> = {
 const STAPLE_SLOT = 5;
 
 export type TemplateBlockCode =
-  'bad_shape' | 'unknown_dish' | 'off_shelf' | 'dup_item' | 'composition' | 'dup_name' | 'empty';
+  | 'bad_shape'
+  | 'unknown_dish'
+  | 'off_shelf'
+  | 'kind_mismatch'
+  | 'dup_item'
+  | 'composition'
+  | 'dup_name'
+  | 'empty';
+
+/**
+ * `ab_item.category` 非空 = 现做菜（main/half/veg/soup/…）；
+ * 为空 / null = 独立预包装快消单品（生产库实测：fmcg 套餐 28 个单品全部 category IS NULL）。
+ *
+ * ⚠️ 这是「品类隔离」唯一判据，脚本 `gen-meal-template.mjs` 的 `filterDishesByKind`
+ *    必须与它逐字同源；两边漂移会让「生成时拦了、确认时又放行」。
+ */
+export function isCookedDish(category: string | null | undefined): boolean {
+  return category != null && String(category).trim() !== '';
+}
+
+/** 该单品能不能进这个品类的模板 */
+export function dishFitsKind(kind: 'meal' | 'fmcg', category: string | null | undefined): boolean {
+  return kind === 'fmcg' ? !isCookedDish(category) : isCookedDish(category);
+}
 
 export interface TemplateBlocked {
   name: string;
@@ -71,7 +103,8 @@ export interface TemplateBlocked {
 }
 
 export interface RevalidateTemplateCtx {
-  dishes: Array<{ id: number; status?: number | null }>;
+  /** 必带 `category`：缺了就无法判品类，宁可编译期报错也不要运行时 fail-open */
+  dishes: Array<{ id: number; status?: number | null; category: string | null }>;
   /** 现有模板名（小写去空白集合），用于重名检测 */
   existingNames: Set<string>;
 }
@@ -105,8 +138,9 @@ export function revalidateMealTemplateDraft(
     };
   }
 
-  const dishById = new Map<number, { status?: number | null }>();
-  for (const d of ctx.dishes) dishById.set(Number(d.id), { status: d.status });
+  const dishById = new Map<number, { status?: number | null; category: string | null }>();
+  for (const d of ctx.dishes)
+    dishById.set(Number(d.id), { status: d.status, category: d.category });
 
   const normItems: MealTemplateDraftItem[] = [];
   for (const it of items) {
@@ -122,6 +156,21 @@ export function revalidateMealTemplateDraft(
       return {
         ok: false,
         blocked: { name, code: 'off_shelf', detail: `模板「${name}」含已下架菜品 #${itemId}` },
+      };
+    }
+    // 品类隔离：kind 取自**草稿自身**（可能是 LLM 写的），不与输入 kind 混用
+    const draftKind = (draft as { kind?: string })?.kind === 'fmcg' ? 'fmcg' : 'meal';
+    if (!dishFitsKind(draftKind, dishById.get(itemId)?.category)) {
+      return {
+        ok: false,
+        blocked: {
+          name,
+          code: 'kind_mismatch',
+          detail:
+            `模板「${name}」是「${draftKind}」，却混入了` +
+            (draftKind === 'fmcg' ? '现做菜' : '预包装快消单品') +
+            ` #${itemId}（品类不符，不能入库）`,
+        },
       };
     }
     if (!Number.isInteger(slot) || slot < 1 || slot > 5) {

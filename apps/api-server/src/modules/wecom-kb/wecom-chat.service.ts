@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'path';
 import { isAfterCutoff, todayBj, tomorrowBj } from '../../common/utils/time';
 import {
+  isActiveTemplate,
   isLaunchCandidateEnabled,
-  isMealTemplate,
   launchDraftText,
+  parseActiveKinds,
   planLaunchConfirm,
   revalidateLaunchDraft,
   type LaunchConfirmBlockCode,
@@ -24,6 +25,7 @@ import { WecomBindingService } from './wecom-binding.service';
 import { WecomSvcTokenService } from './wecom-svc-token.service';
 import { WecomTokenService } from './wecom-token.service';
 import { AiInsightService } from './ai-insight.service';
+import { BizConfigService } from '../../common/services/biz-config.service';
 import { bjYmdPlus, parseMealDate } from './name-match';
 import { parseIntent, isConfirm, isCancel } from './chat-flow';
 import {
@@ -310,6 +312,8 @@ export class WecomChatService {
      *    故这里调用一律不包 try/catch（包了反而会掩盖「record 本该吞异常」这个契约）。
      */
     private readonly aiInsight: AiInsightService,
+    /** 读 `catalog.activeKinds` 等运营配置（CommonModule 已 @Global 导出） */
+    private readonly bizConfig: BizConfigService,
   ) {}
 
   private getSession(userId: string): Session | undefined {
@@ -1373,8 +1377,9 @@ export class WecomChatService {
    * `gen-launch-draft.mjs` 在**候选集白名单**内补齐，杜绝 LLM 编造 ID。
    *
    * 三道护栏（生成与执行分离）：
-   *   ① 组候选集时就只放**启用**的楼群 + **启用且 kind=meal** 的模板
-   *     —— 生产库 `ab_set_meal` 里混着 `fmcg`（预包装快消品）套餐，必须先滤掉；
+   *   ① 组候选集时就只放**启用**的楼群 + **启用且属于当前启用品类**的模板
+   *     —— 生产库 `ab_set_meal` 里 `meal` / `fmcg` 共存，启用品类由
+   *        `catalog.activeKinds` 决定（缺省 `fmcg`），不得写死；
    *   ② 脚本内白名单（防编造 ID）；
    *   ③ 生成回来后**用实时数据再复核一遍**（`revalidateLaunchDraft`）
    *     —— 防「生成那几秒里模板/楼群被停用」这种快照失效。
@@ -1407,15 +1412,22 @@ export class WecomChatService {
         message: '取不到套餐模板库，没法出开团草稿。请先在后台「套餐编排」建好模板。',
       };
 
+    // 启用品类是**运营配置**，不是代码常量：将来开盒饭把 catalog.activeKinds 改成
+    // `fmcg,meal` 即可，本文件不用动。取配置失败按缺省（只跑快消品）兜底，绝不 fail-open。
+    const activeKinds = parseActiveKinds(
+      await this.bizConfig.getRaw('catalog.activeKinds').catch(() => null),
+    );
     const groups = groupsRaw.filter((g) => isLaunchCandidateEnabled(g.status));
     const templates = tplsRaw.filter(
-      (t) => isMealTemplate(t) && isLaunchCandidateEnabled(t.status),
+      (t) => isActiveTemplate(t, activeKinds) && isLaunchCandidateEnabled(t.status),
     );
     if (groups.length === 0) return { ok: false, message: '现在没有启用中的楼群，没法开团。' };
     if (templates.length === 0)
       return {
         ok: false,
-        message: '模板库里没有「启用中的餐盒套餐」（可能只有预包装品或都已停用），没法开团。',
+        message:
+          `模板库里没有当前启用品类（${activeKinds.join('、')}）的启用模板，没法开团。` +
+          '可在后台「系统配置 → 在售品类」调整。',
       };
 
     // 选品依据：近 30 天菜品热度（与节点 F 同源）。取不到也不影响出草稿 ——
@@ -1550,6 +1562,8 @@ export class WecomChatService {
       mealDate,
       groups: groupsLive && groupsLive.length ? groupsLive : groups,
       templates: tplsLive && tplsLive.length ? tplsLive : templates,
+      // 与候选过滤同一份口径，避免「组候选放行、复核又拦」的自相矛盾
+      activeKinds,
     };
     const res = revalidateLaunchDraft(payload, ctx);
     const mode = typeof payload.mode === 'string' ? payload.mode : null;

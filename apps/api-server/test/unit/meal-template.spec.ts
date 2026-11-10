@@ -1,4 +1,6 @@
 import {
+  dishFitsKind,
+  isCookedDish,
   revalidateMealTemplateDraft,
   type MealTemplateDraft,
 } from '../../src/common/utils/meal-template';
@@ -13,14 +15,21 @@ import {
  *
  * ⚠️ 必须与 scripts/gen-meal-template.mjs 的 validateTemplateDraft 同源：
  *   脚本管「生成时刻快照」，这里管「确认时刻实时集」。两者判据漂移会被本测试抓出。
+ *
+ * ⭐ 2026-11-10 加品类隔离：LIVE 夹具照**生产库真实形态**裁剪 ——
+ *    现做菜 `category` 非空，独立预包装快消单品 `category` 为 NULL（服务层下发 ''）。
  */
 
 const LIVE = [
-  { id: 101, status: 1 },
-  { id: 102, status: 1 },
-  { id: 103, status: 1 },
-  { id: 104, status: 1 },
-  { id: 199, status: 0 }, // 已下架
+  { id: 101, status: 1, category: 'main' },
+  { id: 102, status: 1, category: 'half' },
+  { id: 103, status: 1, category: 'veg' },
+  { id: 104, status: 1, category: 'soup' },
+  { id: 199, status: 0, category: 'main' }, // 已下架
+  // 独立预包装快消单品（ab_item.category IS NULL）
+  { id: 201, status: 1, category: '' },
+  { id: 202, status: 1, category: '' },
+  { id: 203, status: 1, category: '' },
 ];
 
 function meal(
@@ -53,16 +62,16 @@ describe('revalidateMealTemplateDraft · 必不报（合法草稿放行）', () 
   });
 
   it('快消单品 slot=3 放行', () => {
-    const r = revalidateMealTemplateDraft(fmcg([{ itemId: 103, slot: 3 }]), ctx);
+    const r = revalidateMealTemplateDraft(fmcg([{ itemId: 201, slot: 3 }]), ctx);
     expect(r.ok).toBe(true);
   });
 
   it('快消多件任意档位放行', () => {
     const r = revalidateMealTemplateDraft(
       fmcg([
-        { itemId: 101, slot: 1 },
-        { itemId: 102, slot: 2 },
-        { itemId: 103, slot: 4 },
+        { itemId: 201, slot: 1 },
+        { itemId: 202, slot: 2 },
+        { itemId: 203, slot: 4 },
       ]),
       ctx,
     );
@@ -166,6 +175,78 @@ describe('revalidateMealTemplateDraft · 必报（违规草稿拦截）', () => 
     const r = revalidateMealTemplateDraft(meal([{ itemId: 101, slot: 1 }], ''), ctx);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.blocked.code).toBe('bad_shape');
+  });
+});
+
+describe('品类隔离 · 判据自证（与脚本 filterDishesByKind 同源）', () => {
+  it.each([
+    ['main', true],
+    ['veg', true],
+    [' ', false],
+    ['', false],
+    [null, false],
+  ])('isCookedDish(%p) → %p', (c, expected) => {
+    expect(isCookedDish(c as string | null)).toBe(expected);
+  });
+
+  it('dishFitsKind：fmcg 只收空品类，meal 只收现做菜', () => {
+    expect(dishFitsKind('fmcg', '')).toBe(true);
+    expect(dishFitsKind('fmcg', null)).toBe(true);
+    expect(dishFitsKind('fmcg', 'main')).toBe(false);
+    expect(dishFitsKind('meal', 'main')).toBe(true);
+    expect(dishFitsKind('meal', '')).toBe(false);
+  });
+});
+
+describe('品类隔离 · 必报 / 必不报（2026-11-10）', () => {
+  const ctx = { dishes: LIVE, existingNames: new Set<string>() };
+
+  it('★ 必报：快消模板混入现做菜 → kind_mismatch（旧版会放行）', () => {
+    const r = revalidateMealTemplateDraft(fmcg([{ itemId: 101, slot: 1 }]), ctx);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.blocked.code).toBe('kind_mismatch');
+      expect(r.blocked.detail).toContain('现做菜');
+    }
+  });
+
+  it('★ 必报：饭类模板混入快消单品 → kind_mismatch（反向也堵）', () => {
+    const r = revalidateMealTemplateDraft(
+      meal([
+        { itemId: 101, slot: 1 },
+        { itemId: 102, slot: 2 },
+        { itemId: 103, slot: 3 },
+        { itemId: 201, slot: 4 },
+      ]),
+      ctx,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.blocked.code).toBe('kind_mismatch');
+  });
+
+  it('必不报：纯快消多件（含 slot=5）放行 —— 判据不恒红', () => {
+    const r = revalidateMealTemplateDraft(
+      fmcg([
+        { itemId: 201, slot: 1 },
+        { itemId: 202, slot: 2 },
+        { itemId: 203, slot: 5 },
+      ]),
+      ctx,
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('必不报：纯现做菜饭类一饭四菜照常放行 —— 将来开盒饭不用改判据', () => {
+    const r = revalidateMealTemplateDraft(
+      meal([
+        { itemId: 101, slot: 1 },
+        { itemId: 102, slot: 2 },
+        { itemId: 103, slot: 3 },
+        { itemId: 104, slot: 4 },
+      ]),
+      ctx,
+    );
+    expect(r.ok).toBe(true);
   });
 });
 

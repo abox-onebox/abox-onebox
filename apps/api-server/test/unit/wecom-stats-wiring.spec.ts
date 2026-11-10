@@ -87,6 +87,7 @@ function makeSvc(handler: (code: string, params: Record<string, string>) => unkn
     null as never,
     null as never,
     { record: async () => undefined } as never,
+    { getRaw: async () => null } as never,
   );
   return { svc, calls, execCatalog };
 }
@@ -157,6 +158,7 @@ describe('统计问句 · 接线', () => {
       null as never,
       null as never,
       { record: async () => undefined } as never,
+      { getRaw: async () => null } as never,
     );
 
     const out = await svc.reply('u5', '经营情况', BINDING);
@@ -210,6 +212,7 @@ describe('统计问句 · 接线', () => {
       null as never,
       null as never,
       { record: async () => undefined } as never,
+      { getRaw: async () => null } as never,
     );
     const out = await svc.reply('u9', '经营情况', BINDING);
     expect(out).toContain('没查到');

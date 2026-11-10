@@ -780,7 +780,8 @@ export class MealAdminService {
    * 这是「AI 出方案、人执行」的最后一关；controller 已把端点限制为负责人角色。
    */
   async confirmTemplateDraft(dto: CreateSetMealTemplateDto, operatorId: number) {
-    const liveDishes = await this.itemRepo.find({ select: ['id', 'status'] });
+    // 必带 category：确认闸要按单品品类隔离（fmcg 模板不得混现做菜）
+    const liveDishes = await this.itemRepo.find({ select: ['id', 'status', 'category'] });
     const existing = await this.setMealRepo.find({ select: ['id', 'name'] });
     const existingNames = new Set(
       existing
@@ -793,7 +794,11 @@ export class MealAdminService {
     );
 
     const check = revalidateMealTemplateDraft(dto as unknown as MealTemplateDraft, {
-      dishes: liveDishes,
+      dishes: liveDishes.map((d) => ({
+        id: d.id,
+        status: d.status,
+        category: d.category ?? null,
+      })),
       existingNames,
     });
     if (!check.ok) {

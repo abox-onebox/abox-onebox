@@ -1,5 +1,8 @@
 import {
+  DEFAULT_ACTIVE_KINDS,
+  isActiveTemplate,
   launchDraftText,
+  parseActiveKinds,
   planLaunchConfirm,
   revalidateLaunchDraft,
   type LaunchConfirmPending,
@@ -13,13 +16,17 @@ import {
  * 本文件钉死四件事：
  *   ① **必不报**：完全合法的草稿必须原样放行（防判据恒红、把正常链路卡死）；
  *   ② **必报**：编造 ID / 停用 / 日期错 / 重复 必须逐条拦下并给出人话原因（防恒绿）；
- *   ③ **`kind=fmcg` 必须拦**：生产库 `ab_set_meal` 里确有预包装快消品套餐，
- *      id 合法、状态正常，但绝不该进餐盒开团 —— 脚本侧只看 id，这个洞只能这里堵；
+ *   ③ **非当前启用品类必须拦**：假定本文件 CTX 配置成 `activeKinds=['meal']`
+ *      （模拟将来开盒饭），则 `fmcg` 模板 id 合法也必须被拦；另有一组用例钉死
+ *      **缺省启用品类是 `fmcg`**（当前只跑快消品）；
  *   ④ 脏数据**不许抛错**：开团链路不能因一条畸形草稿崩掉整段对话。
  */
 
 const CTX: LaunchDraftRecheckCtx = {
   mealDate: '2026-11-05',
+  // 本文件测的是「复核闸判据」，显式配成 meal 档以保留原有断言语义；
+  // 当前生产缺省（fmcg）由下面那组独立用例钉死。
+  activeKinds: ['meal'],
   groups: [
     { id: 1, name: '量子大厦', status: 1 },
     { id: 2, name: '京仪大厦', status: 1 },
@@ -75,6 +82,9 @@ describe('revalidateLaunchDraft —— 必不报：合法草稿全放行', () =>
       { drafts: [{ buildingGroupId: 1, setMealId: 7 }] },
       {
         mealDate: '2026-11-05',
+        // 本用例只测「status 缺省视为启用」，品类显式沿用 CTX 口径，
+        // 否则缺 kind 会按 meal 撞上全局缺省 fmcg，红的是别的事。
+        activeKinds: ['meal'],
         groups: [{ id: 1, name: '量子大厦' }],
         templates: [{ id: 7, name: '牛肉双拼', priceFen: 2580 }],
       },
@@ -85,7 +95,7 @@ describe('revalidateLaunchDraft —— 必不报：合法草稿全放行', () =>
 });
 
 describe('revalidateLaunchDraft —— 必报：该拦的一条都不许漏', () => {
-  it('kind=fmcg 的模板必须拦（id 合法也不能开团）', () => {
+  it('非当前启用品类（fmcg）的模板必须拦（id 合法也不能开团）', () => {
     const r = revalidateLaunchDraft(
       { drafts: [{ mealDate: '2026-11-05', buildingGroupId: 1, setMealId: 8 }] },
       CTX,
@@ -173,6 +183,69 @@ describe('revalidateLaunchDraft —— 脏数据不抛错', () => {
     expect(r.rows).toHaveLength(0);
     expect(r.blocked.every((b) => b.code === 'bad_shape')).toBe(true);
     expect(r.blocked).toHaveLength(3);
+  });
+});
+
+describe('catalog.activeKinds —— 启用品类由配置驱动（2026-11-10 裁定）', () => {
+  it('缺省只跑快消品 fmcg，绝不放开盒饭档', () => {
+    expect(DEFAULT_ACTIVE_KINDS).toEqual(['fmcg']);
+  });
+
+  it.each([
+    [null, ['fmcg']],
+    [undefined, ['fmcg']],
+    ['', ['fmcg']],
+    ['   ', ['fmcg']],
+    ['fmcg,meal', ['fmcg', 'meal']],
+    [' MEAL , fmcg ', ['meal', 'fmcg']],
+    ['meal,meal', ['meal']],
+    ['junk,meal', ['meal']],
+    ['junk', ['fmcg']],
+  ])('parseActiveKinds(%p) → %p', (raw, expected) => {
+    expect(parseActiveKinds(raw as string | null | undefined)).toEqual(expected);
+  });
+
+  it('isActiveTemplate：缺 kind 按 meal 处理，不猜成启用品类', () => {
+    expect(isActiveTemplate({ id: 1, kind: 'fmcg' })).toBe(true);
+    expect(isActiveTemplate({ id: 2, kind: 'meal' })).toBe(false);
+    expect(isActiveTemplate({ id: 3 })).toBe(false);
+    expect(isActiveTemplate({ id: 2, kind: 'meal' }, ['fmcg', 'meal'])).toBe(true);
+  });
+
+  it('★ 缺省 CTX（不传 activeKinds）下：meal 模板被拦、fmcg 模板放行', () => {
+    const noCfg: LaunchDraftRecheckCtx = {
+      mealDate: '2026-11-05',
+      groups: [{ id: 1, name: '量子大厦', status: 1 }],
+      templates: [
+        { id: 7, name: '红烧肉套餐', status: 1, kind: 'meal' },
+        { id: 8, name: 'ABox 零食盒', status: 1, kind: 'fmcg' },
+      ],
+    };
+    const r = revalidateLaunchDraft(
+      {
+        drafts: [
+          { buildingGroupId: 1, setMealId: 7 },
+          { buildingGroupId: 1, setMealId: 8 },
+        ],
+      },
+      noCfg,
+    );
+    // 被品类闸拦下的条目**不占用**楼群去重位（seenGroup 只在全通过后才 add），
+    // 所以第 2 条 fmcg 正常放行 —— 这正是「缺省只跑快消品」的最强证据。
+    expect(r.blocked).toHaveLength(1);
+    expect(r.blocked[0].code).toBe('template_kind_mismatch');
+    expect(r.blocked[0].detail).toContain('fmcg');
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0].setMealId).toBe(8);
+  });
+
+  it('把配置切成 fmcg,meal 后，同一份 meal 草稿即可放行（零代码开盒饭）', () => {
+    const r = revalidateLaunchDraft(
+      { drafts: [{ buildingGroupId: 1, setMealId: 7 }] },
+      { ...CTX, activeKinds: parseActiveKinds('fmcg,meal') },
+    );
+    expect(r.blocked).toHaveLength(0);
+    expect(r.rows).toHaveLength(1);
   });
 });
 

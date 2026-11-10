@@ -50,6 +50,19 @@
             <text class="dp__desc">{{ descriptionText }}</text>
           </view>
 
+          <!-- 预包装标签信息（124 号令第二十条：销售页展示逐品标签；有值才显示） -->
+          <view v-if="labelRows.length" class="dp__section">
+            <text class="dp__section-title">
+              <text class="abi abi-16">{{ I.shield }}</text> 预包装标签信息
+            </text>
+            <view class="dp__label-list">
+              <view v-for="(row, i) in labelRows" :key="i" class="dp__label-row">
+                <text class="dp__label-key">{{ row.key }}</text>
+                <text class="dp__label-val">{{ row.value }}</text>
+              </view>
+            </view>
+          </view>
+
           <!-- 门店实拍（决策2·方案B 保留照片墙；后端已补 store_photos 列 + 下发字段，见迁移 1700000000015） -->
           <view v-if="photos.length" class="dp__section">
             <text class="dp__section-title">
@@ -109,6 +122,8 @@
  * ## 数据
  * · `item`：U1 套餐内一道菜的展示视图（MealItemView），含 imageUrl / description /
  *   category / supplierName / supplierId —— **无需新增后端字段**即可落地头图与资质入口。
+ * · `item.labelInfo`：124 号令第二十条「销售页展示标签」的逐品具体值（可选）。
+ *   ⭐ 有值才渲染整段、无值整段隐藏 ⇒ 现做盒饭档不需要改本组件。
  * · `photos`：门店实拍（决策2·方案B 保留）。⭐ 后端已落地 `store_photos` 列（迁移 1700000000015）
  *   与 `SupplierQualificationDetail.photos` / `SupplierQualificationItem.photos` 下发字段；
  *   本组件把照片墙做成「有则显示、无则整体隐藏」的可选增强，数据由首页 `openDish` 按 supplierId 注入。
@@ -211,6 +226,17 @@ const descriptionText = computed(() => {
   if (d && d.trim()) return d.trim();
   // 优雅降级：不报错，给一句中性说明
   return DISH_DESC_FALLBACK;
+});
+
+// 预包装标签：后端已 normalize，这里再做一次形态防御（兼容旧版后端 / 手填 JSON 串）。
+// 只收「字符串键 → 非空字符串值」，异常项整条跳过，绝不让脏数据把弹窗撑爆。
+const labelRows = computed<Array<{ key: string; value: string }>>(() => {
+  const raw = props.item?.labelInfo;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+  return Object.entries(raw)
+    .filter(([k, v]) => k && typeof v === 'string' && v.trim())
+    .slice(0, 20)
+    .map(([key, value]) => ({ key: key.trim(), value: String(value).trim() }));
 });
 
 // ---- 手势 ----
@@ -510,6 +536,35 @@ function closeZoom(): void {
 
 .dp__qual-arrow {
   color: $c-gold-fg;
+}
+
+// 预包装标签（124 号令）：内嵌浅底卡片，键左值右，键值都只用文字前景令牌
+.dp__label-list {
+  margin-top: $space-2;
+  padding: $space-2 $space-3;
+  background: $c-surface-2;
+  border: 1rpx solid $c-border;
+  border-radius: $radius-md;
+}
+
+.dp__label-row {
+  display: flex;
+  align-items: flex-start;
+  gap: $space-2;
+  padding: 6rpx 0;
+}
+
+.dp__label-key {
+  flex: 0 0 180rpx;
+  font-size: $fs-body;
+  color: $c-text-weak;
+}
+
+.dp__label-val {
+  flex: 1;
+  font-size: $fs-body;
+  line-height: 1.6;
+  color: $c-text;
 }
 
 .dp__pad {
