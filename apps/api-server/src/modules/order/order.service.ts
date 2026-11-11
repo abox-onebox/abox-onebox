@@ -308,6 +308,20 @@ export class OrderService {
         reasonText: availability.reasonText,
       });
     }
+    /**
+     * ⭐ 2026-11-11 P1 根治：无在职团长在**首页**表现为 `canOrder=false` + 引导换楼；
+     *    若有人绕过首页直调 `POST /orders`，这里必须显式拦住 —— 不映射就会 fall-through
+     *    到金额计算，最后才在 `resolveLeader` 抛 30007，等于把 `availability` 结果静默丢弃。
+     *    复用 30007（语义同为「没有可用团长」），但文案取唯一出口 `reasonText`。
+     */
+    if (availability.reason === 'leader_unavailable') {
+      throw new BizException(
+        ErrorCode.LEADER_NOT_FOUND,
+        availability.reasonText ?? undefined,
+        undefined,
+        { reason: availability.reason },
+      );
+    }
 
     /**
      * ⑥ ~~同用户同出餐日重复下单 → 30004~~ —— **2026-10-03 起移除**

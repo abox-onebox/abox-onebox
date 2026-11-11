@@ -2,7 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, LessThanOrEqual, MoreThanOrEqual, Repository } from 'typeorm';
 
+import { LeaderStatus } from '@abox/shared-types';
+
 import { Building, BuildingGroup } from '../../database/entities/building.entity';
+import { TeamLeader } from '../../database/entities/leader.entity';
 import { MealAssignment } from '../../database/entities/meal.entity';
 import { SalesPause } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
@@ -29,6 +32,9 @@ export type OrderAvailability = Availability & { reasonText: string | null };
  *        当成配置缺口去排查，故障就永久消失在日志之外。故本服务不加 try/catch。
  *   3. **零缓存**。加缓存会把「停售开关」与「实际判定」拉出时间差，W1 要求的
  *      「写入停售后立刻生效」会因此失效（不要在编排层把 60 秒 TTL 加回来）。
+ *   4. ⭐ **在职团长是第 6 项装载数据**（2026-11-11 P1 根治）：与 `OrderService.resolveLeader()`
+ *     查同一张 `ab_team_leader`、同一个 `LeaderStatus.ACTIVE`。⚠️ 这里**只装载布尔值**，
+ *     判据仍在 `utils/orderability.ts` —— 在本类里夹带 `if (!leader)` 就是第二份判据。
  */
 @Injectable()
 export class OrderAvailabilityService {
@@ -38,6 +44,7 @@ export class OrderAvailabilityService {
     @InjectRepository(BuildingGroup) private readonly groupRepo: Repository<BuildingGroup>,
     @InjectRepository(MealAssignment) private readonly assignRepo: Repository<MealAssignment>,
     @InjectRepository(SalesPause) private readonly pauseRepo: Repository<SalesPause>,
+    @InjectRepository(TeamLeader) private readonly leaderRepo: Repository<TeamLeader>,
     private readonly bizConfig: BizConfigService,
   ) {}
 
@@ -104,7 +111,7 @@ export class OrderAvailabilityService {
       : null;
     const groupId = building?.buildingGroupId ?? null;
 
-    const [group, assignment, pause, cutoffWindowMinutes] = await Promise.all([
+    const [group, assignment, pause, cutoffWindowMinutes, activeLeader] = await Promise.all([
       groupId
         ? this.groupRepo.findOne({ where: { id: groupId, deletedAt: IsNull() } })
         : Promise.resolve<BuildingGroup | null>(null),
@@ -115,6 +122,12 @@ export class OrderAvailabilityService {
         : Promise.resolve<MealAssignment | null>(null),
       this.salesPaused(mealDate),
       this.bizConfig.cutoffWindowMinutes(),
+      buildingId
+        ? this.leaderRepo.findOne({
+            where: { buildingId, status: LeaderStatus.ACTIVE },
+            order: { id: 'ASC' },
+          })
+        : Promise.resolve<TeamLeader | null>(null),
     ]);
 
     const publishAtMs = publishAtOf(mealDate).getTime();
@@ -130,6 +143,7 @@ export class OrderAvailabilityService {
       publishAtMs,
       cutoffAtMs,
       nowMs: now().getTime(),
+      hasActiveLeader: activeLeader !== null,
     });
 
     // ⚠️ 文案一律走纯函数的唯一出口 `reasonText()`，本服务不自己拼 ——

@@ -35,6 +35,20 @@ function requestPayment(params: PayCreateResult): Promise<void> {
   });
 }
 
+/**
+ * `PROVIDER_MODE=mock` 时服务端返回的是 `mock-wx-pay.provider.ts` 造的假参数
+ * （`paySign: 'mock_pay_sign'`、`package: 'prepay_id=mock_prepay_<orderNo>'`），
+ * 真实收银台必然 reject。提审包是 production 构建（`ENV.demoMode === false`），
+ * 走不到 `mockPaid` 分支，故按参数特征识别并跳过收银台：
+ * 服务端 `MOCK_PAY_AUTO_SUCCESS` 会在约 800ms 后置 paid，下面 `pollResult()`
+ * 以 U8 服务端状态为准（见文件头注释）。
+ *
+ * `real` 模式返回真实 prepay_id 与签名，此判断恒 false，行为不变。
+ */
+function isMockPrepay(params: PayCreateResult): boolean {
+  return params.paySign === 'mock_pay_sign' || params.package.startsWith('prepay_id=mock_');
+}
+
 export function useWechatPay() {
   const paying = ref(false);
 
@@ -59,9 +73,11 @@ export function useWechatPay() {
 
       if (ENV.demoMode) {
         await mockPaid(orderNo, prepay.payAmountFen);
-      } else {
+      } else if (!isMockPrepay(prepay)) {
         await requestPayment(prepay);
       }
+      // mock 假参数不调收银台（必失败）；服务端 MOCK_PAY_AUTO_SUCCESS 会自动置 paid，
+      // 下面 pollResult() 以 U8 服务端状态为准。
 
       return await pollResult(orderNo);
     } finally {

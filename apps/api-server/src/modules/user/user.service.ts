@@ -124,6 +124,19 @@ export class UserService {
       );
     }
 
+    // ⭐ 2026-11-11 提审前收口（P0-5）：`GET /building` 已只开放有在职团长的楼，
+    //    绑楼口必须同判据，否则绕过列表直接调接口仍能绑到「能看不能买」的楼。
+    const activeLeader = await this.leaderRepo.findOne({
+      where: { buildingId: dto.buildingId, status: LeaderStatus.ACTIVE },
+      order: { id: 'ASC' },
+    });
+    if (!activeLeader) {
+      throw new BizException(
+        ErrorCode.BUILDING_NOT_FOUND,
+        `「${building.name}」暂未开放预订，请选择列表中的其他办公楼`,
+      );
+    }
+
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new BizException(ErrorCode.USER_NOT_FOUND);
     if (user.status === UserStatus.CANCELED) throw new BizException(ErrorCode.ACCOUNT_CANCELED);

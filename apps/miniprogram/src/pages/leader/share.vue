@@ -48,7 +48,12 @@
           >
         </view>
 
-        <view class="way" hover-class="way--hover" @tap="makeQrcode">
+        <view
+          v-if="material && !material.mock"
+          class="way"
+          hover-class="way--hover"
+          @tap="makeQrcode"
+        >
           <text class="abi abi-24 way__icon">{{ I.image }}</text>
           <view class="way__body">
             <text class="way__title">生成二维码海报</text>
@@ -104,22 +109,17 @@
         </view>
       </view>
 
-      <!-- ⑤ 小程序码 -->
-      <view class="card card--center">
+      <!-- ⑤ 小程序码（能力未接入时整块隐藏，不暴露未完成态文案） -->
+      <view v-if="qrcode && !qrcode.mock" class="card card--center">
         <text class="card__title">小程序码</text>
 
         <view class="qr">
           <image v-if="qrImage" class="qr__img" :src="qrImage" mode="aspectFit" />
           <view v-else class="qr__ph">
-            <text class="qr__ph-text">小程序码待接入</text>
-            <text class="qr__ph-hint">{{ qrcode?.tips || '微信码能力接入后自动展示' }}</text>
+            <text class="qr__ph-text">分享小程序码</text>
+            <text class="qr__ph-hint">{{ qrcode?.tips || '可先复制邀请码或链接分享给同事' }}</text>
           </view>
         </view>
-
-        <text v-if="qrcode?.mock" class="qr__mock">
-          当前为模拟态（scene = {{ qrcode.scene }}）：微信小程序码生成能力尚未接入，
-          此处不展示占位图片，以免与真实码混淆。
-        </text>
 
         <button class="btn btn--ghost btn--block" hover-class="btn--hover" @tap="makeQrcode">
           {{ qrcode ? '重新生成' : '生成小程序码' }}
@@ -185,7 +185,9 @@
  * ⚠️ 邀请码是**确定性生成**的（`LDR` + 4 位零填充团长 id），与 U6 的 `leaderCode`
  *    同一套规则 —— 邀请落地页 P10 用它反查团长，端上不要自行拼装。
  * ⚠️ 微信「小程序码生成」能力**尚未接入**：服务端如实返回 `mock: true` 且 `qrcodeUrl: null`。
- *    端上**必须展示占位说明**，不得伪造一张图或复用 Logo 冒充真码（否则联调会误判已打通）。
+ *    ⭐ 提审包按「未接入即隐藏」处理（卡片 `v-if="qrcode && !qrcode.mock"`），
+ *    不向用户暴露「待接入 / 模拟态」等未完成态文案；真接入后 `mock: false` 自动恢复展示。
+ *    不得伪造一张图或复用 Logo 冒充真码（否则联调会误判已打通）。
  * ⚠️ 推荐列表**只回昵称**（§1.6 无手机号）；转正与否以服务端 `isFormal` 为准，
  *    端上不得用「是否已成为团长」代替「是否已转正」（见习不算转正）。
  * ⚠️ 原型大卡里的链接形如 `https://abox.com/leader/liming?b=guomao-3-A`，那是演示域名。
@@ -283,9 +285,7 @@ async function makeQrcode(): Promise<void> {
     const res = await run(() => generateLeaderQrcode(430));
     qrcode.value = res;
     qrImage.value = res.qrcodeUrl ?? '';
-    if (!res.qrcodeUrl) {
-      uni.showToast({ title: '微信码能力未接入，已展示占位说明', icon: 'none', duration: 2400 });
-    }
+    // ⭐ 2026-11-11 提审包：mock 时入口已整块隐藏，此处不再弹「未接入」类未完成态文案。
   } catch (e) {
     toastApiError(e, '生成小程序码失败');
   }

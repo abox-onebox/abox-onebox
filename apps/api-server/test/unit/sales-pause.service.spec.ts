@@ -4,6 +4,7 @@ import { FindOperator, Repository } from 'typeorm';
 import { OrderAvailabilityService } from '../../src/common/services/order-availability.service';
 import { ErrorCode } from '../../src/common/constants/error-code';
 import { BuildingGroup, Building } from '../../src/database/entities/building.entity';
+import { TeamLeader } from '../../src/database/entities/leader.entity';
 import { MealAssignment } from '../../src/database/entities/meal.entity';
 import { SalesPause } from '../../src/database/entities/system.entity';
 import { User } from '../../src/database/entities/user.entity';
@@ -207,6 +208,17 @@ function makeAvailability(pauseRepo: PauseRepo) {
   };
   const userRepo = { findOne: jest.fn(async () => null as unknown as User) };
   const bizConfig = { cutoffWindowMinutes: jest.fn(async () => 10) };
+  /**
+   * ⭐ 2026-11-11 P1 根治：编排层新增第 6 项装载「在职团长」。
+   *    基线夹具必须返回**有**团长，否则本文件所有「不停售 ⇒ canOrder=true」用例
+   *    会被新判据一并拦成 leader_unavailable，红的就不是被测的停售行为了。
+   */
+  const leaderRepo = {
+    findOne: jest.fn(
+      async (): Promise<TeamLeader | null> =>
+        ({ id: 1, buildingId: 1, status: 1 }) as unknown as TeamLeader,
+    ),
+  };
 
   const svc = new OrderAvailabilityService(
     userRepo as unknown as Repository<User>,
@@ -214,9 +226,10 @@ function makeAvailability(pauseRepo: PauseRepo) {
     groupRepo as unknown as Repository<BuildingGroup>,
     assignRepo as unknown as Repository<MealAssignment>,
     pauseRepo as unknown as Repository<SalesPause>,
+    leaderRepo as unknown as Repository<TeamLeader>,
     bizConfig as never,
   );
-  return { svc, buildingRepo, groupRepo, assignRepo, bizConfig };
+  return { svc, buildingRepo, groupRepo, assignRepo, bizConfig, leaderRepo };
 }
 
 // ---------------------------------------------------------------------------
@@ -385,6 +398,25 @@ describe('OrderAvailabilityService · 停售接线（W1）', () => {
       canOrder: true,
       reason: null,
     });
+  });
+
+  it('★ P1 根治：编排层装载在职团长，查不到即 fail-closed（leader_unavailable）', async () => {
+    const repo = makePauseRepo([]);
+    const { svc, leaderRepo } = makeAvailability(repo);
+
+    // 正对照：有在职团长，且结构层 / 时间层全放行 ⇒ 可下单
+    await expect(svc.forBuilding(MEAL_DATE, 1)).resolves.toMatchObject({
+      canOrder: true,
+      reason: null,
+    });
+    expect(leaderRepo.findOne).toHaveBeenCalledTimes(1);
+
+    // 负样本：无在职团长 ⇒ 判不可下单，文案走 reasonText() 唯一出口
+    leaderRepo.findOne.mockResolvedValueOnce(null);
+    const blocked = await svc.forBuilding(MEAL_DATE, 1);
+    expect(blocked.canOrder).toBe(false);
+    expect(blocked.reason).toBe('leader_unavailable');
+    expect(blocked.reasonText).toBe('该办公楼暂未开放预订，请选择列表中的其他办公楼');
   });
 
   it('WHEN 停售生效 THEN 文案含运营填的 reason', async () => {

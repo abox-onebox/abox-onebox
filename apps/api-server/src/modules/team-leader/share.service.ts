@@ -17,15 +17,16 @@ import { TeamLeader } from '../../database/entities/leader.entity';
  *
  * **小程序码现状（务必知悉）**：真实小程序码需调微信 `wxacode.getUnlimited`，
  * 而 `WxMiniProvider` 尚未提供该方法（属 M5 上线前事项）。故当前 `mock=true`
- * 且 `qrcodeUrl=null`，端上应展示占位并提示「生成中」——**不要**用伪造 URL
- * 冒充真实图片，那会让联调期误判「已经能出码」。
+ * 且 `qrcodeUrl=null`，端上按「未接入即隐藏」处理，**不要**用伪造 URL
+ * 冒充真实图片，也**不要**向用户暴露「待接入 / 生成中 / 模拟态」等未完成态文案。
  */
 @Injectable()
 export class ShareService {
   private readonly logger = new Logger('ShareService');
 
-  /** 小程序落地页（与 `apps/miniprogram/src/pages.json` 首个页面一致） */
-  private static readonly LANDING_PATH = 'pages/index/index';
+  /** ⭐ 2026-11-11 收口：邀请落地页读 `leaderCode` 并调 `bindLeaderByInvite`；
+   *   原指首页，而首页与 `App.vue` 都不读 `leaderCode` ⇒ 拉新归属链路不通。 */
+  private static readonly LANDING_PATH = 'pages/leader-invite/leader-invite';
 
   /** L2 · 分享物料 */
   getShareMaterial(leader: TeamLeader) {
@@ -40,16 +41,18 @@ export class ShareService {
       path: ShareService.LANDING_PATH,
       /** 端上可直接拼的完整参数串 */
       shareQuery: `leaderCode=${inviteCode}`,
-      title: 'ABox 一盒 · 一饭四菜 ¥25.80',
+      // ⭐ 2026-11-11 去餐化：原「一饭四菜」是餐饮自营旧口径，与当前预包装快消品冲突；
+      //    且本串由服务端下发，`mp:ux-terms` 只扫前端 `.vue`，扫不到。
+      title: 'ABox 一盒 · ¥25.80 / 份',
       // ⚠️ 送达时刻**派生自真源**（PR-02 收口）：改前是手写 `'11:30'`，
       //    后台把「送达时间」改掉后，团长转发出去的分享语与系统实际行为**不一致**，
       //    而分享语是**离线的**（转发到微信群后无法再纠正）。
-      desc: `${leader.realName} 邀请你加入${leader.floor ? ` ${leader.floor} ` : ''}拼饭群，次日上午 ${formatTimeOfDay(currentTimeline().arrival)} 送到楼下`,
+      desc: `${leader.realName} 邀请你一起预订次日的「一盒」，上午 ${formatTimeOfDay(currentTimeline().arrival)} 送到工位`,
       /** 海报底图：素材库上线前为 null（M5） */
       posterUrl: null as string | null,
       qrcodeUrl: null as string | null,
       mock: true,
-      tips: '小程序码将在接入微信能力后生成；当前可先用「分享给朋友」转发小程序卡片',
+      tips: '可复制邀请码或分享链接给同事，也可直接用「分享给朋友」转发小程序卡片',
     };
   }
 
@@ -75,7 +78,7 @@ export class ShareService {
       /** 真实图片 URL —— M5 接入后由 storage provider 返回 */
       qrcodeUrl: null as string | null,
       mock: true,
-      tips: '小程序码将在接入微信能力后生成（当前为 mock 模式）',
+      tips: '可先用邀请码或分享链接邀请同事',
     };
   }
 }

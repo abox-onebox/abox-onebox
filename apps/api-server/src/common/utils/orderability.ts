@@ -29,13 +29,20 @@ export interface AvailabilityInput extends StructureScope {
   publishAtMs: number; // publishAtOf(mealDate).getTime()
   cutoffAtMs: number; // cutoffAtOf(mealDate).getTime()
   nowMs: number; // now().getTime()
+  /** 该楼是否有在职团长（`ab_team_leader.status = ACTIVE`）；由编排层装载，判据只此一份 */
+  hasActiveLeader: boolean;
 }
 
 export type StructureBlockReason =
   'building_not_grouped' | 'building_preparing' | 'building_suspended' | 'group_suspended';
 
 export type OrderBlockReason =
-  'sales_paused' | StructureBlockReason | 'meal_not_published' | 'not_open_yet' | 'cutoff';
+  | 'sales_paused'
+  | StructureBlockReason
+  | 'meal_not_published'
+  | 'not_open_yet'
+  | 'cutoff'
+  | 'leader_unavailable';
 
 export interface StructureResult {
   ok: boolean;
@@ -98,8 +105,8 @@ export function evaluateStructure(s: StructureScope): StructureResult {
  * 用户端完整谓词（结构层 + 编排层 + 时间层 + 停售层）
  *
  * ⚠️ 求值顺序同样是全序，不要调换：1 `sales_paused`（**全局**事实，先判才不会把停售
- *    误报成「这栋楼的问题」）→ 2~5 `evaluateStructure` → 6 `meal_not_published`
- *    → 7 `not_open_yet` → 8 `cutoff`。
+ *    误报成「这栋楼的问题」）→ 2~5 `evaluateStructure` → 6 `leader_unavailable`
+ *    → 7 `meal_not_published` → 8 `not_open_yet` → 9 `cutoff`。
  *
  * ⚠️ 第 7 / 8 条合起来等价于既有 `isOrderable()` 的 `[开团, 截单 − cutoffWindowMinutes)`
  *    左闭右开区间，只是把「false」拆成了两个可区分的原因 —— 二者对用户的处置完全相反
@@ -110,6 +117,11 @@ export function evaluateAvailability(i: AvailabilityInput): Availability {
 
   const structure = evaluateStructure(i);
   if (structure.reason !== null) return { canOrder: false, reason: structure.reason };
+
+  // ⭐ 2026-11-11 P1 根治：与 `OrderService.resolveLeader()` 同源。此前本谓词不查团长，
+  //    首页 canOrder=true 而下单必抛 30007（「能看不能买」）。判据只此一份，装载在编排层。
+  //    ⚠️ 位置不可调换：结构层（楼停用 / 未归群）是更根本的事实，必须先于本条。
+  if (!i.hasActiveLeader) return { canOrder: false, reason: 'leader_unavailable' };
 
   if (i.assignmentStatus !== 'active') return { canOrder: false, reason: 'meal_not_published' };
   if (i.nowMs < i.publishAtMs) return { canOrder: false, reason: 'not_open_yet' };
@@ -153,6 +165,8 @@ export const REASON_TEXT: Record<OrderBlockReason, string> = {
   building_suspended: '该办公楼已暂停服务',
   group_suspended: '该区域已暂停服务',
   meal_not_published: '该办公楼今日未开团',
+  /** 与 `user.service.ts` / `building/switch.vue` 的「暂未开放预订」同一句，避免端上出现第三份口径 */
+  leader_unavailable: '该办公楼暂未开放预订，请选择列表中的其他办公楼',
   not_open_yet: '', // 动态文案：今日 {HH:mm} 开团，敬请期待
   cutoff: '', // 动态文案：距截单不足 {N} 分钟，请明日再订
 };

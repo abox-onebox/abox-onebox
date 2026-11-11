@@ -61,8 +61,8 @@ export class BuildingService {
    *
    * ⭐ **带上「该楼在任团长」**是有意的：用户选楼的真正目的是「跟着谁取餐」，
    *    只有楼名他判断不了。且 `leaderName = null` 时端上要如实写「暂无团长」——
-   *    此时即便绑了楼，`/home/daily` 仍会报 `30005 未开团`，若不提前告知，
-   *    用户会以为是自己操作错了。
+   *    2026-11-11 补排期后这类楼变成「能看不能买」（首页 canOrder=true、下单抛 `30007`），
+   *    故本方法已改为 **只返回有在职团长的楼**，从源头不给用户必然失败的选择（P0-5 收口）。
    *
    * ⚠️ 一栋楼可能有多个在职团长记录（历史数据），取 **id 最小**的那个 ——
    *    与 `MealService.resolveLeader` 的回落判据（`order: { id: 'ASC' }`）逐字一致。
@@ -89,13 +89,19 @@ export class BuildingService {
     }
 
     return {
-      list: rows.map((b) => ({
-        id: Number(b.id),
-        name: b.name,
-        address: b.address,
-        district: b.district ?? null,
-        leaderName: leaderOf.get(Number(b.id)) ?? null,
-      })),
+      // ⭐ 2026-11-11 提审前收口（P0-5）：只开放「有在职团长」的楼。
+      //    `canOrder` 只判排期不判团长，而 `OrderService.resolveLeader` 无团长即抛 30007；
+      //    两套判据不同源时，展示无团长楼等于把用户引到必失败的「立即预订」按钮上。
+      //    修复方向由祝总拍板为「只开放有团长的 4 栋」，绑楼口 `bindBuilding` 同步校验。
+      list: rows
+        .filter((b) => leaderOf.has(Number(b.id)))
+        .map((b) => ({
+          id: Number(b.id),
+          name: b.name,
+          address: b.address,
+          district: b.district ?? null,
+          leaderName: leaderOf.get(Number(b.id)) ?? null,
+        })),
       /**
        * 口径说明由**服务端下发**（端上不复制一份文案）
        *

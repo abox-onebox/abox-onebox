@@ -100,6 +100,7 @@ const INPUT: AvailabilityInput = {
   publishAtMs: Date.UTC(2026, 9, 26, 10, 0),
   cutoffAtMs: Date.UTC(2026, 9, 27, 0, 0),
   nowMs: Date.UTC(2026, 9, 26, 12, 0),
+  hasActiveLeader: true,
 };
 
 // ── 用例 ────────────────────────────────────────────────────────────────────
@@ -166,9 +167,10 @@ describe('N1-2 · orderability 不读环境时钟（行为判据 · 静态守不
     expect(r.noArgDates).toBe(0);
   });
 
-  it('★ evaluateAvailability 四个拦截分支期间也都零读时钟（含 not_open_yet / cutoff）', () => {
+  it('★ evaluateAvailability 五个拦截分支期间也都零读时钟（含 not_open_yet / cutoff）', () => {
     const cases: Array<[string, AvailabilityInput]> = [
       ['sales_paused', { ...INPUT, salesPaused: true }],
+      ['leader_unavailable', { ...INPUT, hasActiveLeader: false }],
       ['meal_not_published', { ...INPUT, assignmentStatus: null }],
       ['not_open_yet', { ...INPUT, nowMs: Date.UTC(2026, 9, 26, 9, 0) }],
       ['cutoff', { ...INPUT, nowMs: Date.UTC(2026, 9, 26, 23, 45) }],

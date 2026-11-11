@@ -141,7 +141,7 @@ async function pick(b: BuildingOptionItem): Promise<void> {
 
   const noLeader = !b.leaderName;
   const content = noLeader
-    ? `「${b.name}」目前没有在职团长，绑定后仍可能看不到次日组合。确定选择？`
+    ? `「${b.name}」当前暂未开放预订，确定选择？`
     : `确定把办公楼切换为「${b.name}」？跟随团长会按新楼重新匹配。`;
 
   try {

@@ -39,6 +39,7 @@ const input = (i: Partial<AvailabilityInput>): AvailabilityInput => ({
   publishAtMs: PUBLISH_MS,
   cutoffAtMs: CUTOFF_MS,
   nowMs: PUBLISH_MS,
+  hasActiveLeader: true,
   ...i,
 });
 
@@ -105,6 +106,33 @@ describe('evaluateAvailability（用户端完整谓词）', () => {
     const r = evaluateAvailability(input({ assignmentStatus: 'pending' })).reason;
     expect(r).toBe('meal_not_published');
   });
+
+  it('★ P1 根治：无在职团长 ⇒ leader_unavailable（fail-closed），且优先于未上架 / 时间层', () => {
+    expect(
+      evaluateAvailability(
+        input({ hasActiveLeader: false, assignmentStatus: 'pending', nowMs: CUTOFF_MS }),
+      ).reason,
+    ).toBe('leader_unavailable');
+    expect(evaluateAvailability(input({ hasActiveLeader: true })).canOrder).toBe(true);
+    expect(
+      reasonText('leader_unavailable', {
+        publishAtMs: PUBLISH_MS,
+        cutoffAtMs: CUTOFF_MS,
+        cutoffWindowMinutes: WINDOW_MIN,
+      }),
+    ).toBe('该办公楼暂未开放预订，请选择列表中的其他办公楼');
+  });
+
+  it('★ 求值全序护栏：停售与结构层仍优先于「无团长」', () => {
+    expect(evaluateAvailability(input({ hasActiveLeader: false, salesPaused: true })).reason).toBe(
+      'sales_paused',
+    );
+    expect(
+      evaluateAvailability(
+        input({ hasActiveLeader: false, buildingStatus: BuildingStatus.SUSPENDED }),
+      ).reason,
+    ).toBe('building_suspended');
+  });
 });
 
 describe('reasonText（文案唯一出口）', () => {
@@ -135,13 +163,14 @@ describe('reasonText（文案唯一出口）', () => {
     expect(bare).not.toContain('：');
   });
 
-  it('其余五值恒等于查表结果（不得出现第二份文案）', () => {
+  it('其余六值恒等于查表结果（不得出现第二份文案）', () => {
     const rest = [
       'building_not_grouped',
       'building_preparing',
       'building_suspended',
       'group_suspended',
       'meal_not_published',
+      'leader_unavailable',
     ] as (keyof typeof REASON_TEXT)[];
     for (const r of rest) {
       expect(reasonText(r, ctx)).toBe(REASON_TEXT[r]);

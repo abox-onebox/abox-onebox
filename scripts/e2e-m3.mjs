@@ -7174,20 +7174,54 @@ async function main() {
   {
     log('\n§22 M3-10 系统配置 D57–D58');
 
+    /**
+     * ⭐ 2026-11-11：基数不再是常量 8 / 38。`config.specs.ts` 是**唯一真相**，
+     *    新增 `catalog` / `compliance` 两组后写死的期望值就会让本脚本假红（verify 5/6）。
+     *    ⇒ 改为按声明符号切段、数形态；解析器取空即红，不会恒绿。
+     */
+    const CONFIG_SPECS_SRC57 = join(
+      ROOT,
+      'apps/api-server/src/modules/admin/config/config.specs.ts',
+    );
+    const specSrc57 = readFileSync(CONFIG_SPECS_SRC57, 'utf8');
+    const iG57 = specSrc57.indexOf('export const CONFIG_GROUPS');
+    const iS57 = specSrc57.indexOf('export const CONFIG_SPECS');
+    const iM57 = specSrc57.indexOf('export const CONFIG_SPEC_MAP');
+    const groupsBlock57 = iG57 >= 0 && iS57 > iG57 ? specSrc57.slice(iG57, iS57) : '';
+    const specsBlock57 = iS57 >= 0 && iM57 > iS57 ? specSrc57.slice(iS57, iM57) : '';
+    const countIn57 = (src, re) => [...src.matchAll(re)].length;
+    const G_RE57 = /^\s*group:\s*'/gm;
+    const K_RE57 = /^\s*key:\s*'/gm;
+    const expectedGroups57 = countIn57(groupsBlock57, G_RE57);
+    const expectedItems57 = countIn57(specsBlock57, K_RE57);
+    // 自证（必报）：真实源码必须能数出「组数 > 0 且 项数 > 组数」，取空/切段错即红
+    assert(
+      expectedGroups57 > 0 && expectedItems57 > expectedGroups57,
+      'D57 基数解析器自证·必报样本：CONFIG_GROUPS / CONFIG_SPECS 两段都要取到内容（防恒绿）',
+      `groups=${expectedGroups57} items=${expectedItems57}`,
+    );
+    // 自证（必不报）：抽掉 group 字面量后计数必须归零，证明解析器真在读源码而非返回常量
+    assert(
+      countIn57(groupsBlock57.replace(/group:\s*'/g, "groupRemoved: '"), G_RE57) === 0,
+      'D57 基数解析器自证·必不报样本：扰动后计数必须归零',
+      `after=${countIn57(groupsBlock57.replace(/group:\s*'/g, "groupRemoved: '"), G_RE57)}`,
+    );
+
     const cfgList = await call('GET', '/admin/system/configs', { token: adminToken });
     const d57 = cfgList.body?.data;
     const flatItems = (d57?.groups ?? []).flatMap((g) => g.items ?? []);
     const cfg = Object.fromEntries(flatItems.map((i) => [i.key, i]));
 
     assert(
-      cfgList.body?.code === 0 && (d57?.groups ?? []).length === 8,
-      'D57 按**分组**下发（套餐与价格 / 团长佣金 / 履约成本 / 交易规则 / **楼宇与楼群** / **业务时刻** / 客服入口 / 口径记录与遗留 共 8 组）—— `building` 组由 M5 楼宇停用闸门新增（`suspend_force_max_count` / `suspend_reason_min_length`）：两项都是「放不放行」的阈值，混进「交易规则」会让运营在改动下单参数时顺手放宽停用上限',
-      `code=${cfgList.body?.code} groups=${d57?.groups?.length}`,
+      cfgList.body?.code === 0 && (d57?.groups ?? []).length === expectedGroups57,
+      'D57 按**分组**下发，且组数与 `config.specs.ts` 的 `CONFIG_GROUPS` 同基数（源码是唯一真相；新增 `catalog` / `compliance` 等组时本断言自动跟随，不再写死 8 组）—— 分组的业务语义仍在源码里逐条给出：套餐与价格 / 团长佣金 / 履约成本 / 交易规则 / 楼宇与楼群 / 业务时刻 / 客服入口 / 口径记录与遗留 / 商品目录 / 合规公示',
+      `code=${cfgList.body?.code} groups=${d57?.groups?.length} expected=${expectedGroups57}`,
     );
     assert(
-      flatItems.length === d57?.meta?.wiringSummary?.total && flatItems.length === 38,
-      'D57 出参**自洽**：明细条数 = 汇总总数（分两处算必然出现「汇总 38 项、列表 37 项」）。38 = 旧 33 + D3 提现规则 3 项（`withdraw_daily_limit` / `withdraw_daily_count` / `payout_channel`）+ 楼宇停用闸门 2 项',
-      `items=${flatItems.length} total=${d57?.meta?.wiringSummary?.total}`,
+      flatItems.length === d57?.meta?.wiringSummary?.total &&
+        flatItems.length === expectedItems57,
+      'D57 出参**自洽**：明细条数 = 汇总总数 = `CONFIG_SPECS` 项数（三处同源；写死 38 项会在新增配置项后假红，故改为从源码解析）',
+      `items=${flatItems.length} total=${d57?.meta?.wiringSummary?.total} expected=${expectedItems57}`,
     );
 
     // ---------------------------------------------------------- A. 「未接线」如实标注
