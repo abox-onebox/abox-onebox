@@ -28,7 +28,7 @@
             >每单按售价提 <text class="hl">{{ rateMin }}% – {{ rateMax }}%</text></text
           >
           <text class="card__li">次日入账，<text class="b">能抵消费，也能提现</text></text>
-          <text class="card__li">每月<text class="b">好几百</text>，饭钱就有了</text>
+          <text class="card__li">每月都有<text class="b">返佣到账</text>，积少成多</text>
         </view>
       </view>
 
@@ -40,7 +40,7 @@
         <view class="card__rule" />
         <view class="card__list">
           <text class="card__li">下班以后，<text class="b">转发个链接</text></text>
-          <text class="card__li">同事点开，<text class="hl">就进你的团</text></text>
+          <text class="card__li">同事点开，<text class="hl">由你统一配送</text></text>
           <text class="card__li">午休时间，<text class="b">顺手带回来</text></text>
         </view>
       </view>
@@ -67,7 +67,8 @@
       </button>
       <!-- 推荐奖励真源：invite.service markFormal() 转正钩子发 5 元/30 天券（文案与实现同源） -->
       <text class="cta__note"
-        >自己暂时不当也行——介绍他成为团长，你领 <text class="b">5 元代金券</text></text
+        >自己暂时不当也行——介绍他成为团长，你可得 <text class="b">5 元代金券</text>（一次性）</text
+      >
       >
     </view>
 
