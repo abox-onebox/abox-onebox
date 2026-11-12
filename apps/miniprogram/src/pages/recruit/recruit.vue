@@ -69,7 +69,6 @@
       <text class="cta__note"
         >自己暂时不当也行——介绍他成为团长，你可得 <text class="b">5 元代金券</text>（一次性）</text
       >
-      >
     </view>
 
     <view class="foot">

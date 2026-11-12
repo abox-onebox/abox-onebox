@@ -174,16 +174,8 @@
     <!-- 口径提示（沿用既有文案，只做归纳） -->
     <view class="tip">
       <text class="tip__text">
-        C3：办公楼通过团长邀请链接绑定；App 不读取定位，也不索取手机号与地址（L9）。 退款 / 提现 /
+        办公楼通过团长邀请链接绑定；App 不读取定位，也不索取手机号与地址。 退款 / 提现 /
         退出团长等需人工介入的事项，请添加客服微信处理。
-      </text>
-    </view>
-
-    <!-- 联调（开发期保留：清空登录态用于验证「首次进入」链路） -->
-    <view class="dev">
-      <text class="dev__row" hover-class="dev__row--hover" @tap="clearLocal">清空本地登录态</text>
-      <text class="dev__hint">
-        本小程序为静默授权：清空后下次进入会自动重新登录同一账号（联调期固定 code）。
       </text>
     </view>
 
@@ -231,7 +223,6 @@ import { csEntryLabel } from '@/composables/use-customer-service';
 import { useLeaderStore } from '@/stores/leader';
 import { fenToYuanText } from '@/utils/format';
 import { useUserStore } from '@/stores/user';
-import { clearAuthStorage } from '@/utils/storage';
 import { navigateTo, switchTab } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 import type { CustomerServiceMode } from '@abox/shared-types';
@@ -576,13 +567,6 @@ function goAbout(): void {
   navigateTo('/pages/about/about');
 }
 
-function clearLocal(): void {
-  clearAuthStorage();
-  userStore.clear();
-  leaderStore.clear();
-  uni.showToast({ title: '已清空，下次进入自动重新登录', icon: 'none', duration: 2200 });
-}
-
 onShow(() => {
   // ⚠️ 必须**先等 loadProfile 完成**再发其余取数，不能五个并发：
   // loadMonthCommission / loadPendingDeliver 以 `leaderStore.isLeader` 为闸门，
@@ -871,30 +855,6 @@ onShow(() => {
 
   &__text {
     font-size: $fs-caption;
-    line-height: 1.7;
-    color: $c-text-weak;
-  }
-}
-
-// ---- 联调区（开发期保留） ----
-.dev {
-  margin-top: $space-4;
-  padding: 0 $space-1;
-
-  &__row {
-    display: block;
-    font-size: $fs-caption;
-    color: $c-warn-fg;
-
-    &--hover {
-      opacity: 0.8;
-    }
-  }
-
-  &__hint {
-    display: block;
-    margin-top: $space-1;
-    font-size: 20rpx;
     line-height: 1.7;
     color: $c-text-weak;
   }
