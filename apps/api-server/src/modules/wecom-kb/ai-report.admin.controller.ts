@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { IsArray, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -74,6 +74,18 @@ export class AiReportAdminController {
       digest: r.digest,
       pushed: false,
     };
+  }
+
+  /** ④效果复盘（只读）：采纳率 / 执行率 / 效果覆盖，按节点聚合 */
+  @Get('effect-review')
+  async effectReview() {
+    return this.insights.effectReview();
+  }
+
+  /** ⑤事件预警骨架（只读，不推送不执行）：近 N 天业务趋势信号 */
+  @Get('alerts')
+  async alerts(@Query('windowDays') windowDays?: string) {
+    return this.insights.alerts(windowDays ? Number(windowDays) : 7);
   }
 
   /** 数据体检（纯只读）：今天有没有数据可算、哪些节点会被跳过 */

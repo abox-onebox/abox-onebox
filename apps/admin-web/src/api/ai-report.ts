@@ -69,3 +69,43 @@ export interface BackfillResult {
 export function backfillEffects(windowDays = 7): Promise<BackfillResult> {
   return http.post('/admin/ai-report/backfill-effects', { windowDays });
 }
+
+/** ④效果复盘：采纳率 / 执行率 / 效果覆盖，按节点聚合 */
+export interface EffectReview {
+  total: number;
+  byStatus: Record<string, number>;
+  adoptedRate: number;
+  executedRate: number;
+  effectCovered: number;
+  byKind: Array<{
+    kind: string;
+    total: number;
+    adopted: number;
+    executed: number;
+    effectCovered: number;
+  }>;
+  at: string;
+}
+
+export function getEffectReview(): Promise<EffectReview> {
+  return http.get('/admin/ai-report/effect-review');
+}
+
+/** ⑤事件预警骨架（只读，不推送不执行） */
+export interface AlertSignal {
+  key: string;
+  label: string;
+  value: number;
+  level: 'info' | 'warn' | 'danger';
+}
+export interface AlertsResult {
+  windowDays: number;
+  grade: 'insufficient' | 'ok' | 'attention';
+  signals: AlertSignal[];
+  note: string;
+  at: string;
+}
+
+export function getAlerts(windowDays = 7): Promise<AlertsResult> {
+  return http.get('/admin/ai-report/alerts', { windowDays });
+}

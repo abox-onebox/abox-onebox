@@ -302,6 +302,156 @@ export class AiInsightService {
     return { scanned: all.length, filled, degraded };
   }
 
+  /**
+   * ④效果复盘（只读聚合）：从台账算采纳率 / 执行率 / 效果回填覆盖率，按 kind 分组。
+   * 零新表：全从 ab_ai_insight 的 status + meta_json 派生。
+   * 空数据时如实返回 0 与空分布，不造假比例。
+   */
+  async effectReview(): Promise<{
+    total: number;
+    byStatus: Record<string, number>;
+    adoptedRate: number;
+    executedRate: number;
+    effectCovered: number;
+    byKind: Array<{
+      kind: string;
+      total: number;
+      adopted: number;
+      executed: number;
+      effectCovered: number;
+    }>;
+    at: string;
+  }> {
+    const all = await this.repo.find();
+    const parse = (s: string | null | undefined): Record<string, unknown> => {
+      try {
+        return s ? (JSON.parse(s) as Record<string, unknown>) : {};
+      } catch {
+        return {};
+      }
+    };
+    const group = new Map<
+      string,
+      { total: number; adopted: number; executed: number; effectCovered: number }
+    >();
+    const byStatus: Record<string, number> = {};
+    let executed = 0;
+    let effectCovered = 0;
+    for (const r of all) {
+      const g = group.get(r.kind) ?? { total: 0, adopted: 0, executed: 0, effectCovered: 0 };
+      g.total++;
+      byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
+      const meta = parse(r.metaJson);
+      const isExec = (meta.execution as { done?: boolean } | undefined)?.done === true;
+      const hasEffect = !!(meta.effect && (meta.effect as { available?: boolean }).available);
+      if (r.status === 'adopted') g.adopted++;
+      if (isExec) {
+        g.executed++;
+        executed++;
+      }
+      if (hasEffect) {
+        g.effectCovered++;
+        effectCovered++;
+      }
+      group.set(r.kind, g);
+    }
+    const adopted = byStatus.adopted ?? 0;
+    const pct = (n: number, d: number): number => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
+    return {
+      total: all.length,
+      byStatus,
+      adoptedRate: pct(adopted, all.length),
+      executedRate: pct(executed, adopted),
+      effectCovered,
+      byKind: [...group.entries()]
+        .map(([kind, g]) => ({ kind, ...g }))
+        .sort((a, b) => b.total - a.total),
+      at: toBjIso(now()) ?? '',
+    };
+  }
+
+  /**
+   * ⑤事件预警骨架（只读）：基于近 windowDays 天业务表的量，给出低/中/高信号。
+   * ⚠️ 只出预警给人看，**不推送、不自动执行**（碰红线）；无数据时 grade=insufficient。
+   * 目前是「趋势快照 + 阈值提示」骨架，真实基线与同比要等业务数据攒够才做得准。
+   */
+  async alerts(windowDays = 7): Promise<{
+    windowDays: number;
+    grade: 'insufficient' | 'ok' | 'attention';
+    signals: Array<{
+      key: string;
+      label: string;
+      value: number;
+      level: 'info' | 'warn' | 'danger';
+    }>;
+    note: string;
+    at: string;
+  }> {
+    const days = Math.min(90, Math.max(1, Math.floor(Number(windowDays) || 7)));
+    const sinceD = new Date(now().getTime() - days * 86400000);
+    const p = (n: number): string => String(n).padStart(2, '0');
+    const sinceS =
+      sinceD.getFullYear() +
+      '-' +
+      p(sinceD.getMonth() + 1) +
+      '-' +
+      p(sinceD.getDate()) +
+      ' ' +
+      p(sinceD.getHours()) +
+      ':' +
+      p(sinceD.getMinutes()) +
+      ':' +
+      p(sinceD.getSeconds());
+    const count = async (table: string, where: string, args: unknown[]): Promise<number> => {
+      const r = await this.dataSource.query(
+        'SELECT COUNT(*) AS c FROM ' + table + ' WHERE ' + where,
+        args,
+      );
+      return Number(r?.[0]?.c ?? 0);
+    };
+    try {
+      const [orders, refunds, leaders] = await Promise.all([
+        count('ab_order', 'created_at >= ?', [sinceS]),
+        count('ab_refund', 'created_at >= ?', [sinceS]),
+        count('ab_team_leader', 'created_at >= ?', [sinceS]),
+      ]);
+      const sufficient = orders >= 10;
+      const signals = [
+        { key: 'orders', label: '近 ' + days + ' 天订单', value: orders, level: 'info' as const },
+        {
+          key: 'refunds',
+          label: '退款申请',
+          value: refunds,
+          level: (refunds > orders * 0.2 ? 'danger' : refunds > 0 ? 'warn' : 'info') as
+            'info' | 'warn' | 'danger',
+        },
+        { key: 'leaders', label: '新增团长', value: leaders, level: 'info' as const },
+      ];
+      return {
+        windowDays: days,
+        grade: !sufficient
+          ? 'insufficient'
+          : signals.some((s) => s.level === 'danger')
+            ? 'attention'
+            : 'ok',
+        signals,
+        note: sufficient
+          ? '阈值提示为初始骨架，业务数据攒够后应改用同比基线'
+          : '近 ' + days + ' 天订单少于 10 单，样本不足、不做异常判定',
+        at: toBjIso(now()) ?? '',
+      };
+    } catch (e) {
+      return {
+        windowDays: days,
+        grade: 'insufficient',
+        signals: [],
+        note:
+          '业务表查询失败（表缺失或驱动不支持），未编造预警：' +
+          (e instanceof Error ? e.message : String(e)),
+        at: toBjIso(now()) ?? '',
+      };
+    }
+  }
   /** 可选节点清单（给前端筛选下拉用：只列库里有数据的 kind，不写死枚举） */
   async kinds(): Promise<Array<{ kind: string; count: number }>> {
     const rows = (await this.repo

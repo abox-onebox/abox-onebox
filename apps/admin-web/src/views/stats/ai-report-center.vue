@@ -59,6 +59,70 @@
       <p v-else-if="!weeklyLoading" class="hint">还没有汇总，点「刷新汇总」看本周 AI 产出概览。</p>
     </el-card>
 
+    <el-card shadow="never" class="block review">
+      <div class="toolbar">
+        <span class="toolbar__hint">效果复盘 · 采纳率 / 执行率（只读）</span>
+        <div class="toolbar__right">
+          <span v-if="review" class="hint">截至 {{ fmtTime(review.at) }}</span>
+          <el-button :loading="reviewLoading" @click="loadReview">刷新复盘</el-button>
+        </div>
+      </div>
+      <template v-if="review">
+        <div class="review__metrics">
+          <div class="review__metric">
+            <span class="review__metric-label">台账总数</span>
+            <span class="review__metric-value">{{ review.total }}</span>
+          </div>
+          <div class="review__metric">
+            <span class="review__metric-label">采纳率</span>
+            <span class="review__metric-value">{{ review.adoptedRate }}%</span>
+          </div>
+          <div class="review__metric">
+            <span class="review__metric-label">执行率（占已采纳）</span>
+            <span class="review__metric-value">{{ review.executedRate }}%</span>
+          </div>
+          <div class="review__metric">
+            <span class="review__metric-label">已回填效果</span>
+            <span class="review__metric-value">{{ review.effectCovered }}</span>
+          </div>
+        </div>
+        <el-table :data="review.byKind" size="small" class="review__table">
+          <el-table-column label="节点" prop="kind" min-width="130" />
+          <el-table-column label="留档" prop="total" width="70" />
+          <el-table-column label="采纳" prop="adopted" width="70" />
+          <el-table-column label="已执行" prop="executed" width="80" />
+          <el-table-column label="有效果" prop="effectCovered" width="80" />
+        </el-table>
+        <p class="hint">采纳率 / 执行率从台账状态派生；无数据时如实为 0，不代表 AI 无效。</p>
+      </template>
+      <p v-else-if="!reviewLoading" class="hint">
+        还没有复盘数据，点「刷新复盘」看采纳与执行情况。
+      </p>
+    </el-card>
+
+    <el-card shadow="never" class="block alerts">
+      <div class="toolbar">
+        <span class="toolbar__hint">事件预警 · 只读骨架（不推送、不执行）</span>
+        <div class="toolbar__right">
+          <el-button :loading="alertsLoading" @click="loadAlerts">刷新预警</el-button>
+        </div>
+      </div>
+      <template v-if="alerts">
+        <div class="alerts__signals">
+          <span
+            v-for="sig in alerts.signals"
+            :key="sig.key"
+            class="alerts__signal"
+            :class="'alerts__signal--' + sig.level"
+          >
+            {{ sig.label }}: {{ sig.value }}
+          </span>
+        </div>
+        <p class="hint">{{ alerts.note }}</p>
+      </template>
+      <p v-else-if="!alertsLoading" class="hint">还没有预警，点「刷新预警」看近 7 天业务趋势。</p>
+    </el-card>
+
     <el-card shadow="never" class="block">
       <div class="toolbar">
         <span class="toolbar__hint">共 {{ reportKinds.length }} 类报告</span>
@@ -253,10 +317,14 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   backfillEffects,
   generateReports,
+  getAlerts,
+  getEffectReview,
   getPreflight,
   getWeeklyDigest,
+  type AlertsResult,
   type BackfillResult,
   type DailyNodeResult,
+  type EffectReview,
   type WeeklyDigest,
 } from '@/api/ai-report';
 import {
@@ -353,6 +421,34 @@ async function loadWeekly(): Promise<void> {
     weekly.value = null;
   } finally {
     weeklyLoading.value = false;
+  }
+}
+
+// ④效果复盘（只读）
+const reviewLoading = ref(false);
+const review = ref<EffectReview | null>(null);
+async function loadReview(): Promise<void> {
+  reviewLoading.value = true;
+  try {
+    review.value = await getEffectReview();
+  } catch {
+    review.value = null;
+  } finally {
+    reviewLoading.value = false;
+  }
+}
+
+// ⑤事件预警骨架（只读，不推送不执行）
+const alertsLoading = ref(false);
+const alerts = ref<AlertsResult | null>(null);
+async function loadAlerts(): Promise<void> {
+  alertsLoading.value = true;
+  try {
+    alerts.value = await getAlerts(7);
+  } catch {
+    alerts.value = null;
+  } finally {
+    alertsLoading.value = false;
   }
 }
 
@@ -545,12 +641,59 @@ onMounted(() => {
   void loadPending();
   void loadPreflight();
   void loadWeekly();
+  void loadReview();
+  void loadAlerts();
 });
 </script>
 
 <style scoped>
 .notice {
   margin-bottom: 1rem;
+}
+.review__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.review__metric {
+  background: var(--el-fill-color-lighter);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.review__metric-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.review__metric-value {
+  font-size: 20px;
+  font-weight: 500;
+}
+.review__table {
+  margin-bottom: 8px;
+}
+.alerts__signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.alerts__signal {
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--el-fill-color-lighter);
+}
+.alerts__signal--warn {
+  color: var(--el-color-warning);
+  border: 1px solid var(--el-color-warning);
+}
+.alerts__signal--danger {
+  color: var(--el-color-danger);
+  border: 1px solid var(--el-color-danger);
 }
 .block {
   margin-bottom: 1rem;
