@@ -44,6 +44,9 @@ export const ADMIN_MENU_KEYS = [
   '/order/delivery',
   '/leader/list',
   '/leader/apply',
+  // 团长处置卡（#N 安全版）：与前端 ADMIN_NAV 成对，否则侧边栏不显示（nav:consistency 会拦）。
+  // 本 key 落在非 /system/ 命名空间 ⇒ operator 可见可看卡；真处置由 confirm 方法级 @Roles 拦。
+  '/leader/taskcard',
   // 招募任务卡（#G 安全版）：与前端 ADMIN_NAV 成对，否则侧边栏不显示（nav:consistency 会拦）。
   '/recruit/taskcard-draft',
   // P0-3（2026-10-08 全面复查修复）：团长详情下钻页。路由在（`admin-web/router/routes.ts:67`）、

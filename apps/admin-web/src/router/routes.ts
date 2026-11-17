@@ -82,6 +82,12 @@ export const routes: RouteRecordRaw[] = [
         name: 'LeaderDetail',
         component: () => import('@/views/leader/detail.vue'),
       },
+      // 团长处置卡（#N 安全版）—— AI 出处置卡、运营逐卡确认只出清单，不停用不清归属。
+      {
+        path: 'leader/taskcard',
+        name: 'LeaderTaskcard',
+        component: () => import('@/views/leader/leader-taskcard.vue'),
+      },
       // 招募任务卡（#G 安全版）—— AI 出缺口卡、运营逐卡确认出物料，不自动发消息不建团长。
       {
         path: 'recruit/taskcard-draft',

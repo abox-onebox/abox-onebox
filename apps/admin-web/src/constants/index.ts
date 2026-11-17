@@ -211,6 +211,15 @@ export const ADMIN_NAV = [
         module: 'M33-03/04/05',
         icon: 'users',
       },
+      // 团长处置卡（#N 安全版）。原型无对应页 ⇒ `page` 记 `—`；`module` 记 AI 节点。
+      // 入口须同时进服务端 `ADMIN_MENU_KEYS`，否则 `nav:consistency` 门禁会拦。
+      {
+        path: '/leader/taskcard',
+        title: '团长处置卡',
+        page: '—',
+        module: 'AI-N',
+        icon: 'alert',
+      },
       // 招募任务卡（#G 安全版）。原型无对应页 ⇒ `page` 记 `—`；`module` 记 AI 节点。
       // 入口须同时进服务端 `ADMIN_MENU_KEYS`，否则 `nav:consistency` 门禁会拦。
       {
