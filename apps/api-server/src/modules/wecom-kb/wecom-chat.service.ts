@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync } from 'fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'path';
-import { isAfterCutoff, todayBj, tomorrowBj } from '../../common/utils/time';
+import { isAfterCutoff, toBjIso, todayBj, tomorrowBj } from '../../common/utils/time';
 import {
   isActiveTemplate,
   isLaunchCandidateEnabled,
@@ -819,6 +819,35 @@ export class WecomChatService {
         )
       : all;
     return { nodes, pushed: false };
+  }
+
+  /**
+   * 数据体检只读查询（后台报告中心用）：解释「今天有没有数据可算、为什么报告降级」。
+   *
+   * 复用编排前的同一套 `preflightData()` 判据（禁止另写一份，避免两处口径漂移），
+   * 再附 `describePreflight()` 人话。**纯只读**：三项取数都只读、不写库、不推送、不发消息。
+   * 本地无真实 owner binding 时兜底只读 binding（与 `generateReportsDryRun` 同源）。
+   */
+  async getPreflightReadonly(): Promise<{
+    at: string;
+    result: PreflightResult;
+    text: string;
+  }> {
+    const now = new Date();
+    const resolved = await this.resolveOwnerBinding();
+    const binding: Binding = resolved?.binding ?? {
+      operatorName: 'AI 报告中心',
+      tier: 'owner',
+      grantedOps: [],
+      operatorToken: null,
+      approverToken: null,
+    };
+    const result = await this.preflightData(now, binding);
+    return {
+      at: toBjIso(now) ?? now.toISOString(),
+      result,
+      text: describePreflight(result) || '数据体检通过：各项基础数据齐备，编排节点不会被跳过。',
+    };
   }
 
   /**

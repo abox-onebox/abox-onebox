@@ -25,3 +25,21 @@ export function generateReports(kinds?: string[]): Promise<{
 }> {
   return http.post('/admin/ai-report/generate', { kinds });
 }
+
+/** 数据体检结果（今天有没有数据可算、哪些节点会被跳过） */
+export interface PreflightResult {
+  grade: string;
+  headline: string;
+  blockers: string[];
+  notes: string[];
+  skipNodes: string[];
+}
+
+/** 只读数据体检：解释报告为何降级，不写库不推送 */
+export function getPreflight(): Promise<{
+  at: string;
+  result: PreflightResult;
+  text: string;
+}> {
+  return http.get('/admin/ai-report/preflight');
+}

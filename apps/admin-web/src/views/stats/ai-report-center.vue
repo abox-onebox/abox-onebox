@@ -15,6 +15,24 @@
       </template>
     </el-alert>
 
+    <el-card shadow="never" class="block preflight">
+      <div class="toolbar">
+        <span class="toolbar__hint">数据体检 · 今天有没有数据可算</span>
+        <div class="toolbar__right">
+          <span v-if="preflightAt" class="hint">检查于 {{ fmtTime(preflightAt) }}</span>
+          <el-button :loading="preflightLoading" @click="loadPreflight">重新体检</el-button>
+        </div>
+      </div>
+      <div v-if="preflightText" class="preflight__body">
+        <el-tag :type="preflightTag" size="small" effect="light">{{ preflightGradeLabel }}</el-tag>
+        <span class="preflight__headline">{{ preflightHeadline }}</span>
+      </div>
+      <pre v-if="preflightText" class="preflight__detail">{{ preflightText }}</pre>
+      <p v-else-if="!preflightLoading" class="hint">
+        还没有体检结果，点「重新体检」跑一次（只读，不写库）。
+      </p>
+    </el-card>
+
     <el-card shadow="never" class="block">
       <div class="toolbar">
         <span class="toolbar__hint">共 {{ reportKinds.length }} 类报告</span>
@@ -151,7 +169,7 @@
 import { onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
-import { generateReports, type DailyNodeResult } from '@/api/ai-report';
+import { generateReports, getPreflight, type DailyNodeResult } from '@/api/ai-report';
 import {
   getInsight,
   listInsights,
@@ -159,7 +177,6 @@ import {
   type InsightListItem,
 } from '@/api/ai-insight';
 
-/** 9 类报告节点（kind 与后端台账一致，对应编排的 9 个纯报告节点） */
 /** 9 类报告节点（kind 与后端台账一致）。batch=false 的两类不在 12 节点编排里，走各自独立入口 */
 const reportKinds: Array<{ kind: string; label: string; batch: boolean }> = [
   { kind: 'campaign', label: '文案素材', batch: false },
@@ -188,6 +205,38 @@ const drawer = ref(false);
 const detail = ref<InsightDetail | null>(null);
 const genVisible = ref(false);
 const genResult = ref<{ nodes: DailyNodeResult[]; pushed: false; generated: number } | null>(null);
+
+// 数据体检（只读）：解释报告为何降级
+const preflightLoading = ref(false);
+const preflightAt = ref('');
+const preflightHeadline = ref('');
+const preflightText = ref('');
+const preflightGrade = ref('');
+const preflightTag = (): 'success' | 'warning' | 'danger' | 'info' => {
+  const g = preflightGrade.value;
+  if (g === 'ok' || g === 'green') return 'success';
+  if (g === 'yellow') return 'warning';
+  if (g === 'red') return 'danger';
+  return 'info';
+};
+const preflightGradeLabel = (): string =>
+  (({ ok: '通过', green: '良好', yellow: '有缺口', red: '缺数据' }) as Record<string, string>)[
+    preflightGrade.value
+  ] ?? preflightGrade.value;
+async function loadPreflight(): Promise<void> {
+  preflightLoading.value = true;
+  try {
+    const r = await getPreflight();
+    preflightAt.value = r.at;
+    preflightGrade.value = r.result?.grade ?? '';
+    preflightHeadline.value = r.result?.headline ?? '';
+    preflightText.value = r.text ?? '';
+  } catch {
+    preflightText.value = '数据体检没取到（接口异常），不影响报告页其它功能。';
+  } finally {
+    preflightLoading.value = false;
+  }
+}
 
 async function reload(): Promise<void> {
   listing.value = true;
@@ -277,7 +326,10 @@ function firstLine(s: string): string {
   );
 }
 
-onMounted(() => void reload());
+onMounted(() => {
+  void reload();
+  void loadPreflight();
+});
 </script>
 
 <style scoped>
@@ -308,6 +360,27 @@ onMounted(() => void reload());
 .hint {
   font-size: 13px;
   color: var(--el-text-color-secondary);
+}
+.preflight__body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.preflight__headline {
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+}
+.preflight__detail {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--el-text-color-regular);
+  background: var(--el-fill-color-lighter);
+  border-radius: 6px;
 }
 .cards {
   display: grid;

@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { IsArray, IsOptional, IsString } from 'class-validator';
 
 import { AdminGuard } from '../../common/guards/admin.guard';
@@ -25,16 +25,34 @@ export class GenerateReportsDto {
  * - 生成是「留档给人看」，不是「执行」—— 真动作仍去各业务页人工做。
  *
  * ## 权限
- * 生成会写台账（12 条/次），收紧到 super_admin/admin；operator 只能在台账页看。
+ * 读取（报告/体检）对 operator 开放，与台账页一致；生成会写台账（12 条/次），
+ * `@Post generate` 单独收紧到 super_admin/admin。
  */
 @Controller('admin/ai-report')
 @UseGuards(AdminGuard)
-@Roles('super_admin', 'admin')
+@Roles('super_admin', 'admin', 'operator')
 export class AiReportAdminController {
   constructor(private readonly chat: WecomChatService) {}
 
+  /** 数据体检（纯只读）：今天有没有数据可算、哪些节点会被跳过 */
+  @Get('preflight')
+  async preflight(): Promise<{
+    at: string;
+    result: {
+      grade: string;
+      headline: string;
+      blockers: string[];
+      notes: string[];
+      skipNodes: string[];
+    };
+    text: string;
+  }> {
+    return this.chat.getPreflightReadonly();
+  }
+
   /** 批量生成报告（只留档不外发）。返回逐节点结果与 pushed=false 证据 */
   @Post('generate')
+  @Roles('super_admin', 'admin')
   async generate(@Body() dto: GenerateReportsDto): Promise<{
     nodes: DailyNodeResult[];
     pushed: false;
