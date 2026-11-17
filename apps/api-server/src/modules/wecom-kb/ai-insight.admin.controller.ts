@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } fr
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
+import { ApiProperty } from '@nestjs/swagger';
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { CurrentAdmin, Roles } from '../../common/decorators/auth.decorator';
 import type { JwtPayload } from '../../common/decorators/auth.decorator';
@@ -60,6 +61,7 @@ export class DecideInsightDto {
 
 export class MarkExecutionDto {
   /** 是否已执行。false = 撤销执行标记 */
+  @ApiProperty({ description: '是否已执行：true=标记已执行，false=撤销执行标记' })
   @IsBoolean()
   done!: boolean;
 
