@@ -193,6 +193,15 @@ export const ADMIN_NAV = [
         module: 'M33-03/04/05',
         icon: 'users',
       },
+      // 招募任务卡（#G 安全版）。原型无对应页 ⇒ `page` 记 `—`；`module` 记 AI 节点。
+      // 入口须同时进服务端 `ADMIN_MENU_KEYS`，否则 `nav:consistency` 门禁会拦。
+      {
+        path: '/recruit/taskcard-draft',
+        title: '招募任务卡',
+        page: '—',
+        module: 'AI-G',
+        icon: 'star',
+      },
       // ⚠️⚠️ M5-15 补登（**同类缺陷第三次复发**）：`/building/*` 共 5 条在服务端
       //    `ADMIN_MENU_KEYS`（`admin-role.ts:39-43`）**全部早已授权**、路由也全在
       //    （`routes.ts:158-176`）、后端新建/编辑接口也全实现（`POST admin/buildings`

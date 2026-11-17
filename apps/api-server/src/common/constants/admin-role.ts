@@ -44,6 +44,8 @@ export const ADMIN_MENU_KEYS = [
   '/order/delivery',
   '/leader/list',
   '/leader/apply',
+  // 招募任务卡（#G 安全版）：与前端 ADMIN_NAV 成对，否则侧边栏不显示（nav:consistency 会拦）。
+  '/recruit/taskcard-draft',
   // P0-3（2026-10-08 全面复查修复）：团长详情下钻页。路由在（`admin-web/router/routes.ts:67`）、
   //   页面在（`views/leader/detail.vue`）、三处入口也在（`leader/list.vue:583`「详情」、
   //   `leader/apply.vue:265` 流水钻取、`leader/detail.vue:342` 本页自跳转），

@@ -191,6 +191,20 @@ export class AiInsightService {
   }
 
   /** 取某时刻之后的全部留档（周播报聚合用；不分页、不过滤，调用方自己裁剪） */
+  /**
+   * G 招募任务卡幂等用：取某时刻之后的 recruit-taskcard 留档（含 metaJson 全文）。
+   * 与 listSince 的区别：只查 G 的 kind、不裁剪，调用方要读 meta.payload 里存的物料。
+   * 一天最多几十条，直接全取在 JS 里精确比对 buildingId（避免 LIKE 把 #12 命中 #120）。
+   */
+  async listRecruitLedgerSince(since: Date): Promise<AiInsight[]> {
+    return this.repo
+      .createQueryBuilder('t')
+      .where('t.kind = :kind', { kind: 'recruit-taskcard' })
+      .andWhere('t.createdAt >= :since', { since })
+      .orderBy('t.id', 'DESC')
+      .getMany();
+  }
+
   async listSince(since: Date): Promise<AiInsight[]> {
     return this.repo
       .createQueryBuilder('t')

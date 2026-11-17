@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CouponModule } from '../coupon/coupon.module';
+import { StatsModule } from '../stats/stats.module';
 import { WecomKbController } from './wecom-kb.controller';
 import { WecomKbService } from './wecom-kb.service';
 import { WecomCryptoService } from './wecom-crypto.service';
@@ -16,9 +17,11 @@ import { WecomSimulateController } from './wecom-simulate.admin.controller';
 import { LaunchDraftAdminController } from './launch-draft.admin.controller';
 import { AiInsightAdminController } from './ai-insight.admin.controller';
 import { RecallCampaignAdminController } from './recall-campaign.admin.controller';
+import { RecruitTaskcardAdminController } from './recruit-taskcard.admin.controller';
 import { WecomBinding } from './wecom-binding.entity';
 import { AiInsightService } from './ai-insight.service';
 import { RecallCampaignService } from './recall-campaign.service';
+import { RecruitTaskcardService } from './recruit-taskcard.service';
 import { AiInsight } from '../../database/entities';
 
 /**
@@ -29,7 +32,7 @@ import { AiInsight } from '../../database/entities';
  * 不阻塞启动（与「生产禁 mock」等硬闸解耦，因为这是功能模块不是安全模型开关）。
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([WecomBinding, AiInsight]), CouponModule],
+  imports: [TypeOrmModule.forFeature([WecomBinding, AiInsight]), CouponModule, StatsModule],
   controllers: [
     WecomKbController,
     WecomBindingAdminController,
@@ -41,6 +44,8 @@ import { AiInsight } from '../../database/entities';
     AiInsightAdminController,
     // 复购 / 流失主动唤醒闭环（#C）：复用 CouponService 批量发券 + 负责人企微知会
     RecallCampaignAdminController,
+    // 招募任务卡（#G 安全版）：只读生成 + 逐卡确认出物料，不发消息不建团长
+    RecruitTaskcardAdminController,
   ],
   providers: [
     WecomKbService,
@@ -55,6 +60,8 @@ import { AiInsight } from '../../database/entities';
     AiInsightService,
     // 复购 / 流失主动唤醒（#C）
     RecallCampaignService,
+    // 招募任务卡（#G 安全版）
+    RecruitTaskcardService,
   ],
   exports: [WecomBindingService, AiInsightService],
 })

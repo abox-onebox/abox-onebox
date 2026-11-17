@@ -82,6 +82,12 @@ export const routes: RouteRecordRaw[] = [
         name: 'LeaderDetail',
         component: () => import('@/views/leader/detail.vue'),
       },
+      // 招募任务卡（#G 安全版）—— AI 出缺口卡、运营逐卡确认出物料，不自动发消息不建团长。
+      {
+        path: 'recruit/taskcard-draft',
+        name: 'RecruitTaskcardDraft',
+        component: () => import('@/views/recruit/taskcard-draft.vue'),
+      },
 
       // ───────────────────────── 供应商相关（⚠️ 两角色共用本 SPA，路径必须分家） ─────────────────────────
       //
