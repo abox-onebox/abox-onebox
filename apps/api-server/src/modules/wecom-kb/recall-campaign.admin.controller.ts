@@ -56,7 +56,11 @@ export class RecallCampaignAdminController {
    * 确认发放：按所选档位建券种 + 批量发券（幂等）+ 记台账 + 推负责人企微。
    * 真写库、真触达，须人工点击。
    */
+  // ⚠️ 真发券到用户账户（建券种 + 批量发券 + 企微推送），比 G 的「只出物料」更敏感：
+  // 类级 @Roles 含 operator 仅供其看 preview 圈人；这里方法级收紧到负责人，
+  // operator 即使拿到接口地址也不能真发券（与 A/G 的写操作口径一致）。
   @Post('confirm')
+  @Roles('super_admin', 'admin')
   async confirm(
     @Body() dto: RecallConfirmDto,
     @CurrentAdmin() admin: JwtPayload | undefined,

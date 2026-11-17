@@ -48,10 +48,14 @@ export function recallPreview(): Promise<RecallPreview> {
   return http.post('/admin/recall-campaign/preview');
 }
 
-/** 确认发放：建券种 + 批量发券（幂等）+ 记台账 + 推负责人企微 */
+/**
+ * 确认发放：建券种 + 批量发券（幂等）+ 记台账 + 推负责人企微。
+ * ⚠️ 安全默认：dryRun 默认 true（只试算人数、不写库）。要真发必须显式传 false，
+ * 且经页面上 ElMessageBox 二次确认 —— 防止漏传参数变成真发券。
+ */
 export function recallConfirm(
   segments: RecallSegment[],
-  dryRun = false,
+  dryRun = true,
 ): Promise<RecallConfirmResult> {
   return http.post('/admin/recall-campaign/confirm', { segments, dryRun });
 }

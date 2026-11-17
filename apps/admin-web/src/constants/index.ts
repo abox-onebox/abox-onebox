@@ -177,6 +177,15 @@ export const ADMIN_NAV = [
     //    单数的 `user`，故复用 `users`（跨组复用是允许的，本表头注已写明）。
     items: [
       { path: '/user/list', title: '用户管理', page: '—', module: 'admin/users', icon: 'users' },
+      // 用户召回（#M 主动唤醒）。原型无对应页 ⇒ `page` 记 `—`；`module` 记 AI 节点。
+      // 入口须同时进服务端 `ADMIN_MENU_KEYS`，否则 `nav:consistency` 门禁会拦。
+      {
+        path: '/user/recall-campaign',
+        title: '用户召回',
+        page: '—',
+        module: 'AI-M',
+        icon: 'gift',
+      },
     ],
   },
   {

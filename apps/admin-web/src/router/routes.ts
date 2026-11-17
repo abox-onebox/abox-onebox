@@ -184,6 +184,13 @@ export const routes: RouteRecordRaw[] = [
       //    运营查不到人、代绑不了楼、也拉不黑（`status=2` 有语义、登录侧有拦截，
       //    但没有任何入口能把它置上）。
       { path: 'user/list', name: 'UserList', component: () => import('@/views/user/list.vue') },
+      // 用户召回（#M 主动唤醒）—— 后端闭环已完整（preview 圈人 / confirm 真发券），
+      // 本页是运营入口；写操作由控制器 @Roles('super_admin','admin') 收紧。
+      {
+        path: 'user/recall-campaign',
+        name: 'UserRecallCampaign',
+        component: () => import('@/views/user/recall-campaign.vue'),
+      },
 
       // 办公楼管理 M33 · P37（5 视图）
       {

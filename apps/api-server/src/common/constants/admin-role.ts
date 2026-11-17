@@ -63,6 +63,9 @@ export const ADMIN_MENU_KEYS = [
   //   ⚠️ 本 key 落在非 `/system/` 命名空间下，故 `operator`（客服）**可见** ——
   //     代绑楼栋、拉黑恶意用户是客服的日常，不给入口就没人干得了。
   '/user/list',
+  // 用户召回（#M 主动唤醒）：与前端 ADMIN_NAV 成对，否则侧边栏不显示（nav:consistency 会拦）。
+  // 本 key 落在非 /system/ 命名空间 ⇒ operator 可见可试算；真发券由 confirm 方法级 @Roles 拦。
+  '/user/recall-campaign',
   '/building/overview',
   '/building/list',
   '/building/groups',
