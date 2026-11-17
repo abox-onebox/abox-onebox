@@ -72,6 +72,9 @@ export const ADMIN_MENU_KEYS = [
   // 发券策略卡（#H 安全版）：与前端 ADMIN_NAV 成对。operator 可见可看清单；
   // 本页不真发券，确认端点方法级 @Roles 收紧到负责人。
   '/user/coupon-taskcard',
+  // 社群排期卡（#P 安全版）：与前端 ADMIN_NAV 成对。operator 可见可看排期；
+  // 本页不发消息不发券，确认端点方法级 @Roles 收紧到负责人。
+  '/user/community-taskcard',
   '/building/overview',
   '/building/list',
   '/building/groups',

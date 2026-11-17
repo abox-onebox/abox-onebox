@@ -204,6 +204,13 @@ export const routes: RouteRecordRaw[] = [
         name: 'UserCouponTaskcard',
         component: () => import('@/views/user/coupon-taskcard.vue'),
       },
+      // 社群排期卡（#P 安全版）—— AI 出一周排期+合规话术，逐日确认只出清单，
+      // 系统不发消息不发券；真发由人拿清单去群里手动操作。写操作由 @Roles 收紧。
+      {
+        path: 'user/community-taskcard',
+        name: 'UserCommunityTaskcard',
+        component: () => import('@/views/user/community-taskcard.vue'),
+      },
 
       // 办公楼管理 M33 · P37（5 视图）
       {

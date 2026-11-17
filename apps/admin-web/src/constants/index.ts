@@ -195,6 +195,15 @@ export const ADMIN_NAV = [
         module: 'AI-H',
         icon: 'cash',
       },
+      // 社群排期卡（#P 安全版）。原型无对应页 ⇒ `page` 记 `—`；`module` 记 AI 节点。
+      // 入口须同时进服务端 `ADMIN_MENU_KEYS`，否则 `nav:consistency` 门禁会拦。
+      {
+        path: '/user/community-taskcard',
+        title: '社群排期卡',
+        page: '—',
+        module: 'AI-P',
+        icon: 'calendar',
+      },
     ],
   },
   {
