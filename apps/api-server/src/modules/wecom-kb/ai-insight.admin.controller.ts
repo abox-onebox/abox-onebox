@@ -58,6 +58,18 @@ export class DecideInsightDto {
   status!: string;
 }
 
+export class MarkExecutionDto {
+  /** 是否已执行。false = 撤销执行标记 */
+  @IsBoolean()
+  done!: boolean;
+
+  /** 执行备注（可选，如「已于 3/5 在后台发券」） */
+  @IsOptional()
+  @IsString()
+  @Max(255)
+  note?: string;
+}
+
 export class BroadcastWeeklyDto {
   /**
    * 仅生成并预览摘要，不真正推送企微。默认 false（真实推送）。
@@ -190,5 +202,19 @@ export class AiInsightAdminController {
   ): Promise<{ id: number; status: string }> {
     const row = await this.svc.decide(id, dto.status, admin?.username ?? null);
     return { id: row.id, status: row.status };
+  }
+
+  /**
+   * 标记「这条建议做了没」（②执行跟踪）。
+   * 只写本台账 meta_json.execution，不碰任何业务表、不新增列。
+   * 权限与 decide 一致（三角色可标记，仅给自己留记号）。
+   */
+  @Post(':id/execution')
+  async markExecution(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MarkExecutionDto,
+    @CurrentAdmin() admin: JwtPayload | undefined,
+  ): Promise<{ id: number; execution: Record<string, unknown> }> {
+    return this.svc.markExecution(id, dto.done, dto.note ?? null, admin?.username ?? null);
   }
 }

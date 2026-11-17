@@ -178,6 +178,40 @@ export class AiInsightService {
     return { ...row, status, decidedAt: status === 'open' ? null : new Date() };
   }
 
+  /**
+   * 标记「这条建议到底做了没」——②执行跟踪。
+   *
+   * ⚠️ 零新增列：执行回执塞进 metaJson.execution，不改业务表、不加数据库字段。
+   * 只写台账自己的 meta_json，与 decide（采纳/忽略）正交：
+   *   decide = 要不要做；execution = 做了没。
+   * done=false 即撤销执行标记（现实中「标完成才发现没做」很常见）。
+   */
+  async markExecution(
+    id: number,
+    done: boolean,
+    note: string | null,
+    byName: string | null,
+  ): Promise<{ id: number; execution: Record<string, unknown> }> {
+    const row = await this.detail(id); // 复用 404 校验
+    let meta: Record<string, unknown> = {};
+    if (row.metaJson) {
+      try {
+        const parsed: unknown = JSON.parse(row.metaJson);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          meta = parsed as Record<string, unknown>;
+        }
+      } catch {
+        // 脏串不覆盖：保留原文到 parseError，避免在坏数据上再叠一层
+        meta = { parseError: true, raw: row.metaJson };
+      }
+    }
+    const execution: Record<string, unknown> = done
+      ? { done: true, doneAt: toBjIso(now()), doneBy: byName, note: note ?? '' }
+      : { done: false, doneAt: null, doneBy: null, note: '' };
+    await this.repo.update({ id }, { metaJson: JSON.stringify({ ...meta, execution }) });
+    return { id, execution };
+  }
+
   /** 可选节点清单（给前端筛选下拉用：只列库里有数据的 kind，不写死枚举） */
   async kinds(): Promise<Array<{ kind: string; count: number }>> {
     const rows = (await this.repo

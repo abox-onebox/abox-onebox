@@ -214,13 +214,39 @@
           <span>· {{ fmtTime(detail.createdAt) }}</span>
         </div>
         <pre class="detail__content">{{ detail.content }}</pre>
+        <div v-if="detail.status === 'adopted'" class="detail__execution">
+          <div class="detail__execution-head">
+            <span class="detail__execution-title">执行跟踪</span>
+            <el-tag :type="executionDone ? 'success' : 'warning'" size="small" effect="plain">
+              {{ executionDone ? '已执行' : '待执行' }}
+            </el-tag>
+          </div>
+          <p v-if="executionDone" class="detail__execution-meta">
+            {{ executionDoneBy }} · {{ executionDoneAt }}
+            <span v-if="executionNote"> · {{ executionNote }}</span>
+          </p>
+          <div class="detail__execution-actions">
+            <el-button
+              v-if="!executionDone"
+              type="primary"
+              size="small"
+              :loading="execLoading"
+              @click="markExec(true)"
+            >
+              标记已执行
+            </el-button>
+            <el-button v-else size="small" :loading="execLoading" @click="markExec(false)">
+              撤销执行标记
+            </el-button>
+          </div>
+        </div>
       </div>
     </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
@@ -234,7 +260,9 @@ import {
   decideInsight,
   getInsight,
   listInsights,
+  markInsightExecution,
   type InsightDetail,
+  type InsightExecution,
   type InsightListItem,
 } from '@/api/ai-insight';
 
@@ -266,6 +294,7 @@ const latest = ref<Record<string, InsightListItem>>({});
 
 const drawer = ref(false);
 const detail = ref<InsightDetail | null>(null);
+const execLoading = ref(false);
 const genVisible = ref(false);
 const genResult = ref<{ nodes: DailyNodeResult[]; pushed: false; generated: number } | null>(null);
 
@@ -400,6 +429,34 @@ function statusTag(s: string): 'warning' | 'success' | 'info' {
 function onPage(p: number): void {
   page.value = p;
   void reload();
+}
+
+const currentExecution = (): InsightExecution | null => {
+  const m = detail.value?.meta?.execution;
+  return m && typeof m === 'object' ? (m as InsightExecution) : null;
+};
+const executionDone = computed<boolean>(() => currentExecution()?.done === true);
+const executionDoneBy = computed<string>(() => currentExecution()?.doneBy ?? '—');
+const executionDoneAt = computed<string>(() => currentExecution()?.doneAt ?? '—');
+const executionNote = computed<string>(() => currentExecution()?.note ?? '');
+
+async function markExec(done: boolean): Promise<void> {
+  if (!detail.value) return;
+  execLoading.value = true;
+  try {
+    const r = await markInsightExecution(detail.value.id, done);
+    // 本地即时更新 meta，免得关抽屉再看；只动台账回显，不碰业务数据
+    if (detail.value.meta && typeof detail.value.meta === 'object') {
+      detail.value.meta.execution = r.execution;
+    } else {
+      detail.value.meta = { execution: r.execution };
+    }
+    ElMessage.success(done ? '已标记执行' : '已撤销执行标记');
+  } catch {
+    ElMessage.error('标记失败，请稍后重试');
+  } finally {
+    execLoading.value = false;
+  }
 }
 
 async function open(id: number): Promise<void> {
@@ -616,5 +673,30 @@ onMounted(() => {
   word-break: break-word;
   font-size: 13px;
   line-height: 1.7;
+}
+.detail__execution {
+  margin-top: 1.5rem;
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+.detail__execution-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.detail__execution-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+.detail__execution-meta {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin: 0 0 10px;
+}
+.detail__execution-actions {
+  display: flex;
+  gap: 8px;
 }
 </style>

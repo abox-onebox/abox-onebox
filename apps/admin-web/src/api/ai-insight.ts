@@ -88,6 +88,23 @@ export function decideInsight(
   return http.post(`/admin/ai-insight/${id}/decide`, { status });
 }
 
+/** 执行回执（存于 meta.execution，零新增列）：做了没、谁做的、备注 */
+export interface InsightExecution {
+  done: boolean;
+  doneAt: string | null;
+  doneBy: string | null;
+  note?: string;
+}
+
+/** 标记「这条建议做了没」。done=false 撤销执行标记 */
+export function markInsightExecution(
+  id: number,
+  done: boolean,
+  note?: string,
+): Promise<{ id: number; execution: InsightExecution }> {
+  return http.post(`/admin/ai-insight/${id}/execution`, { done, note });
+}
+
 /** 本周 AI 播报：聚合台账并主动推送负责人企微。`dryRun=true` 只预览不推送 */
 export interface BroadcastWeeklyResult {
   pushed: boolean;
