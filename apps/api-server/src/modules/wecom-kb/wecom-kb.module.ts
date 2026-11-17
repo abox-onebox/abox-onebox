@@ -18,10 +18,12 @@ import { LaunchDraftAdminController } from './launch-draft.admin.controller';
 import { AiInsightAdminController } from './ai-insight.admin.controller';
 import { RecallCampaignAdminController } from './recall-campaign.admin.controller';
 import { RecruitTaskcardAdminController } from './recruit-taskcard.admin.controller';
+import { CouponTaskcardAdminController } from './coupon-taskcard.admin.controller';
 import { WecomBinding } from './wecom-binding.entity';
 import { AiInsightService } from './ai-insight.service';
 import { RecallCampaignService } from './recall-campaign.service';
 import { RecruitTaskcardService } from './recruit-taskcard.service';
+import { CouponTaskcardService } from './coupon-taskcard.service';
 import { AiInsight } from '../../database/entities';
 
 /**
@@ -46,6 +48,8 @@ import { AiInsight } from '../../database/entities';
     RecallCampaignAdminController,
     // 招募任务卡（#G 安全版）：只读生成 + 逐卡确认出物料，不发消息不建团长
     RecruitTaskcardAdminController,
+    // 发券策略卡（#H 安全版）：只读生成 + 逐卡确认出执行清单，不真发券不建券种
+    CouponTaskcardAdminController,
   ],
   providers: [
     WecomKbService,
@@ -62,6 +66,8 @@ import { AiInsight } from '../../database/entities';
     RecallCampaignService,
     // 招募任务卡（#G 安全版）
     RecruitTaskcardService,
+    // 发券策略卡（#H 安全版）
+    CouponTaskcardService,
   ],
   exports: [WecomBindingService, AiInsightService],
 })

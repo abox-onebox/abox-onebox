@@ -66,6 +66,9 @@ export const ADMIN_MENU_KEYS = [
   // 用户召回（#M 主动唤醒）：与前端 ADMIN_NAV 成对，否则侧边栏不显示（nav:consistency 会拦）。
   // 本 key 落在非 /system/ 命名空间 ⇒ operator 可见可试算；真发券由 confirm 方法级 @Roles 拦。
   '/user/recall-campaign',
+  // 发券策略卡（#H 安全版）：与前端 ADMIN_NAV 成对。operator 可见可看清单；
+  // 本页不真发券，确认端点方法级 @Roles 收紧到负责人。
+  '/user/coupon-taskcard',
   '/building/overview',
   '/building/list',
   '/building/groups',

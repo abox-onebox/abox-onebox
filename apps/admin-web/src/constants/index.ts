@@ -186,6 +186,15 @@ export const ADMIN_NAV = [
         module: 'AI-M',
         icon: 'gift',
       },
+      // 发券策略卡（#H 安全版）。原型无对应页 ⇒ `page` 记 `—`；`module` 记 AI 节点。
+      // 入口须同时进服务端 `ADMIN_MENU_KEYS`，否则 `nav:consistency` 门禁会拦。
+      {
+        path: '/user/coupon-taskcard',
+        title: '发券策略卡',
+        page: '—',
+        module: 'AI-H',
+        icon: 'cash',
+      },
     ],
   },
   {

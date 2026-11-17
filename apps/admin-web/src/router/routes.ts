@@ -191,6 +191,13 @@ export const routes: RouteRecordRaw[] = [
         name: 'UserRecallCampaign',
         component: () => import('@/views/user/recall-campaign.vue'),
       },
+      // 发券策略卡（#H 安全版）—— AI 动态定券方案、逐卡确认出执行清单，
+      // 系统不真发券不建券种；真发仍走券管理页。写操作由控制器 @Roles 收紧。
+      {
+        path: 'user/coupon-taskcard',
+        name: 'UserCouponTaskcard',
+        component: () => import('@/views/user/coupon-taskcard.vue'),
+      },
 
       // 办公楼管理 M33 · P37（5 视图）
       {
