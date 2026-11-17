@@ -100,7 +100,21 @@
         >
           <el-option v-for="k in reportKinds" :key="k.kind" :label="k.label" :value="k.kind" />
         </el-select>
+        <el-select
+          v-model="statusFilter"
+          placeholder="全部状态"
+          clearable
+          class="toolbar__select"
+          @change="onFilter"
+        >
+          <el-option label="待决策 (open)" value="open" />
+          <el-option label="已采纳 (adopted)" value="adopted" />
+          <el-option label="已忽略 (dismissed)" value="dismissed" />
+        </el-select>
         <div class="toolbar__right">
+          <el-tag v-if="pendingCount > 0" type="warning" size="small" effect="light">
+            {{ pendingCount }} 条待决策
+          </el-tag>
           <span class="hint">共 {{ total }} 条</span>
         </div>
       </div>
@@ -128,9 +142,23 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="90">
+        <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-button link type="primary" @click="open(row.id)">查看原文</el-button>
+            <el-tag size="small" :type="statusTag(row.status)" effect="plain">
+              {{ statusLabel(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" min-width="190">
+          <template #default="{ row }">
+            <template v-if="row.status === 'open'">
+              <el-button link type="success" @click="decide(row.id, 'adopted')">采纳</el-button>
+              <el-button link type="info" @click="decide(row.id, 'dismissed')">忽略</el-button>
+            </template>
+            <el-button v-else link type="warning" @click="decide(row.id, 'open')"
+              >退回待看</el-button
+            >
+            <el-button link type="primary" @click="open(row.id)">原文</el-button>
           </template>
         </el-table-column>
         <template #empty
@@ -203,6 +231,7 @@ import {
   type WeeklyDigest,
 } from '@/api/ai-report';
 import {
+  decideInsight,
   getInsight,
   listInsights,
   type InsightDetail,
@@ -230,6 +259,8 @@ const total = ref(0);
 const page = ref(1);
 const pageSize = 20;
 const kind = ref('');
+const statusFilter = ref('');
+const pendingCount = ref(0);
 /** 每个 kind 的最近记录（从当前筛选外的全量一次取回，用于卡片计数） */
 const latest = ref<Record<string, InsightListItem>>({});
 
@@ -295,7 +326,12 @@ async function loadWeekly(): Promise<void> {
 async function reload(): Promise<void> {
   listing.value = true;
   try {
-    const r = await listInsights({ kind: kind.value || undefined, page: page.value, pageSize });
+    const r = await listInsights({
+      kind: kind.value || undefined,
+      status: statusFilter.value || undefined,
+      page: page.value,
+      pageSize,
+    });
     rows.value = r.list;
     total.value = r.total;
     await reloadLatest();
@@ -326,6 +362,40 @@ const latestAt = (k: string): string | null => latest.value[k]?.createdAt ?? nul
 function onFilter(): void {
   page.value = 1;
   void reload();
+}
+
+/** 待决策计数：只统计 open，供顶部提示；失败不影响列表 */
+async function loadPending(): Promise<void> {
+  try {
+    const r = await listInsights({ status: 'open', page: 1, pageSize: 1 });
+    pendingCount.value = r.total;
+  } catch {
+    pendingCount.value = 0;
+  }
+}
+
+/** 标记决策：只写台账 status，不碰任何业务表 */
+async function decide(id: number, status: 'open' | 'adopted' | 'dismissed'): Promise<void> {
+  try {
+    await decideInsight(id, status);
+    ElMessage.success(
+      status === 'open' ? '已退回待看' : status === 'adopted' ? '已采纳' : '已忽略',
+    );
+    await Promise.all([reload(), loadPending()]);
+  } catch {
+    ElMessage.error('标记失败，请稍后重试');
+  }
+}
+
+function statusLabel(s: string): string {
+  return (
+    ({ open: '待决策', adopted: '已采纳', dismissed: '已忽略' } as Record<string, string>)[s] ?? s
+  );
+}
+function statusTag(s: string): 'warning' | 'success' | 'info' {
+  if (s === 'open') return 'warning';
+  if (s === 'adopted') return 'success';
+  return 'info';
 }
 function onPage(p: number): void {
   page.value = p;
@@ -382,6 +452,7 @@ function firstLine(s: string): string {
 
 onMounted(() => {
   void reload();
+  void loadPending();
   void loadPreflight();
   void loadWeekly();
 });
