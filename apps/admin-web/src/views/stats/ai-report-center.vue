@@ -33,6 +33,32 @@
       </p>
     </el-card>
 
+    <el-card shadow="never" class="block weekly">
+      <div class="toolbar">
+        <span class="toolbar__hint">本周汇总 · 只读预览（不推送）</span>
+        <div class="toolbar__right">
+          <span v-if="weekly" class="hint">{{ weekly.rangeFrom }} ~ {{ weekly.rangeTo }}</span>
+          <el-button :loading="weeklyLoading" @click="loadWeekly">刷新汇总</el-button>
+        </div>
+      </div>
+      <template v-if="weekly">
+        <div class="weekly__stats">
+          <span class="weekly__total">本周共 {{ weekly.total }} 条留档</span>
+          <el-tag
+            v-for="(count, k) in weeklyTopKinds"
+            :key="k"
+            size="small"
+            effect="plain"
+            class="weekly__tag"
+          >
+            {{ kindLabel(k) }} {{ count }}
+          </el-tag>
+        </div>
+        <pre class="weekly__digest">{{ weekly.digest }}</pre>
+      </template>
+      <p v-else-if="!weeklyLoading" class="hint">还没有汇总，点「刷新汇总」看本周 AI 产出概览。</p>
+    </el-card>
+
     <el-card shadow="never" class="block">
       <div class="toolbar">
         <span class="toolbar__hint">共 {{ reportKinds.length }} 类报告</span>
@@ -169,7 +195,13 @@
 import { onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
-import { generateReports, getPreflight, type DailyNodeResult } from '@/api/ai-report';
+import {
+  generateReports,
+  getPreflight,
+  getWeeklyDigest,
+  type DailyNodeResult,
+  type WeeklyDigest,
+} from '@/api/ai-report';
 import {
   getInsight,
   listInsights,
@@ -235,6 +267,28 @@ async function loadPreflight(): Promise<void> {
     preflightText.value = '数据体检没取到（接口异常），不影响报告页其它功能。';
   } finally {
     preflightLoading.value = false;
+  }
+}
+
+// 本周汇总（只读预览，后端强制 dryRun）
+const weeklyLoading = ref(false);
+const weekly = ref<WeeklyDigest | null>(null);
+const weeklyTopKinds = (): Record<string, number> => {
+  const byKind = weekly.value?.byKind ?? {};
+  return Object.fromEntries(
+    Object.entries(byKind)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6),
+  );
+};
+async function loadWeekly(): Promise<void> {
+  weeklyLoading.value = true;
+  try {
+    weekly.value = await getWeeklyDigest();
+  } catch {
+    weekly.value = null;
+  } finally {
+    weeklyLoading.value = false;
   }
 }
 
@@ -329,6 +383,7 @@ function firstLine(s: string): string {
 onMounted(() => {
   void reload();
   void loadPreflight();
+  void loadWeekly();
 });
 </script>
 
@@ -372,6 +427,31 @@ onMounted(() => {
   color: var(--el-text-color-primary);
 }
 .preflight__detail {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--el-text-color-regular);
+  background: var(--el-fill-color-lighter);
+  border-radius: 6px;
+}
+.weekly__stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.weekly__total {
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+}
+.weekly__tag {
+  margin-right: 2px;
+}
+.weekly__digest {
   margin: 0;
   padding: 10px 12px;
   font-size: 12px;

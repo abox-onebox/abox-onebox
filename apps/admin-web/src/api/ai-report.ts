@@ -43,3 +43,18 @@ export function getPreflight(): Promise<{
 }> {
   return http.get('/admin/ai-report/preflight');
 }
+
+/** 本周汇总（只读预览，后端强制 dryRun，绝不外发） */
+export interface WeeklyDigest {
+  rangeFrom: string;
+  rangeTo: string;
+  total: number;
+  byKind: Record<string, number>;
+  byStatus: Record<string, number>;
+  digest: string;
+  pushed: false;
+}
+
+export function getWeeklyDigest(): Promise<WeeklyDigest> {
+  return http.get('/admin/ai-report/weekly-digest');
+}

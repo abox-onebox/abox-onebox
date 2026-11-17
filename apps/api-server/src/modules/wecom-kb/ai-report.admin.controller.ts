@@ -4,6 +4,7 @@ import { IsArray, IsOptional, IsString } from 'class-validator';
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { Roles } from '../../common/decorators/auth.decorator';
 import { WecomChatService, type DailyNodeResult } from './wecom-chat.service';
+import { AiInsightService } from './ai-insight.service';
 
 /** 生成范围：节点 key（daily/meal/...）或台账 kind（daily-report/meal-proposal/...）均可 */
 export class GenerateReportsDto {
@@ -32,7 +33,37 @@ export class GenerateReportsDto {
 @UseGuards(AdminGuard)
 @Roles('super_admin', 'admin', 'operator')
 export class AiReportAdminController {
-  constructor(private readonly chat: WecomChatService) {}
+  constructor(
+    private readonly chat: WecomChatService,
+    private readonly insights: AiInsightService,
+  ) {}
+
+  /**
+   * 本周汇总（纯只读预览）：复用 broadcastWeekly 的汇总逻辑，**强制 dryRun=true**。
+   * ⚠️ 绝不让前端传 dryRun —— 否则一个误点就会真推企微。这里写死 true，
+   *    走 broadcastWeekly 的早返回分支，不推送、不写台账。
+   */
+  @Get('weekly-digest')
+  async weeklyDigest(): Promise<{
+    rangeFrom: string;
+    rangeTo: string;
+    total: number;
+    byKind: Record<string, number>;
+    byStatus: Record<string, number>;
+    digest: string;
+    pushed: false;
+  }> {
+    const r = await this.insights.broadcastWeekly({ dryRun: true });
+    return {
+      rangeFrom: r.rangeFrom,
+      rangeTo: r.rangeTo,
+      total: r.total,
+      byKind: r.byKind,
+      byStatus: r.byStatus,
+      digest: r.digest,
+      pushed: false,
+    };
+  }
 
   /** 数据体检（纯只读）：今天有没有数据可算、哪些节点会被跳过 */
   @Get('preflight')
