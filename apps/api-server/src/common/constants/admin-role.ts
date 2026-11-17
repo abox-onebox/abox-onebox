@@ -130,6 +130,9 @@ export const ADMIN_MENU_KEYS = [
   //   ⚠️ 刻意**不给 finance / viewer**：台账含全平台经营分析结论（选品/发券/流失），
   //      比看板原始指标更进一步，窄角色不应看到「AI 建议怎么调整经营」。
   '/stats/ai-insight',
+  // AI 报告中心（2026-11-17）：9 类报告批量生成 + 回看。页面可见性同台账（operator 经
+  //   派生规则可见），但「生成」端点收紧到 super_admin/admin —— operator 只能看历史留档。
+  '/stats/ai-report-center',
   // C 端智能客服预览（D · #44 · 2026-11-04）：只读预览消费者端可见的公示与问答，
   //   供运营核对文案。无写动作，与 `ADMIN_NAV` 的「数据」组同向；operator 经派生规则自动可见。
   '/stats/ai-cs',

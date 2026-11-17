@@ -728,6 +728,34 @@ export class WecomChatService {
   }
 
   /**
+   * 报告中心「批量生成」入口：只跑各节点 + 留档，**绝不推送**（dryRun 语义）。
+   *
+   * 与每日 Cron 的区别：Cron 走 `resolveOwnerBinding → runAndPushForUser`（会 sendText），
+   * 这里只调 `runDailyNodes`（逐节点 record 到 ab_ai_insight，不推群）。
+   * 本地 sqlite + mock 下若没有真实 owner binding，兜底一个只读 binding —— gen 方法
+   * 只用它取 operatorName/tier/grantedOps 做数据鉴权，不发消息、不写业务表。
+   */
+  async generateReportsDryRun(
+    kinds?: string[],
+  ): Promise<{ nodes: DailyNodeResult[]; pushed: false }> {
+    const resolved = await this.resolveOwnerBinding();
+    const binding: Binding = resolved?.binding ?? {
+      operatorName: 'AI 报告中心',
+      tier: 'owner',
+      grantedOps: [],
+      operatorToken: null,
+      approverToken: null,
+    };
+    const all = await this.runDailyNodes(binding, new Date());
+    const nodes = kinds?.length
+      ? all.filter(
+          (n) => kinds.includes(n.key) || kinds.includes(NODE_INSIGHT_KIND[n.key] ?? n.key),
+        )
+      : all;
+    return { nodes, pushed: false };
+  }
+
+  /**
    * 数据体检：编排前先问一句「现在有东西可算吗」
    *
    * 三项独立取数，各自 try/catch —— 任一项失败只让该项留 null（「不知道」），

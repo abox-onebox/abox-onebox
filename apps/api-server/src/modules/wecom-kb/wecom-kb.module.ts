@@ -16,6 +16,7 @@ import { WecomOpsAdminController } from './wecom-ops.admin.controller';
 import { WecomSimulateController } from './wecom-simulate.admin.controller';
 import { LaunchDraftAdminController } from './launch-draft.admin.controller';
 import { AiInsightAdminController } from './ai-insight.admin.controller';
+import { AiReportAdminController } from './ai-report.admin.controller';
 import { RecallCampaignAdminController } from './recall-campaign.admin.controller';
 import { RecruitTaskcardAdminController } from './recruit-taskcard.admin.controller';
 import { CouponTaskcardAdminController } from './coupon-taskcard.admin.controller';
@@ -48,6 +49,8 @@ import { AiInsight } from '../../database/entities';
     LaunchDraftAdminController,
     // AI 台账（ab_ai_insight）：15 个 AI 节点的产出可回看/可标记
     AiInsightAdminController,
+    // AI 报告中心：批量生成 9 类报告并留档，只生成不外发
+    AiReportAdminController,
     // 复购 / 流失主动唤醒闭环（#C）：复用 CouponService 批量发券 + 负责人企微知会
     RecallCampaignAdminController,
     // 招募任务卡（#G 安全版）：只读生成 + 逐卡确认出物料，不发消息不建团长

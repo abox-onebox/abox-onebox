@@ -324,6 +324,12 @@ export const routes: RouteRecordRaw[] = [
         name: 'StatsAiInsight',
         component: () => import('@/views/stats/ai-insight.vue'),
       },
+      // AI 报告中心（2026-11-17）：9 类经营报告批量生成 + 回看，只留档不外发
+      {
+        path: 'stats/ai-report-center',
+        name: 'StatsAiReportCenter',
+        component: () => import('@/views/stats/ai-report-center.vue'),
+      },
       // C 端智能客服预览（D · #44）：只读预览消费者端可见的公示与问答
       {
         path: 'stats/ai-cs',

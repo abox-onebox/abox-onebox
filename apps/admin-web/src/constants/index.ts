@@ -456,6 +456,14 @@ export const ADMIN_NAV = [
         module: 'ai-insight',
         icon: 'star',
       },
+      // AI 报告中心：9 类经营报告批量生成 + 回看（只留档不外发）
+      {
+        path: '/stats/ai-report-center',
+        title: 'AI 报告中心',
+        page: '—',
+        module: 'ai-report-center',
+        icon: 'calendar',
+      },
       // C 端智能客服预览（D · #44 · 2026-11-04 新增）：只读预览消费者端可见的
       //   124 号令公示与规则问答，供运营核对文案；不另建「组合」入口（无写动作）。
       {
