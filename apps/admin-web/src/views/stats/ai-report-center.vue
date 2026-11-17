@@ -64,6 +64,7 @@
         <span class="toolbar__hint">共 {{ reportKinds.length }} 类报告</span>
         <div class="toolbar__right">
           <el-button :loading="listing" @click="reload">刷新</el-button>
+          <el-button :loading="backfilling" @click="openBackfill">回填效果</el-button>
           <el-button type="primary" :loading="generating" @click="openGenerate">
             批量生成报告
           </el-button>
@@ -250,9 +251,11 @@ import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
+  backfillEffects,
   generateReports,
   getPreflight,
   getWeeklyDigest,
+  type BackfillResult,
   type DailyNodeResult,
   type WeeklyDigest,
 } from '@/api/ai-report';
@@ -282,6 +285,7 @@ const kindLabel = (k: string): string => reportKinds.find((x) => x.kind === k)?.
 
 const listing = ref(false);
 const generating = ref(false);
+const backfilling = ref(false);
 const rows = ref<InsightListItem[]>([]);
 const total = ref(0);
 const page = ref(1);
@@ -466,6 +470,35 @@ async function open(id: number): Promise<void> {
     detail.value = await getInsight(id);
   } catch {
     ElMessage.error('读取报告失败');
+  }
+}
+
+async function openBackfill(): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      '扫所有「已采纳且已标记执行」的建议，按生成后 7 天的业务增量回填效果背景（券核销/新增团长/订单）。只读业务表、只写台账，可重复跑。确定继续？',
+      '回填效果背景',
+      { type: 'info', confirmButtonText: '开始回填', cancelButtonText: '取消' },
+    );
+  } catch {
+    return;
+  }
+  backfilling.value = true;
+  try {
+    const r: BackfillResult = await backfillEffects(7);
+    ElMessage.success(
+      '扫描 ' +
+        r.scanned +
+        ' 条，回填 ' +
+        r.filled +
+        ' 条' +
+        (r.degraded ? '，降级 ' + r.degraded + ' 条' : '') +
+        '（业务快照为相关性背景，非因果归因）',
+    );
+  } catch {
+    ElMessage.error('回填失败，请稍后重试');
+  } finally {
+    backfilling.value = false;
   }
 }
 

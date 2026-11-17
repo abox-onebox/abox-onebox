@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
-import { IsArray, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 
 import { AdminGuard } from '../../common/guards/admin.guard';
 import { Roles } from '../../common/decorators/auth.decorator';
@@ -7,6 +8,16 @@ import { WecomChatService, type DailyNodeResult } from './wecom-chat.service';
 import { AiInsightService } from './ai-insight.service';
 
 /** 生成范围：节点 key（daily/meal/...）或台账 kind（daily-report/meal-proposal/...）均可 */
+export class BackfillEffectsDto {
+  /** 回填窗口天数（建议生成后 N 天内的业务快照）。1-90，默认 7 */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  windowDays?: number;
+}
+
 export class GenerateReportsDto {
   /** 只生成指定节点；不传 = 全部 12 个节点 */
   @IsOptional()
@@ -79,6 +90,20 @@ export class AiReportAdminController {
     text: string;
   }> {
     return this.chat.getPreflightReadonly();
+  }
+
+  /**
+   * ③效果回填：扫已执行建议，按生成后窗口查业务快照写回 meta.effect。
+   * 只写台账、业务表只读；幂等可重复跑。当前无真实数据时 filled 可能为 0，属预期。
+   */
+  @Post('backfill-effects')
+  @Roles('super_admin', 'admin')
+  async backfillEffects(@Body() dto: BackfillEffectsDto): Promise<{
+    scanned: number;
+    filled: number;
+    degraded: number;
+  }> {
+    return this.insights.backfillEffects(dto.windowDays ?? 7);
   }
 
   /** 批量生成报告（只留档不外发）。返回逐节点结果与 pushed=false 证据 */

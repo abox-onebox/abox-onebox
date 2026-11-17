@@ -58,3 +58,14 @@ export interface WeeklyDigest {
 export function getWeeklyDigest(): Promise<WeeklyDigest> {
   return http.get('/admin/ai-report/weekly-digest');
 }
+
+/** ③效果回填结果：扫已执行建议，按生成后窗口回填业务快照到 meta.effect */
+export interface BackfillResult {
+  scanned: number;
+  filled: number;
+  degraded: number;
+}
+
+export function backfillEffects(windowDays = 7): Promise<BackfillResult> {
+  return http.post('/admin/ai-report/backfill-effects', { windowDays });
+}

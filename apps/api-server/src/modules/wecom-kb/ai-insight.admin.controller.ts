@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 import { AdminGuard } from '../../common/guards/admin.guard';
@@ -66,7 +66,7 @@ export class MarkExecutionDto {
   /** 执行备注（可选，如「已于 3/5 在后台发券」） */
   @IsOptional()
   @IsString()
-  @Max(255)
+  @MaxLength(255)
   note?: string;
 }
 

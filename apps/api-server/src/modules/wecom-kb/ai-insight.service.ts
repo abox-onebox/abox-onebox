@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 
 import { BizException } from '../../common/exceptions/biz.exception';
 import { ErrorCode } from '../../common/constants/error-code';
@@ -71,6 +71,7 @@ export class AiInsightService {
     @InjectRepository(AiInsight) private readonly repo: Repository<AiInsight>,
     private readonly tokenSvc: WecomTokenService,
     private readonly bindingSvc: WecomBindingService,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -210,6 +211,95 @@ export class AiInsightService {
       : { done: false, doneAt: null, doneBy: null, note: '' };
     await this.repo.update({ id }, { metaJson: JSON.stringify({ ...meta, execution }) });
     return { id, execution };
+  }
+
+  /**
+   * ③效果回填：按「建议生成时刻之后的业务快照」写回 meta.effect。
+   *
+   * ⚠️ 为什么不是「按关联 id 精确反查」：台账 meta 里只有 {input:{node,ranAt}}，
+   *    没有券码 / buildingId / 团长 id 可挂（抽样实测）。所以这里用诚实的近似——
+   *    每条已执行建议生成后 windowDays 天内的业务增量，作为该建议的「效果背景」。
+   *    它是**相关性背景，不是因果归因**；页面必须如实标注，不许写成「这条券赚了 X」。
+   *
+   * - 只扫 status='adopted' 且 meta.execution.done=true 的条目；
+   * - 业务表**只读**（SELECT count），唯一写点仍是台账自己的 meta_json；
+   * - 幂等：重复跑覆盖同一窗口快照，不累加；
+   * - 业务表为空/驱动不支持时给出降级快照（available=false），不假造 0。
+   */
+  async backfillEffects(windowDays = 7): Promise<{
+    scanned: number;
+    filled: number;
+    degraded: number;
+  }> {
+    const days = Math.min(90, Math.max(1, Math.floor(Number(windowDays) || 7)));
+    const all = await this.repo.find({ where: { status: 'adopted' } });
+    let filled = 0;
+    let degraded = 0;
+
+    for (const row of all) {
+      let meta: Record<string, unknown> = {};
+      try {
+        meta = row.metaJson ? (JSON.parse(row.metaJson) as Record<string, unknown>) : {};
+      } catch {
+        meta = {};
+      }
+      const exec = meta.execution as { done?: boolean } | undefined;
+      if (!exec?.done) continue; // 只回填「已标记执行」的
+
+      const since = row.createdAt;
+      const until = new Date(since.getTime() + days * 86400000);
+      // 原生 SQL 参数用字符串：mysql2 能绑定 Date，但 better-sqlite3 只能绑基本类型。
+      // 走本地分量拼 'YYYY-MM-DD HH:mm:ss'，两种驱动通用（不用 toISOString 避免 UTC 偏移）。
+      const sqlTime = (d: Date): string => {
+        const p = (n: number): string => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+      };
+      const sinceS = sqlTime(since);
+      const untilS = sqlTime(until);
+      let snap: Record<string, unknown>;
+      try {
+        const [coupons, leaders, orders] = await Promise.all([
+          this.dataSource.query(
+            'SELECT COUNT(*) AS c FROM ab_user_coupon WHERE status = ? AND used_at >= ? AND used_at < ?',
+            ['used', sinceS, untilS],
+          ),
+          this.dataSource.query(
+            'SELECT COUNT(*) AS c FROM ab_team_leader WHERE created_at >= ? AND created_at < ?',
+            [sinceS, untilS],
+          ),
+          this.dataSource.query(
+            'SELECT COUNT(*) AS c FROM ab_order WHERE created_at >= ? AND created_at < ?',
+            [sinceS, untilS],
+          ),
+        ]);
+        snap = {
+          available: true,
+          windowDays: days,
+          rangeFrom: toBjIso(since),
+          rangeTo: toBjIso(until),
+          couponsUsed: Number(coupons?.[0]?.c ?? 0),
+          leadersAdded: Number(leaders?.[0]?.c ?? 0),
+          ordersCreated: Number(orders?.[0]?.c ?? 0),
+          note: '生成时刻之后的相关性背景，非因果归因',
+          filledAt: toBjIso(now()),
+        };
+        filled++;
+      } catch (e) {
+        snap = {
+          available: false,
+          windowDays: days,
+          note: '业务快照查询失败（表缺失或驱动不支持），未回填假数据',
+          reason: e instanceof Error ? e.message : String(e),
+          filledAt: toBjIso(now()),
+        };
+        degraded++;
+      }
+      await this.repo.update(
+        { id: row.id },
+        { metaJson: JSON.stringify({ ...meta, effect: snap }) },
+      );
+    }
+    return { scanned: all.length, filled, degraded };
   }
 
   /** 可选节点清单（给前端筛选下拉用：只列库里有数据的 kind，不写死枚举） */
