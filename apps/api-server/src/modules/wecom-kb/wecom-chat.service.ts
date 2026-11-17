@@ -26,6 +26,11 @@ import { WecomSvcTokenService } from './wecom-svc-token.service';
 import { WecomTokenService } from './wecom-token.service';
 import { AiInsightService } from './ai-insight.service';
 import { BizConfigService } from '../../common/services/biz-config.service';
+import { formatTaskCardChat } from '../../common/utils/taskcard-chat';
+import { RecruitTaskcardService } from './recruit-taskcard.service';
+import { CouponTaskcardService } from './coupon-taskcard.service';
+import { LeaderTaskcardService } from './leader-taskcard.service';
+import { CommunityTaskcardService } from './community-taskcard.service';
 import { bjYmdPlus, parseMealDate } from './name-match';
 import { parseIntent, isConfirm, isCancel } from './chat-flow';
 import {
@@ -314,6 +319,11 @@ export class WecomChatService {
     private readonly aiInsight: AiInsightService,
     /** 读 `catalog.activeKinds` 等运营配置（CommonModule 已 @Global 导出） */
     private readonly bizConfig: BizConfigService,
+    /** G/H/N/P 结构化任务卡：企微口语直出草稿（只读生成，确认仍回后台） */
+    private readonly recruitTaskcard: RecruitTaskcardService,
+    private readonly couponTaskcard: CouponTaskcardService,
+    private readonly leaderTaskcard: LeaderTaskcardService,
+    private readonly communityTaskcard: CommunityTaskcardService,
   ) {}
 
   private getSession(userId: string): Session | undefined {
@@ -470,6 +480,22 @@ export class WecomChatService {
         return this.captureInsight('community-plan', '社群运营排期', binding, () =>
           this.genCommunityPlan(binding, now),
         );
+      case 'genRecruitTaskCard':
+        return this.captureInsight('recruit-taskcard', '招募任务卡', binding, () =>
+          this.chatRecruitTaskCard(),
+        );
+      case 'genCouponTaskCard':
+        return this.captureInsight('coupon-taskcard', '发券策略卡', binding, () =>
+          this.chatCouponTaskCard(),
+        );
+      case 'genLeaderTaskCard':
+        return this.captureInsight('leader-taskcard', '团长处置卡', binding, () =>
+          this.chatLeaderTaskCard(),
+        );
+      case 'genCommunityTaskCard':
+        return this.captureInsight('community-taskcard', '社群排期卡', binding, () =>
+          this.chatCommunityTaskCard(),
+        );
       case 'genRefundCluster':
         return this.captureInsight('refund-cluster', '退款根因', binding, () =>
           this.genRefundCluster(binding, now),
@@ -530,6 +556,46 @@ export class WecomChatService {
       });
     }
     return text;
+  }
+
+  // ── 结构化任务卡口语直出（G/H/N/P）────────────────────────
+  // 复用各 taskcard service 的 generate()（只读生成、绝不写库/发消息/发券/停团长），
+  // 再把结构卡转成人话。**确认与执行仍只在后台页做** —— 聊天里出卡 = 纯只读草稿。
+
+  private async chatRecruitTaskCard(): Promise<string> {
+    try {
+      const r = await this.recruitTaskcard.generate();
+      return formatTaskCardChat('recruit', r as Parameters<typeof formatTaskCardChat>[1]);
+    } catch {
+      return '招募任务卡暂时生成不出来（数据或脚本异常），先别急；可到后台「招募任务卡」页重试。没动任何数据。';
+    }
+  }
+
+  private async chatCouponTaskCard(): Promise<string> {
+    try {
+      const r = await this.couponTaskcard.generate();
+      return formatTaskCardChat('coupon', r as Parameters<typeof formatTaskCardChat>[1]);
+    } catch {
+      return '发券策略卡暂时生成不出来（数据或脚本异常），先别急；可到后台「发券策略卡」页重试。没发任何券。';
+    }
+  }
+
+  private async chatLeaderTaskCard(): Promise<string> {
+    try {
+      const r = await this.leaderTaskcard.generate();
+      return formatTaskCardChat('leader', r as Parameters<typeof formatTaskCardChat>[1]);
+    } catch {
+      return '团长处置卡暂时生成不出来（数据或脚本异常），先别急；可到后台「团长处置卡」页重试。没动任何团长状态。';
+    }
+  }
+
+  private async chatCommunityTaskCard(): Promise<string> {
+    try {
+      const r = await this.communityTaskcard.generate();
+      return formatTaskCardChat('community', r as Parameters<typeof formatTaskCardChat>[1]);
+    } catch {
+      return '社群排期卡暂时生成不出来（数据或脚本异常），先别急；可到后台「社群排期卡」页重试。没发任何消息。';
+    }
   }
 
   /**

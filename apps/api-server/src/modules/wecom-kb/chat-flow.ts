@@ -35,6 +35,10 @@ export type ChatIntent =
   | { kind: 'genRefundCluster' }
   | { kind: 'genLaunchDraft'; date: string | null }
   | { kind: 'confirmLaunchDraft'; picks: number[] | null }
+  | { kind: 'genRecruitTaskCard' }
+  | { kind: 'genCouponTaskCard' }
+  | { kind: 'genLeaderTaskCard' }
+  | { kind: 'genCommunityTaskCard' }
   | { kind: 'runOrchestrate' }
   | { kind: 'unknown'; raw: string };
 
@@ -74,6 +78,28 @@ export function parseIntent(raw: string, now: Date): ChatIntent {
       .filter((n) => Number.isInteger(n) && n > 0);
     return { kind: 'confirmLaunchDraft', picks: nums.length ? nums : null };
   }
+
+  // ── 结构化任务卡（G/H/N/P · 企微口语直出草稿）────────────────
+  // 与「提案/策略/健康度」类自由文本节点的分工：这些词带「任务卡/处置卡/排期卡/策略卡」
+  // 后缀，产出的是**结构化可执行草稿**（去后台逐卡确认），不是分析文本。
+  // ⚠️ 都必须排在对应提案词表之前；后缀词「任务卡/处置卡/排期卡/策略卡」在提案词表里
+  //    从不出现，故不会互相截走。确认动作仍只在后台页做，聊天里出卡=纯只读。
+  if (/(生成|出|来一份|给我|做|要|来批)?\s*(团长)?\s*(招募任务卡|招募执行卡|发展任务卡)/.test(t))
+    return { kind: 'genRecruitTaskCard' };
+  if (
+    /(生成|出|来一份|给我|做|要|来批)?\s*(运营|本周|下周)?\s*(发券任务卡|发券策略卡|发券执行卡|券任务卡)/.test(
+      t,
+    )
+  )
+    return { kind: 'genCouponTaskCard' };
+  if (/(生成|出|来一份|给我|做|要|来批)?\s*(团长)?\s*(处置卡|处置任务卡|团长跟进卡)/.test(t))
+    return { kind: 'genLeaderTaskCard' };
+  if (
+    /(生成|出|来一份|给我|做|要|排|来批)?\s*(本周|下周|一周)?\s*(社群排期卡|社群任务卡|排期卡|群排期卡)/.test(
+      t,
+    )
+  )
+    return { kind: 'genCommunityTaskCard' };
 
   // AI 编排节点 B · 文案与素材生成（企微触发）：认出「生成招募页/文案 + 需求」即走该节点。
   // ⚠️ 必须早于后面的 orders/assign 判定 —— 需求里若误带「套餐/订单」等词也不应被截走。

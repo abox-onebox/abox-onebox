@@ -371,3 +371,40 @@ describe('确认开团（节点 R · 写库）', () => {
     expect(kindOf('给量子大厦A座上明天的A套餐')).toBe('assign');
   });
 });
+
+describe('parseIntent · 结构化任务卡口语直出（G/H/N/P）', () => {
+  const kindOf = (s: string): string => parseIntent(s, new Date('2026-11-17T10:00:00Z')).kind;
+
+  it('招募任务卡：认出结构化出卡说法', () => {
+    expect(kindOf('出一批招募任务卡')).toBe('genRecruitTaskCard');
+    expect(kindOf('生成团长招募任务卡')).toBe('genRecruitTaskCard');
+    expect(kindOf('给我招募执行卡')).toBe('genRecruitTaskCard');
+  });
+
+  it('发券任务卡：认出结构化出卡说法', () => {
+    expect(kindOf('出发券任务卡')).toBe('genCouponTaskCard');
+    expect(kindOf('生成发券策略卡')).toBe('genCouponTaskCard');
+  });
+
+  it('团长处置卡：认出结构化出卡说法', () => {
+    expect(kindOf('出团长处置卡')).toBe('genLeaderTaskCard');
+    expect(kindOf('生成处置卡')).toBe('genLeaderTaskCard');
+  });
+
+  it('社群排期卡：认出结构化出卡说法', () => {
+    expect(kindOf('出社群排期卡')).toBe('genCommunityTaskCard');
+    expect(kindOf('排一周社群排期卡')).toBe('genCommunityTaskCard');
+  });
+
+  it('负控：自由文本提案仍归原节点，不被任务卡词表抢走', () => {
+    expect(kindOf('招募提案')).toBe('genRecruitProposal');
+    expect(kindOf('发券策略')).toBe('genCouponStrategy');
+    expect(kindOf('团长健康度')).toBe('genLeaderHealth');
+    expect(kindOf('社群排期')).toBe('genCommunityPlan');
+  });
+
+  it('负控：裸招募文案/真排餐不被任务卡抢走', () => {
+    expect(kindOf('生成招募页 双十一暖冬团')).toBe('genCampaign');
+    expect(kindOf('给量子大厦A座上明天的A套餐')).toBe('assign');
+  });
+});
