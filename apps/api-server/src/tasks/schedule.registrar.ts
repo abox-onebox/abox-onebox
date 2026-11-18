@@ -210,10 +210,13 @@ export class ScheduleRegistrar implements OnModuleInit, OnModuleDestroy {
       this.registry.addCronJob(name, job);
       job.start();
 
-      // ⚠️ 高频任务没有 `timelineKey`（不挂在时间轴上）⇒ 横幅走另一支，
+      // ⚠️ 不走时间轴的任务没有 `timelineKey` ⇒ 横幅走另一支，
       //    否则会拿 `null` 去索引时间轴（TS 会拦，但运行时形态是 undefined 文案）
+      // ⚠️ 文案**不能写「高频任务」**：`timelineKey: null` 一度只对应 `pay-reconcile`，
+      //    2026-11-18 加了 `trainee-warn`（每日 10:00 的定点任务）之后，
+      //    「null = 高频」当场变成假话 —— 那是两条不同的理由，共用的只是「不走时间轴」。
       if (!spec.timelineKey) {
-        lines.push(`${name.padEnd(19)} ${cron}  (高频任务 · 与时间轴配置无关)`);
+        lines.push(`${name.padEnd(19)} ${cron}  (不走时间轴 · cron 固定)`);
       } else {
         const overridden =
           formatTimeOfDay(timeline[spec.timelineKey]) !==
