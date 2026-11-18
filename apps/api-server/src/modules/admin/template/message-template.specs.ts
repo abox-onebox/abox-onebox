@@ -84,6 +84,21 @@ export const NOTIFY_PAGES = {
    * ⚠️ 真值须与 `apps/miniprogram/src/pages.json` 的 `pages/leader/share` 一致。
    */
   leaderShare: 'pages/leader/share',
+  /**
+   * 提现页（提现结果通知的落地页 · 2026-11-18）
+   *
+   * 提现结果通知点开后要能**立刻看到那笔单的状态与驳回原因**，
+   * 落「我的-提现」页而不是钱包首页：后者还要他自己再点一次才看到明细。
+   */
+  leaderWithdraw: 'pages/leader/withdraw',
+  /**
+   * 团长申请页（停职通知的落地页 · 2026-11-18）
+   *
+   * 被动停职的团长当务之急是「怎么恢复」——`apply` 对停职者有
+   * 「复职并重置为见习」分支（`team-leader.service.ts`），落地页必须直达申请页，
+   * 而不是把他丢回一个他进不去的工作台（那正是停职后最糟的体验）。
+   */
+  leaderApply: 'pages/leader-apply/leader-apply',
 } as const;
 
 /**
@@ -189,7 +204,7 @@ export interface MessageTemplateSpec {
 }
 
 /**
- * 10 个场景
+ * 14 个场景
  *
  * ## ⚠️ 与原型 P36 的关系（必须如实说明，别让它变成「两个真相」）
  *
@@ -210,7 +225,13 @@ export interface MessageTemplateSpec {
  * 第 10 行 `group_open` 是 **2026-11-18 新增**：开团对外没有声音，团长不知道何时
  * 能开始分享 —— 它补齐了团长一天四个节点的**第一个**（开团 → 截单 → 送达 → 入账）。
  *
- * → 后台 P36 页面会显示 **10 行**。这不是页面写错了，是代码事实比原型多了 5 行；
+ * 第 11–14 行 `leader_promoted` / `trainee_expiring` / `leader_suspended` /
+ * `withdraw_result` 是 **2026-11-18 第二批**：与开团通知同属一个缺陷族 ——
+ * 「状态自动翻转了、当事人不知道、而这直接决定他下一步动作」。
+ * 四处全是**钱与资格**：涨佣金、即将失去资格、已经失去资格、提现结果。
+ * 它们的共同点是「当事人本来可以做出反应」，静默等于剥夺了他的反应机会。
+ *
+ * → 后台 P36 页面会显示 **14 行**。这不是页面写错了，是代码事实比原型多了 9 行；
  *   若运营问「为什么多了」，答案在本段。
  *
  * ⚠️ **新增行一律追加在末尾**（保持「前 5 行 = 原型」这一结构的可核对性）——
@@ -568,6 +589,196 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
         '【ABox 开团】{{mealDate}} 的午餐已开团（{{setMealName}}），{{cutoffAt}} 截单，请尽快分享给同事。',
     },
   },
+  // ==========================================================================
+  // 2026-11-18 第二批（团长激活三件套）
+  //
+  // 共性：它们全是**自动发生的状态翻转**，当事人却完全无感知 ——
+  //   晋级（涨钱）／见习到期（即将失去资格）／被停职（已经失去资格）／提现结果（钱）。
+  // 与开团通知同属一个缺陷族：「状态变了、该知道的人不知道、而且这直接决定他下一步动作」。
+  //
+  // ## ⚠️ 四个场景**刻意用完全相同的模板结构**（2 个关键词：`thing1` + `time2`）
+  //
+  // 原因不是偷懒：运营要拿这四行去微信公共模板库**分别申请四个模板**，
+  // 每个模板的关键词数量与顺序都必须和我们这边对齐。四个场景若各有各的结构
+  // （有的 2 个、有的 3 个、`amount` 和 `thing` 混用），申请时就要记四套规则 ——
+  // 记错一次就 `47003 参数不合法`，而且失败发生在**生产投递时**，不是申请时。
+  // 统一成「第 1 个选事物、第 2 个选时间」，四行只需记一条规则。
+  //
+  // ## ⚠️ 为什么第 1 个关键词要自己拼成一句话（而不是分 3 个关键词）
+  //
+  // `thing` 限 20 字符。把「新等级 / 佣金比例 / 还差几单」拆成三个关键词看着更整齐，
+  // 但那要求模板恰好有 3 个 `thing` 位 —— 公共模板库里没有这种模板，
+  // 运营只能自己组合，反而更容易错。拼成一句 ≤20 字的话，任何 2 关键词模板都能用。
+  // ==========================================================================
+  {
+    /**
+     * 团长晋级通知（2026-11-18 · 全清单第 11 行）
+     *
+     * ## 为什么这条的正反馈最强
+     *
+     * 晋级 = **佣金率从 8% 涨到 9%/10%/12%**，是团长最该被强化的时刻。
+     * 而它现在只写进一行服务端日志（`promotion.service.ts` 的 `logger.log`），
+     * 团长永远不会知道自己的费率变了 —— 他下次算钱时只会觉得「怎么对不上」。
+     *
+     * ## ⚠️ 三个让它「零风险」的事实（决定它该不该发）
+     *
+     * 1. **只升不降**：`promotion.service.ts` 里是 `promoted ? target : leader.level`，
+     *    没有降级分支 ⇒ 这条通知**永远是好消息**，不存在难写的坏消息文案。
+     * 2. **自动发生**：确认分发 / 每日自动确认都会触发审计，团长无需任何操作。
+     * 3. **当天只发一次**：多次分发一天内触发多次审计，用 `dedupeKey` 兜住
+     *    （第二次审计已不再 `promoted`，本就不会重复，但幂等键是第二道保险）。
+     */
+    scene: 'leader_promoted',
+    label: '团长晋级通知',
+    audience: '等级被上调的团长',
+    channels: ['wechat_subscribe', 'wechat_group'],
+    trigger: '确认分发 / 自动确认触发晋级审计并升级时',
+    mandatory: false,
+    variables: ['levelLabel', 'rateText', 'effectiveAt'],
+    requestSubscribe: true,
+    consumedBy: 'team-leader/promotion.service.ts → notifyPromoted()（audit 升级分支，事务外）',
+    wiring: 'live',
+    /** 晋级概要（等级 + 新佣金比例，拼成一句话）/ 生效时间 */
+    wxFields: { noticeTitle: 'thing1', effectiveAt: 'time2' },
+    note:
+      '⭐ 晋级=涨钱，是团长最该被强化的时刻，此前只写日志。' +
+      '⚠️ 本通知**只能由「非本人主动」的审计触发**：团长自己在佣金页点「重新核算」时' +
+      '（L22），升级结果当场就在他屏幕上，再推一条通知是重复打扰 —— ' +
+      '故 `audit()` 带 `notify` 开关，L22 传 `false`。' +
+      '⚠️ 一次性订阅额度有限，模板未到位时用群文案人工补（后台可复制）。',
+    seed: {
+      enabled: 0,
+      wechatTemplateId: null,
+      groupContent:
+        '【ABox 晋级】恭喜升为{{levelLabel}}团长，佣金比例调整为 {{rateText}}，{{effectiveAt}} 起生效。',
+    },
+  },
+  {
+    /**
+     * 见习到期预警（2026-11-18 · 全清单第 12 行）
+     *
+     * ## 它补的是「沉默的死」
+     *
+     * 见习团长 30 天未促单 → 每日 03:00 跑批**直接停职**（`expireTrainees`）。
+     * 此前这条链路上**没有任何中途提示**：团长照常过完第 29 天，第 30 天早上
+     * 团长入口就没了。而被停职的人本来是**可以救的**（他只要出一单就续上），
+     * 前提是他知道自己在倒计时。
+     *
+     * ## ⚠️ 为什么只在「恰好剩 7 天」发一次，不是最后 7 天每天发
+     *
+     * 每天发是骚扰，且会迅速被无视（狼来了）。7 天 = 一个完整周盒周期，
+     * 够他安排一次促单。跨天去重靠「剩余天数 == 7」这个精确判据（`trainee-warn.task.ts`），
+     * **不能用 `dedupeKey`** —— 那个只按「当天」去重，起不到「这辈子只发一次」的作用。
+     */
+    scene: 'trainee_expiring',
+    label: '见习到期预警',
+    audience: '见习期即将届满（剩 7 天）的团长',
+    channels: ['wechat_subscribe', 'wechat_group'],
+    trigger: '每日跑批 · 距见习失效恰好 7 天',
+    mandatory: false,
+    variables: ['noticeTitle', 'deadlineAt'],
+    requestSubscribe: true,
+    consumedBy: 'tasks/trainee-warn.task.ts → MessageService.notify()（每日 03:30）',
+    wiring: 'live',
+    wxFields: { noticeTitle: 'thing1', deadlineAt: 'time2' },
+    note:
+      '⭐ 30 天未促单会被自动停职，此前没有任何倒计时提醒 —— 这是可救的流失。' +
+      '⚠️ 只在「恰好剩 7 天」发一次：最后 7 天每天发会被无视，也违背不打扰原则。' +
+      '⚠️ 失效判据的起算点是 `lastOrderAt ?? createdAt`（从未出单者从建档起算），' +
+      '与本通知共用 `expireTrainees()` 的同一算法，不允许此处另算一份。',
+    seed: {
+      enabled: 0,
+      wechatTemplateId: null,
+      groupContent:
+        '【ABox 提醒】你的见习团长资格将于 {{deadlineAt}} 到期，{{noticeTitle}}。出一单即可续上。',
+    },
+  },
+  {
+    /**
+     * 团长停职通知（2026-11-18 · 全清单第 13 行）
+     *
+     * ## 为什么必须发（这是最糟的体验，没有之一）
+     *
+     * 停职后 `LeaderGuard` 会挡住所有团长端接口，端上 `isLeader` 变 false ⇒
+     * **底部导航的「团长」入口直接消失**。当事人看到的是「我的团长身份凭空没了」，
+     * 没有原因、没有期限、也不知道自己能申请复职。
+     *
+     * ## 两条触发来源共用本场景（行为一致，文案一致）
+     *
+     * 1. **被动**：`expireTrainees()` 见习期满（每日 03:00 跑批）；
+     * 2. **主动**：运营在后台「停职」（`leader-admin.service.ts` 的 `audit.SUSPEND`）。
+     *
+     * ⚠️ **复职不发**：复职后团长端立刻恢复可见，他打开就知道；再推一条属于噪音。
+     */
+    scene: 'leader_suspended',
+    label: '团长停职通知',
+    audience: '被停职的团长',
+    channels: ['wechat_subscribe', 'wechat_group'],
+    trigger: '见习期满自动停职 / 运营后台手动停职',
+    mandatory: false,
+    variables: ['reasonText', 'suspendedAt'],
+    requestSubscribe: true,
+    consumedBy:
+      'team-leader/promotion.service.ts（expireTrainees）· leader-admin.service.ts（audit.SUSPEND）',
+    wiring: 'live',
+    wxFields: { noticeTitle: 'thing1', suspendedAt: 'time2' },
+    note:
+      '⭐ 停职后端上团长入口直接消失，此前没有任何解释 —— 这是最伤人的一种静默。' +
+      '⚠️ 文案必须给出「可重新申请复职」这条出路（`team-leader.service.ts` 的 apply 对' +
+      '停职者有复职分支，等级重置为见习），否则等于宣布他出局。' +
+      '⚠️ 落地页是**申请页**而不是工作台：他此刻进不去工作台。',
+    seed: {
+      enabled: 0,
+      wechatTemplateId: null,
+      groupContent:
+        '【ABox 通知】你的团长身份已于 {{suspendedAt}} 暂停，原因：{{reasonText}}。' +
+        '可在小程序「申请团长」重新提交恢复（等级从见习起算），历史佣金与订单均保留。',
+    },
+  },
+  {
+    /**
+     * 提现结果通知（2026-11-18 · 全清单第 14 行）
+     *
+     * ## 为什么这条是「信任」问题，不是「便利」问题
+     *
+     * 提现要过 `approve → markPaid` 两道人工关，还可能 `reject` / `markFailed`。
+     * 这四种结果此前**全部静默**，团长只能自己反复进提现页刷。
+     * 钱的事让人靠猜，猜错一次就是投诉（「我提现三天了还没到」）。
+     *
+     * ## 四种结果都发，但**措辞必须能一眼分清**
+     *
+     * 尤其 `reject`（运营驳回，可再提）与 `markFailed`（打款失败，需改收款方式）
+     * 是两种完全不同的下一步动作，文案例必须区分（见 `withdraw-admin.service.ts` 的映射）。
+     *
+     * ⚠️ 金额塞进 `thing1`（≤20 字符，`¥120.00 已打款` 远未超限）而**不新开 `amount` 位**：
+     * 一旦用了 `amount`，模板就必须恰好在第 2 位有金额类型 —— 四行统一结构就破了。
+     */
+    scene: 'withdraw_result',
+    label: '提现结果通知',
+    audience: '提交提现申请的团长',
+    channels: ['wechat_subscribe', 'wechat_group'],
+    trigger: '提现终态：驳回 / 打款成功 / 打款失败（审批通过不单独发，见 note）',
+    mandatory: false,
+    variables: ['noticeTitle', 'resultAt'],
+    requestSubscribe: true,
+    consumedBy: 'finance/withdraw-admin.service.ts（approve / reject / markPaid / markFailed）',
+    wiring: 'live',
+    wxFields: { noticeTitle: 'thing1', resultAt: 'time2' },
+    note:
+      '⭐ 提现的终态此前全静默，团长靠反复刷页面确认钱到没到 —— 这是信任问题，不是便利问题。' +
+      '⚠️ **`approve`（审批通过）刻意不发**：它只是中间态（钱还在路上），' +
+      '真正的答案是终态。一次性订阅**一次授权只有 1 条额度**，' +
+      '一笔提现若发「已通过」+「已到账」两条，团长点两次「允许」才够用一次 —— ' +
+      '额度必须留给「钱到了」和「钱没到」这两种他必须知道的时刻。' +
+      '⚠️ `reject`（可重新提交）与 `markFailed`（需改收款方式）的措辞必须区分，' +
+      '两者下一步动作不同，写混了等于把一次失败变成两次。' +
+      '⚠️ 幂等键为 `withdraw:<id>:<状态>`：运营重复点「确认打款」不会让团长收到两条。',
+    seed: {
+      enabled: 0,
+      wechatTemplateId: null,
+      groupContent: '【ABox 提现】{{resultAt}} 你的提现申请{{noticeTitle}}，可在小程序查看明细。',
+    },
+  },
 ];
 
 /** 场景键 → 声明（投递侧按 scene 查渠道与变量） */
@@ -752,7 +963,16 @@ export const WX_BIZ_FIELD_LABEL: Record<string, string> = {
   cutoffAt: '截单时间（含日期）',
   applyAt: '申请时间',
   leaderLevel: '团长等级',
-  noticeTitle: '开团信息（日期 + 套餐名）',
+  /**
+   * ⚠️ 这个键被 **5 个场景**共用（开团 / 晋级 / 见习到期 / 停职 / 提现结果），
+   *    所以标签不能再写成「开团信息（日期 + 套餐名）」—— 运营在晋级那行会读不懂。
+   *    各场景的具体含义写在各自 `note` 里（开团 = 日期 + 套餐名，晋级 = 等级 + 新费率……）。
+   */
+  noticeTitle: '通知概要（一句话，≤20 字）',
+  effectiveAt: '生效时间',
+  deadlineAt: '到期时间',
+  suspendedAt: '停职时间',
+  resultAt: '处理时间',
 };
 
 export function toWxData(

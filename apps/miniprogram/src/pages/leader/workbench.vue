@@ -53,9 +53,9 @@
             v-if="war.kind === 'waiting'"
             class="war__btn"
             hover-class="war__btn--hover"
-            @tap="onSubscribeGroupOpen"
+            @tap="onSubscribeNotices"
           >
-            <text class="abi abi-16">{{ I.bell }}</text> 开团后用微信提醒我
+            <text class="abi abi-16">{{ I.bell }}</text> 开启微信提醒
           </button>
           <text v-if="war.kind === 'open'" class="war__foot">
             <text class="abi abi-16">{{ I.info }}</text>
@@ -421,8 +421,19 @@ function goCommission(): void {
  *    下来时，清单为空是常态，这不是错误。
  * 3. **授权结果不影响任何业务**：拒绝就是不提醒，页面照常。
  */
-function onSubscribeGroupOpen(): void {
-  const tmplIds = subscribe.requestFor(['group_open'], (results) => {
+function onSubscribeNotices(): void {
+  /**
+   * ⚠️ **一次最多传 3 个场景**：微信 `requestSubscribeMessage` 单次上限就是 3 个
+   * `tmplIds`，传第 4 个整次调用会失败（不是静默丢弃）。
+   *
+   * 这里选「开团 + 见习到期」两个 —— 它们是**与工作台这个场景相关**的两件事
+   * （「能开始卖了」「快要失去资格了」）。
+   * 第三类通知**不在这里索权**，而是挪到各自动作发生的时刻，那样更可解释：
+   *   · 晋级（`leader_promoted`）→ 分发完成后（`pickup.vue`，那一刻正是晋级审计触发点）
+   *   · 提现结果（`withdraw_result`）→ 提交提现时（`withdraw.vue`）
+   * 缺了对应的模板 ID 时 `requestFor` 会自动过滤，实际请求数只会更少。
+   */
+  const tmplIds = subscribe.requestFor(['group_open', 'trainee_expiring'], (results) => {
     const accepted = Object.values(results).some((v) => v === 'accept');
     if (accepted) {
       // 如实告知「一次授权 = 一条提醒」：微信一次性订阅的真实规则，不粉饰
@@ -430,7 +441,7 @@ function onSubscribeGroupOpen(): void {
     }
   });
   if (!tmplIds.length) {
-    uni.showToast({ title: '开团提醒暂未开放（模板审核中）', icon: 'none' });
+    uni.showToast({ title: '团长提醒暂未开放（模板审核中）', icon: 'none' });
   }
 }
 

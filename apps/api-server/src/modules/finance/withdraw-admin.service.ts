@@ -17,11 +17,13 @@ import { maskPhone } from '../../common/utils/crypto';
 import { money, toFen, toYuan } from '../../common/utils/money';
 import { payoutBatchNoOf } from '../../common/utils/order-no';
 import { normalizePage, paginate } from '../../common/utils/response';
-import { addDays, bjDateTime, now, toBjIso, todayBj } from '../../common/utils/time';
+import { addDays, bjDateTime, bjMinuteText, now, toBjIso, todayBj } from '../../common/utils/time';
 import { Balance, BalanceLog, Commission } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
 import { User } from '../../database/entities/user.entity';
 import { Withdraw } from '../../database/entities/withdraw.entity';
+import { NOTIFY_PAGES } from '../admin/template/message-template.specs';
+import { MessageService } from '../message/message.service';
 import {
   AdminApproveWithdrawDto,
   AdminFailWithdrawDto,
@@ -105,6 +107,13 @@ export class WithdrawAdminService {
     @InjectRepository(TeamLeader) private readonly leaderRepo: Repository<TeamLeader>,
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     private readonly dataSource: DataSource,
+    /**
+     * 2026-11-18：提现**终态**通知团长（场景 `withdraw_result`）
+     *
+     * 四种状态里只发三种终结态（驳回 / 到账 / 打款失败），`approve` 不发 ——
+     * 理由见 `message-template.specs.ts` 里该场景的 `note`（一次性订阅额度稀缺）。
+     */
+    private readonly message: MessageService,
   ) {}
 
   /**
@@ -342,6 +351,13 @@ export class WithdrawAdminService {
         `（审批人 ${operatorName}：${dto.reason}）`,
     );
 
+    // 通知放在事务之后（回滚了却已通知「被驳回」= 假消息）
+    await this.notifyResult(
+      row,
+      WithdrawStatus.REJECTED,
+      `提现被驳回，¥${money(before / 100)} 已退回`,
+    );
+
     return {
       id: Number(row.id),
       withdrawNo: row.withdrawNo,
@@ -450,6 +466,17 @@ export class WithdrawAdminService {
         `− 代扣 ¥${money(toYuan(taxFen))} = 实付 ¥${money(toYuan(actualFen))}（登记人 ${operatorName}）`,
     );
 
+    /**
+     * ⚠️ 报的是 **实付**（`actualFen`），不是申请金额：代扣个税后到账金额不同，
+     *    发申请金额会让他对银行短信里的数字产生怀疑 —— 而这正是本条通知要消灭的怀疑。
+     */
+    await this.notifyResult(
+      row,
+      WithdrawStatus.SUCCESS,
+      `¥${money(toYuan(actualFen))} 已到账`,
+      paidAt,
+    );
+
     return {
       id: Number(row.id),
       withdrawNo: row.withdrawNo,
@@ -501,6 +528,14 @@ export class WithdrawAdminService {
       `D46c 提现打款失败#${row.id}（${row.withdrawNo}）→ 解冻 ¥${money(amountFen / 100)}：${dto.failReason}`,
     );
 
+    // ⚠️ 与 `reject` 的措辞必须可区分：失败多为「收款信息有误」，
+    //    他下一步是**改收款方式**再提，而不是直接重提一次。
+    await this.notifyResult(
+      row,
+      WithdrawStatus.FAILED,
+      `打款失败，¥${money(amountFen / 100)} 已退回`,
+    );
+
     return {
       id: Number(row.id),
       withdrawNo: row.withdrawNo,
@@ -512,6 +547,45 @@ export class WithdrawAdminService {
       moneyMoved: true,
       tips: '已退回团长可用余额，他可在「提现记录」看到「打款失败」并重新申请',
     };
+  }
+
+  /**
+   * 提现终态通知（驳回 / 到账 / 打款失败）
+   *
+   * ## 三条取舍
+   *
+   * 1. **`approve` 刻意不调用本方法**：审批通过只是中间态（钱还在路上），
+   *    而一次性订阅**一次授权只有 1 条额度** —— 一笔提现发两条，团长要点两次「允许」。
+   *    额度必须留给「钱到了」和「钱没到」这两个他必须知道的时刻。
+   * 2. **绝不抛出**：审批已成功、钱已经动了，通知失败只能是「这次没通知到」。
+   *    `MessageService.notify()` 本身承诺不抛，但模板表查询仍可能抛 DB 错，故再包一层。
+   * 3. **幂等键带状态**：运营重复点「确认打款」不会让团长收到两条。
+   */
+  private async notifyResult(
+    row: Withdraw,
+    status: string,
+    title: string,
+    at: Date = now(),
+  ): Promise<void> {
+    const resultAt = bjMinuteText(at);
+    try {
+      const r = await this.message.notify({
+        scene: 'withdraw_result',
+        userId: Number(row.userId),
+        page: NOTIFY_PAGES.leaderWithdraw,
+        wxData: {
+          noticeTitle: { value: title.slice(0, 20) },
+          resultAt: { value: resultAt },
+        },
+        variables: { noticeTitle: title, resultAt },
+        dedupeKey: `withdraw:${row.id}:${status}`,
+      });
+      if (r.delivered && !r.ok) {
+        this.logger.warn(`提现结果通知未送达（单#${row.id}）：${r.errMsg}`);
+      }
+    } catch (e) {
+      this.logger.warn(`提现结果通知异常（单#${row.id}，不影响审批结果）：${(e as Error).message}`);
+    }
   }
 
   // ==========================================================================

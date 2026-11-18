@@ -261,8 +261,8 @@ const DATE_KIND_LABEL: Record<string, string> = {
 /**
  * 未实装任务的补齐批次说明
  *
- * ⭐ **M4-2 后本表为空** —— 9 个任务全部实装（日切 3 + 结算 3 + 既有 2 + 支付查单 1），
- * `GET /admin/schedule` 的 `summary.implemented` 应为 `9/9`。
+ * ⭐ **M4-2 后本表为空** —— 10 个任务全部实装（日切 3 + 结算 3 + 既有 2 + 支付查单 1 + 见习预警 1），
+ * `GET /admin/schedule` 的 `summary.implemented` 应为 `10/10`。
  *
  * ⚠️ **本表刻意保留**（而不是连同 `implemented` 字段一起删掉）：`implemented` 不是
  *    手写常量，而是 `runners.has(task)` 的**派生值** —— 将来若有人只往

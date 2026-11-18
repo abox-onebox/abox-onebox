@@ -96,8 +96,8 @@
         <view class="done__acts">
           <text class="done__link" @tap="goCommission">看佣金 ›</text>
           <text class="done__link" @tap="goOrders">看订单 ›</text>
-          <!-- 一次性订阅授权：点一下才有额度，之后佣金入账能收到微信通知 -->
-          <text class="done__link" @tap="askCommissionNotify">到账通知 ›</text>
+          <!-- 一次性订阅授权：点一下才有额度，之后佣金入账 / 晋级能收到微信通知 -->
+          <text class="done__link" @tap="askCommissionNotify">到账/晋级通知 ›</text>
         </view>
       </view>
 
@@ -411,11 +411,18 @@ function goOrders(): void {
  *
  * 所以挂在分发完成卡片的链接上：那一刻团长刚看到「¥X 将于次日 02:00 入账」，
  * 正是「到账了能通知我吗」这个念头最强的时候，点一下语义自然、也不骚扰。
+ *
+ * ## 2026-11-18 扩展为「到账 + 晋级」两个场景
+ *
+ * 分发确认**正是晋级审计的触发点**（`LeaderOrderService` 在事务外跑一次审计），
+ * 所以这一屏既是「钱什么时候到」的时刻，也是「我会不会升级」的时刻 ——
+ * 两个授权一次拿完，比让他在两个页面各点一次省一半打扰。
+ * ⚠️ 加上这两项仍是 **2 个**，没超过微信「单次最多 3 个」的上限。
  */
 function askCommissionNotify(): void {
-  const ids = subscribe.requestFor(['commission_settled'], (results) => {
-    console.log('[subscribe] commission_settled', results);
-    uni.showToast({ title: '已开启，入账当天会通知你', icon: 'none' });
+  const ids = subscribe.requestFor(['commission_settled', 'leader_promoted'], (results) => {
+    console.log('[subscribe] commission_settled / leader_promoted', results);
+    uni.showToast({ title: '已开启，入账与晋级都会通知你', icon: 'none' });
   });
   if (!ids.length) {
     // 清单为空 = 运营还没在后台配模板 ID（一期常态），别让用户以为是自己点错了

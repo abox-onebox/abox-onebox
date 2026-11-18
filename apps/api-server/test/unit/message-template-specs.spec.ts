@@ -96,4 +96,72 @@ describe('通知场景声明 · 结构自检（D60++）', () => {
       expect(subscribeTemplateOf(spec!, specState(spec!))).toBeNull();
     });
   });
+
+  /**
+   * 团长激活三件套（2026-11-18 第二批）
+   *
+   * 这四个场景有一条**刻意的统一约束**：全部 2 个关键词、且是 `thing1` + `time2`。
+   * 不是为了整齐好看 —— 运营要拿这四行**分别去微信公共模板库申请模板**，
+   * 每行结构不同就要记一套自己的规则，记错一次的结果是**生产投递时** `47003`，
+   * 而不是申请时。把「统一」写成断言，改动时立刻被拦下。
+   */
+  describe('团长激活三件套（晋级 / 到期预警 / 停职 / 提现结果）', () => {
+    const SCENES = ['leader_promoted', 'trainee_expiring', 'leader_suspended', 'withdraw_result'];
+
+    it('四个场景都存在且已接线（声明了却不接线 = 索权不用）', () => {
+      for (const scene of SCENES) {
+        const spec = MESSAGE_TEMPLATE_SPECS.find((s) => s.scene === scene);
+        expect(spec).toBeDefined();
+        expect(spec?.wiring).toBe('live');
+        expect(spec?.requestSubscribe).toBe(true);
+      }
+    });
+
+    it('全部双渠道 —— 一次性订阅额度有限，必须留群兜底', () => {
+      for (const scene of SCENES) {
+        const spec = MESSAGE_TEMPLATE_SPECS.find((s) => s.scene === scene);
+        expect(spec?.channels).toEqual(['wechat_subscribe', 'wechat_group']);
+      }
+    });
+
+    it('全部恰好 2 个关键词，且是 thing1 + time2（统一结构，运营只需记一条规则）', () => {
+      for (const scene of SCENES) {
+        const wx = MESSAGE_TEMPLATE_SPECS.find((s) => s.scene === scene)?.wxFields ?? {};
+        expect(Object.keys(wx)).toHaveLength(2);
+        expect(Object.values(wx).sort()).toEqual(['thing1', 'time2']);
+      }
+    });
+
+    it('全部种子未启用 —— 缺模板 ID 时启用闸门必须拦住', () => {
+      for (const scene of SCENES) {
+        const spec = MESSAGE_TEMPLATE_SPECS.find((s) => s.scene === scene)!;
+        const state = specState(spec);
+        expect(state.enabled).toBe(0);
+        const missing = missingForEnable(spec, state);
+        expect(missing.length).toBe(1);
+        expect(missing[0]).toContain(CHANNEL_REQUIREMENT.wechat_subscribe.fieldLabel);
+      }
+    });
+
+    it('晋级文案必须点明「佣金比例」—— 涨钱才是这条通知的意义', () => {
+      const spec = MESSAGE_TEMPLATE_SPECS.find((s) => s.scene === 'leader_promoted');
+      expect(spec?.seed.groupContent).toContain('佣金');
+      // 变量白名单里必须有费率，否则运营拿到的群文案会漏掉最关键的那个数字
+      expect(spec?.variables).toContain('rateText');
+    });
+
+    it('停职文案必须给出复职出路 —— 只说「你被停职了」等于宣布出局', () => {
+      const spec = MESSAGE_TEMPLATE_SPECS.find((s) => s.scene === 'leader_suspended');
+      expect(spec?.seed.groupContent).toContain('申请');
+      expect(spec?.seed.groupContent).toContain('保留');
+    });
+
+    it('提现结果文案必须能区分「驳回」与「打款失败」的下一步', () => {
+      const spec = MESSAGE_TEMPLATE_SPECS.find((s) => s.scene === 'withdraw_result');
+      // 模板本身用占位符承载结果，判据是「不把两种失败写死成同一句话」
+      expect(spec?.seed.groupContent).toContain('{{noticeTitle}}');
+      expect(spec?.trigger).toContain('驳回');
+      expect(spec?.trigger).toContain('打款失败');
+    });
+  });
 });

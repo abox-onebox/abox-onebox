@@ -2,12 +2,22 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 
-import { LeaderLevel, LeaderStatus } from '@abox/shared-types';
+import { LEADER_LEVEL_META, LeaderLevel, LeaderStatus } from '@abox/shared-types';
 
 import { BizConfigService } from '../../common/services/biz-config.service';
-import { monthRangeOf, todayBj } from '../../common/utils/time';
+import {
+  addDays,
+  bjMinuteText,
+  daysBetween,
+  monthRangeOf,
+  now,
+  toBjIso,
+  todayBj,
+} from '../../common/utils/time';
 import { Commission } from '../../database/entities/finance.entity';
 import { TeamLeader } from '../../database/entities/leader.entity';
+import { NOTIFY_PAGES } from '../admin/template/message-template.specs';
+import { MessageService } from '../message/message.service';
 import { LeaderInviteService } from './invite.service';
 import { LeaderLevelService } from './level.service';
 
@@ -34,6 +44,22 @@ export interface PromotionAuditResult {
 
 /** 链式晋级最大递归深度（防数据环：A 邀请 B、B 又邀请 A） */
 const MAX_CHAIN_DEPTH = 4;
+
+/**
+ * 见习期长度（天）—— 自「最近一次出单」或「建档」起算，超期即停职
+ *
+ * ⚠️ 失效判定（`expireTrainees`）与到期预警（`warnExpiringTrainees`）**必须**共用它：
+ *    两处各写一个 30，改一处漏一处就会出现「预警说还剩 5 天、其实今天已经失效」
+ *    这种最难解释的不一致。
+ */
+export const TRAINEE_EXPIRE_DAYS = 30;
+
+/**
+ * 到期预警提前天数 —— 恰好剩这么多天时提醒**一次**
+ *
+ * 取 7 天（一个完整周盒周期）：够他安排一次促单，又不会早到被遗忘。
+ */
+export const TRAINEE_WARN_DAYS = 7;
 
 /**
  * 团长晋级审计（C2 · M2-2.9「推荐裂变与晋级审计」）
@@ -72,6 +98,7 @@ export class LeaderPromotionService {
     private readonly inviteService: LeaderInviteService,
     private readonly levelService: LeaderLevelService,
     private readonly bizConfig: BizConfigService,
+    private readonly message: MessageService,
   ) {}
 
   /**
@@ -128,8 +155,27 @@ export class LeaderPromotionService {
    *
    * @param leaderId  `ab_team_leader.id`（不是 user_id）
    * @param depth     内部使用，限制链式递归
+   * @param opts.notify
+   *   升级时**是否推送晋级通知**（缺省 `true`）。
+   *
+   *   ## 为什么默认发、却必须留一个关闭口
+   *
+   *   晋级 = 佣金率上涨，是本系统里**唯一纯好消息的自动状态翻转**，团长必须知道。
+   *   但有两个场景不能发：
+   *   ① **L22 团长自己点「重新核算晋级进度」**（`team-leader.controller.ts`）——
+   *      升级结果当场显示在他屏幕上，再推一条微信是重复打扰；
+   *   ② 后台/脚本的**批量重算**（`auditAll` 用于修数据）—— 一次扫几百人，
+   *      会给全体团长群发一遍「恭喜晋级」。此时调用方显式传 `false`。
+   *
+   *   ⚠️ 判据写成 `opts.notify !== false`（而不是 `=== true`）：漏传要发，
+   *      这是刻意的默认值方向 —— **忘了传的代价是「多一条好消息」，
+   *      而不是「团长永远不知道自己的费率变了」**。
    */
-  async audit(leaderId: number, depth = 0): Promise<PromotionAuditResult | null> {
+  async audit(
+    leaderId: number,
+    depth = 0,
+    opts: { notify?: boolean } = {},
+  ): Promise<PromotionAuditResult | null> {
     const leader = await this.leaderRepo.findOne({ where: { id: leaderId } });
     if (!leader) return null;
 
@@ -174,6 +220,9 @@ export class LeaderPromotionService {
         `晋级：团长#${leaderId} ${leader.level} → ${after}` +
           `（月单 ${monthOrders} / 介绍转正 ${invitedFormalCount}，费率 ${patch.commissionRate}）`,
       );
+      if (opts.notify !== false) {
+        await this.notifyPromoted(Number(leader.userId), leader.level, after, rate);
+      }
     }
 
     // ---- 推荐关系回写：被邀请人达「正式及以上」→ 标记 is_formal 并给邀请人 +1 ----
@@ -195,7 +244,9 @@ export class LeaderPromotionService {
     }
 
     if (depth + 1 < MAX_CHAIN_DEPTH) {
-      const inviterAudit = await this.audit(Number(inviterLeaderId), depth + 1);
+      // ⚠️ `opts` 必须**透传**：链式晋升里升的是**邀请人**，不是本人 ——
+      //    漏传就等于「邀请人被升级了却收不到通知」，而这正是裂变链条上最该被强化的那一环。
+      const inviterAudit = await this.audit(Number(inviterLeaderId), depth + 1, opts);
       if (inviterAudit) result.inviterAudit = inviterAudit;
     } else {
       this.logger.warn(
@@ -235,7 +286,7 @@ export class LeaderPromotionService {
    *
    * @returns 被停职的团长 id 列表（幂等：重复执行第二次返回空）
    */
-  async expireTrainees(days = 30, now = new Date()): Promise<number[]> {
+  async expireTrainees(days = TRAINEE_EXPIRE_DAYS, now = new Date()): Promise<number[]> {
     const deadline = new Date(now.getTime() - days * 24 * 3600 * 1000);
 
     const trainees = await this.leaderRepo.find({
@@ -249,6 +300,15 @@ export class LeaderPromotionService {
 
       await this.leaderRepo.save({ ...t, status: LeaderStatus.SUSPENDED });
       expiredIds.push(Number(t.id));
+      // ⚠️ 通知**失败不得中断跑批**：一个人发不出去，不该让后面几十个人全都
+      //    留在一个「已经在停职中却不知道」的状态里。故单独 try 住、只记日志。
+      try {
+        await this.notifySuspended(Number(t.userId), `见习期内 ${days} 天未促成订单`, now);
+      } catch (e) {
+        this.logger.warn(
+          `停职通知发送失败（团长#${t.id}，停职本身已生效）：${(e as Error).message}`,
+        );
+      }
     }
 
     if (expiredIds.length) {
@@ -256,4 +316,175 @@ export class LeaderPromotionService {
     }
     return expiredIds;
   }
+
+  /**
+   * 见习到期预警：找出「恰好还剩 `withinDays` 天到期」的见习团长，逐个提醒
+   *
+   * ## 为什么判据是「恰好等于」而不是「小于等于」
+   *
+   * 小于等于会让最后 7 天**每天**发一条 —— 那是骚扰，而且第二天就被无视。
+   * 恰好等于 7 天，天然做到「这辈子只发一次」，不需要额外记「发过没发过」的状态。
+   *
+   * ⚠️ 代价：若某天任务没跑（服务停机 / 锁未释放），这个人就**收不到**预警，
+   *    只能等 7 天后的停职通知兜底。这个取舍是刻意的 ——
+   *    「偶尔漏一条提醒」比「连续 7 天每天提醒一次」代价小得多。
+   *
+   * ⚠️ 起算点必须与 `expireTrainees()` **完全同源**（`lastOrderAt ?? createdAt`）：
+   *    否则会出现「预警说还有 7 天、失效判据说已经过期」这种谁也解释不清的分裂。
+   *
+   * @returns 真正发送成功的条数（未启用 / 额度耗尽都不计入）
+   */
+  async warnExpiringTrainees(withinDays = TRAINEE_WARN_DAYS, at: Date = now()): Promise<number> {
+    const today = todayBj(at);
+    const trainees = await this.leaderRepo.find({
+      where: { status: LeaderStatus.ACTIVE, level: LeaderLevel.TRAINEE },
+    });
+
+    let sent = 0;
+    for (const t of trainees) {
+      const anchor = t.lastOrderAt ? new Date(t.lastOrderAt) : new Date(t.createdAt);
+      const anchorIso = toBjIso(anchor);
+      if (!anchorIso) continue;
+      // `toBjIso` 已换算成北京时间，取前 10 位即「北京日期」
+      const anchorDate = anchorIso.slice(0, 10);
+
+      const deadline = addDays(anchorDate, TRAINEE_EXPIRE_DAYS);
+      if (daysBetween(today, deadline) !== withinDays) continue;
+
+      /**
+       * 文案要说「多久没出单」，**不能说「还差几单」** ——
+       * 失效判据是「30 天没有新订单」，与「月度份数没到 30 单」是两件不同的事：
+       * 一个首席团长一个月做 5 单照样合规，一个刚上任的见习做 40 单也可能因为
+       * 集中在某一天而逼近「30 天无单」。说错这一句，通知就变成了假信息。
+       */
+      const silentDays = daysBetween(anchorDate, today);
+      const title = t.lastOrderAt ? `已 ${silentDays} 天没有新订单` : '上任后一直没有订单';
+
+      try {
+        const r = await this.message.notify({
+          scene: 'trainee_expiring',
+          userId: Number(t.userId),
+          // 落工作台：他要看的是「今天有没有团可推」和分享入口，不是佣金明细
+          page: NOTIFY_PAGES.leaderWorkbench,
+          wxData: {
+            noticeTitle: { value: title.slice(0, 20) },
+            // 失效发生在当日 0 点（第 30 天结束），`time` 关键词须带完整时刻
+            deadlineAt: { value: `${deadline} 00:00` },
+          },
+          variables: { noticeTitle: title, deadlineAt: deadline },
+          dedupeKey: `trainee-warn:${t.id}:${deadline}`,
+        });
+        if (r.ok) sent += 1;
+      } catch (e) {
+        this.logger.warn(`到期预警发送失败（团长#${t.id}）：${(e as Error).message}`);
+      }
+    }
+
+    if (sent) {
+      this.logger.log(`见习到期预警：已提醒 ${sent} 名团长（距失效 ${withinDays} 天）`);
+    }
+    return sent;
+  }
+
+  // ==========================================================================
+  // 通知投递（2026-11-18 · 团长激活三件套）
+  //
+  // ## 为什么发通知的代码要收敛到这两个私有方法
+  //
+  // 晋级有两个触发源（确认分发 / 每日自动确认），停职也有两个（见习期满 / 后台手动）。
+  // 每个调用点各自拼一遍 `wxData`，迟早出现「同一件事在两个入口写成两句话」——
+  // 与 `cutoffAtText` 被提取进 `time.ts` 是同一个理由（单一实现，不许有第二份）。
+  //
+  // ## ⚠️ 三条共同纪律
+  //
+  // 1. **绝不影响主流程**：`MessageService.notify()` 本身承诺不抛异常，但模板表查询
+  //    仍可能抛 DB 错。调用方各自 try 住，失败只记 WARN —— 通知是增强，不是业务。
+  // 2. **必须带 `dedupeKey`**：同一件事可能经由多个入口触发（见各方法内注）。
+  // 3. **`thing` 关键词限 20 字符**：超长微信直接 `47003`，故统一 `slice(0, 20)` 截断。
+  // ==========================================================================
+
+  /**
+   * 晋级通知（涨钱的事，团长必须知道）
+   *
+   * @param at 生效时刻；缺省取当前时刻（`bjMinuteText` 按 UTC+8 格式化）
+   */
+  private async notifyPromoted(
+    userId: number,
+    before: string,
+    after: string,
+    rate: number,
+    at: Date = now(),
+  ): Promise<void> {
+    const label = LEADER_LEVEL_META[after as LeaderLevel]?.label ?? after;
+    const rateText = pctText(rate);
+    // 「金牌团长 · 佣金10%」= 11 字，远未触及 20 字上限，但截断仍要留（等级名可配置）
+    const title = `${label}团长 · 佣金${rateText}`.slice(0, 20);
+    const effectiveAt = bjMinuteText(at);
+
+    const r = await this.message.notify({
+      scene: 'leader_promoted',
+      userId,
+      page: NOTIFY_PAGES.leaderCommission,
+      wxData: {
+        noticeTitle: { value: title },
+        effectiveAt: { value: effectiveAt },
+      },
+      variables: { levelLabel: label, rateText, effectiveAt },
+      // 同一人同一等级只发一次：链式审计 + 多入口触发之外的第二道保险
+      dedupeKey: `promote:${userId}:${after}`,
+    });
+
+    if (r.delivered && !r.ok) {
+      this.logger.warn(`晋级通知未送达（用户#${userId}，${before}→${after}）：${r.errMsg}`);
+    }
+  }
+
+  /**
+   * 停职通知（必须带上「怎么恢复」这条出路）
+   *
+   * ⚠️ 停职后 `LeaderGuard` 挡住所有团长端接口、端上 `isLeader` 变 false ⇒
+   *    **底部导航的团长入口直接消失**。只说「你被停职了」等于宣布出局，
+   *    故落地页指向申请页（`apply` 对停职者有复职分支，等级重置为见习）。
+   */
+  private async notifySuspended(userId: number, reason: string, at: Date): Promise<void> {
+    const suspendedAt = bjMinuteText(at);
+    const title = reason.slice(0, 20);
+
+    const r = await this.message.notify({
+      scene: 'leader_suspended',
+      userId,
+      page: NOTIFY_PAGES.leaderApply,
+      wxData: {
+        noticeTitle: { value: title },
+        suspendedAt: { value: suspendedAt },
+      },
+      variables: { reasonText: reason, suspendedAt },
+      dedupeKey: `suspend:${userId}`,
+    });
+
+    if (r.delivered && !r.ok) {
+      this.logger.warn(`停职通知未送达（用户#${userId}）：${r.errMsg}`);
+    }
+  }
+
+  /**
+   * 供**其他模块**在「运营手动停职」时复用同一条文案与落地页
+   *
+   * `leader-admin.service.ts` 的 `audit.SUSPEND` 与见习期满自动停职是两回事，
+   * 但团长看到的东西必须**一模一样** —— 所以它不能自己拼一份 `wxData`。
+   */
+  async notifySuspendedFor(userId: number, reason: string): Promise<void> {
+    await this.notifySuspended(userId, reason, now());
+  }
+}
+
+/**
+ * 费率 → `8%` / `8.5%` / `12%`
+ *
+ * ⚠️ 不能用 `replace(/\.?0+$/, '')` 收尾零：`'10.00'` 会被吃成 `'1'`（经典坑），
+ *    必须分两步 —— 先删尾零，再删可能残留的小数点。
+ */
+function pctText(rate: number): string {
+  const s = (rate * 100).toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  return `${s}%`;
 }

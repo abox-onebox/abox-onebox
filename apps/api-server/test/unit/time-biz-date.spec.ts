@@ -15,7 +15,7 @@
  *    另外几类入参形态各自都有用例。
  */
 
-import { toBizDateStr } from '../../src/common/utils/time';
+import { addDays, daysBetween, toBizDateStr } from '../../src/common/utils/time';
 
 describe('toBizDateStr · 任意日期值归一为业务日', () => {
   it('Date 对象取**本地**分量（东八区下用 toISOString 会退成前一天）', () => {
@@ -50,5 +50,57 @@ describe('toBizDateStr · 任意日期值归一为业务日', () => {
   it('数字等其他类型不被误当日（避免 `1730000000000` 这种被当日期）', () => {
     expect(toBizDateStr(1730000000000)).toBe('');
     expect(toBizDateStr(0)).toBe('');
+  });
+});
+
+/**
+ * `daysBetween` 单测 —— 见习到期判定与预警共用的日历天数差
+ *
+ * ## 为什么它非测不可
+ *
+ * 这个差值直接决定两件事同不同步：
+ *   · `expireTrainees()`：「anchor 距今 > 30 天 → 停职」
+ *   · `warnExpiringTrainees()`：「距失效恰好 7 天 → 提醒」
+ * 一旦它按毫秒相除（而不是日历日），同一个「还剩 7 天」的团长会在
+ * 不同小时被判成 6 天或 7 天 —— 表现为「昨天该提醒的今天没提醒」。
+ *
+ * 输入是字符串（`addDays` / `todayBj` 的产物），故本函数只对**日期**负责，
+ * 时刻差异在调用方就已按北京日期归零（见 `warnExpiringTrainees` 里的
+ * `toBjIso(...).slice(0, 10)`）。
+ */
+describe('daysBetween · 日历天数差', () => {
+  it('同一天为 0（不是 1，也不是 -1）', () => {
+    expect(daysBetween('2026-11-18', '2026-11-18')).toBe(0);
+  });
+
+  it('相邻两天为 1 / -1（方向敏感）', () => {
+    expect(daysBetween('2026-11-18', '2026-11-19')).toBe(1);
+    expect(daysBetween('2026-11-19', '2026-11-18')).toBe(-1);
+  });
+
+  it('跨月、跨年都对', () => {
+    expect(daysBetween('2026-11-28', '2026-12-02')).toBe(4);
+    expect(daysBetween('2026-12-31', '2027-01-01')).toBe(1);
+  });
+
+  it('闰年 2 月：2028 有 29 号、2027 没有（差一天）', () => {
+    expect(daysBetween('2028-02-28', '2028-03-01')).toBe(2);
+    expect(daysBetween('2027-02-28', '2027-03-01')).toBe(1);
+  });
+
+  it('与 addDays 互为逆运算（30 天见习期在两个月里都算得对）', () => {
+    for (const base of ['2026-11-18', '2026-02-01', '2028-02-28']) {
+      expect(daysBetween(base, addDays(base, 30))).toBe(30);
+      expect(daysBetween(addDays(base, 30), base)).toBe(-30);
+    }
+  });
+
+  it('30 天窗口内「恰好剩 7 天」的判据稳定（不会因为中间跨闰月而漂）', () => {
+    // 2028-02-01 + 30 = 2028-03-02；从此往前 7 天 = 2028-02-24
+    const deadline = addDays('2028-02-01', 30);
+    expect(deadline).toBe('2028-03-02');
+    expect(daysBetween('2028-02-24', deadline)).toBe(7);
+    // 前一天的判据必须是 8，不能与 7 混淆（差一天会让预警提前/推迟一次）
+    expect(daysBetween('2028-02-23', deadline)).toBe(8);
   });
 });

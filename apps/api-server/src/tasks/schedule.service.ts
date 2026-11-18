@@ -35,12 +35,12 @@ import { TZ } from '../common/utils/tz';
  * 「套餐提前一天上架」或「订单被提前确认」。
  *
  * ## 所以本文件提供两件东西
- * 1. **`TASK_SCHEDULES` 声明表** —— 9 个任务一张表写清「几点触发」+「动哪一天」，
+ * 1. **`TASK_SCHEDULES` 声明表** —— 10 个任务一张表写清「几点触发」+「动哪一天」，
  *    是调度口径的**唯一真相**。任务从表里读，不各自硬编码。
  * 2. **`targetDate(kind)` 语义单点** —— 把 `today` / `tomorrow` / `yesterday`
  *    三种语义收在一处，杜绝各任务自写 `addDays(todayBj(), ±1)` 时正负号写错。
  *
- * ## 9 个任务的目标日期一览（改代码前先看这张表）
+ * ## 10 个任务的目标日期一览（改代码前先看这张表）
  * | 任务 | 触发 | 目标日期 | 理由 |
  * | --- | --- | --- | --- |
  * | `meal-publish` | T-1 14:00 | **明日** | D 日 14:00 开的是 D+1 的团（D+1 的开团时刻正是 D 日 14:00） |
@@ -51,6 +51,7 @@ import { TZ } from '../common/utils/tz';
  * | `supplier-share` | T+1 02:10 | **昨日** | 应付对象是**已发生**的交付 |
  * | `reconciliation` | 04:00 | **昨日** | 核**完整自然日**；04:00 对「今日」只能核 4 小时切片 |
  * | `leader-expire` | 03:00 | `null` | 全量扫描，与出餐日无关 |
+ * | `trainee-warn` | 10:00 | `null` | 全量扫描，与出餐日无关；**固定上午**，不能夜里发 |
  * | `pay-reconcile` | 每 30 分钟 | `null` | **高频**：扫的是「此刻」滞留的待支付订单，与出餐日无关 |
  *
  * ⚠️ `cutoff` / `delivery-generate` / `auto-confirm` 三个任务的 cron 落在**同一个
@@ -299,7 +300,14 @@ export type TaskName =
   | 'reconciliation'
   | 'leader-expire'
   /** P3（2026-10-29）：支付查单补齐 —— **高频**任务，不走时间轴（见 `TASK_SCHEDULES` 该条注释） */
-  | 'pay-reconcile';
+  | 'pay-reconcile'
+  /**
+   * 2026-11-18：见习到期预警（剩 7 天时提醒一次）
+   *
+   * 同样 `timelineKey: null`，但**不是高频任务** —— 理由见 `TASK_SCHEDULES` 该条注释
+   * （上午发提醒是刻意的，时间轴上没有上午项）。
+   */
+  | 'trainee-warn';
 
 export interface TaskSchedule {
   /**
@@ -367,7 +375,7 @@ export function dateKindFor(
 }
 
 /**
- * 9 个任务的调度声明 —— **口径唯一真相**（时刻部分委托给 `order-timeline.ts`，
+ * 10 个任务的调度声明 —— **口径唯一真相**（时刻部分委托给 `order-timeline.ts`，
  * 高频任务 `pay-reconcile` 例外，见该条注释）
  *
  * ⚠️ 任务的 `@Cron()` 与 `targetDate()` 均**从本表读取**，不在任务里写第二遍。
@@ -443,7 +451,7 @@ export const TASK_SCHEDULES: Record<TaskName, TaskSchedule> = {
     what: '每日见习团长 30 天未促单失效（C2）',
   },
   /**
-   * P3（2026-10-29）· 支付查单补齐 —— **9 个任务里唯一的高频任务**
+   * P3（2026-10-29）· 支付查单补齐 —— **10 个任务里唯一的高频任务**
    *
    * ⚠️ `timelineKey: null` 是**刻意**的：补齐的对象是「**此刻**滞留的待支付订单」，
    *    不是「某一天的数据」；`cronOf()` 只能表达「每天某时刻」，
@@ -460,6 +468,28 @@ export const TASK_SCHEDULES: Record<TaskName, TaskSchedule> = {
     timeZone: TZ,
     dateKind: null,
     what: '每 30 分钟扫描滞留待支付订单，向微信查单补齐（回调丢失的兜底）',
+  },
+  /**
+   * 2026-11-18 · 见习到期预警（团长激活三件套之一）
+   *
+   * ## 为什么固定 **10:00**、而不是挂在时间轴上
+   *
+   * `timelineKey: null` 不等于「高频」—— 本任务是每日一次的定点任务。
+   * 之所以不进时间轴，是因为时间轴描述的是**出餐链路**（开团 14:00 / 截单 24:00 /
+   * 送达 11:30），它的每一项都同时驱动下单窗口等业务判定；
+   * 往里面塞一个「提醒几点发」会在每次改开团时刻时被无辜牵连。
+   *
+   * 而定 **10:00** 的理由是**不能夜里发**：见习失效跑批在 03:00，若把预警也挂在
+   * 隔壁，团长会在凌晨三点收到「你还差 8 单保住资格」—— 这正是 2026-11-18
+   * 截单提醒那次已经定过的同一条取舍（零点发只有负收益）。
+   * 上午 10 点是他一天里最可能看到并当天做出反应的时刻。
+   */
+  'trainee-warn': {
+    timelineKey: null,
+    cron: '0 0 10 * * *',
+    timeZone: TZ,
+    dateKind: null,
+    what: '每日 10:00 扫描「恰好剩 7 天到期」的见习团长并预警',
   },
 };
 

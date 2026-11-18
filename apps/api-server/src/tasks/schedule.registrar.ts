@@ -21,6 +21,7 @@ import { PayReconcileTask } from './pay-reconcile.task';
 import { ReconciliationTask } from './reconciliation.task';
 import { TASK_SCHEDULES, TaskName, cronFor } from './schedule.service';
 import { SupplierShareTask } from './supplier-share.task';
+import { TraineeWarnTask } from './trainee-warn.task';
 
 /**
  * 定时任务注册器 —— 让**后台配置真的能改变跑批时刻**（缺陷 #49 的接线部分）
@@ -34,7 +35,7 @@ import { SupplierShareTask } from './supplier-share.task';
  * 于是本类在 `onModuleInit` 时：
  *   1. 读 `ab_config` → 解析出**生效时间轴**（`BizConfigService.timeline()`）
  *   2. 按时间轴**生成**每个任务的 cron（`cronFor()`，时刻来自 `order-timeline.ts`）
- *   3. 动态注册 8 个 `CronJob`
+ *   3. 动态注册 10 个 `CronJob`
  *
  * ## ⭐ 注册 ≠ 只在启动时注册一次（否则等于把漂移换个位置复现）
  * 若只在启动时读一次配置，运营改完配置就必须**重启服务**才生效 —— 而「下单窗口」
@@ -51,7 +52,7 @@ import { SupplierShareTask } from './supplier-share.task';
  * 结果**不是报错**，而是「这个任务从此再也没有跑过」—— 而 e2e 全走补跑接口，
  * **不会发现**。故本类有三道防护：
  *   · 注册完**逐名核对** `doesExist('cron', name)`，缺一个立即抛错（**阻止进程启动**）
- *   · 启动横幅打印「已注册 N/8 + 各自 cron（含配置覆写标记）」
+ *   · 启动横幅打印「已注册 N/N + 各自 cron（含配置覆写标记）」
  *   · `GET /admin/schedule` 的 `registeredCron` 字段暴露**实际注册值**（外部可观测）
  */
 @Injectable()
@@ -101,6 +102,7 @@ export class ScheduleRegistrar implements OnModuleInit, OnModuleDestroy {
     reconciliation: ReconciliationTask,
     leaderExpire: LeaderExpireTask,
     payReconcile: PayReconcileTask,
+    traineeWarn: TraineeWarnTask,
   ) {
     this.handlers = new Map<TaskName, () => Promise<void>>([
       ['meal-publish', () => mealPublish.handle()],
@@ -112,6 +114,7 @@ export class ScheduleRegistrar implements OnModuleInit, OnModuleDestroy {
       ['reconciliation', () => reconciliation.handle()],
       ['leader-expire', () => leaderExpire.handle()],
       ['pay-reconcile', () => payReconcile.handle()],
+      ['trainee-warn', () => traineeWarn.handle()],
     ]);
   }
 

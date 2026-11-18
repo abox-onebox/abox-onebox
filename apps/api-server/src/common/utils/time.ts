@@ -149,6 +149,26 @@ export function addDays(dateStr: string, days: number): string {
 }
 
 /**
+ * 两个 `YYYY-MM-DD` 之间的**日历天数差**（`to − from`，可负）
+ *
+ * ## 为什么必须是「日历日」而不是「毫秒除以 86400000」
+ *
+ * 见习到期判定（`expireTrainees`）与到期预警（`warnExpiringTrainees`）用的都是
+ * **日期**语义：`lastOrderAt` 是 `2026-11-18 23:50` 还是 `2026-11-18 00:10`，
+ * 对「还剩几天」没有区别。若拿两个 Date 直接相减再取整，同一个第 7 天会因为
+ * **时刻不同**而在某些小时算成 6 天、另一些小时算成 7 天 ——
+ * 表现为「同一个人昨天该收到预警、今天反而没收到」。
+ *
+ * 故两边都先落到**北京日期字符串**（`addDays` / `todayBj` 的产物），再按 UTC 日历日求差。
+ * 纯字符串解析，不经过 `Date` 的本地时区，也没有 `toISOString` 的时区偏移问题。
+ */
+export function daysBetween(from: string, to: string): number {
+  const [y1, m1, d1] = from.split('-').map(Number);
+  const [y2, m2, d2] = to.split('-').map(Number);
+  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / DAY_MS);
+}
+
+/**
  * 截单时刻 → **带日期的完整文本**（`YYYY-MM-DD HH:mm`）
  *
  * ## 为什么要有这一个函数（而不是每个调用点自己拼）
@@ -279,6 +299,29 @@ export function toBjIso(at: Date | null | undefined): string | null {
 /** 未支付订单过期时刻 = 下单时刻 + payTimeoutMinutes（T3：30 分钟未支付自动取消） */
 export const payExpireAt = (createdAt: Date, payTimeoutMinutes: number): Date =>
   new Date(createdAt.getTime() + payTimeoutMinutes * 60 * 1000);
+
+/**
+ * 时刻 → 微信 `time` 关键词可用的 **`YYYY-MM-DD HH:mm`**（北京时间）
+ *
+ * ## 为什么不是直接 `toBjIso()`
+ *
+ * `toBjIso()` 产出的是 `2026-11-18T17:53:00+08:00`（接口传输格式，带 T 与时区），
+ * 微信订阅消息的 `time` 关键词**不接受这个形状** —— 它要的是「日期 + 时刻」两段
+ * 用空格分隔的朴素写法，否则 `47003 参数不合法`。
+ *
+ * ## 与 `cutoffAtText()` 的分工（两者不可互相替代）
+ *
+ * - `cutoffAtText(mealDate, t)`：时刻是**配置推导出来的**（截单锚点），要按出餐日算；
+ * - `bjMinuteText(at)`：时刻是**已经发生的**（晋级 / 停职 / 打款），直接格式化。
+ *
+ * 共同点：**只有这两个函数**负责「Date 或配置 → 发给微信的 time 字符串」，
+ * 任何调用点都不许自己 `slice` —— 各拼一份必然写成两个样式。
+ */
+export function bjMinuteText(at: Date = now()): string {
+  const iso = toBjIso(at);
+  // `toBjIso` 只在 `at` 为空时返回 null，此处入参必有值；兜底返回空串让 toWxData 判缺
+  return iso ? `${iso.slice(0, 10)} ${iso.slice(11, 16)}` : '';
+}
 
 /**
  * 自然月区间（含首含尾）

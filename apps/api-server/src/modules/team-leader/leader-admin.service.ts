@@ -31,6 +31,7 @@ import {
   AuditLeaderDto,
   UpdateLeaderDto,
 } from './dto/leader-admin.dto';
+import { LeaderPromotionService } from './promotion.service';
 
 /** `ab_building.status`：1 合作中 / 2 停用 */
 const BUILDING_OPEN = 1;
@@ -87,6 +88,13 @@ export class LeaderAdminService {
     private readonly leaderMoney: LeaderMoneyService,
     /** M5-13：**等级 → 费率** 的唯一真源口（`ab_config.commission.rate.*` · 常量兜底） */
     private readonly bizConfig: BizConfigService,
+    /**
+     * 2026-11-18：手动停职要通知团长（场景 `leader_suspended`）
+     *
+     * ⚠️ 复用 `LeaderPromotionService` 的投递方法，**不在这里另拼一份 `wxData`**：
+     *    见习期满自动停职与运营手动停职，团长看到的必须是同一条文案。
+     */
+    private readonly promotion: LeaderPromotionService,
   ) {}
 
   // ==========================================================================
@@ -662,6 +670,13 @@ export class LeaderAdminService {
         await manager.getRepository(User).update(Number(leader.userId), { teamLeaderId: null });
       });
       note = '已停职：该团长无法再接单、无法访问团长端；历史佣金 / 订单 / 推荐关系保留。';
+      // ⚠️ 通知放在事务**之后**（事务回滚了却已发出「你被停职了」= 假消息）。
+      //    失败不影响停职结果 —— 停职已生效，通知只是让他知道原因与出路。
+      try {
+        await this.promotion.notifySuspendedFor(Number(leader.userId), dto.reason);
+      } catch (e) {
+        this.logger.warn(`停职通知发送失败（团长#${id}）：${(e as Error).message}`);
+      }
     } else if (action === LeaderAuditAction.RESTORE) {
       if (leader.status === LeaderStatus.ACTIVE) {
         throw new BizException(ErrorCode.LEADER_STATUS_ILLEGAL, '该团长已处于在职状态');

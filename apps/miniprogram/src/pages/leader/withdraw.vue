@@ -104,6 +104,8 @@
     <text class="foot">
       提交后进入「待审批」并冻结对应金额，运营审批打款后到账；佣金经灵活用工平台代发并代扣个税。
     </text>
+    <!-- 一次性订阅授权：点一下才有额度，之后审批 / 打款结果能收到微信通知 -->
+    <text class="foot-link" @tap="askWithdrawNotify">开启微信提醒 ›</text>
   </view>
 </template>
 
@@ -132,11 +134,13 @@ import { applyWithdraw, fetchLeaderBalance, fetchWithdrawals } from '@/api/leade
 import type { LeaderBalanceData, LeaderWithdrawalItem } from '@/api/leader-finance';
 import { ApiError } from '@/api/request';
 import { apiErrorMessage, toastApiError, useRequest } from '@/composables/use-request';
+import { useSubscribeMessage } from '@/composables/use-subscribe-message';
 import { displayOr, fenToYuanText, formatDateTime, uuid } from '@/utils/format';
 import { navigateTo, navigateBack } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const { run } = useRequest();
+const subscribe = useSubscribeMessage();
 
 const balance = ref<LeaderBalanceData | null>(null);
 const profile = ref<LeaderProfile | null>(null);
@@ -281,7 +285,35 @@ function goBack(): void {
   navigateBack();
 }
 
+/**
+ * 开启「提现结果」订阅通知（`withdraw_result`）
+ *
+ * ## 为什么是独立链接，而不是提交时顺手要授权
+ *
+ * `submit()` 第一步就是 `await showModal()` 二次确认 —— 微信的
+ * `requestSubscribeMessage` 只能在**用户点击的同步流程**里调用，
+ * `await` 之后手势已失效，再调必被拒（`fail can only be invoked by user TAP gesture`）。
+ * 与 `pickup.vue` 的「到账通知」是同一约束、同一解法：挂在页面上的显式链接。
+ *
+ * ## 为什么值得单独给一个入口
+ *
+ * 提现要过「审批 → 打款」两道人工关，还可能被驳回或打款失败。
+ * 不给通知，他只能自己反复进来刷这一页 —— 钱的事让人靠猜，猜错一次就是投诉。
+ */
+function askWithdrawNotify(): void {
+  const ids = subscribe.requestFor(['withdraw_result'], (results) => {
+    console.log('[subscribe] withdraw_result', results);
+    uni.showToast({ title: '已开启，审批与打款会通知你', icon: 'none' });
+  });
+  if (!ids.length) {
+    // 清单为空 = 后台还没配模板 ID（一期常态），别让用户以为是自己点错了
+    uni.showToast({ title: '通知暂未开通', icon: 'none' });
+  }
+}
+
 onShow(() => {
+  // 预加载模板清单：链接点击时才能同步调用（不在点击里 await 拉清单）
+  void subscribe.preload();
   void loadAll();
 });
 </script>
@@ -547,5 +579,14 @@ onShow(() => {
   font-size: 22rpx;
   line-height: 1.7;
   color: $c-text-weak;
+}
+
+/* 订阅授权入口：与 `.foot` 同一视觉层级（它是次要操作，不能抢主按钮） */
+.foot-link {
+  display: block;
+  margin-top: $space-2;
+  padding: 0 $space-1;
+  font-size: $fs-caption;
+  color: $c-gold-fg;
 }
 </style>

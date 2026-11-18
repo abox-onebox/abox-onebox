@@ -129,7 +129,9 @@ export class TeamLeaderController {
     summary: 'L22 重新核算我的晋级进度（月单 + 介绍转正 → 落表并升级）',
   })
   auditLevel(@CurrentLeader() leader: TeamLeader) {
-    return this.promotionService.audit(Number(leader.id));
+    // ⚠️ `notify: false`：本次是团长**自己点**的，升级结果当场显示在他屏幕上，
+    //    再推一条微信属于重复打扰（判据见 `LeaderPromotionService.audit` 的 opts 注释）。
+    return this.promotionService.audit(Number(leader.id), 0, { notify: false });
   }
 
   // ------------------------------------------------------ 退出（M2-2.8）
