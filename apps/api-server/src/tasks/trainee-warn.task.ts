@@ -31,7 +31,7 @@ const NAME = 'trainee-warn' as const;
  *
  * ## ⚠️ 本类不含 `@Cron` 装饰器
  *
- * 与其余 9 个任务同理（缺陷 #49）：装饰器参数在模块加载时求值一次，
+ * 与其余 9 个任务同理（本任务加入后共 10 个 · 缺陷 #49）：装饰器参数在模块加载时求值一次，
  * 后台改配置不可能影响它。实际 cron 由 `ScheduleRegistrar` 在 `onModuleInit`
  * 按 `TASK_SCHEDULES['trainee-warn']` 动态注册。
  */

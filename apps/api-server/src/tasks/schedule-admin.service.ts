@@ -24,6 +24,7 @@ import {
 } from './schedule.service';
 import { ScheduleRegistrar } from './schedule.registrar';
 import { SupplierShareTask } from './supplier-share.task';
+import { TraineeWarnTask } from './trainee-warn.task';
 
 /** 跑批时刻表的一行（`GET /admin/schedule`） */
 export interface ScheduleRow {
@@ -122,6 +123,7 @@ export class ScheduleAdminService {
     reconciliation: ReconciliationTask,
     leaderExpire: LeaderExpireTask,
     payReconcile: PayReconcileTask,
+    traineeWarn: TraineeWarnTask,
   ) {
     this.runners = new Map<TaskName, (date: string) => Promise<unknown>>([
       ['meal-publish', (d) => mealPublish.runOnce(d)],
@@ -136,11 +138,13 @@ export class ScheduleAdminService {
       ['leader-expire', (d) => leaderExpire.runOnce(d)],
       // P3（2026-10-29）：`pay-reconcile` 与出餐日无关，`d` 会被 `runOnce` 显式忽略
       ['pay-reconcile', (d) => payReconcile.runOnce(d)],
+      // 2026-11-18：见习到期预警 —— 与出餐日无关，`d` 同 `leader-expire` 显式忽略
+      ['trainee-warn', (d) => traineeWarn.runOnce(d)],
     ]);
   }
 
   /**
-   * 跑批时刻表（9 行全列出，含未实装项 —— 如实告知，而不是隐藏）
+   * 跑批时刻表（10 行全列出，含未实装项 —— 如实告知，而不是隐藏）
    *
    * ⚠️ 本方法为 **async**：要读生效时间轴（`ab_config` 可覆写时刻），
    *    故 `cron`（出厂）与 `registeredCron`（实际注册）可能不同 —— 这是特性不是 bug。

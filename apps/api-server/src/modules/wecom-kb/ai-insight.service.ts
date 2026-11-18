@@ -180,6 +180,57 @@ export class AiInsightService {
   }
 
   /**
+   * 解析 meta_json。脏串不静默丢弃：保留原文到 parseError / raw，
+   * 让后续写入既不覆盖现场，也能在详情里一眼看出数据坏过。
+   */
+  private metaOf(raw: string | null | undefined): Record<string, unknown> {
+    if (!raw) return {};
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      return { parseError: true, raw };
+    } catch {
+      return { parseError: true, raw };
+    }
+  }
+
+  /**
+   * 原子合并 meta 的**单个子键**（`execution` / `effect`）。
+   *
+   * ⚠️ 不能「读整段 → 展开 → 写整段」：`markExecution` 与 `backfillEffects`
+   *    会并发改同一行，两个读到的都是旧 meta，后写的会把先写的子键抹掉
+   *    （实测形态：标完「已执行」再回填效果，execution 凭空消失）。
+   *    这里用旧 meta 原文作**乐观锁条件**：`WHERE meta_json = :expected`，
+   *    冲突就重读重试；连续 3 次被抢先则抛错，绝不带着陈旧值硬写。
+   */
+  private async patchMeta(id: number, key: 'execution' | 'effect', value: unknown): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const row = await this.repo.findOne({
+        where: { id },
+        select: { id: true, metaJson: true },
+      });
+      if (!row) throw new BizException(ErrorCode.NOT_FOUND, 'AI 留档不存在');
+
+      const next = JSON.stringify({ ...this.metaOf(row.metaJson), [key]: value });
+      const qb = this.repo
+        .createQueryBuilder()
+        .update(AiInsight)
+        .set({ metaJson: next })
+        .where('id = :id', { id });
+      if (row.metaJson == null) {
+        qb.andWhere('meta_json IS NULL');
+      } else {
+        qb.andWhere('meta_json = :expected', { expected: row.metaJson });
+      }
+      const result = await qb.execute();
+      if (result.affected) return;
+    }
+    throw new Error(`AI 留档 meta 并发冲突（id=${id}），未用陈旧值覆盖`);
+  }
+
+  /**
    * 标记「这条建议到底做了没」——②执行跟踪。
    *
    * ⚠️ 零新增列：执行回执塞进 metaJson.execution，不改业务表、不加数据库字段。
@@ -193,23 +244,11 @@ export class AiInsightService {
     note: string | null,
     byName: string | null,
   ): Promise<{ id: number; execution: Record<string, unknown> }> {
-    const row = await this.detail(id); // 复用 404 校验
-    let meta: Record<string, unknown> = {};
-    if (row.metaJson) {
-      try {
-        const parsed: unknown = JSON.parse(row.metaJson);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          meta = parsed as Record<string, unknown>;
-        }
-      } catch {
-        // 脏串不覆盖：保留原文到 parseError，避免在坏数据上再叠一层
-        meta = { parseError: true, raw: row.metaJson };
-      }
-    }
+    await this.detail(id); // 复用 404 校验，非法 id 不进 patchMeta 的重试
     const execution: Record<string, unknown> = done
       ? { done: true, doneAt: toBjIso(now()), doneBy: byName, note: note ?? '' }
       : { done: false, doneAt: null, doneBy: null, note: '' };
-    await this.repo.update({ id }, { metaJson: JSON.stringify({ ...meta, execution }) });
+    await this.patchMeta(id, 'execution', execution);
     return { id, execution };
   }
 
@@ -237,12 +276,7 @@ export class AiInsightService {
     let degraded = 0;
 
     for (const row of all) {
-      let meta: Record<string, unknown> = {};
-      try {
-        meta = row.metaJson ? (JSON.parse(row.metaJson) as Record<string, unknown>) : {};
-      } catch {
-        meta = {};
-      }
+      const meta = this.metaOf(row.metaJson);
       const exec = meta.execution as { done?: boolean } | undefined;
       if (!exec?.done) continue; // 只回填「已标记执行」的
 
@@ -283,7 +317,6 @@ export class AiInsightService {
           note: '生成时刻之后的相关性背景，非因果归因',
           filledAt: toBjIso(now()),
         };
-        filled++;
       } catch (e) {
         snap = {
           available: false,
@@ -294,10 +327,15 @@ export class AiInsightService {
         };
         degraded++;
       }
-      await this.repo.update(
-        { id: row.id },
-        { metaJson: JSON.stringify({ ...meta, effect: snap }) },
-      );
+      // ⭐ 用乐观锁只改 effect 子键：并发标「已执行」不会被这段回填抹掉。
+      //    写冲突也算降级，不能把「快照算出来了」当成「已落库」报 filled。
+      try {
+        await this.patchMeta(row.id, 'effect', snap);
+        if (snap.available) filled++;
+      } catch (e) {
+        this.logger.warn(`效果回填写冲突（留档#${row.id}）：${(e as Error).message}`);
+        degraded++;
+      }
     }
     return { scanned: all.length, filled, degraded };
   }
@@ -342,10 +380,14 @@ export class AiInsightService {
       g.total++;
       byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
       const meta = parse(r.metaJson);
+      const isAdopted = r.status === 'adopted';
       const isExec = (meta.execution as { done?: boolean } | undefined)?.done === true;
       const hasEffect = !!(meta.effect && (meta.effect as { available?: boolean }).available);
-      if (r.status === 'adopted') g.adopted++;
-      if (isExec) {
+      if (isAdopted) g.adopted++;
+      // ⭐ 「执行率（占已采纳）」的分子必须同样是已采纳的：
+      //    旧实现把 open/dismissed 但被标了 execution.done 的行也算进分子，
+      //    分母却只有 adopted ⇒ 出现 150% 这种假指标。
+      if (isAdopted && isExec) {
         g.executed++;
         executed++;
       }

@@ -271,7 +271,10 @@ export class LeaderPromotionService {
 
     let promoted = 0;
     for (const l of leaders) {
-      const r = await this.audit(Number(l.id));
+      // ⚠️ 批量重算是修数据，不是逐人庆祝：一次扫几百人若按默认发通知，
+      //    会群发一遍「恭喜晋级」——那些晋级可能已是几天前的事实，纯属骚扰。
+      //    真正的业务触发点（确认分发 / 每日自动确认）走 audit() 的默认发。
+      const r = await this.audit(Number(l.id), 0, { notify: false });
       if (r?.promoted) promoted += 1;
     }
     return { scanned: leaders.length, promoted };
@@ -280,14 +283,19 @@ export class LeaderPromotionService {
   /**
    * 见习团长 30 天未促单 → 取消资格（C2 · 停职）
    *
-   * 判据：`level = trainee` 且 `status = 在职` 且 `last_order_at` 早于 30 天前。
+   * 判据：`level = trainee` 且 `status = 在职` 且北京日期差 `≥ 30 天`
+   *（即预警文案承诺的失效日当天，由 03:00 跑批停职）。
    * ⚠️ `last_order_at` 为空（从未促单）视为**自建档时间起算** —— 否则「从未出过单」
    *    的见习团长会永久免于失效，与 C2 语义相反。
    *
    * @returns 被停职的团长 id 列表（幂等：重复执行第二次返回空）
    */
-  async expireTrainees(days = TRAINEE_EXPIRE_DAYS, now = new Date()): Promise<number[]> {
-    const deadline = new Date(now.getTime() - days * 24 * 3600 * 1000);
+  async expireTrainees(days = TRAINEE_EXPIRE_DAYS, at: Date = now()): Promise<number[]> {
+    // ⚠️ 与 warnExpiringTrainees 同源：**北京日期差**，不比毫秒。
+    //    旧实现是 `anchor < now - 30*24h`：同一天 23:50 出的单，在次日 03:00 会被
+    //    多留一天（日期差 30 但毫秒差只有 27h），而预警按日期算「恰好剩 7 天」
+    //    已在 7 天前发出 —— 用户被告知 11-18 失效，实际 11-19 才停职。
+    const today = todayBj(at);
 
     const trainees = await this.leaderRepo.find({
       where: { status: LeaderStatus.ACTIVE, level: LeaderLevel.TRAINEE },
@@ -296,14 +304,17 @@ export class LeaderPromotionService {
     const expiredIds: number[] = [];
     for (const t of trainees) {
       const anchor = t.lastOrderAt ? new Date(t.lastOrderAt) : new Date(t.createdAt);
-      if (anchor.getTime() >= deadline.getTime()) continue;
+      const anchorIso = toBjIso(anchor);
+      if (!anchorIso) continue;
+      const anchorDate = anchorIso.slice(0, 10);
+      if (daysBetween(anchorDate, today) < days) continue;
 
       await this.leaderRepo.save({ ...t, status: LeaderStatus.SUSPENDED });
       expiredIds.push(Number(t.id));
       // ⚠️ 通知**失败不得中断跑批**：一个人发不出去，不该让后面几十个人全都
       //    留在一个「已经在停职中却不知道」的状态里。故单独 try 住、只记日志。
       try {
-        await this.notifySuspended(Number(t.userId), `见习期内 ${days} 天未促成订单`, now);
+        await this.notifySuspended(Number(t.userId), `见习期内 ${days} 天未促成订单`, at);
       } catch (e) {
         this.logger.warn(
           `停职通知发送失败（团长#${t.id}，停职本身已生效）：${(e as Error).message}`,
@@ -368,7 +379,8 @@ export class LeaderPromotionService {
           page: NOTIFY_PAGES.leaderWorkbench,
           wxData: {
             noticeTitle: { value: title.slice(0, 20) },
-            // 失效发生在当日 0 点（第 30 天结束），`time` 关键词须带完整时刻
+            // 日期口径下 deadline 就是失效日；跑批在当日 03:00 执行，
+            // `time` 关键词用 00:00 标定「哪一天」，不要误读成 0 点整停职
             deadlineAt: { value: `${deadline} 00:00` },
           },
           variables: { noticeTitle: title, deadlineAt: deadline },

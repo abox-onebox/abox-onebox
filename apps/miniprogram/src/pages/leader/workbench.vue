@@ -172,7 +172,7 @@ import type { PickupTodayData } from '@/api/leader-order';
 import { fetchDaily } from '@/api/meal';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
-import { useSubscribeMessage } from '@/composables/use-subscribe-message';
+import { subscribeOutcome, useSubscribeMessage } from '@/composables/use-subscribe-message';
 import { useLeaderStore } from '@/stores/leader';
 import {
   displayOr,
@@ -434,10 +434,15 @@ function onSubscribeNotices(): void {
    * 缺了对应的模板 ID 时 `requestFor` 会自动过滤，实际请求数只会更少。
    */
   const tmplIds = subscribe.requestFor(['group_open', 'trainee_expiring'], (results) => {
-    const accepted = Object.values(results).some((v) => v === 'accept');
-    if (accepted) {
+    // 统一判据：两个模板只接受一个时不能说「两个都已开启」
+    const outcome = subscribeOutcome(results);
+    if (outcome === 'all') {
       // 如实告知「一次授权 = 一条提醒」：微信一次性订阅的真实规则，不粉饰
       uni.showToast({ title: '已开启（每次授权可收 1 条）', icon: 'none' });
+    } else if (outcome === 'partial') {
+      uni.showToast({ title: '已开启部分提醒（每次授权可收 1 条）', icon: 'none' });
+    } else {
+      uni.showToast({ title: '未开启，后续不会收到提醒', icon: 'none' });
     }
   });
   if (!tmplIds.length) {

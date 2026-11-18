@@ -37,8 +37,27 @@ interface RequestSubscribeOptions {
 
 type RequestSubscribeFn = (options: RequestSubscribeOptions) => void;
 
-/** 授权结果（`accept` / `reject` / `ban` / `filter`）—— 仅用于日志 */
+/** 授权结果（`accept` / `reject` / `ban` / `filter` / `failed`）—— 用于日志与如实提示 */
 type SubscribeResults = Record<string, string>;
+
+/** 授权汇总：`all` 全部同意 / `partial` 部分同意 / `none` 一个都没同意 */
+export type SubscribeOutcome = 'all' | 'partial' | 'none';
+
+/**
+ * 把微信回包汇总成一句可提示的结论。
+ *
+ * ⚠️ 不能「success 就等于已开启」：`requestSubscribeMessage` 的 `success` 只表示
+ *    **调用成功**，用户逐个模板点「拒绝」也走 `success`，只是每项值为 `reject/ban`。
+ *    旧版页面据此弹「已开启」，等于当面说谎；这里统一成唯一判据。
+ */
+export function subscribeOutcome(results: SubscribeResults): SubscribeOutcome {
+  const values = Object.values(results);
+  if (!values.length) return 'none';
+  const accepted = values.filter((v) => v === 'accept').length;
+  if (accepted === values.length) return 'all';
+  if (accepted > 0) return 'partial';
+  return 'none';
+}
 
 /**
  * 模块级缓存：**一次小程序会话只拉一次**

@@ -678,7 +678,8 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     mandatory: false,
     variables: ['noticeTitle', 'deadlineAt'],
     requestSubscribe: true,
-    consumedBy: 'tasks/trainee-warn.task.ts → MessageService.notify()（每日 03:30）',
+    consumedBy:
+      'team-leader/promotion.service.ts → warnExpiringTrainees()（每日 10:00 由 trainee-warn 任务触发）',
     wiring: 'live',
     wxFields: { noticeTitle: 'thing1', deadlineAt: 'time2' },
     note:

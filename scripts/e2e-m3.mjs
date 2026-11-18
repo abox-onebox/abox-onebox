@@ -2565,10 +2565,13 @@ async function main() {
       'D12 每行列数与表头一致（错位会让运营把份数读成金额）',
       `列数=${expRowA?.length}/${eD?.headers?.length}`,
     );
+    // ⚠️ 手机号列位置会随业务列增减而移动（2026-11-18 在昵称后插入「取餐人/工位」），
+    //    按表头名定位而不是写死下标 —— 否则导出功能没坏，测试却恒红。
+    const phoneIdx = (eD?.headers ?? []).indexOf('手机号');
     assert(
-      expRowA?.[3] === '18600000002',
+      phoneIdx >= 0 && expRowA?.[phoneIdx] === '18600000002',
       'D12 导出给**完整手机号**（与 D8 列表脱敏形成对照：拿到全号只有这一条路，且必须留痕）',
-      `phone=${expRowA?.[3]}`,
+      `phoneIdx=${phoneIdx} phone=${expRowA?.[phoneIdx] ?? ''}`,
     );
     assert(
       eD?.truncated === false && eD?.count === (eD?.list ?? []).length && !!eD?.fileName,
@@ -8462,8 +8465,8 @@ async function main() {
 
     // ---------------------------------------------------------- A. 清单结构
     assert(
-      list0?.list?.length === 9,
-      '⭐ D59 场景清单 = **9 个场景** —— 原型 P36 是 5 行；第 6 行 `commission_settled`（团长佣金入账通知）由 M4-3 新增：两段式佣金（T 日计佣 / T+1 入账）若不通知，团长看到的是「确认了却没钱」，会被当成漏结；第 7 行 `cutoff_remind`（截单提醒）由 F5 新增：真源《系统地图》F5 点名「忘了下单」是最冤的两笔损失之一（另一笔「忘了取餐」由 `leader_delivery` 承载）；第 8/9 行 `building_suspend_fulfill` / `building_suspend_refund` 由 M5 楼宇停用新增 —— 停用会**连带取消当日已下的单**，不通知用户等于「钱退了、饭没了，人还不知道为什么」。⚠️ 新增行**一律追加在末尾**，以保持「前 5 行 = 原型 P36」这一结构的可核对性',
+      list0?.list?.length === 14,
+      '⭐ D59 场景清单 = **14 个场景** —— 原型 P36 是 5 行；其后依次追加 `commission_settled` / `cutoff_remind` / 两条楼宇停用告知（M4-3 · F5 · N2），以及 2026-11-18 上线的五条团长与资金通知：`group_open` / `leader_promoted` / `trainee_expiring` / `leader_suspended` / `withdraw_result`。⚠️ 新增行**一律追加在末尾**，以保持「前 5 行 = 原型 P36」这一结构的可核对性',
       `count=${list0?.list?.length}`,
     );
     assert(
@@ -8517,15 +8520,17 @@ async function main() {
       .sort()
       .join(',');
     assert(
-      liveTpl.length === 6 &&
+      liveTpl.length === 11 &&
         liveScenes ===
-          'building_suspend_fulfill,building_suspend_refund,commission_settled,cutoff_remind,leader_apply,refund_result' &&
+          'building_suspend_fulfill,building_suspend_refund,commission_settled,cutoff_remind,group_open,leader_apply,leader_promoted,leader_suspended,refund_result,trainee_expiring,withdraw_result' &&
         liveTpl.every((t) => String(t.consumedBy).includes('.service')),
-      '⭐⭐ **接线状态如实**：**六个场景**有真实投递点 —— `refund_result`（M3-12）·' +
+      '⭐⭐ **接线状态如实**：**11 个场景**有真实投递点 —— `refund_result`（M3-12）·' +
         '`leader_apply`（M4-3）· `commission_settled`（M4-3）· `cutoff_remind`（F5 ——' +
         '执行口是编排端点 `POST /admin/messages/orchestrate`，与未来的「截单提醒自动跑批」' +
         '**共用同一服务方法**）· `building_suspend_fulfill` / `building_suspend_refund`' +
-        '（N2 —— 执行口是 `building-admin.service.ts::notifySuspendAffected()`）；其余 3 个仍标 `pending`。' +
+        '（N2 —— 执行口是 `building-admin.service.ts::notifySuspendAffected()`）·' +
+        '`group_open` / `leader_promoted` / `trainee_expiring` / `leader_suspended` / `withdraw_result`' +
+        '（2026-11-18 团长激活三件套，执行口在 `meal-admin.service.ts` / `promotion.service.ts` / `withdraw-admin.service.ts`）；其余 3 个仍标 `pending`。' +
         '⚠️ 里程碑 4.10 原文列的是「支付成功 / 出餐提醒 / 取餐通知 / 退款结果」，本批**刻意收窄**：' +
         '`user_order_status` 按原型「简化原则」不推、`leader_delivery` 一期走微信群人工、' +
         '`merchant_cook` 收件人是供应商（非用户小程序身份）—— 三者「接了也没有真实收件人」，' +
@@ -10748,7 +10753,7 @@ async function main() {
   //      （14:00），但 `dateKind` 分别是「次日」与「当日」—— 必须由接口如实下发。
   //      这是 M4 头号陷阱：cron 只写「几点跑」、不写「动哪一天」，写反了照样编译通过、
   //      甚至部分断言仍然是绿的。
-  //   ② M4-2 后 **9 个任务全部实装**（`implemented=true` + `pendingNote=null`）——
+  //   ② M4-2 后 **10 个任务全部实装**（含 11-18 新增的 `trainee-warn`；`implemented=true` + `pendingNote=null`）——
   //      `implemented` 是执行口 `runners.has()` 的**派生值**、不是手写常量：
   //      将来只往声明表加任务却不写执行口，接口会**如实降级**为未实装，
   //      而不是让「只打了一行日志」的占位任务冒充已上线。
@@ -10888,8 +10893,8 @@ async function main() {
       const rows28 = sched28.body?.data?.list ?? [];
       const t28 = (n) => rows28.find((r) => r.task === n) ?? null;
       assert(
-        sched28.body?.code === 0 && rows28.length === 9,
-        '§28 时刻表一次列出全部 9 个定时任务（含未实装项 —— 不隐藏；第 9 个是 `pay-reconcile`，每 30 分钟的高频补单）',
+        sched28.body?.code === 0 && rows28.length === 10,
+        '§28 时刻表一次列出全部 10 个定时任务（含未实装项 —— 不隐藏；第 9 个是 `pay-reconcile` 每 30 分钟高频补单，第 10 个是 `trainee-warn` 每日 10:00 固定跑批）',
         `code=${sched28.body?.code} rows=${rows28.length}`,
       );
       const pub28 = t28('meal-publish');
@@ -10919,11 +10924,13 @@ async function main() {
         'leader-expire',
         // P3（2026-10-29）：支付查单补齐 —— 第 9 个任务，唯一的高频（每 30 分钟）任务
         'pay-reconcile',
+        // 2026-11-18：见习到期预警 —— 第 10 个任务，固定 10:00 全量扫描
+        'trainee-warn',
       ];
       const notImpl28 = allTasks28.filter((n) => t28(n)?.implemented !== true);
       assert(
         sched28.body?.data?.summary?.implemented === allTasks28.length && notImpl28.length === 0,
-        '⭐ §28 M4-2 后 **9 个任务全部实装**（`summary.implemented = 9/9`，无 `pendingNote` 残留）—— `implemented` 是执行口 `runners.has()` 的**派生值**而非手写常量：将来只往声明表加任务却不写执行口，这里会如实暴露，而不是让占位任务冒充已上线',
+        '⭐ §28 M4-2 后 **10 个任务全部实装**（`summary.implemented = 10/10`，无 `pendingNote` 残留）—— `implemented` 是执行口 `runners.has()` 的**派生值**而非手写常量：将来只往声明表加任务却不写执行口，这里会如实暴露，而不是让占位任务冒充已上线',
         `implemented=${sched28.body?.data?.summary?.implemented} 未实装：${notImpl28.join(',') || '无'}`,
       );
 
@@ -10931,7 +10938,7 @@ async function main() {
       const notReg28 = allTasks28.filter((n) => !t28(n)?.registeredCron);
       assert(
         sched28.body?.data?.summary?.registered === allTasks28.length && notReg28.length === 0,
-        '⭐⭐ §28 **9 个任务的 cron 全部真的注册进了调度器**（`registeredCron` 非空）—— cron 改由 `ScheduleRegistrar` 运行时注册（#49）后，「注册环节坏了」的表现是**任务永远不跑、且没有任何报错**（e2e 全走补跑接口，发现不了）；故把**实际注册值**下发出来作外部可观测证据。⚠️ 高频任务 `pay-reconcile`（每 30 分钟）也在此列 —— 它 `timelineKey: null`，注册值直接来自声明表的 cron 字面量',
+        '⭐⭐ §28 **10 个任务的 cron 全部真的注册进了调度器**（`registeredCron` 非空）—— cron 改由 `ScheduleRegistrar` 运行时注册（#49）后，「注册环节坏了」的表现是**任务永远不跑、且没有任何报错**（e2e 全走补跑接口，发现不了）；故把**实际注册值**下发出来作外部可观测证据。⚠️ 高频任务 `pay-reconcile`（每 30 分钟）也在此列 —— 它 `timelineKey: null`，注册值直接来自声明表的 cron 字面量',
         `registered=${sched28.body?.data?.summary?.registered} 未注册：${notReg28.join(',') || '无'}`,
       );
       assert(
@@ -14859,10 +14866,12 @@ async function main() {
       'supplier-share': '02:10',
       reconciliation: '04:00',
       'leader-expire': '03:00',
+      // 2026-11-18 新增第 10 个任务：固定 10:00，不可配（与出餐日无关）
+      'trainee-warn': '10:00',
     };
 
     /**
-     * ⭐ **高频任务**（`pay-reconcile` · P3 2026-10-29 新增）—— 第 9 个任务，**刻意不进 `FACTORY`**
+     * ⭐ **高频任务**（`pay-reconcile` · P3 2026-10-29 新增）—— 第 9 个任务（之后 11-18 又增了第 10 个每日型 `trainee-warn`），**刻意不进 `FACTORY`**
      *
      * `FACTORY` 的语义是「**每天某个时刻**」，它的值会被 `cronOf()` 翻译成 `0 m h * * *`。
      * 而支付查单补齐是「**每 30 分钟**」的分钟级节奏（回调丢了要分钟级发现；等到次日的
@@ -14872,10 +14881,13 @@ async function main() {
      * ⇒ 单列常量；它的 `effectiveAt` 恒为 `null`，正是服务端 `timelineKey: null` 的直接兑现。
      */
     const HIGH_FREQ = { task: 'pay-reconcile', cron: '0 */30 * * * *' };
-    /** 时刻表**应有**的行数 = 每日型 8 + 高频 1 */
+    /** 时刻表**应有**的行数 = 每日型 9 + 高频 1 */
     const TASK_COUNT = Object.keys(FACTORY).length + 1;
     /** 出厂口径的 `effectiveAt`（高频任务为 `null` —— 它不对应任何业务时刻，故不是「偏离」） */
-    const factoryAtOf = (task) => (task === HIGH_FREQ.task ? null : FACTORY[task]);
+    // `timelineKey: null` 的任务（pay-reconcile 每 30 分钟、trainee-warn 固定 10:00）
+    // 在时刻表里 `effectiveAt` 恒为 null；FACTORY 里仍保留 10:00 供 factoryCronOf 派生 cron。
+    const NO_TIMELINE_TASKS = new Set([HIGH_FREQ.task, 'trainee-warn']);
+    const factoryAtOf = (task) => (NO_TIMELINE_TASKS.has(task) ? null : FACTORY[task]);
     /**
      * 出厂口径的 cron。
      *
@@ -14913,7 +14925,13 @@ async function main() {
     ];
 
     /** 「不可配」的任务时刻（纯内部跑批节奏）—— 用于反证：**可配 ≠ 全部可配** */
-    const FIXED_TASKS = ['delivery-generate', 'supplier-share', 'reconciliation', 'leader-expire'];
+    const FIXED_TASKS = [
+      'delivery-generate',
+      'supplier-share',
+      'reconciliation',
+      'leader-expire',
+      'trainee-warn',
+    ];
 
     /**
      * 送达的**出厂值**（`11:30`）—— 它是**业务时刻**，不在 `FACTORY`（那张表按**任务**索引），
@@ -14963,7 +14981,7 @@ async function main() {
             t.registeredCron === t.cron &&
             t.effectiveAt === factoryAtOf(t.task),
         ),
-      '§36(A) 起点归一：5 个可配时刻写回出厂值后，**9 个任务（8 每日型 + 1 高频）全部处于出厂口径且全部已注册**（`registeredCron === cron` 即「无配置覆写」· `effectiveAt` 逐任务等于出厂值；高频任务的 `effectiveAt` 恒为 `null`），归一本身也是断言的一部分，否则本节不可反复跑',
+      '§36(A) 起点归一：5 个可配时刻写回出厂值后，**10 个任务（9 每日型 + 1 高频）全部处于出厂口径且全部已注册**（`registeredCron === cron` 即「无配置覆写」· `effectiveAt` 逐任务等于出厂值；高频任务的 `effectiveAt` 恒为 `null`），归一本身也是断言的一部分，否则本节不可反复跑',
       `code=${norm.body?.code} rows=${s0.list.length} 未注册=${s0.list.filter((t) => !t.registeredCron).length} 偏离=${
         s0.list
           .filter((t) => t.effectiveAt !== factoryAtOf(t.task))
@@ -15039,7 +15057,7 @@ async function main() {
     // 出厂口径列**不被覆写污染**（三个字段各司其职，端上才能一眼看出「生没生效」）
     assert(
       s1.list.every((t) => t.cron === factoryCronOf(t.task)),
-      '⭐ §36(B·出厂列不被污染) 9 行的 `cron` 字段**始终是出厂口径**（改配置只动 `effectiveAt` 与 `registeredCron`）—— 若 `cron` 也跟着变，「出没出厂 / 生没生效」就无从对照，端上那个「配置覆写」标记会自动失效',
+      '⭐ §36(B·出厂列不被污染) 10 行的 `cron` 字段**始终是出厂口径**（改配置只动 `effectiveAt` 与 `registeredCron`）—— 若 `cron` 也跟着变，「出没出厂 / 生没生效」就无从对照，端上那个「配置覆写」标记会自动失效',
       `不符=${
         s1.list
           .filter((t) => t.cron !== factoryCronOf(t.task))
@@ -15065,7 +15083,7 @@ async function main() {
     );
     assert(
       fixedBad.length === 0,
-      '⭐⭐ §36(C·反证) 在**全部可配时刻都被改掉**的状态下，4 个「不可配」任务的 `effectiveAt` 与 `registeredCron` **仍等于出厂值**（配送单生成 / 供应商应付 / 对账 / 见习失效 —— 纯内部节奏）。这条是「可配 ≠ 全部可配」的反证：若哪天有人把 `TIMELINE_CONFIG_KEYS` 扩到 5 个时刻全映射（现在送达时刻是显式 `null`），它会红 —— 而那种扩张会让「内部跑批节奏」变成运营可改的口径，属于要**显式裁决**的事，不该悄悄发生。⚠️ 本表只有「每日型」任务：第 9 个任务 `pay-reconcile` 是分钟级高频，压根不由时间轴派生（`timelineKey: null`），故不在 C 组的反证范围内',
+      '⭐⭐ §36(C·反证) 在**全部可配时刻都被改掉**的状态下，5 个「不可配」任务的 `effectiveAt` 与 `registeredCron` **仍等于出厂值**（配送单生成 / 供应商应付 / 对账 / 见习失效 / 见习到期预警 —— 纯内部节奏）。这条是「可配 ≠ 全部可配」的反证：若哪天有人把 `TIMELINE_CONFIG_KEYS` 扩到 5 个时刻全映射（现在送达时刻是显式 `null`），它会红 —— 而那种扩张会让「内部跑批节奏」变成运营可改的口径，属于要**显式裁决**的事，不该悄悄发生。⚠️ 本表只有「每日型」任务：第 9 个任务 `pay-reconcile` 是分钟级高频，压根不由时间轴派生（`timelineKey: null`），故不在 C 组的反证范围内',
       `不符=${fixedBad.map((x) => `${x.task}(eff=${x.effectiveAt} cron=${x.cron})`).join(' ') || '无'}`,
     );
 
@@ -15099,7 +15117,7 @@ async function main() {
     );
     assert(
       back.body?.code === 0 && leftDrift.length === 0,
-      '⭐ §36(E) 复原并**断言复原**：9 个任务全部回到出厂口径（`registeredCron === cron` 且 `effectiveAt` 等于出厂值）—— 复原本身必须有断言。若只写「改回去」而不验，本节之后的所有节与下一次重跑都会跑在**被污染的时刻**下，而症状是「其它节偶发红」，查起来与本节的因果关系极难建立',
+      '⭐ §36(E) 复原并**断言复原**：10 个任务全部回到出厂口径（`registeredCron === cron` 且 `effectiveAt` 等于出厂值）—— 复原本身必须有断言。若只写「改回去」而不验，本节之后的所有节与下一次重跑都会跑在**被污染的时刻**下，而症状是「其它节偶发红」，查起来与本节的因果关系极难建立',
       `code=${back.body?.code} 残留偏离=${leftDrift.map((t) => `${t.task}:${t.effectiveAt}`).join(',') || '无'}`,
     );
   }
@@ -15850,8 +15868,8 @@ async function main() {
       `note=${String(future39.body?.data?.note ?? '').slice(0, 40)}`,
     );
     assert(
-      (future39.body?.data?.scenes ?? []).length === 9,
-      '⭐ 到达率的 `scenes[]` **含 0 投递的场景**（全部 9 个）—— 否则一期整页空白，' +
+      (future39.body?.data?.scenes ?? []).length === 14,
+      '⭐ 到达率的 `scenes[]` **含 0 投递的场景**（全部 14 个）—— 否则一期整页空白，' +
         '运营看不到「有哪些场景、各自什么状态」',
       `scenes=${future39.body?.data?.scenes?.length}`,
     );

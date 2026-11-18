@@ -134,7 +134,7 @@ import { applyWithdraw, fetchLeaderBalance, fetchWithdrawals } from '@/api/leade
 import type { LeaderBalanceData, LeaderWithdrawalItem } from '@/api/leader-finance';
 import { ApiError } from '@/api/request';
 import { apiErrorMessage, toastApiError, useRequest } from '@/composables/use-request';
-import { useSubscribeMessage } from '@/composables/use-subscribe-message';
+import { subscribeOutcome, useSubscribeMessage } from '@/composables/use-subscribe-message';
 import { displayOr, fenToYuanText, formatDateTime, uuid } from '@/utils/format';
 import { navigateTo, navigateBack } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
@@ -303,7 +303,15 @@ function goBack(): void {
 function askWithdrawNotify(): void {
   const ids = subscribe.requestFor(['withdraw_result'], (results) => {
     console.log('[subscribe] withdraw_result', results);
-    uni.showToast({ title: '已开启，审批与打款会通知你', icon: 'none' });
+    // ⚠️ success ≠ 用户同意：拒绝也走 success，旧版这里一律弹「已开启」。
+    const outcome = subscribeOutcome(results);
+    if (outcome === 'all') {
+      uni.showToast({ title: '已开启，审批与打款会通知你', icon: 'none' });
+    } else if (outcome === 'partial') {
+      uni.showToast({ title: '已开启部分提醒（每次授权可收 1 条）', icon: 'none' });
+    } else {
+      uni.showToast({ title: '未开启，后续不会收到提醒', icon: 'none' });
+    }
   });
   if (!ids.length) {
     // 清单为空 = 后台还没配模板 ID（一期常态），别让用户以为是自己点错了

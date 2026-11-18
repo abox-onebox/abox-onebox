@@ -219,7 +219,7 @@ import { fetchWorkbench } from '@/api/leader';
 import { confirmPickup, fetchPickupToday } from '@/api/leader-order';
 import type { PickupConfirmDone, PickupTodayData } from '@/api/leader-order';
 import { apiErrorMessage, useRequest } from '@/composables/use-request';
-import { useSubscribeMessage } from '@/composables/use-subscribe-message';
+import { subscribeOutcome, useSubscribeMessage } from '@/composables/use-subscribe-message';
 import { displayOr, fenToYuanText, formatDateTime, uuid } from '@/utils/format';
 import { navigateTo } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
@@ -422,7 +422,15 @@ function goOrders(): void {
 function askCommissionNotify(): void {
   const ids = subscribe.requestFor(['commission_settled', 'leader_promoted'], (results) => {
     console.log('[subscribe] commission_settled / leader_promoted', results);
-    uni.showToast({ title: '已开启，入账与晋级都会通知你', icon: 'none' });
+    // ⚠️ success ≠ 用户同意：逐项 reject/ban 也走 success，旧版这里一律弹「已开启」。
+    const outcome = subscribeOutcome(results);
+    if (outcome === 'all') {
+      uni.showToast({ title: '已开启，入账与晋级都会通知你', icon: 'none' });
+    } else if (outcome === 'partial') {
+      uni.showToast({ title: '已开启部分提醒（每次授权可收 1 条）', icon: 'none' });
+    } else {
+      uni.showToast({ title: '未开启，后续不会收到提醒', icon: 'none' });
+    }
   });
   if (!ids.length) {
     // 清单为空 = 运营还没在后台配模板 ID（一期常态），别让用户以为是自己点错了
