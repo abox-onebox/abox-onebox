@@ -1,9 +1,10 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThanOrEqual, Repository } from 'typeorm';
 
 import { Message as MessageLog, MessageTemplate } from '../../database/entities/system.entity';
 import { User } from '../../database/entities/user.entity';
+import { bjDateTime, todayBj } from '../../common/utils/time';
 import { WX_NOTIFY_PROVIDER, WxNotifyProvider } from '../../providers/wx-notify/wx-notify.provider';
 import {
   MESSAGE_CHANNEL_LABEL,
@@ -25,6 +26,21 @@ export interface NotifyInput {
   page?: string;
   /** 变量取值（连同 `scene` 一起落进日志 `payload`，便于事后核对发了什么） */
   variables?: Record<string, string>;
+  /**
+   * 幂等键 —— 同一场景 + 同一键**当天只成功投递一次**（2026-11-18 新增）
+   *
+   * ## 为什么需要（不只是「调用方自己判一下」）
+   *
+   * 「同一件事」可能经由**多个入口**触发：开团既有 T-1 14:00 跑批（`publishByDate`），
+   * 也有矩阵页单条上架、企微「确认开团」逐条 `assign → publish`（都落到
+   * `publishAssignment`）。运营「下架再上架」修正一次排期，团长就会收到**第二条**
+   * 一模一样的「开团了」—— 没有人会觉得这是同一条。
+   *
+   * ⚠️ 判定只看**成功投递过**的记录：上一次失败（额度用尽 / 通道抖动）不该把
+   *    「今天还能再发一次」这条路堵死 —— 与编排侧 `setNx` 失败后删键同一取舍。
+   * ⚠️ 只对「同一天（北京时间）」去重：隔天开的是另一个团，不该被昨天的键拦住。
+   */
+  dedupeKey?: string;
 }
 
 export interface NotifyResult {
@@ -111,6 +127,30 @@ export class MessageService {
 
     const templateId = String(state.wechatTemplateId);
 
+    /**
+     * ⭐ 幂等闸门（`dedupeKey`）—— 同一件事当天只发一次
+     *
+     * 查的是**已成功投递**的日志：失败记录不算数（额度用尽 / 通道抖动之后应当允许重试）。
+     * 用「当天 0 点起」而不是固定 24h 窗口：跨午夜后新的一场团不该被昨天的键拦住。
+     */
+    if (input.dedupeKey) {
+      const since = bjDateTime(todayBj(), 0, 0);
+      const sent = await this.logRepo.find({
+        where: { status: 'success', createdAt: MoreThanOrEqual(since) },
+        select: { id: true, payload: true },
+      });
+      const dup = sent.some((m) => {
+        const p = m.payload as { scene?: string; dedupeKey?: string } | null;
+        return p?.scene === input.scene && p?.dedupeKey === input.dedupeKey;
+      });
+      if (dup) {
+        return {
+          delivered: false,
+          reason: `同一事件（${input.dedupeKey}）今天已投递过，本次跳过（防重复打扰）`,
+        };
+      }
+    }
+
     // 收件人解析：调用方只给业务对象（`userId`），「userId → openid」的换算归投递侧 ——
     // 业务侧（退款、出餐…）不该关心 openid 从哪来，也不该为了发通知去 join 用户表
     let openid = input.openid ?? null;
@@ -176,6 +216,8 @@ export class MessageService {
         sceneLabel: spec.label,
         variables: input.variables ?? {},
         wxData: input.wxData ?? {},
+        /** 幂等键落日志：查重靠它（见 `NotifyInput.dedupeKey`） */
+        ...(input.dedupeKey ? { dedupeKey: input.dedupeKey } : {}),
       },
       ok,
       errMsg,

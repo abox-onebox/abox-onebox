@@ -74,6 +74,16 @@ export const NOTIFY_PAGES = {
    * （一次订阅消息授权额度）已经花掉了。
    */
   orderCreate: 'pages/order-create/order-create',
+  /**
+   * 分享物料页（开团通知的落地页 · 2026-11-18）
+   *
+   * 选分享页而非工作台：开团通知的**唯一目的**是让团长立刻把物料转发出去
+   * （工作台是「看自己战绩」的地方，他点进去还得再找一次分享入口）。
+   * 与截单提醒落到下单页、要求「点开即可行动」是同一条判据。
+   *
+   * ⚠️ 真值须与 `apps/miniprogram/src/pages.json` 的 `pages/leader/share` 一致。
+   */
+  leaderShare: 'pages/leader/share',
 } as const;
 
 /**
@@ -179,7 +189,7 @@ export interface MessageTemplateSpec {
 }
 
 /**
- * 9 个场景
+ * 10 个场景
  *
  * ## ⚠️ 与原型 P36 的关系（必须如实说明，别让它变成「两个真相」）
  *
@@ -197,7 +207,10 @@ export interface MessageTemplateSpec {
  * 楼宇停用只拦新单、存量继续履约（用户已拍板不做批量退款）⇒ 存量订单的用户
  * **必须被告知**。两行**刻意不合成一行** —— 见第 8 行的注释。
  *
- * → 后台 P36 页面会显示 **9 行**。这不是页面写错了，是代码事实比原型多了 4 行；
+ * 第 10 行 `group_open` 是 **2026-11-18 新增**：开团对外没有声音，团长不知道何时
+ * 能开始分享 —— 它补齐了团长一天四个节点的**第一个**（开团 → 截单 → 送达 → 入账）。
+ *
+ * → 后台 P36 页面会显示 **10 行**。这不是页面写错了，是代码事实比原型多了 5 行；
  *   若运营问「为什么多了」，答案在本段。
  *
  * ⚠️ **新增行一律追加在末尾**（保持「前 5 行 = 原型」这一结构的可核对性）——
@@ -486,6 +499,75 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
         '【ABox 通知】您 {{mealDate}} 的订单退款正在处理中，款项将原路退回，请注意查收。',
     },
   },
+  {
+    /**
+     * 团长开团通知（2026-11-18 · 全清单第 10 行）
+     *
+     * ## 它补的是哪一段断链
+     *
+     * 开团（`T-1 14:00` 把明日套餐 `pending → active`）在系统里是一次**状态翻转**，
+     * 但对外**没有任何声音**：团长不知道「今天已经能开始吆喝了」，于是不分享 →
+     * 楼里没单 → 供给侧死结。这不是「多加一条通知」，是把团长一天的四个节点补齐：
+     * 开团（本场景）→ 截单（`cutoff_remind`）→ 送达（`leader_delivery`）→ 入账（`commission_settled`）。
+     *
+     * ## ⚠️ 为什么渠道是**双渠道**（与 `leader_delivery` 只写群不同）
+     *
+     * ABox 属零售 / 预包装快消类目，**申请不到长期订阅**（只对政务、医疗、交通、
+     * 金融、教育开放），只能用一次性订阅：用户点一次「允许」= **仅 1 条额度**，
+     * 勾选「总是保持以上选择」只是免弹窗、**不增加额度**（额度不过期，可以攒）。
+     * ⇒ 只靠订阅消息做「每天一场」的开团通知，团长两天不进小程序就静默收不到，
+     * 而且我们侧**收不到任何报错**。故必须配微信群兜底（团长人数少，成本近似为零）。
+     * 兜底是人工复制 `groupContent`，**不受 `enabled` 限制**（与 `leader_delivery` 同）。
+     *
+     * ## ⚠️ 关键词只选 2 个，且日期+套餐名合进 `thing1`
+     *
+     * `time` 类型**自带日期**（同 `cutoff_remind` 的教训）：单独再塞一个 `date` 会把
+     * 同一信息说两遍，而公共模板库里也没有「开团通知」这类模板可选。把「哪天 + 什么饭」
+     * 拼进一个 `thing` 关键词，既满足「最少 2 个关键词」的平台规则，也让通知标题
+     * 一眼认得出是哪一天的哪份餐。
+     */
+    scene: 'group_open',
+    label: '团长开团通知',
+    audience: '该楼群当日已开团（可下单）的团长',
+    channels: ['wechat_subscribe', 'wechat_group'],
+    // ⚠️ 同 `leader_delivery` / `cutoff_remind`：**不写具体时刻**，时刻的真源是
+    //    `common/utils/order-timeline.ts` 的 `DEFAULT_TIMELINE.publish`（14:00），
+    //    此处只描述事件。写死「14:00」会立刻变成第二份表述。
+    trigger: '跑批开团 / 单条上架（该楼群当日首次变为「可下单」）',
+    mandatory: false,
+    variables: ['mealDate', 'setMealName', 'cutoffAt'],
+    /**
+     * `true`：面向**团长（= 用户小程序身份）**、走订阅消息、且 `wiring='live'`
+     * —— 三条全中（判据见 `subscribeTemplateOf`）。端上在团长工作台请求授权。
+     */
+    requestSubscribe: true,
+    consumedBy:
+      'meal/meal-admin.service.ts → notifyGroupOpen()（两处：publishAssignment 单条上架 / publishByDate 跑批）',
+    wiring: 'live',
+    /** 开团信息（日期+套餐，拼进 `thing`）/ 截单时刻（`time` 自带日期） */
+    wxFields: { noticeTitle: 'thing1', cutoffAt: 'time2' },
+    note:
+      '⭐ **2026-11-18 新增（全清单第 10 行）**：开团这件事对外**一直没有声音**，' +
+      '团长不知道何时能开始分享，是供给侧断链的上半段。' +
+      '⚠️ **两处落点都必须挂**：`publishByDate`（T-1 14:00 跑批）与 `publishAssignment`' +
+      '（矩阵页单条上架，也是企微「确认开团」逐条 assign→publish 的最终入口）——' +
+      ' 只挂跑批，运营手动补开团的那天团长就收不到（与「同一动作两个入口」的坑同类）。' +
+      '⚠️ **幂等**：同一「出餐日 + 楼群」当天只发一次（`dedupeKey`），' +
+      '否则下架再上架会让团长收到 2–3 条一模一样的「开团了」。' +
+      '⚠️ **只发真的开团成功的**：当天未归群 / 已停团 / 没排期的楼群不发 —— ' +
+      '发一条「开团了」但他楼里根本下不了单，比不发更糟。' +
+      '⚠️ 一次性订阅**额度有限**（每人每次授权仅 1 条）：团长不常进小程序时，' +
+      '剩余额度会耗尽，微信回 `43101`。故本场景**必须**保留群兜底，' +
+      '后台也须能看到「还剩几条额度」，不许把「投递返回 delivered」当成「团长收到了」。',
+    seed: {
+      // 双渠道 ⇒ 启用闸门要求「模板 ID + 群文案」都齐；一期模板 ID 为空 → 不允许启用，
+      // 页面如实显示「未启用（缺模板 ID）」。群文案字段本身仍可直接复制使用。
+      enabled: 0,
+      wechatTemplateId: null,
+      groupContent:
+        '【ABox 开团】{{mealDate}} 的午餐已开团（{{setMealName}}），{{cutoffAt}} 截单，请尽快分享给同事。',
+    },
+  },
 ];
 
 /** 场景键 → 声明（投递侧按 scene 查渠道与变量） */
@@ -670,6 +752,7 @@ export const WX_BIZ_FIELD_LABEL: Record<string, string> = {
   cutoffAt: '截单时间（含日期）',
   applyAt: '申请时间',
   leaderLevel: '团长等级',
+  noticeTitle: '开团信息（日期 + 套餐名）',
 };
 
 export function toWxData(

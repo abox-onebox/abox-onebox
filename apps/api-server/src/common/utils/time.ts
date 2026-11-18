@@ -15,7 +15,7 @@
  * 实现说明：不引入 dayjs 插件（避免打包/运行时差异），直接用「显式带偏移量的
  * 字符串解析」+「UTC 字段做日期加减」，全链路不依赖宿主时区。
  */
-import { currentTimeline } from './order-timeline';
+import { currentTimeline, formatTimeOfDay, type TimeOfDay } from './order-timeline';
 
 export const TZ_OFFSET_MINUTES = 8 * 60;
 const BJ_OFFSET_MS = TZ_OFFSET_MINUTES * 60 * 1000;
@@ -146,6 +146,30 @@ export function addDays(dateStr: string, days: number): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   const base = Date.UTC(y, m - 1, d);
   return new Date(base + days * DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * 截单时刻 → **带日期的完整文本**（`YYYY-MM-DD HH:mm`）
+ *
+ * ## 为什么要有这一个函数（而不是每个调用点自己拼）
+ *
+ * 订阅消息的 `time` 关键词会渲染成「2026年11月19日 00:00」，只给 `00:00` 会有歧义
+ * （用户以为**今天**零点截单，其实出餐日是明天）。截单提醒（`cutoff_remind`）与
+ * 开团通知（`group_open`）都要下发这个时刻 —— 各拼一份迟早漂移成
+ * 「同一时间在两个通知里写成两个样子」。
+ *
+ * ## 两条折算规则
+ *
+ * 1. `24:00` → **出餐日当天 `00:00`**（`T-1 24:00` 等于 T 日 0 点）；
+ * 2. 其余时刻（如 `23:00`）挂在 **T-1**（截单一律发生在出餐日前一天）。
+ *
+ * ⚠️ `t` 由调用方从 `currentTimeline()` 取，**不在函数内读全局** —— 单测要能构造
+ *    任意时间轴，读全局会让测试变成「改配置才能测」。
+ * ⚠️ 放 `time.ts` 而非 `order-timeline.ts`：后者已经被本文件 import，
+ *    反向 import `addDays` 会形成循环依赖（运行时可能拿到 `undefined`）。
+ */
+export function cutoffAtText(mealDate: string, t: TimeOfDay): string {
+  return t.hour >= 24 ? `${mealDate} 00:00` : `${addDays(mealDate, -1)} ${formatTimeOfDay(t)}`;
 }
 
 /**

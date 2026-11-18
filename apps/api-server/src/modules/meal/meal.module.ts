@@ -10,6 +10,7 @@ import { Item, Supplier } from '../../database/entities/supplier.entity';
 import { User } from '../../database/entities/user.entity';
 import { AiInsight } from '../../database/entities';
 import { WecomKbModule } from '../wecom-kb/wecom-kb.module';
+import { MessageModule } from '../message/message.module';
 import { HomeController, InviteController } from './meal.controller';
 import { MealAdminController } from './meal-admin.controller';
 import { MealAdminService } from './meal-admin.service';
@@ -43,6 +44,14 @@ import { MealService } from './meal.service';
       AiInsight,
     ]),
     WecomKbModule,
+    /**
+     * 开团通知（场景 `group_open`）需要 `MessageService`（已 export）。
+     *
+     * ⚠️ 单向依赖：`MessageModule` 只 import `TypeOrmModule`，不会反向依赖本模块 ——
+     *    若将来有人在 `MessageModule` 里 import `MealModule`，这里就会形成循环依赖
+     *    （Nest 启动时表现为 `MessageService` 注入为 undefined，而不是报循环）。
+     */
+    MessageModule,
   ],
   controllers: [HomeController, InviteController, MealAdminController],
   providers: [MealService, MealAdminService],

@@ -9,7 +9,7 @@ import { ErrorCode } from '../../common/constants/error-code';
 import { UserStatus } from '../../common/constants/user-status';
 import { BizException } from '../../common/exceptions/biz.exception';
 import { currentTimeline, formatTimeOfDay } from '../../common/utils/order-timeline';
-import { addDays, todayBj, tomorrowBj } from '../../common/utils/time';
+import { addDays, cutoffAtText, todayBj, tomorrowBj } from '../../common/utils/time';
 import { Order } from '../../database/entities/order.entity';
 import { User } from '../../database/entities/user.entity';
 import { MESSAGE_TEMPLATE_SPEC_MAP, NOTIFY_PAGES } from '../admin/template/message-template.specs';
@@ -339,19 +339,12 @@ export function findSelector(key: string): AudienceSelector | undefined {
 const DEFAULT_LIMIT = 500;
 
 /**
- * 截单时刻 → 微信 `time` 关键词可用的「YYYY-MM-DD HH:mm」
+ * 截单时刻文本已提取到 `common/utils/time.ts` 的 `cutoffAtText`（2026-11-18）。
  *
- * 这一行里踩了两个坑：
- * ① `formatTimeOfDay` 产出的是 `HH:mm` **纯时刻**，而 `time` 类型要求**带日期**的完整时刻
- *    （微信卡片渲染成「2026年11月19日 00:00」，见公众平台的卡片预览）；
- * ② `24:00` **不是合法时间字面量**（`new Date` 会拒、微信侧也会判参数非法）。
- *    截单挂在 T-1 日，所以 `T-1 24:00` 与 `T 00:00` 是**同一时刻** —— 直接折成后者，
- *    既不丢精度，也不会让人误以为截单在当天早上（这正是 `formatTimeOfDay` 注释里
- *    「不折算成 00:00」要防的歧义，但那只针对**只显示时刻**的场合）。
+ * 提取理由：开团通知（`group_open`）也要下发同一个截单时刻 —— 两处各拼一份必然
+ * 漂移成「同一时间在两个通知里写成两个样式」；且 `24:00 → 出餐日 00:00` 这条
+ * 折算规则只该有一个实现。
  */
-function cutoffAtText(mealDate: string, t: { hour: number; minute: number }): string {
-  return t.hour >= 24 ? `${mealDate} 00:00` : `${addDays(mealDate, -1)} ${formatTimeOfDay(t)}`;
-}
 
 /**
  * 组装微信订阅消息 `data`

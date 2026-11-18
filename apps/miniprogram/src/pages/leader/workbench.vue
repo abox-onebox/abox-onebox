@@ -49,6 +49,14 @@
 
         <block v-else>
           <text v-if="war.sub" class="war__sub">{{ war.sub }}</text>
+          <button
+            v-if="war.kind === 'waiting'"
+            class="war__btn"
+            hover-class="war__btn--hover"
+            @tap="onSubscribeGroupOpen"
+          >
+            <text class="abi abi-16">{{ I.bell }}</text> 开团后用微信提醒我
+          </button>
           <text v-if="war.kind === 'open'" class="war__foot">
             <text class="abi abi-16">{{ I.info }}</text>
             <!-- ⚠️ 原句后半截「分享给同事可提升本月单量」把「分享」与「收益」直接挂钩，
@@ -164,6 +172,7 @@ import type { PickupTodayData } from '@/api/leader-order';
 import { fetchDaily } from '@/api/meal';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
+import { useSubscribeMessage } from '@/composables/use-subscribe-message';
 import { useLeaderStore } from '@/stores/leader';
 import {
   displayOr,
@@ -179,6 +188,15 @@ import type { AboxIconName } from '@abox/shared-utils';
 
 const { run, loading, error } = useRequest();
 const leaderStore = useLeaderStore();
+
+/**
+ * 开团通知的订阅授权（2026-11-18）
+ *
+ * ⚠️ 微信一次性订阅：**点一次只换 1 条额度**，勾「总是保持」也不增加额度
+ *    （额度不过期，可以攒）。故入口放在「等待开始接单」这一态 —— 团长在那时
+ *    正好想知道「什么时候能开卖」，顺手点一下的成本最低。
+ */
+const subscribe = useSubscribeMessage();
 
 const data = ref<LeaderWorkbenchData | null>(null);
 const profile = ref<LeaderProfile | null>(null);
@@ -391,8 +409,35 @@ function goCommission(): void {
   navigateTo('/pages/leader/commission');
 }
 
+/**
+ * 请求「开团提醒」的订阅授权
+ *
+ * ## 三条行为约束
+ *
+ * 1. **必须在点击的同步流程里调用**（`requestFor` 不 await）—— 先 await 一个网络
+ *    请求再调 `requestSubscribeMessage`，微信会以 `can only be invoked by user TAP
+ *    gesture` 直接拒掉（见 composable 头注）。
+ * 2. **没有可请求的模板就如实说「暂未开放」**，不伪造模板 ID：一期微信模板尚未申请
+ *    下来时，清单为空是常态，这不是错误。
+ * 3. **授权结果不影响任何业务**：拒绝就是不提醒，页面照常。
+ */
+function onSubscribeGroupOpen(): void {
+  const tmplIds = subscribe.requestFor(['group_open'], (results) => {
+    const accepted = Object.values(results).some((v) => v === 'accept');
+    if (accepted) {
+      // 如实告知「一次授权 = 一条提醒」：微信一次性订阅的真实规则，不粉饰
+      uni.showToast({ title: '已开启（每次授权可收 1 条）', icon: 'none' });
+    }
+  });
+  if (!tmplIds.length) {
+    uni.showToast({ title: '开团提醒暂未开放（模板审核中）', icon: 'none' });
+  }
+}
+
 onShow(() => {
   void reload();
+  // 预加载订阅模板清单（失败静默）—— 必须发生在点击之前，否则点击时拿不到 ID
+  void subscribe.preload();
 });
 
 onUnmounted(() => {

@@ -10,6 +10,7 @@ import { paginate, PageResult } from '../../common/utils/response';
 import {
   addDays,
   cutoffAtOf,
+  cutoffAtText,
   isAfterCutoff,
   isDateStr,
   toBjIso,
@@ -24,8 +25,15 @@ import {
 import { AiInsightService } from '../wecom-kb/ai-insight.service';
 import { Building, BuildingGroup } from '../../database/entities/building.entity';
 import { DistributionCenter } from '../../database/entities/finance.entity';
+import { TeamLeader } from '../../database/entities/leader.entity';
 import { MealAssignment, SetMeal, SetMealItem } from '../../database/entities/meal.entity';
 import { Item, Supplier } from '../../database/entities/supplier.entity';
+import { User } from '../../database/entities/user.entity';
+import { LeaderStatus } from '@abox/shared-types';
+import { UserStatus } from '../../common/constants/user-status';
+import { currentTimeline } from '../../common/utils/order-timeline';
+import { NOTIFY_PAGES } from '../admin/template/message-template.specs';
+import { MessageService } from '../message/message.service';
 import {
   CopyAssignmentsDto,
   CreateAssignmentDto,
@@ -153,9 +161,21 @@ export class MealAdminService {
     @InjectRepository(DistributionCenter) private readonly dcRepo: Repository<DistributionCenter>,
     @InjectRepository(BuildingGroup) private readonly groupRepo: Repository<BuildingGroup>,
     @InjectRepository(Building) private readonly buildingRepo: Repository<Building>,
+    /** 开团通知：楼 → 团长（`ab_team_leader.building_id`） */
+    @InjectRepository(TeamLeader) private readonly leaderRepo: Repository<TeamLeader>,
+    /** 开团通知：团长 → 用户（取 openid） */
+    @InjectRepository(User) private readonly userRepo: Repository<User>,
     private readonly bizConfig: BizConfigService,
     private readonly dataSource: DataSource,
     private readonly aiInsight: AiInsightService,
+    /**
+     * 开团通知的投递口（跨模块，`MessageModule` 已 export `MessageService`）
+     *
+     * ⚠️ 只用来**发通知**，绝不让通知失败影响开团本身：`notify()` 已承诺不抛异常，
+     *    调用点也一律放在 `save()` 之后（事务外）—— 开团成功、通知失败是可以接受的；
+     *    开团本身因为发通知而失败则不可接受。
+     */
+    private readonly message: MessageService,
   ) {}
 
   // ==========================================================================
@@ -424,6 +444,23 @@ export class MealAdminService {
     }
 
     await this.assignmentRepo.save(a);
+
+    /**
+     * ⭐ 开团通知（2026-11-18）—— 放在 `save()` **之后**，且只在上架分支
+     *
+     * 这是「开团」的**第二个落点**（第一个是 `publishByDate` 跑批）：矩阵页单条上架、
+     * 以及企微「确认开团」逐条 `assign → publish` 最终都走到这里。只挂跑批的话，
+     * 运营手动补开团的那天，团长**一条通知都收不到**。
+     *
+     * ⚠️ `await` 而非 `void`：`notify()` 不抛异常，await 只是让投递结果在响应返回前
+     *    落定（团长人数少，串行代价可接受）。通知失败**不影响**开团结果。
+     */
+    if (action === 'publish') {
+      await this.notifyGroupOpen([
+        { mealDate: a.mealDate, buildingGroupId: a.buildingGroupId, setMealId: a.setMealId },
+      ]);
+    }
+
     return this.assignmentView(a);
   }
 
@@ -508,9 +545,164 @@ export class MealAdminService {
           `（已上架 ${result.alreadyActive} / 已停团 ${result.skippedCancelled}）` +
           ` 截单时刻 ${toBjIso(cutoffAt)}`,
       );
+
+      // 开团通知（场景 `group_open`）：只发给**本次真的开团成功**的楼群团长。
+      // 放在 save 之后、事务外；`alreadyActive` 的不带进来 —— 否则补跑一次就重复打扰。
+      await this.notifyGroupOpen(
+        toPublish.map((a) => ({
+          mealDate: a.mealDate,
+          buildingGroupId: a.buildingGroupId,
+          setMealId: a.setMealId,
+        })),
+      );
     }
 
     return result;
+  }
+
+  // ==========================================================================
+  // 4.2 · 开团通知（场景 `group_open` · 2026-11-18）
+  // ==========================================================================
+
+  /**
+   * 开团通知 —— 告诉团长「你楼里的团已经开了，可以开始分享」
+   *
+   * ## 为什么必须由**开团动作**触发，而不是定时器
+   *
+   * 开团是一个**事件**（`pending → active`），不是一个时刻。用定时器另起一条
+   * 「14:00 发通知」会让两者脱钩：运营 16:00 才补开团，通知却按 14:00 发过或压根没发。
+   * 挂在这里，**谁让楼里变成可下单，谁就负责通知**。
+   *
+   * ## 三个入口，两个落点（少挂一处就会漏）
+   *
+   * | 入口 | 落点 |
+   * |---|---|
+   * | T-1 14:00 跑批开团 | `publishByDate()` |
+   * | 矩阵页单条上架 | `publishAssignment()` |
+   * | 企微「确认开团」逐条 `assign → publish` | 同上（最终都调 `publishAssignment`） |
+   *
+   * ## 只发「这次真的开团成功」的楼群
+   *
+   * 未归群 / 已停团 / 没排期的楼群不发 —— 发一条「开团了」而他楼里根本下不了单，
+   * 比不发更糟：他会照此去群里吆喝，用户点开却买不了。
+   *
+   * ## ⚠️ `dedupeKey` 里必须含 `userId`
+   *
+   * 少了它，同群**第一个**团长投递成功后，其余团长会在查重时被判成「今天已发」而
+   * **全部静默跳过** —— 一个楼群多个团长时，只有一个人收到通知，且没有任何报错。
+   *
+   * ## 失败不影响开团
+   *
+   * `notify()` 承诺不抛异常；这里只汇总 WARN。开团成功、通知失败可以接受；
+   * 开团因发通知而失败不可接受。
+   *
+   * @param rows 本次**真正从 pending 变 active** 的分配（同一楼群只取一条）
+   */
+  private async notifyGroupOpen(
+    rows: Array<{ mealDate: string; buildingGroupId: number; setMealId: number | null }>,
+  ): Promise<void> {
+    if (!rows.length) return;
+
+    // 同一「出餐日 + 楼群」只发一次（一个群一天只有一个分配，这里再兜一层防重）
+    const seen = new Set<string>();
+    const targets = rows.filter((r) => {
+      const k = `${r.mealDate}#${r.buildingGroupId}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+
+    try {
+      const groupIds = [...new Set(targets.map((t) => t.buildingGroupId))];
+      const buildings = await this.buildingRepo.find({
+        where: { buildingGroupId: In(groupIds), status: 1 },
+        select: { id: true, buildingGroupId: true },
+      });
+      if (!buildings.length) return;
+
+      const buildingIds = buildings.map((b) => b.id);
+      const leaders = await this.leaderRepo.find({
+        where: { buildingId: In(buildingIds), status: LeaderStatus.ACTIVE },
+        select: { id: true, userId: true, buildingId: true },
+      });
+      if (!leaders.length) return;
+
+      const userIds = [...new Set(leaders.map((l) => l.userId))];
+      const users = await this.userRepo.find({
+        where: { id: In(userIds), status: UserStatus.NORMAL },
+        select: { id: true, openid: true },
+      });
+      const openidOf = new Map(users.filter((u) => u.openid).map((u) => [u.id, u.openid!]));
+
+      const setMealIds = [
+        ...new Set(targets.map((t) => t.setMealId).filter((v): v is number => Boolean(v))),
+      ];
+      const meals = setMealIds.length
+        ? await this.setMealRepo.find({
+            where: { id: In(setMealIds) },
+            select: { id: true, name: true },
+          })
+        : [];
+      const mealNameOf = new Map(meals.map((m) => [m.id, m.name ?? '今日套餐']));
+
+      // 楼 → 楼群（一个团长只绑一栋楼，通知里要给出是哪个群开的团）
+      const groupOfBuilding = new Map(buildings.map((b) => [b.id, b.buildingGroupId] as const));
+      const targetOfGroup = new Map(targets.map((t) => [t.buildingGroupId, t] as const));
+
+      let delivered = 0;
+      let ok = 0;
+      let failed = 0;
+
+      for (const l of leaders) {
+        const gid = groupOfBuilding.get(l.buildingId);
+        if (!gid) continue;
+        const t = targetOfGroup.get(gid);
+        if (!t) continue;
+
+        const openid = openidOf.get(l.userId);
+        if (!openid) continue;
+
+        const mealName = t.setMealId ? mealNameOf.get(t.setMealId) : undefined;
+        const cutoffText = cutoffAtText(t.mealDate, currentTimeline().cutoff);
+        // `thing` 类型微信限 20 字符，超长截断（不截会 47003，整条发不出去）
+        const noticeTitle = `${monthDayText(t.mealDate)}午餐 · ${mealName ?? '今日套餐'}`.slice(
+          0,
+          20,
+        );
+
+        const r = await this.message.notify({
+          scene: 'group_open',
+          userId: l.userId,
+          openid,
+          page: NOTIFY_PAGES.leaderShare,
+          wxData: {
+            noticeTitle: { value: noticeTitle },
+            cutoffAt: { value: cutoffText },
+          },
+          variables: {
+            mealDate: t.mealDate,
+            setMealName: mealName ?? '',
+            cutoffAt: cutoffText,
+          },
+          dedupeKey: `group_open:${t.mealDate}#g${gid}#u${l.userId}`,
+        });
+        if (r.delivered) {
+          delivered += 1;
+          if (r.ok) ok += 1;
+          else failed += 1;
+        }
+      }
+
+      if (delivered || failed) {
+        this.logger.log(
+          `开团通知 楼群${groupIds.join('/')} 出餐日${targets[0]?.mealDate} ` +
+            `投递${delivered} 成功${ok} 失败${failed}`,
+        );
+      }
+    } catch (e) {
+      // 通知链路的任何异常都不许冒泡到开团结果（见上方「失败不影响开团」）
+      this.logger.warn(`开团通知异常（不影响开团结果）：${e instanceof Error ? e.message : e}`);
+    }
   }
 
   // ==========================================================================
@@ -1245,4 +1437,19 @@ function dateRange(start: string, end: string): string[] {
     cur = addDays(cur, 1);
   }
   return out;
+}
+
+/**
+ * `2026-11-19` → `11月19日`（开团通知的 `thing` 关键词用）
+ *
+ * ⚠️ 为什么不复用「日期展示」类工具：后台的完整日期（`2026-11-19`）塞进微信 `thing`
+ *    会占掉 10 个字符并挤掉套餐名，而通知的接收场景是**今天下午看明天的饭** ——
+ *    「11月19日」足够，年份在这里没有信息量。
+ * ⚠️ 取不到合法日期时返回**空串**（由调用方拼成「午餐 · 套餐名」）：宁可不显示日期，
+ *    也不要显示 `NaN月NaN日` —— 那会直接触发微信 `47003`，整条通知发不出去。
+ */
+function monthDayText(mealDate: string): string {
+  if (!isDateStr(mealDate)) return '';
+  const [, m, d] = mealDate.split('-');
+  return `${Number(m)}月${Number(d)}日`;
 }
