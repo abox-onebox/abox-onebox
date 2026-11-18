@@ -253,9 +253,12 @@ export class UserAdminService {
       const kw = `%${q.keyword}%`;
       // openid 只让搜**后 6 位**：全串搜等于拿一个内部标识去做模糊查询，
       // 且用户报得上来的也只有尾号（同 D19 只回 openidTail 的口径）。
+      // ⚠️ 2026-11-18 补取餐人 / 工位：昵称在真实数据里基本为空，只按昵称搜等于搜不到人。
       qb.andWhere(
         new Brackets((w) => {
           w.where('u.nickname LIKE :kw', { kw })
+            .orWhere('u.recipient_name LIKE :kw', { kw })
+            .orWhere('u.workstation LIKE :kw', { kw })
             .orWhere('u.phone LIKE :kw', { kw })
             .orWhere('u.openid LIKE :kw', { kw });
         }),
@@ -318,6 +321,14 @@ export class UserAdminService {
         id: uid,
         /** 已注销用户已被匿名化为「已注销用户」（`CANCELED_NICKNAME`），如实展示即可 */
         nickname: u.nickname ?? null,
+        /**
+         * 取餐人称呼 + 工位（用户档案，2026-11-18）
+         *
+         * 后台用户页此前只看得到昵称 —— 而昵称在真实数据里基本为空，
+         * 运营在「用户管理」里搜人时连自己刚服务过的用户都认不出来。
+         */
+        recipientName: u.recipientName ?? null,
+        workstation: u.workstation ?? null,
         avatarUrl: u.avatarUrl ?? null,
         phoneMasked: maskPhone(u.phone),
         openidTail: u.openid ? u.openid.slice(-6) : null,

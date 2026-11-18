@@ -245,7 +245,7 @@ export class LeaderInviteService {
 
     const userIds = [...new Set(rows.map((r) => Number(r.inviteeUserId)))];
     const users = userIds.length ? await this.userRepo.find({ where: { id: In(userIds) } }) : [];
-    const nameOf = new Map(users.map((u) => [Number(u.id), u.nickname]));
+    const viewOf = new Map(users.map((u) => [Number(u.id), u]));
 
     const formalCount = await this.countFormal(inviterLeaderId);
 
@@ -262,7 +262,15 @@ export class LeaderInviteService {
         rows.map((r) => ({
           id: Number(r.id),
           /** 被邀请人昵称（无手机号） */
-          nickname: nameOf.get(Number(r.inviteeUserId)) ?? '微信用户',
+          nickname: viewOf.get(Number(r.inviteeUserId))?.nickname ?? '微信用户',
+          /**
+           * 取餐人称呼（2026-11-18）
+           *
+           * ⚠️ 此前只回昵称，而微信早已不返回昵称 ⇒ 团长在「我邀请的人」里
+           *   看到一排「微信用户」，根本认不出谁是谁 —— 与「团长不知道谁下单」同源。
+           *   昵称仍保留（用户自己填过就有），端上按 recipientName → nickname 优先级取。
+           */
+          recipientName: viewOf.get(Number(r.inviteeUserId))?.recipientName ?? null,
           channel: r.channel,
           /** 绑定时间 */
           bindAt: r.bindAt,
@@ -301,7 +309,7 @@ export class LeaderInviteService {
 
     const userIds = [...new Set(rows.map((r) => Number(r.inviteeUserId)))];
     const users = userIds.length ? await this.userRepo.find({ where: { id: In(userIds) } }) : [];
-    const nameOf = new Map(users.map((u) => [Number(u.id), u.nickname]));
+    const viewOf = new Map(users.map((u) => [Number(u.id), u]));
 
     const formalCount = await this.countFormalByUser(inviterUserId);
 
@@ -317,7 +325,15 @@ export class LeaderInviteService {
       ...paginate(
         rows.map((r) => ({
           id: Number(r.id),
-          nickname: nameOf.get(Number(r.inviteeUserId)) ?? '微信用户',
+          nickname: viewOf.get(Number(r.inviteeUserId))?.nickname ?? '微信用户',
+          /**
+           * 取餐人称呼（2026-11-18）
+           *
+           * ⚠️ 此前只回昵称，而微信早已不返回昵称 ⇒ 团长在「我邀请的人」里
+           *   看到一排「微信用户」，根本认不出谁是谁 —— 与「团长不知道谁下单」同源。
+           *   昵称仍保留（用户自己填过就有），端上按 recipientName → nickname 优先级取。
+           */
+          recipientName: viewOf.get(Number(r.inviteeUserId))?.recipientName ?? null,
           channel: r.channel,
           bindAt: r.bindAt,
           isFormal: Number(r.isFormal) === 1,

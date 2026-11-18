@@ -72,7 +72,7 @@ export class AdminOrdersQueryDto {
   @MaxLength(24)
   status?: string;
 
-  @ApiPropertyOptional({ description: '关键词：订单号 或 用户昵称' })
+  @ApiPropertyOptional({ description: '关键词：订单号 / 取餐人 / 工位 / 用户昵称' })
   @IsOptional()
   @IsString()
   @MaxLength(64)

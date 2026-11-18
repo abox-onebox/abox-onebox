@@ -96,10 +96,18 @@ export class RefundAdminService {
       }
       if (q.keyword) {
         const kw = `%${q.keyword.trim()}%`;
+        /**
+         * 关键词命中：退款单号 / 订单号 / 用户昵称 / **取餐人 / 工位**（2026-11-18 补）
+         *
+         * ⚠️ 昵称在真实数据里基本为空（微信已不返回），所以此前这条搜索**实际只能搜单号**。
+         *   运营接到「3F-A12 那位要退款」时得先凭工位把人捞出来，否则只能靠订单号反查。
+         */
         qb.andWhere(
-          '(r.refund_no LIKE :kw OR r.order_no LIKE :kw OR r.user_id IN ' +
-            '(SELECT u1.id FROM ab_user u1 WHERE u1.nickname LIKE :nick))',
-          { kw, nick: kw },
+          '(r.refund_no LIKE :kw OR r.order_no LIKE :kw' +
+            ' OR r.order_id IN (SELECT o2.id FROM ab_order o2' +
+            '   WHERE o2.recipient_name LIKE :kw OR o2.workstation LIKE :kw)' +
+            ' OR r.user_id IN (SELECT u1.id FROM ab_user u1 WHERE u1.nickname LIKE :kw))',
+          { kw },
         );
       }
       return qb;
@@ -243,6 +251,14 @@ export class RefundAdminService {
         user: {
           id: Number(r.userId),
           nickname: user?.nickname ?? null,
+          /**
+           * 取餐人 + 工位快照（2026-11-18）
+           *
+           * 审批退款时运营要判断「这单到底是谁的、送没送到工位」，
+           * 昵称为空时这两个字段是唯一线索（与后台订单列表同口径）。
+           */
+          recipientName: order?.recipientName ?? null,
+          workstation: order?.workstation ?? null,
           /** 后台列表**同样脱敏** —— 全号属于 D12 导出那条受审计的通道 */
           phoneMasked: maskPhone(user?.phone ?? null),
         },

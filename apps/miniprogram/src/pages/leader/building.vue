@@ -208,7 +208,11 @@ const memberStats = computed(() => {
   const totalQty = members.reduce((sum, m) => sum + m.quantity, 0);
   const multiList = members
     .filter((m) => m.quantity >= 2)
-    .map((m) => ({ name: displayOr(m.userName, '匿名用户'), quantity: m.quantity }));
+    .map((m) => ({
+      // 取餐人公开为昵称回退：昵称在真实数据里基本为空，只取 userName 会退化成「匿名用户」
+      name: displayOr(m.recipientName, displayOr(m.userName, '匿名用户')),
+      quantity: m.quantity,
+    }));
 
   return {
     dinerCount,

@@ -326,8 +326,10 @@ export function signAgreement(
 /** 我的推荐 · 单条明细（**不含手机号**，§1.6） */
 export interface LeaderInviteItem {
   id: number;
-  /** 被邀请人昵称（无手机号） */
+  /** 被邀请人昵称（无手机号）—— 微信已不返回昵称，多为空或「微信用户」 */
   nickname: string;
+  /** 被邀请人的取餐人称呼（2026-11-18）：昵称为空时团长靠这个认人 */
+  recipientName: string | null;
   /** link 链接 / qrcode 小程序码 / poster 海报 / self 自荐 */
   channel: string;
   /** 绑定时间（UTC ISO，`....Z`） */

@@ -81,7 +81,7 @@
 
       <el-input
         v-model="query.keyword"
-        placeholder="订单号 / 用户昵称"
+        placeholder="订单号 / 取餐人 / 工位 / 昵称"
         clearable
         style="width: 180px"
         @keyup.enter="reload"
@@ -148,11 +148,16 @@
         </template>
       </el-table-column>
       <el-table-column prop="mealDate" label="发货日" width="104" />
-      <el-table-column label="用户" width="140">
+      <!-- ⚠️ 2026-11-18：原来这一列叫「用户」，只显示昵称 —— 而微信早已不返回昵称，
+           真实数据里几乎全是「(未设昵称)」，运营认不出下单人。改以取餐人为主、昵称为辅。 -->
+      <el-table-column label="取餐人 / 用户" width="168">
         <template #default="{ row }">
           <div class="stack">
-            <span>{{ displayOr(row.userName, '(未设昵称)') }}</span>
-            <span class="stack__sub">{{ row.phoneMasked }}</span>
+            <span>{{ displayOr(row.recipientName, displayOr(row.userName, '(未填取餐人)')) }}</span>
+            <span v-if="row.workstation" class="stack__sub">
+              {{ row.workstation }} · {{ row.phoneMasked }}
+            </span>
+            <span v-else class="stack__sub">{{ row.phoneMasked }}</span>
           </div>
         </template>
       </el-table-column>

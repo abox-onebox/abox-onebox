@@ -100,10 +100,12 @@
     </div>
 
     <el-table v-loading="loading" :data="rows" class="table" stripe size="small">
-      <el-table-column label="用户" min-width="140">
+      <!-- ⚠️ 2026-11-18：昵称在真实数据里基本为空，主行改以取餐人称呼为主、昵称为辅 -->
+      <el-table-column label="用户" min-width="170">
         <template #default="{ row }">
           <div class="stack">
-            <span class="strong">{{ displayOr(row.nickname) }}</span>
+            <span class="strong">{{ displayOr(row.recipientName, displayOr(row.nickname)) }}</span>
+            <span v-if="row.workstation" class="stack__sub">{{ row.workstation }}</span>
             <span class="stack__sub mono">id {{ row.id }} · openid …{{ row.openidTail }}</span>
           </div>
         </template>
@@ -182,7 +184,7 @@
     <!-- ─────────────────── 详情抽屉 ─────────────────── -->
     <el-drawer
       v-model="detailVisible"
-      :title="`用户详情 · ${detail?.user.nickname ?? ''}`"
+      :title="`用户详情 · ${detail?.user.recipientName ?? detail?.user.nickname ?? ''}`"
       size="560px"
     >
       <div v-if="detail" v-loading="detailLoading">
@@ -196,6 +198,12 @@
 
         <el-descriptions :column="2" border size="small" class="desc">
           <el-descriptions-item label="用户 id">{{ detail.user.id }}</el-descriptions-item>
+          <el-descriptions-item label="取餐人 / 工位">
+            {{ displayOr(detail.user.recipientName) }}
+            <span v-if="detail.user.workstation" class="card__note">
+              {{ detail.user.workstation }}
+            </span>
+          </el-descriptions-item>
           <el-descriptions-item label="昵称">
             {{ displayOr(detail.user.nickname) }}
           </el-descriptions-item>
@@ -261,7 +269,7 @@
     <!-- ─────────────────── 改绑 / 拉黑 ─────────────────── -->
     <el-dialog
       v-model="editVisible"
-      :title="`修改用户 · ${editTarget?.nickname ?? ''}`"
+      :title="`修改用户 · ${editTarget?.recipientName ?? editTarget?.nickname ?? ''}`"
       width="520px"
     >
       <el-alert
@@ -468,7 +476,7 @@ async function confirmEdit() {
     try {
       await ElMessageBox.confirm(
         '解绑后该用户将无法下单，需到小程序重新选择办公楼。确认解绑？',
-        `确认解绑 · ${row.nickname ?? row.id}`,
+        `确认解绑 · ${row.recipientName ?? row.nickname ?? row.id}`,
         { type: 'warning', confirmButtonText: '确认解绑', cancelButtonText: '取消' },
       );
     } catch {

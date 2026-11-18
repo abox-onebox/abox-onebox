@@ -22,6 +22,9 @@ export interface UserRow {
   id: number;
   /** 已注销用户已被服务端匿名化为「已注销用户」，如实展示 */
   nickname: string | null;
+  /** 取餐人称呼 + 工位（用户档案，2026-11-18）—— 昵称为空时后台靠这两项认人 */
+  recipientName: string | null;
+  workstation: string | null;
   avatarUrl: string | null;
   /** 脱敏手机号（如 `138****1234`）；未填则 `null` */
   phoneMasked: string | null;

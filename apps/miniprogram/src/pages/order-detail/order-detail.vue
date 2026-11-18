@@ -153,6 +153,12 @@
         <text class="pickup__when"
           >明日 {{ detail.pickup.expectAt }} 由团长统一派送，直接送到你的工位</text
         >
+        <!-- 送达工位（2026-11-18）：下单必填、订单快照 —— 用户可在此自证「我填的是这个」，
+             填错了当场能发现并联系团长改，不必等饭送错。 -->
+        <text class="pickup__where"
+          >送至 {{ detail.workstation || '未填工位'
+          }}<text v-if="detail.recipientName"> · {{ detail.recipientName }} 收</text></text
+        >
         <view class="pickup__acts">
           <button class="ghost-btn" hover-class="ghost-btn--hover" @tap="contactLeader">
             <text class="abi abi-20">{{ I.phone }}</text> 联系团长

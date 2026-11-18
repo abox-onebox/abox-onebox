@@ -617,6 +617,14 @@ export class OrderService {
       payAmountFen: toFen(order.payAmount),
       remark: order.remark ?? null,
       /**
+       * 取餐人 + 工位快照（2026-11-18）
+       *
+       * 下单必填、订单已存，但此前详情**不出参**：用户把工位写错（3F→5F）后，
+       * 端上无从核对，只能等饭送错再找团长。出参后「我的订单」可自证。
+       */
+      recipientName: order.recipientName ?? null,
+      workstation: order.workstation ?? null,
+      /**
        * ⭐⭐ x 盲盒 · **服务端遮蔽**（2026-10-27 · 首轮测试反馈后立规）
        *
        * **原状**：`blindBoxName: order.blindBoxName ?? null` —— **无条件下发**，

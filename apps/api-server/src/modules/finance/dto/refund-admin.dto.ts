@@ -53,7 +53,7 @@ export class AdminRefundsQueryDto {
   tab?: (typeof REFUND_TABS)[number];
 
   @ApiPropertyOptional({
-    description: '关键词：退款单号 / 订单号 / 用户昵称',
+    description: '关键词：退款单号 / 订单号 / 取餐人 / 工位 / 用户昵称',
     example: 'RF20260915',
   })
   @IsOptional()

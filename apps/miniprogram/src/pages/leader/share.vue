@@ -148,7 +148,8 @@
 
         <view v-for="it in inviteList" :key="it.id" class="inv">
           <view class="inv__left">
-            <text class="inv__name">{{ it.nickname }}</text>
+            <!-- 昵称常为空（微信不返回），优先显示对方下单时填的取餐人称呼 -->
+            <text class="inv__name">{{ displayOr(it.recipientName, it.nickname) }}</text>
             <text class="inv__time">
               {{ formatDateTime(it.bindAt) }} · {{ channelLabel(it.channel) }}
             </text>
@@ -207,7 +208,7 @@ import type {
 } from '@/api/leader';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useLeaderStore } from '@/stores/leader';
-import { formatDateTime } from '@/utils/format';
+import { displayOr, formatDateTime } from '@/utils/format';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const { run, loading } = useRequest();

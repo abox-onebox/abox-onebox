@@ -571,6 +571,15 @@ export class OrderAdminService {
         '订单号',
         '出餐日',
         '用户昵称',
+        /**
+         * 取餐人 / 工位（2026-11-18 补）
+         *
+         * 「用户昵称」列在真实导出里基本是空的（微信已不返回昵称），运营拿这份
+         * CSV 去对「这份饭该给谁」时无从下手。两列紧跟昵称：昵称有就看昵称，
+         * 没有就看取餐人 —— 后者才是下单时用户**自己填的**，一定有值。
+         */
+        '取餐人',
+        '工位',
         '手机号',
         '办公楼',
         '楼群',
@@ -597,6 +606,8 @@ export class OrderAdminService {
         v.orderNo,
         v.mealDate,
         v.userName ?? '',
+        v.recipientName ?? '',
+        v.workstation ?? '',
         users.get(userIdOf.get(v.orderNo as string) ?? 0)?.phone ?? '',
         v.buildingName ?? '',
         v.groupName ?? '',
@@ -679,13 +690,19 @@ export class OrderAdminService {
 
     if (q.keyword?.trim()) {
       const kw = `%${q.keyword.trim()}%`;
-      // 关键词命中订单号，或命中下单用户的昵称（昵称要子查询，无法只靠 o.* 表达）
+      /**
+       * 关键词命中：订单号 / 取餐人 / 工位 / 下单用户昵称（昵称要子查询，无法只靠 o.* 表达）
+       *
+       * ⚠️ 2026-11-18：原注释只写了「订单号或昵称」，但微信早已不返回昵称、用户也不会填，
+       * 所以这条搜索在真实数据上**实际只能搜订单号** —— 运营接到「3F-A12 那份没送到」时
+       * 无从查起。补上取餐人与工位（下单必填，一定有值）。
+       */
       qb.andWhere(
         new Brackets((w) => {
-          w.where('o.orderNo LIKE :kw', { kw }).orWhere(
-            'o.userId IN (SELECT u.id FROM ab_user u WHERE u.nickname LIKE :kw)',
-            { kw },
-          );
+          w.where('o.orderNo LIKE :kw', { kw })
+            .orWhere('o.recipientName LIKE :kw', { kw })
+            .orWhere('o.workstation LIKE :kw', { kw })
+            .orWhere('o.userId IN (SELECT u.id FROM ab_user u WHERE u.nickname LIKE :kw)', { kw });
         }),
       );
     }
@@ -754,6 +771,16 @@ export class OrderAdminService {
         balanceUsedFen: toFen(Number(o.balanceUsed)),
         payAmountFen: toFen(Number(o.payAmount)),
         userName: u?.nickname ?? null,
+        /**
+         * 取餐人 + 工位快照（2026-11-18）
+         *
+         * ⚠️ 缺了这两列，后台「用户」列在真实数据里几乎全是 `(未设昵称)` ——
+         * 微信新版早已不返回昵称，用户也不会主动去填。运营接到「3F-A12 的饭没送到」
+         * 时，唯一能认人的就只有这两列。团长端已有（`leader-order.service.ts` toView），
+         * 后台此前**没跟上**，属于同一个根因的另一处漏口。
+         */
+        recipientName: o.recipientName ?? null,
+        workstation: o.workstation ?? null,
         /** ⚠️ 后台列表同样脱敏（只有 D12 导出给全号） */
         phoneMasked: maskPhone(u?.phone),
         ...(withUserId ? { userId: Number(o.userId) } : {}),

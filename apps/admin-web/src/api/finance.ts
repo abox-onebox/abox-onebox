@@ -48,7 +48,14 @@ export interface RefundRow {
   reasonTypeText: string | null;
   reason: string | null;
 
-  user: { id: number; nickname: string | null; phoneMasked: string | null };
+  user: {
+    id: number;
+    nickname: string | null;
+    /** 取餐人 + 工位快照（2026-11-18）：昵称常为空，审批退款时靠这两项认人 */
+    recipientName: string | null;
+    workstation: string | null;
+    phoneMasked: string | null;
+  };
   leader: { id: number; realName: string | null; level: string } | null;
 
   /** C6 第二段依据：申请前的订单状态（驳回会回到这里） */

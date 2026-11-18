@@ -51,7 +51,9 @@
 
           <view v-for="o in autoHandled" :key="o.orderNo" class="row">
             <view class="row__left">
-              <text class="row__name">{{ displayOr(o.userName, '匿名用户') }}</text>
+              <text class="row__name">{{
+                displayOr(o.recipientName, displayOr(o.userName, '匿名用户'))
+              }}</text>
               <text class="row__meta">{{ o.statusText }} · {{ formatTime(o.createdAt) }}</text>
             </view>
             <text class="row__tail row__tail--ok">已取消</text>
@@ -76,7 +78,9 @@
 
           <view v-for="o in refundHandled" :key="o.orderNo" class="row">
             <view class="row__left">
-              <text class="row__name">{{ displayOr(o.userName, '匿名用户') }}</text>
+              <text class="row__name">{{
+                displayOr(o.recipientName, displayOr(o.userName, '匿名用户'))
+              }}</text>
               <text class="row__meta">{{ o.statusText }} · {{ formatTime(o.createdAt) }}</text>
             </view>
             <text
@@ -111,7 +115,9 @@
             @tap="pick(item.orderNo)"
           >
             <view class="cand__left">
-              <text class="cand__user">{{ displayOr(item.userName, '匿名用户') }}</text>
+              <text class="cand__user">{{
+                displayOr(item.recipientName, displayOr(item.userName, '匿名用户'))
+              }}</text>
               <text class="cand__no">{{ item.orderNo }}</text>
             </view>
             <view class="cand__right">
@@ -139,7 +145,9 @@
         </view>
         <view v-if="target" class="kv">
           <text class="kv__k">用户</text>
-          <text class="kv__v">{{ displayOr(target.userName, '匿名用户') }}</text>
+          <text class="kv__v">{{
+            displayOr(target.recipientName, displayOr(target.userName, '匿名用户'))
+          }}</text>
         </view>
         <view v-if="target" class="kv">
           <text class="kv__k">申请退款额</text>

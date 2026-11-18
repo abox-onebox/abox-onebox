@@ -78,6 +78,14 @@
           <el-card shadow="never" class="card">
             <template #header><span class="card__title">下单人</span></template>
             <el-descriptions :column="1" border size="small">
+              <!-- ⚠️ 2026-11-18 新增：昵称在真实数据里基本为空（微信不返回），
+                   送餐/客服核对靠的是下单时用户必填的取餐人与工位，故排在最前。 -->
+              <el-descriptions-item label="取餐人">
+                {{ displayOr(detail.order.recipientName, '(未填取餐人)') }}
+              </el-descriptions-item>
+              <el-descriptions-item label="工位">
+                {{ displayOr(detail.order.workstation) }}
+              </el-descriptions-item>
               <el-descriptions-item label="昵称">
                 {{ displayOr(detail.order.userName, '(未设昵称)') }}
               </el-descriptions-item>

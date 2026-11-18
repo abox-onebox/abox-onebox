@@ -47,7 +47,7 @@
       />
       <el-input
         v-model="query.keyword"
-        placeholder="退款单号 / 订单号 / 用户昵称"
+        placeholder="退款单号 / 订单号 / 取餐人 / 工位 / 昵称"
         clearable
         style="width: 240px"
         @keyup.enter="reload"
@@ -138,11 +138,18 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="用户" min-width="130">
+      <!-- ⚠️ 2026-11-18：原来只显示昵称，而昵称在真实数据里常为空 ——
+           审批退款时运营认不出申请人，也判断不了「这单该送到哪个工位」。 -->
+      <el-table-column label="取餐人 / 用户" min-width="150">
         <template #default="{ row }">
           <div class="stack">
-            <span>{{ displayOr(asRow(row).user.nickname) }}</span>
-            <span class="stack__sub mono">{{ displayOr(asRow(row).user.phoneMasked) }}</span>
+            <span>
+              {{ displayOr(asRow(row).user.recipientName, displayOr(asRow(row).user.nickname)) }}
+            </span>
+            <span v-if="asRow(row).user.workstation" class="stack__sub">
+              {{ asRow(row).user.workstation }} · {{ displayOr(asRow(row).user.phoneMasked) }}
+            </span>
+            <span v-else class="stack__sub mono">{{ displayOr(asRow(row).user.phoneMasked) }}</span>
           </div>
         </template>
       </el-table-column>
@@ -251,6 +258,12 @@
           </el-descriptions-item>
           <el-descriptions-item label="订单号">
             <span class="mono">{{ current.orderNo }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="取餐人 / 工位">
+            {{ displayOr(current.user.recipientName) }}
+            <span v-if="current.user.workstation" class="card__note">
+              {{ current.user.workstation }}
+            </span>
           </el-descriptions-item>
           <el-descriptions-item label="用户">
             {{ displayOr(current.user.nickname) }} · {{ displayOr(current.user.phoneMasked) }}

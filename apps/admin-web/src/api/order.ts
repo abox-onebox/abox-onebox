@@ -35,6 +35,9 @@ export interface AdminOrderRow {
   balanceUsedFen: number;
   payAmountFen: number;
   userName: string | null;
+  /** 取餐人称呼 + 工位（下单时用户必填，订单快照）—— 昵称为空时运营靠这两项认人 */
+  recipientName: string | null;
+  workstation: string | null;
   /** ⚠️ 列表只给脱敏号；完整号仅在 D12 导出 */
   phoneMasked: string;
   userId?: number;

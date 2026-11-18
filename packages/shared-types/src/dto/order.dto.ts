@@ -76,6 +76,15 @@ export interface OrderDetailResult {
   payAmountFen: number;
   remark: string | null;
   /**
+   * 取餐人称呼 + 工位（**本单快照**，下单当时定格）
+   *
+   * ⚠️ 2026-11-18：下单时已必填，但此前详情**不下发** —— 用户把工位写错
+   *   （3F 写成 5F）后，自己在「我的订单」里无从核对，只能等饭送错再找团长。
+   *   下发后用户可自证「我当时填的是这个」。
+   */
+  recipientName: string | null;
+  workstation: string | null;
+  /**
    * 本单**是否含** x 盲盒（只回答「有没有」，**不含内容**）—— 可安全下发
    *
    * ⚠️ 为什么需要它：`blindBoxName` 在送达前被服务端抹成 `null`（见下），
