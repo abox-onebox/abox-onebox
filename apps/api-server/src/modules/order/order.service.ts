@@ -247,6 +247,16 @@ export class OrderService {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new BizException(ErrorCode.USER_NOT_FOUND);
 
+    /**
+     * 取餐人称呼 / 工位（2026-11-18）：入参优先，回退用户档案。
+     * · 端上下单必填，正常都会带值；老客户端 / E2E 载荷不带时回退档案，均无则 null。
+     * · `trim()` 去空白，空串视作未填，避免团长看到一串空格。
+     */
+    const inName = dto.recipientName?.trim() || null;
+    const inStation = dto.workstation?.trim() || null;
+    const recipientName = inName ?? user.recipientName ?? null;
+    const workstation = inStation ?? user.workstation ?? null;
+
     // ④ 团长归属（邀请码优先，回落用户默认绑定）→ 30007
     const leader = await this.resolveLeader(dto.leaderCode, user);
 
@@ -416,9 +426,22 @@ export class OrderService {
         payAmount: toYuanStr(payAmountFen),
         status: OrderStatus.PENDING_PAY,
         blindBoxName,
+        /** 取餐人信息快照（本单定格，团长据此送工位） */
+        recipientName,
+        workstation,
         version: 0,
       });
-      return m.getRepository(Order).save(entity);
+      const saved = await m.getRepository(Order).save(entity);
+
+      // 回写用户档案（仅本次入参有值时）：下次下单预填免填。
+      // 空值不覆盖，避免老客户端/E2E 不带字段时把已存档案清掉。
+      const profilePatch: Partial<typeof user> = {};
+      if (inName) profilePatch.recipientName = inName;
+      if (inStation) profilePatch.workstation = inStation;
+      if (Object.keys(profilePatch).length > 0) {
+        await m.getRepository(User).update({ id: userId }, profilePatch);
+      }
+      return saved;
     });
 
     const expireAt = payExpireAt(order.createdAt ?? now, payTimeout);

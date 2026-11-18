@@ -6,6 +6,10 @@ export interface UserInfo {
   id: number;
   nickname: string | null;
   avatarUrl: string | null;
+  /** 取餐人称呼（下单填过就有，下单页预填用；2026-11-18） */
+  recipientName: string | null;
+  /** 工位 / 取餐点（下单填过就有，下单页预填用） */
+  workstation: string | null;
   /** ⚠️ C3 / L9：仅微信授权登录，**不取手机号与地址**；此字段一律为 null */
   phone: string | null;
   /** 所属办公楼（经团长邀请链接绑定；未绑定则无法下单） */

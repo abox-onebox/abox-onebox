@@ -24,6 +24,10 @@ export interface LeaderOrderItem {
   orderNo: string;
   /** 用户昵称 */
   userName: string | null;
+  /** 取餐人称呼快照（下单定格，团长据此认人；2026-11-18） */
+  recipientName: string | null;
+  /** 工位 / 取餐点快照（下单定格） */
+  workstation: string | null;
   /** ⚠️ 已脱敏，如 `138****0007`；无手机号 → null */
   phoneMasked: string | null;
   quantity: number;

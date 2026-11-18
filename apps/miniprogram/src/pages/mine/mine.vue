@@ -6,9 +6,16 @@
 
     <!-- 身份卡 -->
     <view class="profile">
-      <view class="profile__avatar">
-        <text class="profile__avatar-text">{{ initials }}</text>
-      </view>
+      <!-- 头像（2026-11-18）：点一下采用微信头像（chooseAvatar），后端换持久地址并入库。
+           有头像显示图片，没有则显示昵称首字；button 态保证 chooseAvatar 能唤起。 -->
+      <button
+        class="profile__avatar profile__avatar--btn"
+        open-type="chooseAvatar"
+        @chooseavatar="onChooseAvatar"
+      >
+        <image v-if="avatarUrl" class="profile__avatar-img" :src="avatarUrl" mode="aspectFill" />
+        <text v-else class="profile__avatar-text">{{ initials }}</text>
+      </button>
       <text class="profile__name">{{ nickname }}</text>
       <text class="profile__follow">{{ followText }}</text>
 
@@ -214,7 +221,7 @@ import { LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
 import { fetchMe } from '@/api/auth';
 import type { MeResult } from '@/api/auth';
 import { fetchOrders } from '@/api/order';
-import { fetchMyBalance } from '@/api/user';
+import { fetchMyBalance, uploadAvatar } from '@/api/user';
 import { fetchCommissions } from '@/api/leader-finance';
 import { fetchWorkbench } from '@/api/leader';
 import { fetchSupportContact } from '@/api/support';
@@ -262,6 +269,25 @@ const csEntryText = computed(() => csEntryLabel(csMode.value));
  */
 const nickname = computed(() => me.value?.nickname || userStore.info?.nickname || '微信用户');
 const initials = computed(() => nickname.value.slice(0, 1));
+/** 头像（服务端快照优先，同 nickname 口径；chooseAvatar 上传后本地即时回显） */
+const avatarUrl = computed(() => me.value?.avatarUrl || userStore.info?.avatarUrl || '');
+
+/**
+ * 采用微信头像（chooseAvatar 一键）：临时路径上传到后端换持久 URL 并入库。
+ * ⚠️ 不直接展示/入库临时路径（会话结束即失效）；上传失败只提示，不改现有头像。
+ */
+async function onChooseAvatar(e: { detail?: { avatarUrl?: string } }): Promise<void> {
+  const tmp = e.detail?.avatarUrl;
+  if (!tmp) return;
+  try {
+    const { url } = await run(() => uploadAvatar(tmp));
+    userStore.patchInfo({ avatarUrl: url });
+    me.value = me.value ? { ...me.value, avatarUrl: url } : me.value;
+    uni.showToast({ title: '头像已更新', icon: 'success' });
+  } catch (err) {
+    toastApiError(err);
+  }
+}
 
 /** 「跟随团长：李明 · 国贸三期 A 座」（任一缺失就退化成已有信息，不显示 null） */
 const followText = computed(() => {
@@ -307,6 +333,8 @@ async function loadProfile(): Promise<void> {
       id: res.id,
       nickname: res.nickname,
       avatarUrl: res.avatarUrl,
+      recipientName: res.recipientName,
+      workstation: res.workstation,
       phone: res.phone,
       buildingId: res.buildingId,
       teamLeaderId: res.teamLeaderId,
@@ -617,8 +645,26 @@ onShow(() => {
     justify-content: center;
     width: 128rpx;
     height: 128rpx;
+    padding: 0;
+    margin: 0;
     background: $c-surface-2;
     border-radius: 50%;
+    overflow: hidden;
+    line-height: 1;
+
+    // 去掉 button 默认边框/背景，保留圆形头像外观
+    &--btn {
+      border: none;
+
+      &::after {
+        border: none;
+      }
+    }
+  }
+
+  &__avatar-img {
+    width: 100%;
+    height: 100%;
   }
 
   &__avatar-text {

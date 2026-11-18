@@ -590,6 +590,8 @@ async function doQuit(): Promise<void> {
         id: res.id,
         nickname: res.nickname,
         avatarUrl: res.avatarUrl,
+        recipientName: res.recipientName,
+        workstation: res.workstation,
         phone: res.phone,
         buildingId: res.buildingId,
         teamLeaderId: res.teamLeaderId,

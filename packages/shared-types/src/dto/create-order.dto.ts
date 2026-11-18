@@ -18,6 +18,16 @@ export interface CreateOrderDto {
   leaderCode?: string;
   /** 选用的代金券券码（`ab_user_coupon.code`）；省略表示不使用券 */
   couponCode?: string;
+  /**
+   * 取餐人称呼（端上下单必填，服务端落 `ab_order.recipient_name` 并回写用户档案）
+   * —— 团长按此认人送工位。省略时服务端回退读取用户档案，均无则记「匿名用户」。
+   */
+  recipientName?: string;
+  /**
+   * 工位 / 取餐点（端上下单必填，服务端落 `ab_order.workstation` 并回写用户档案）
+   * —— 省略时服务端回退读取用户档案，均无则记「未留工位」。
+   */
+  workstation?: string;
 }
 
 /** U6 返回 —— 订单已创建（`pending_pay`），支付参数由 U7 单独获取 */

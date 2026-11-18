@@ -97,9 +97,13 @@
           @tap="goRefund(item.orderNo)"
         >
           <view class="row__left">
-            <text class="row__name">{{ displayOr(item.userName, '匿名用户') }}</text>
+            <text class="row__name">
+              {{ displayOr(item.recipientName, displayOr(item.userName, '匿名用户')) }}
+            </text>
             <text class="row__sub">
-              {{ item.quantity }} 份 ·
+              {{ displayOr(item.workstation, '未留工位') }} · {{ item.quantity }} 份
+            </text>
+            <text class="row__sub">
               {{ displayOr(item.phoneMasked, '未留手机号') }}
             </text>
             <text v-if="item.remark" class="row__remark">备注：{{ item.remark }}</text>

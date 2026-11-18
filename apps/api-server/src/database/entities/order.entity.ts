@@ -119,6 +119,16 @@ export class Order {
   remark?: string | null;
 
   /**
+   * 取餐人称呼 + 工位（每单快照，2026-11-18）
+   * —— 下单时从入参或用户档案定格，团长据此送工位；用户事后改档案不影响历史单。
+   */
+  @Column({ name: 'recipient_name', type: 'varchar', length: 32, nullable: true })
+  recipientName?: string | null;
+
+  @Column({ name: 'workstation', type: 'varchar', length: 64, nullable: true })
+  workstation?: string | null;
+
+  /**
    * x 盲盒抽到的内容（轻量小辅助功能）
    * 下单时从配置池随机定一个，送达后揭晓；`null` 表示本单未含盲盒（如功能关闭 / 池为空）。
    */

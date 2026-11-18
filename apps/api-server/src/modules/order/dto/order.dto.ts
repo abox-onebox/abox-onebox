@@ -52,6 +52,24 @@ export class CreateOrderReqDto implements CreateOrderDto {
   @IsString()
   @MaxLength(32)
   couponCode?: string;
+
+  @ApiPropertyOptional({
+    description: '取餐人称呼（端上下单必填）；落订单快照并回写用户档案；缺省回退档案',
+    example: '张三',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  recipientName?: string;
+
+  @ApiPropertyOptional({
+    description: '工位 / 取餐点（端上下单必填）；落订单快照并回写用户档案；缺省回退档案',
+    example: '12层A区',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  workstation?: string;
 }
 
 /** U9 订单列表查询 */

@@ -123,6 +123,8 @@ export class AuthService {
         id: user.id,
         nickname: user.nickname ?? null,
         avatarUrl: user.avatarUrl ?? null,
+        recipientName: user.recipientName ?? null,
+        workstation: user.workstation ?? null,
         phone: user.phone ?? null,
         buildingId: user.buildingId ?? null,
         teamLeaderId: user.teamLeaderId ?? null,
@@ -268,6 +270,9 @@ export class AuthService {
       id: user.id,
       nickname: user.nickname ?? null,
       avatarUrl: user.avatarUrl ?? null,
+      /** 取餐人档案：下单页预填免填用（2026-11-18） */
+      recipientName: user.recipientName ?? null,
+      workstation: user.workstation ?? null,
       phone: user.phone ?? null,
       buildingId: user.buildingId ?? null,
       /** ⭐ 派生：办公楼名称（未绑定 → null），P8「跟随团长：X · {本字段}」 */

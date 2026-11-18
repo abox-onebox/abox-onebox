@@ -207,6 +207,8 @@ async function refresh(): Promise<void> {
       id: me.id,
       nickname: me.nickname,
       avatarUrl: me.avatarUrl,
+      recipientName: me.recipientName,
+      workstation: me.workstation,
       phone: me.phone,
       buildingId: me.buildingId,
       teamLeaderId: me.teamLeaderId,

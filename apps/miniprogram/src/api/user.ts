@@ -7,7 +7,52 @@
  * U15 订阅上报一期未实装；U16 协议正文已由 M5-18 实装（`constants/agreements.ts`，**不经接口**）；
  * M5-20 补 **U19 账号注销**（`POST /me/cancel` · 提审硬条件）。
  */
+import { ENV } from '@/constants/env';
+import { getToken } from '@/utils/storage';
+
 import { http, query } from './request';
+
+// ---------------------------------------------------------------------------
+// 用户头像（2026-11-18 · 微信 chooseAvatar 一键采用）
+// ---------------------------------------------------------------------------
+
+/** 头像上传端点路径（用户态，全局 JwtAuthGuard 鉴权） */
+const AVATAR_PATH = '/me/avatar';
+
+/**
+ * 上传并更新头像（chooseAvatar 一键采用）
+ *
+ * `filePath` 是 `chooseAvatar` 回调给的**临时路径**（会话结束即失效），
+ * 必须经 `POST /me/avatar` 换成服务端持久 URL 并入库；返回的 `url` 才是可展示的头像。
+ * 鉴权头与统一请求层同口径（`Authorization: Bearer <token>`）。
+ */
+export function uploadAvatar(filePath: string): Promise<{ url: string }> {
+  return new Promise((resolve, reject) => {
+    uni.uploadFile({
+      url: `${ENV.apiBaseUrl}${AVATAR_PATH}`,
+      filePath,
+      name: 'file',
+      header: { Authorization: `Bearer ${getToken()}` },
+      success: (res) => {
+        let code: number | undefined;
+        let body: { url?: string; message?: string } = {};
+        try {
+          body = JSON.parse(res.data) as { url?: string; message?: string };
+          code = (body as unknown as { code?: number }).code;
+        } catch {
+          reject(new Error('头像上传返回格式异常'));
+          return;
+        }
+        if (res.statusCode === 201 && code === 0 && body.url) {
+          resolve({ url: body.url });
+        } else {
+          reject(new Error(body.message || '头像上传失败'));
+        }
+      },
+      fail: (err) => reject(new Error(err.errMsg || '头像上传失败')),
+    });
+  });
+}
 
 // ---------------------------------------------------------------------------
 // U-B2 自助绑定 / 更换办公楼（`PUT /me/building`）

@@ -28,6 +28,9 @@ export interface LoginUser {
   id: number;
   nickname: string | null;
   avatarUrl: string | null;
+  /** 取餐人档案（下单填过就有，下单页预填用；2026-11-18） */
+  recipientName: string | null;
+  workstation: string | null;
   /** ⚠️ C3 / L9：不取手机号，恒为 null */
   phone: string | null;
   buildingId: number | null;

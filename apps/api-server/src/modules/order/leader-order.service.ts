@@ -139,12 +139,25 @@ export class LeaderOrderService {
       mealDate,
       count: rows.length,
       /** 导出列（端上据表头写 CSV） */
-      headers: ['订单号', '用户昵称', '手机号', '份数', '金额(元)', '状态', '备注', '下单时间'],
+      headers: [
+        '订单号',
+        '用户昵称',
+        '取餐人',
+        '工位',
+        '手机号',
+        '份数',
+        '金额(元)',
+        '状态',
+        '备注',
+        '下单时间',
+      ],
       list: rows.map((o) => {
         const u = users.get(Number(o.userId));
         return [
           o.orderNo,
           u?.nickname ?? '',
+          o.recipientName ?? '',
+          o.workstation ?? '',
           u?.phone ?? '', // 完整手机号（仅此接口）
           String(o.quantity),
           Number(o.totalAmount).toFixed(2),
@@ -434,6 +447,9 @@ export class LeaderOrderService {
     return {
       orderNo: o.orderNo,
       userName: u?.nickname ?? null,
+      /** 取餐人 + 工位快照（下单定格，团长据此送工位；2026-11-18） */
+      recipientName: o.recipientName ?? null,
+      workstation: o.workstation ?? null,
       /** ⚠️ 脱敏：138****0007 */
       phoneMasked: maskPhone(u?.phone),
       quantity: Number(o.quantity || 0),

@@ -141,9 +141,14 @@
             <view v-else class="member__check member__check--muted" />
 
             <view class="member__left">
-              <text class="member__name">{{ displayOr(m.userName, '匿名用户') }}</text>
+              <text class="member__name">
+                {{ displayOr(m.recipientName, displayOr(m.userName, '匿名用户')) }}
+              </text>
               <text class="member__sub">
-                {{ m.quantity }} 份 · {{ displayOr(m.phoneMasked, '未留手机号') }}
+                {{ displayOr(m.workstation, '未留工位') }} · {{ m.quantity }} 份
+              </text>
+              <text class="member__sub">
+                {{ displayOr(m.phoneMasked, '未留手机号') }}
               </text>
             </view>
 
@@ -264,7 +269,10 @@ const selectedCommissionFen = computed(() =>
 const multiList = computed(() =>
   (today.value?.members ?? [])
     .filter((m) => m.quantity >= 2)
-    .map((m) => ({ name: displayOr(m.userName, '匿名用户'), quantity: m.quantity })),
+    .map((m) => ({
+      name: displayOr(m.recipientName, displayOr(m.userName, '匿名用户')),
+      quantity: m.quantity,
+    })),
 );
 
 /** 配送状态色调：已送达 → 成功绿；配送中 → 金棕；未发车 → 暖棕 */

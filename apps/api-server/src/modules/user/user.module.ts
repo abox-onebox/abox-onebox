@@ -9,6 +9,7 @@ import { TeamLeaderModule } from '../team-leader/team-leader.module';
 import { UserAdminController } from './user-admin.controller';
 import { UserAdminService } from './user-admin.service';
 import { UserController } from './user.controller';
+import { UserAvatarController } from './user-avatar.controller';
 import { UserService } from './user.service';
 
 /**
@@ -39,7 +40,7 @@ import { UserService } from './user.service';
     TypeOrmModule.forFeature([User, TeamLeader, Order, Building, BuildingGroup]),
     TeamLeaderModule,
   ],
-  controllers: [UserController, UserAdminController],
+  controllers: [UserController, UserAdminController, UserAvatarController],
   providers: [UserService, UserAdminService],
 })
 export class UserModule {}

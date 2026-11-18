@@ -99,6 +99,41 @@
           </view>
         </view>
 
+        <!-- 取餐人信息（2026-11-18）：下单必填，团长据此认人送工位。
+             档案有值则预填免改；提交时随订单落档，下次自动带出。 -->
+        <view class="card">
+          <text class="card__title">
+            <text class="abi abi-16">{{ I.pin }}</text> 取餐人信息
+          </text>
+          <text class="recipient-hint">填写一次，以后下单自动带出；团长照此送到工位</text>
+          <view class="recipient-field">
+            <text class="recipient-field__label"
+              >称呼 <text class="recipient-field__req">*</text></text
+            >
+            <input
+              v-model="recipientName"
+              class="recipient-field__input"
+              type="text"
+              :maxlength="32"
+              placeholder="如：张三 / 小王"
+              placeholder-class="recipient-field__ph"
+            />
+          </view>
+          <view class="recipient-field">
+            <text class="recipient-field__label"
+              >工位 <text class="recipient-field__req">*</text></text
+            >
+            <input
+              v-model="workstation"
+              class="recipient-field__input"
+              type="text"
+              :maxlength="64"
+              placeholder="如：12层A区 / 前台"
+              placeholder-class="recipient-field__ph"
+            />
+          </view>
+        </view>
+
         <!-- 支付方式 -->
         <view class="card">
           <text class="card__title"
@@ -180,6 +215,7 @@ import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
 import { useWechatPay } from '@/composables/use-wechat-pay';
 import { ORDER_MAX_QUANTITY, SALES_PAUSED_UNAFFECTED_NOTICE } from '@/constants';
+import { useUserStore } from '@/stores/user';
 import { fenToYuan, formatTime, uuid } from '@/utils/format';
 import { buildUrl, navigateBack, navigateTo, pageQuery, redirectTo } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
@@ -192,6 +228,14 @@ const daily = ref<HomeDailyResult | null>(null);
 const quantity = ref(1);
 const submitting = ref(false);
 const errorHint = ref('请返回首页重试');
+const userStore = useUserStore();
+
+/** 取餐人信息（下单必填）：档案有值则预填，用户可改，提交时随订单回写档案 */
+const recipientName = ref('');
+const workstation = ref('');
+
+/** 取餐人信息是否已填（trim 后非空）—— 必填校验，防止空格糊弄过去 */
+const recipientReady = computed(() => !!recipientName.value.trim() && !!workstation.value.trim());
 
 /** 下单幂等键（同一意图内复用） */
 let orderIdemKey = '';
@@ -266,7 +310,9 @@ watch(totalFen, () => {
  *    「已订一单的人永远付不了第二单」，故移除 —— 重复提交改由 `Idempotency-Key`
  *    拦（同一键回放 → 10006），换键下单是用户的新意图。
  */
-const canSubmit = computed(() => !!daily.value?.canOrder && !submitting.value);
+const canSubmit = computed(
+  () => !!daily.value?.canOrder && !submitting.value && recipientReady.value,
+);
 
 /**
  * 不可下单时**按钮为什么要禁用**（W1 §13.2）
@@ -349,7 +395,12 @@ async function load(mealDate: string): Promise<void> {
  */
 async function submit(): Promise<void> {
   const d = daily.value;
-  if (!d || !canSubmit.value) return;
+  if (!d || !canSubmit.value) {
+    if (d?.canOrder && !recipientReady.value) {
+      uni.showToast({ title: '请填写取餐人称呼和工位', icon: 'none' });
+    }
+    return;
+  }
 
   submitting.value = true;
   try {
@@ -360,6 +411,9 @@ async function submit(): Promise<void> {
           {
             mealDate: d.mealDate,
             quantity: quantity.value,
+            // 取餐人信息（端上必填；服务端落订单快照并回写档案）
+            recipientName: recipientName.value.trim(),
+            workstation: workstation.value.trim(),
             // 自动选中的券（无券时不传，服务端按无券处理）
             couponCode: bestCoupon.value?.code || undefined,
           },
@@ -416,6 +470,9 @@ onLoad((options) => {
   if (Number.isFinite(qtyRaw) && qtyRaw >= 1) {
     quantity.value = Math.min(Math.floor(qtyRaw), ORDER_MAX_QUANTITY);
   }
+  // 预填取餐人档案（填过就有，免重复填；用户仍可改，提交时回写）
+  recipientName.value = userStore.info?.recipientName ?? '';
+  workstation.value = userStore.info?.workstation ?? '';
   orderIdemKey = uuid();
   payIdemKey = uuid();
   void load(mealDate);
@@ -481,6 +538,47 @@ onLoad((options) => {
     font-weight: bold;
     letter-spacing: 1rpx;
     color: $c-text;
+  }
+}
+
+// ---- 取餐人信息（下单必填）----
+.recipient-hint {
+  display: block;
+  margin: $space-2 0 $space-3;
+  font-size: $fs-caption;
+  color: $c-text-weak;
+}
+
+.recipient-field {
+  display: flex;
+  align-items: center;
+  padding: $space-2 0;
+
+  &__label {
+    width: 130rpx;
+    flex-shrink: 0;
+    font-size: $fs-body;
+    color: $c-text;
+  }
+
+  &__req {
+    color: $c-gold-deep;
+  }
+
+  &__input {
+    flex: 1;
+    min-width: 0;
+    height: 72rpx;
+    padding: 0 $space-3;
+    background: $c-bg;
+    border: 1px solid $c-border;
+    border-radius: $radius-md;
+    font-size: $fs-body;
+    color: $c-text;
+  }
+
+  &__ph {
+    color: $c-text-weak;
   }
 }
 

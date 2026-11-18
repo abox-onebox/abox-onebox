@@ -24,6 +24,14 @@ export class User {
   @Column({ name: 'avatar_url', type: 'varchar', length: 512, nullable: true })
   avatarUrl?: string | null;
 
+  /** 取餐人称呼（用户档案）—— 下单时填写并回写，下次下单预填；团长据此认人 */
+  @Column({ name: 'recipient_name', type: 'varchar', length: 32, nullable: true })
+  recipientName?: string | null;
+
+  /** 工位 / 取餐点（用户档案）—— 下单时填写并回写，下次下单预填 */
+  @Column({ name: 'workstation', type: 'varchar', length: 64, nullable: true })
+  workstation?: string | null;
+
   @Column({ type: 'varchar', length: 20, nullable: true, comment: '可选，普通用户可不填' })
   phone?: string | null;
 

@@ -250,6 +250,8 @@ export class UserService {
         deletedAt: canceledAt,
         nickname: CANCELED_NICKNAME,
         avatarUrl: null,
+        recipientName: null,
+        workstation: null,
         phone: null,
         phoneHash: null,
         buildingId: null,
@@ -288,5 +290,15 @@ export class UserService {
        */
       note: '账号已注销：同一微信号将无法再登录本小程序，个人资料已匿名化。与订单、退款、佣金相关的记录按法律法规要求保留。如需恢复，请联系客服。',
     };
+  }
+
+  /**
+   * 更新头像 URL（2026-11-18 · 微信 chooseAvatar 一键采用）
+   *
+   * url 由上传端点写入（持久地址，非 chooseAvatar 的临时路径）。
+   * 只更新本人（userId 来自 @CurrentUser，不接受外部传入 id）。
+   */
+  async updateAvatar(userId: number, avatarUrl: string): Promise<void> {
+    await this.userRepo.update({ id: userId, status: Not(UserStatus.CANCELED) }, { avatarUrl });
   }
 }
