@@ -383,8 +383,17 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     requestSubscribe: true,
     consumedBy: 'message/message-orchestrator.service.ts → orchestrate()（F5 接线）',
     wiring: 'live',
-    /** 日期 / 截单时刻 —— 选模板时关键词顺序须与此一致 */
-    wxFields: { mealDate: 'date1', cutoffTime: 'time2' },
+    /**
+     * 只投「截单时间」**一个**关键词。
+     *
+     * ⚠️ 为什么不是「日期 + 时刻」两个字段（2026-11-18 按实际可申请的模板改）：
+     *    微信 `time` 类型**自带日期**，卡片渲染成「2026年11月19日 00:00」——
+     *    再塞一个 `date` 字段等于同一信息说两遍；且公共模板库里「截单通知」
+     *    这类模板根本没有独立的日期关键词可选（候选只有：截单时间 / 截单档口 /
+     *    截单批次 / 备注）。
+     *    ⇒ 完整时刻由 `message-orchestrator` 的 `cutoffAtText()` 拼好，此处只声明编号。
+     */
+    wxFields: { cutoffAt: 'time1' },
     note:
       '⭐ **F5 新增（全清单第 7 行）**：真源《系统地图》F5 点名「忘了下单」是最冤的两笔损失之一' +
       '（另一笔「忘了取餐」由 `leader_delivery` 承载）。' +
@@ -658,6 +667,7 @@ export const WX_BIZ_FIELD_LABEL: Record<string, string> = {
   mealDate: '出餐日期',
   settledCount: '笔数',
   cutoffTime: '截单时刻',
+  cutoffAt: '截单时间（含日期）',
   applyAt: '申请时间',
   leaderLevel: '团长等级',
 };

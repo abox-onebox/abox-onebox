@@ -113,7 +113,11 @@ export class MessageOrchestratorService {
     // ⚠️ 缺省 dryRun：安全默认（见类头注释②）
     const dryRun = input.dryRun !== false;
 
-    const cutoffTime = formatTimeOfDay(currentTimeline().cutoff);
+    const timeline = currentTimeline();
+    /** 群文案用的纯时刻（`24:00` 原样保留，运营读得懂「今晚十二点」） */
+    const cutoffTime = formatTimeOfDay(timeline.cutoff);
+    /** 微信 `time` 关键词用的完整时刻（卡片渲染成「2026年11月19日 00:00」） */
+    const cutoffAt = cutoffAtText(mealDate, timeline.cutoff);
 
     let delivered = 0;
     let ok = 0;
@@ -154,7 +158,7 @@ export class MessageOrchestratorService {
             userId,
             page: NOTIFY_PAGES.orderCreate,
             variables: { mealDate, cutoffTime },
-            wxData: buildWxData({ mealDate, cutoffTime }),
+            wxData: buildWxData({ cutoffAt }),
           });
           if (r.delivered) {
             delivered += 1;
@@ -335,11 +339,27 @@ export function findSelector(key: string): AudienceSelector | undefined {
 const DEFAULT_LIMIT = 500;
 
 /**
+ * 截单时刻 → 微信 `time` 关键词可用的「YYYY-MM-DD HH:mm」
+ *
+ * 这一行里踩了两个坑：
+ * ① `formatTimeOfDay` 产出的是 `HH:mm` **纯时刻**，而 `time` 类型要求**带日期**的完整时刻
+ *    （微信卡片渲染成「2026年11月19日 00:00」，见公众平台的卡片预览）；
+ * ② `24:00` **不是合法时间字面量**（`new Date` 会拒、微信侧也会判参数非法）。
+ *    截单挂在 T-1 日，所以 `T-1 24:00` 与 `T 00:00` 是**同一时刻** —— 直接折成后者，
+ *    既不丢精度，也不会让人误以为截单在当天早上（这正是 `formatTimeOfDay` 注释里
+ *    「不折算成 00:00」要防的歧义，但那只针对**只显示时刻**的场合）。
+ */
+function cutoffAtText(mealDate: string, t: { hour: number; minute: number }): string {
+  return t.hour >= 24 ? `${mealDate} 00:00` : `${addDays(mealDate, -1)} ${formatTimeOfDay(t)}`;
+}
+
+/**
  * 组装微信订阅消息 `data`
  *
- * ⚠️ 一期 key 用**业务变量名**（`mealDate` / `cutoffTime`），不是微信的 `thing1` / `time2` ——
- *    真实 keyword 由微信公众平台创建模板时决定，一期拿不到，凭空造即编造契约。
- *    映射待模板创建后**只改这一处**（同 `refund.service.ts` 的既有口径）。
+ * 这里只包一层 `{ value }`；**关键词编号的映射不在这里** —— 由 `toWxData()` 按场景声明的
+ * `wxFields` 完成（见 `message-template.specs.ts`）。分开的理由：编号是「模板契约」，
+ * 同一场景换模板时只该动声明，不该动投递代码；且 `toWxData` 会因缺字段而**拒发**，
+ * 这层校验不能被绕过。
  */
 function buildWxData(vars: Record<string, string>): Record<string, { value: string }> {
   return Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, { value: v }]));
