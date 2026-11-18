@@ -338,7 +338,7 @@ const doneCount = computed(() => detail.value?.timeline.filter((n) => n.done).le
  *
  * ⚠️ **不要**改回按状态判：那样又会与服务端各判一次，改一边漏一边。
  */
-const blindBoxRevealed = computed(() => detail.value?.blindBoxName != null);
+const blindBoxRevealed = computed(() => Boolean(detail.value?.blindBoxName));
 
 /**
  * 时间线节点三态 —— 规格 §八「时间线 · 节点 15px 圆形」+ 清单 §七「已过 / 当前 / 未到」。

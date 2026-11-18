@@ -637,7 +637,7 @@ export class OrderService {
        * ⚠️ **揭晓态的真源在此一处**。端上（原 `order-detail.vue` 的
        *   `blindBoxRevealed`）曾按 `status === DELIVERED || COMPLETED` 自己判一遍 ——
        *   那是第二份判据，与本批在治的「判据两份」同病。现在端上改为
-       *   `blindBoxName != null`（服务端给了就是揭晓了），判据收口到服务端。
+       *   `Boolean(blindBoxName)`（服务端给了非空就是揭晓了），判据收口到服务端。
        *
        * ⚠️ **为什么必须同时给 `blindBoxPending`**：只把 `blindBoxName` 抹成 null，
        *   端上就分不清「有盲盒、待揭晓」和「这单没有盲盒」——占位行会整行消失，
