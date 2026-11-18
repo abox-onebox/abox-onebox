@@ -14,6 +14,7 @@ import { OpBlocklistController } from './op-blocklist/op-blocklist.controller';
 import { AdminUserService } from './admin-user/admin-user.service';
 import { ConfigService } from './config/config.service';
 import { MessageTemplateService } from './template/message-template.service';
+import { WxTemplateInspectService } from './template/wx-template-inspect.service';
 import { SalesPauseController } from './sales-pause/sales-pause.controller';
 import { SalesPauseService } from './sales-pause/sales-pause.service';
 import { AdminRoleService } from './role/role.service';
@@ -71,6 +72,7 @@ import { OperationLogService } from './operation-log/operation-log.service';
     OperationLogService,
     ConfigService,
     MessageTemplateService,
+    WxTemplateInspectService,
     SalesPauseService,
   ],
   exports: [

@@ -1,5 +1,5 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 /**
  * D60 编辑通知模板（单条）
@@ -81,4 +81,35 @@ export class CreateMessageTemplateDto extends UpdateMessageTemplateDto {
   @IsString({ message: 'scene 必须为字符串' })
   @MaxLength(64, { message: 'scene 过长（上限 64 字符）' })
   scene!: string;
+}
+
+/**
+ * D60++ · 校验「填进来的模板 ID」与场景声明是否对得上（2026-11-18 新增）
+ *
+ * ## 为什么模板 ID 要**显式传**，而不是从库里读
+ *
+ * 让运营在**保存之前**就能校验：填完 ID 先点一下「校验」，通过了再保存/启用。
+ * 若从库里读，就必须先保存才能校验，等于把「发现填错」推迟到「已经存进去之后」。
+ *
+ * `wechatTemplateId` 必填而非可选，也是同一个理由 —— 允许缺省会让"校验"与
+ * "库里那行"产生歧义（到底校验的是页面上的，还是库里的？）。
+ */
+export class VerifyTemplateDto {
+  @ApiProperty({
+    description: '场景键（须在服务端场景声明内）',
+    example: 'cutoff_remind',
+  })
+  @IsString({ message: 'scene 必须为字符串' })
+  @IsNotEmpty({ message: 'scene 不能为空' })
+  @MaxLength(64, { message: 'scene 过长（上限 64 字符）' })
+  scene!: string;
+
+  @ApiProperty({
+    description: '要校验的微信模板 ID（运营在公众平台「我的模板」里复制的那串）',
+    example: '9Aw5ZV1j9xdWTFEkqCpZ7mIBbSC34khK55OtzUPl0rU',
+  })
+  @IsString({ message: 'wechatTemplateId 必须为字符串' })
+  @IsNotEmpty({ message: '请先填微信模板 ID 再校验' })
+  @MaxLength(64, { message: 'wechatTemplateId 过长（上限 64 字符）' })
+  wechatTemplateId!: string;
 }

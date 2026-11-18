@@ -21,6 +21,7 @@ import {
   MockWxNotifyProvider,
 } from './wx-notify/wx-notify.provider';
 import { RealWxNotifyProvider } from './wx-notify/real-wx-notify.provider';
+import { WxAccessTokenService } from './wx-access-token.service';
 
 /**
  * 外部依赖模块（全局）
@@ -33,12 +34,20 @@ import { RealWxNotifyProvider } from './wx-notify/real-wx-notify.provider';
 @Global()
 @Module({
   providers: [
+    /**
+     * ⭐ access_token 的**唯一持有者**（`@Global` 模块内 ⇒ 全应用单例）
+     *
+     * 微信小程序 token 是全局唯一的：取新的会让旧的立刻失效。所以凡是需要它的人
+     * —— 登录取手机号、订阅消息发送、模板关键词校验 —— 都必须拿**同一个实例**，
+     * 各自缓存必在并发时互相顶掉。
+     */
+    WxAccessTokenService,
     {
       provide: WX_MINI_PROVIDER,
-      inject: [ConfigService],
-      useFactory: (cfg: ConfigService): WxMiniProvider =>
+      inject: [ConfigService, WxAccessTokenService],
+      useFactory: (cfg: ConfigService, tokens: WxAccessTokenService): WxMiniProvider =>
         cfg.get<string>('app.drivers.providerMode') === 'real'
-          ? new RealWxMiniProvider(cfg)
+          ? new RealWxMiniProvider(cfg, tokens)
           : new MockWxMiniProvider(cfg),
     },
     {
@@ -51,7 +60,7 @@ import { RealWxNotifyProvider } from './wx-notify/real-wx-notify.provider';
     },
     {
       provide: WX_NOTIFY_PROVIDER,
-      inject: [ConfigService],
+      inject: [ConfigService, WxAccessTokenService],
       /**
        * ⚠️ 2026-11-18 修正：此前这里**无条件**返回 `MockWxNotifyProvider`，
        * 连 `PROVIDER_MODE` 都没读。后果是线上 6 个已接线的订阅场景
@@ -62,9 +71,9 @@ import { RealWxNotifyProvider } from './wx-notify/real-wx-notify.provider';
        * 而一张全是 success 的表不会引起任何人怀疑。故与其他四个通道统一口径：
        * **real 走真实发送，mock 才打日志**。
        */
-      useFactory: (cfg: ConfigService): WxNotifyProvider =>
+      useFactory: (cfg: ConfigService, tokens: WxAccessTokenService): WxNotifyProvider =>
         cfg.get<string>('app.drivers.providerMode') === 'real'
-          ? new RealWxNotifyProvider(cfg)
+          ? new RealWxNotifyProvider(cfg, tokens)
           : new MockWxNotifyProvider(),
     },
     {
@@ -84,6 +93,8 @@ import { RealWxNotifyProvider } from './wx-notify/real-wx-notify.provider';
     },
   ],
   exports: [
+    /** 让 `admin/template` 等模块能注入同一个 token 实例（模板校验要用） */
+    WxAccessTokenService,
     WX_MINI_PROVIDER,
     WX_PAY_PROVIDER,
     WX_NOTIFY_PROVIDER,

@@ -325,6 +325,51 @@ export function initMessageTemplate(
 }
 
 // ---------------------------------------------------------------------------
+// D60++ 模板关键词校验
+// ---------------------------------------------------------------------------
+
+/** 一个微信模板关键词：编号 + 模板上展示的中文标签 */
+export interface TemplateVerifyKeyword {
+  code: string;
+  label: string;
+}
+
+/**
+ * 校验结果
+ *
+ * ⚠️ `ok=true` **只代表编号集合齐了**，不代表语义对 —— 模板里的 `time1` 可能叫
+ *    「下单时间」而我们填的是截单时刻。所以渲染时必须把 `actual[].label` 显示出来，
+ *    让人再看一眼。服务端的 `message` 已写明这点。
+ */
+export interface TemplateVerifyResult {
+  ok: boolean;
+  templateId: string;
+  title: string | null;
+  /** 2 = 一次性订阅，3 = 长期订阅 */
+  type: number | null;
+  /** 模板实际有哪些关键词（顺序同模板） */
+  actual: TemplateVerifyKeyword[];
+  /** 本场景需要哪些关键词（来自服务端场景声明） */
+  expected: TemplateVerifyKeyword[];
+  missing: string[];
+  extra: string[];
+  message: string;
+}
+
+/**
+ * 拿微信侧真实模板，比对本场景声明的关键词
+ *
+ * 只读：不改库、不发消息、不消耗用户授权额度。模板 ID 由调用方显式传入，
+ * 因此**保存之前**就能校验（填完先验，通过了再保存）。
+ */
+export function verifyMessageTemplate(payload: {
+  scene: string;
+  wechatTemplateId: string;
+}): Promise<TemplateVerifyResult> {
+  return http.post<TemplateVerifyResult>('/admin/system/templates/verify', payload);
+}
+
+// ---------------------------------------------------------------------------
 // F5 消息触达（D67 到达率 + D68 编排）
 // ---------------------------------------------------------------------------
 

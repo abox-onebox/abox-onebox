@@ -17,6 +17,7 @@ import { AdminGuard } from '../../common/guards/admin.guard';
 import { AdminUserService } from './admin-user/admin-user.service';
 import { ConfigService } from './config/config.service';
 import { MessageTemplateService } from './template/message-template.service';
+import { WxTemplateInspectService } from './template/wx-template-inspect.service';
 import { AdminRoleService } from './role/role.service';
 import { OperationLogService } from './operation-log/operation-log.service';
 import {
@@ -26,7 +27,11 @@ import {
   UpdateAdminUserDto,
 } from './dto/admin.dto';
 import { UpdateConfigsDto } from './dto/config.dto';
-import { CreateMessageTemplateDto, UpdateMessageTemplateDto } from './dto/message-template.dto';
+import {
+  CreateMessageTemplateDto,
+  UpdateMessageTemplateDto,
+  VerifyTemplateDto,
+} from './dto/message-template.dto';
 
 /**
  * 后台 · 系统管理（D51–D60）· 见《接口规范 v1.0》§6.7
@@ -47,6 +52,7 @@ export class AdminController {
     private readonly operationLogService: OperationLogService,
     private readonly configService: ConfigService,
     private readonly messageTemplateService: MessageTemplateService,
+    private readonly wxTemplateInspect: WxTemplateInspectService,
   ) {}
 
   // ------------------------------------------------------------ D51–D53 账号
@@ -191,5 +197,21 @@ export class AdminController {
   })
   createTemplate(@Body() dto: CreateMessageTemplateDto, @CurrentAdmin('sub') operatorId: number) {
     return this.messageTemplateService.ensureRow(dto.scene, dto, operatorId);
+  }
+
+  @Post('templates/verify')
+  @ApiOperation({
+    summary: 'D60++ 校验模板 ID 的关键词是否与本场景对得上（只读，不改库）',
+    description:
+      '订阅消息的 data 必须按微信模板的**真实关键词编号**给值（`time1` / `thing2` …），' +
+      '而编号取决于运营在公众平台怎么勾选、怎么排序 —— 代码侧只能声明"期望"，无从得知实际。' +
+      '本端点向微信拉一次该模板的 content，解析出实际关键词，与场景声明比对，' +
+      '当场告诉运营「对得上 / 缺哪个 / 多哪个」。' +
+      '⚠️ 集合相等**只代表不会因字段报 47003**，语义是否正确（如 time1 是"下单时间"还是"截单时间"）' +
+      '仍需人核对返回里的中文标签。' +
+      '⚠️ 线上必须有可用的 access_token（与发送侧共用同一份缓存）。',
+  })
+  verifyTemplate(@Body() dto: VerifyTemplateDto) {
+    return this.wxTemplateInspect.inspect(dto.scene, dto.wechatTemplateId);
   }
 }

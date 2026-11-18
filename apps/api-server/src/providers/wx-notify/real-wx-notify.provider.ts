@@ -2,10 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
+import { WxAccessTokenService } from '../wx-access-token.service';
 import { SubscribeMessageInput, WxNotifyProvider } from './wx-notify.provider';
-
-/** 提前刷新窗口（秒）：微信给 7200s，提前 300s 换新，避免临界失效 */
-const TOKEN_AHEAD_SECONDS = 300;
 
 /**
  * 「手里这把 token 已经不认了」类错误码 —— 清缓存重试一次即可恢复。
@@ -58,8 +56,6 @@ const ERRCODE_HINT: Record<number, string> = {
 @Injectable()
 export class RealWxNotifyProvider extends WxNotifyProvider {
   private readonly logger = new Logger('WxNotify:real');
-  private readonly appId: string;
-  private readonly appSecret: string;
   /**
    * `miniprogram_state`：打开通知落地页时进入的版本。
    *
@@ -69,22 +65,20 @@ export class RealWxNotifyProvider extends WxNotifyProvider {
    */
   private readonly miniState: 'formal' | 'trial' | 'developer';
 
-  private token: string | null = null;
-  /** 毫秒时间戳；0 = 无有效缓存 */
-  private tokenExpireAt = 0;
-  /** 并发去重：多个发送同时发现无 token 时，只发一次取 token 请求 */
-  private inflightToken: Promise<string> | null = null;
-
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    /**
+     * ⚠️ token **不在这里自持**：微信 access_token 全局唯一，两处各自缓存必互相顶掉
+     * （登录侧每取一次手机号就会顶掉发送侧手里的 token）。见 `WxAccessTokenService`。
+     */
+    private readonly tokens: WxAccessTokenService,
+  ) {
     super();
-    this.appId = this.config.get<string>('wechat.mini.appId') ?? '';
-    this.appSecret = this.config.get<string>('wechat.mini.appSecret') ?? '';
-
     const raw = (this.config.get<string>('app.notifyMiniState') ?? 'formal').toLowerCase();
     this.miniState =
       raw === 'trial' || raw === 'developer' ? (raw as 'trial' | 'developer') : 'formal';
 
-    if (!this.appId || !this.appSecret) {
+    if (!this.tokens.configured) {
       // 不抛：与 Mock 一样构造成功，发送时逐条返回失败原因（否则整个应用启动不起来）
       this.logger.warn('WX_MINI_APPID / WX_MINI_SECRET 未配置，订阅消息发送必然失败');
     }
@@ -95,7 +89,7 @@ export class RealWxNotifyProvider extends WxNotifyProvider {
   }
 
   async send(input: SubscribeMessageInput): Promise<{ ok: boolean; errMsg?: string }> {
-    if (!this.appId || !this.appSecret) {
+    if (!this.tokens.configured) {
       return { ok: false, errMsg: 'WX_MINI_APPID / WX_MINI_SECRET 未配置' };
     }
     if (!input.templateId) {
@@ -107,13 +101,13 @@ export class RealWxNotifyProvider extends WxNotifyProvider {
     }
 
     try {
-      let r = await this.postOnce(input, await this.getAccessToken());
+      let r = await this.postOnce(input, await this.tokens.get());
 
       // token 可能刚被顶掉：清缓存重试一次（只重试这一类，别把业务错误也重试）
       if (!r.ok && r.code !== undefined && TOKEN_INVALID_CODES.has(r.code)) {
         this.logger.warn(`access_token 失效（errcode=${r.code}），已刷新并重试一次`);
-        this.invalidateToken();
-        r = await this.postOnce(input, await this.getAccessToken());
+        this.tokens.invalidate();
+        r = await this.postOnce(input, await this.tokens.get());
       }
 
       if (!r.ok) {
@@ -190,38 +184,5 @@ export class RealWxNotifyProvider extends WxNotifyProvider {
       if (val) out[k] = { value: val.slice(0, 20) }; // 微信 thing 类上限 20 字，超了会 47003
     }
     return out;
-  }
-
-  private async getAccessToken(): Promise<string> {
-    if (this.token && Date.now() < this.tokenExpireAt) return this.token;
-    if (this.inflightToken) return this.inflightToken;
-
-    this.inflightToken = this.fetchToken().finally(() => {
-      this.inflightToken = null;
-    });
-    return this.inflightToken;
-  }
-
-  private async fetchToken(): Promise<string> {
-    const { data } = await axios.get('https://api.weixin.qq.com/cgi-bin/token', {
-      params: { grant_type: 'client_credential', appid: this.appId, secret: this.appSecret },
-      timeout: 5000,
-    });
-
-    const token: string | undefined = data?.access_token;
-    if (!token) {
-      throw new Error(`获取 access_token 失败：errcode=${data?.errcode} errmsg=${data?.errmsg}`);
-    }
-
-    const ttl = Number(data?.expires_in ?? 7200);
-    this.token = token;
-    this.tokenExpireAt = Date.now() + Math.max(60, ttl - TOKEN_AHEAD_SECONDS) * 1000;
-    this.logger.log(`access_token 已刷新（有效期 ${ttl}s）`);
-    return token;
-  }
-
-  private invalidateToken(): void {
-    this.token = null;
-    this.tokenExpireAt = 0;
   }
 }

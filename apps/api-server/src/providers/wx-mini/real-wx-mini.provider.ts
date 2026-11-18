@@ -4,6 +4,7 @@ import axios from 'axios';
 
 import { ErrorCode } from '../../common/constants/error-code';
 import { BizException } from '../../common/exceptions/biz.exception';
+import { WxAccessTokenService } from '../wx-access-token.service';
 import { Code2SessionResult, PhoneNumberResult, WxMiniProvider } from './wx-mini.provider';
 
 /**
@@ -16,7 +17,15 @@ export class RealWxMiniProvider extends WxMiniProvider {
   private readonly appId: string;
   private readonly appSecret: string;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    /**
+     * ⚠️ 取手机号要 access_token，而微信 token 全局唯一 —— 这里**不能再自取**
+     * （原先每次调用都打 `/cgi-bin/token`，用户每登录一次就把订阅消息侧的 token 顶掉一次，
+     * 导致之后第一条通知必然 40001）。共用 `WxAccessTokenService` 的同一份缓存。
+     */
+    private readonly tokens: WxAccessTokenService,
+  ) {
     super();
     this.appId = this.config.get<string>('wechat.mini.appId') ?? '';
     this.appSecret = this.config.get<string>('wechat.mini.appSecret') ?? '';
@@ -55,14 +64,13 @@ export class RealWxMiniProvider extends WxMiniProvider {
   }
 
   async getPhoneNumber(code: string): Promise<PhoneNumberResult> {
-    // 需先用 code2Session 取得的 access_token；此处按正式实现补全
-    const tokenRes = await axios.get('https://api.weixin.qq.com/cgi-bin/token', {
-      params: { grant_type: 'client_credential', appid: this.appId, secret: this.appSecret },
-      timeout: 5000,
-    });
-    const accessToken: string | undefined = tokenRes.data?.access_token;
-    if (!accessToken)
+    let accessToken: string;
+    try {
+      accessToken = await this.tokens.get();
+    } catch (e) {
+      this.logger.error(`获取 access_token 失败：${e instanceof Error ? e.message : String(e)}`);
       throw new BizException(ErrorCode.INTERNAL_ERROR, '获取微信 access_token 失败');
+    }
 
     const { data } = await axios.post(
       `https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token=${accessToken}`,

@@ -69,18 +69,38 @@
             <div class="form__row">
               <span class="form__label">微信模板 ID</span>
               <div class="form__stack">
-                <el-input
-                  v-model="draft[t.scene].wechatTemplateId"
-                  class="form__input"
-                  placeholder="在微信公众平台创建订阅消息模板后填入；留空表示未配置"
-                  :disabled="saving === t.scene"
-                />
+                <div class="form__verify">
+                  <el-input
+                    v-model="draft[t.scene].wechatTemplateId"
+                    class="form__input"
+                    placeholder="在微信公众平台创建订阅消息模板后填入；留空表示未配置"
+                    :disabled="saving === t.scene"
+                    @input="verifyResults[t.scene] = null"
+                  />
+                  <el-button
+                    :loading="verifying === t.scene"
+                    :disabled="!draft[t.scene].wechatTemplateId.trim() || saving === t.scene"
+                    @click="runVerify(t)"
+                  >
+                    校验
+                  </el-button>
+                </div>
                 <!-- ⚠️ 这行是给运营照着选模板用的：微信只认关键词编号，
                      选到的模板关键词类型/顺序不一致，投递会被 47003 拒掉 -->
                 <span v-if="t.wxFieldsHint" class="form__hint">
                   选模板时关键词须为：{{ t.wxFieldsHint }}
                   （顺序与类型都要一致，否则微信会拒发）
                 </span>
+                <p
+                  v-if="verifyOf(t.scene)"
+                  class="verify"
+                  :class="verifyOf(t.scene)!.ok ? 'verify--ok' : 'verify--bad'"
+                >
+                  {{ verifyOf(t.scene)!.message }}
+                  <span class="verify__list">
+                    模板实际关键词：{{ kwText(verifyOf(t.scene)!.actual) }}
+                  </span>
+                </p>
               </div>
             </div>
 
@@ -254,11 +274,14 @@ import {
   MessageReachView,
   MessageTemplateItemView,
   OrchestrateResult,
+  TemplateVerifyKeyword,
+  TemplateVerifyResult,
   fetchMessageReach,
   fetchMessageTemplates,
   initMessageTemplate,
   orchestrateMessage,
   updateMessageTemplate,
+  verifyMessageTemplate,
 } from '@/api/system';
 
 interface Draft {
@@ -269,6 +292,15 @@ interface Draft {
 
 const loading = ref(false);
 const saving = ref<string | null>(null);
+/** 正在校验模板 ID 的场景键（按钮 loading 用） */
+const verifying = ref<string | null>(null);
+/**
+ * 每个场景上一次的校验结果
+ *
+ * ⚠️ 模板 ID 一改就必须**立刻清掉**（输入框 `@input` 里清）：
+ *    留着上一次的绿色「✓」而 ID 已经换了，就是一条会让人直接点启用的假结论。
+ */
+const verifyResults = reactive<Record<string, TemplateVerifyResult | null>>({});
 /** 每场景一份草稿（D60 是**单条**编辑，故不像配置页那样整批保存） */
 const draft = reactive<Record<string, Draft>>({});
 const data = ref<Awaited<ReturnType<typeof fetchMessageTemplates>> | null>(null);
@@ -346,6 +378,44 @@ async function save(t: MessageTemplateItemView): Promise<void> {
     await load();
   } finally {
     saving.value = null;
+  }
+}
+
+// ---------------------------------------------------------------- 模板 ID 校验
+
+function verifyOf(scene: string): TemplateVerifyResult | null {
+  return verifyResults[scene] ?? null;
+}
+
+/** 关键词列表 → 一行中文（编号是给代码看的，标签才是给人看的） */
+function kwText(ks: TemplateVerifyKeyword[]): string {
+  return ks.map((k) => `${k.label}(${k.code})`).join(' · ');
+}
+
+/**
+ * 向微信拉一次该模板的真实关键词，与场景声明比对
+ *
+ * 只读动作：不改库、不发消息、不消耗任何用户的订阅授权额度。
+ * 因此可以「先校验、再保存」—— 把发现填错的时间点提前到启用之前。
+ */
+async function runVerify(t: MessageTemplateItemView): Promise<void> {
+  const id = draft[t.scene].wechatTemplateId.trim();
+  if (!id) {
+    ElMessage.warning('请先填微信模板 ID 再校验');
+    return;
+  }
+  verifying.value = t.scene;
+  try {
+    verifyResults[t.scene] = await verifyMessageTemplate({
+      scene: t.scene,
+      wechatTemplateId: id,
+    });
+  } catch {
+    // 拦截器已统一提示（10001 场景未知 / 模板不属于本小程序 / token 未配置）。
+    // 清掉旧结论：留着上一份结果会让人以为「这次也校验过了」。
+    verifyResults[t.scene] = null;
+  } finally {
+    verifying.value = null;
   }
 }
 
@@ -623,9 +693,43 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 4px;
 }
+/* 模板 ID 输入框 + 「校验」按钮同一行：按钮紧随输入框，运营填完立刻能验 */
+.form__verify {
+  display: flex;
+  align-items: center;
+  gap: $space-2;
+}
+.form__verify .form__input {
+  flex: 1;
+  min-width: 0;
+}
 .form__hint {
   color: $c-text-weak;
   font-size: $fs-caption;
+}
+/* 校验结论：绿=编号齐了、红=不能直接用（仍要看中文标签确认语义） */
+.verify {
+  margin: 0;
+  padding: $space-1 $space-2;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: $fs-caption;
+  line-height: 1.7;
+}
+.verify--ok {
+  border-color: $c-ok-bd;
+  background: $c-ok-bg;
+  color: $c-ok-fg;
+}
+.verify--bad {
+  border-color: $c-warn-bd;
+  background: $c-warn-bg;
+  color: $c-warn-fg;
+}
+.verify__list {
+  display: block;
+  margin-top: 2px;
+  opacity: 0.9;
 }
 /* 发送时段提示：常规态中性、深夜态转警示色 —— 让「现在别发」在视觉上一眼可辨 */
 .send-window {
