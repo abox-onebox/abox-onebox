@@ -149,6 +149,27 @@ export interface MessageTemplateSpec {
   pendingReason?: string;
   /** 出参附带的额外说明（页面直接展示，端上不自造文案） */
   note?: string;
+  /**
+   * 业务字段 → **微信模板关键词编号** 的映射（`wechat_subscribe` 渠道**投放必需**）
+   *
+   * ## 为什么必须有这一层
+   *
+   * 微信订阅消息 `data` 的键名不是业务名（`orderNo`），而是**关键词编号**
+   * （`character_string1` / `amount2` / `time3`），且必须与运营申请到的那个模板
+   * 逐个对齐。直接传业务名会 `47003 参数不合法` —— 这个错在 2026-11-18 之前
+   * 一直存在，只是被「通道是 Mock」掩盖了：假成功连参数都不校验。
+   *
+   * ## 这份默认值怎么来的
+   *
+   * 按微信公共模板库里同类通知的**常见关键词顺序**填。运营申请到模板后**必须核对**：
+   * 若模板的关键词类型/顺序与这里不同（如订单号是 `thing1` 而不是 `character_string1`），
+   * **改这里一行即可** —— 它与 `wechatTemplateId` 是一对，换模板就要同时改。
+   *
+   * ⚠️ 为什么不放到后台让运营手填：模板还没申请时他填不出编号，手填 JSON 也更容易错。
+   *   先由代码给默认值、后台页面只读展示「本场景要选什么关键词的模板」，
+   *   等真有换模板需求时再考虑做成可配置（届时须同时迁移这 9 行默认值）。
+   */
+  wxFields?: Record<string, string>;
   /** 种子默认值（可编辑部分） */
   seed: {
     enabled: number;
@@ -274,6 +295,8 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     consumedBy:
       'team-leader/team-leader.service.ts → MessageService.notify()（M4-3 接线·提交后事务外）',
     wiring: 'live',
+    /** 申请时间 / 团长等级 —— 运营须选关键词为「时间 + 等级(事物)」的模板 */
+    wxFields: { applyAt: 'time1', leaderLevel: 'thing2' },
     note:
       '⭐ M4-3 接线：C3「申请即生效、无审核」**不等于**无需通知 —— 团长当场并不知道' +
       '「佣金怎么算、去哪看余额、什么时候开始生效」，这些都写在小程序里，' +
@@ -299,6 +322,8 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     requestSubscribe: true,
     consumedBy: 'finance/refund.service.ts → MessageService.notify()（M3-12 接线）',
     wiring: 'live',
+    /** 订单号 / 退款金额 / 退款时间 —— 选模板时关键词顺序须与此一致 */
+    wxFields: { orderNo: 'character_string1', amount: 'amount2', refundedAt: 'time3' },
     note:
       '⭐ **必推项**（原型原文：用户端常规状态不推，但退款结果属必推）。' +
       '投递在**退款事务提交之后**执行 —— 事务回滚了通知却已发出，是退款链路最忌讳的「说不清」。',
@@ -324,6 +349,8 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     consumedBy:
       'finance/commission.service.ts → MessageService.notify()（M4-3 接线·队列 settle-orders）',
     wiring: 'live',
+    /** 日期 / 金额 / 笔数 —— 选模板时关键词顺序须与此一致 */
+    wxFields: { mealDate: 'date1', amount: 'amount2', settledCount: 'number3' },
     note:
       '⭐ 两段式佣金的**必要配套**：T 日确认计佣、T+1 02:00 才入账（见 `COMMISSION_SETTLE_NOTE`），' +
       '中间隔了一夜。若不通知，团长在小程序里看到的是「昨天确认了却没钱」——两段式本身没问题，' +
@@ -356,6 +383,8 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     requestSubscribe: true,
     consumedBy: 'message/message-orchestrator.service.ts → orchestrate()（F5 接线）',
     wiring: 'live',
+    /** 日期 / 截单时刻 —— 选模板时关键词顺序须与此一致 */
+    wxFields: { mealDate: 'date1', cutoffTime: 'time2' },
     note:
       '⭐ **F5 新增（全清单第 7 行）**：真源《系统地图》F5 点名「忘了下单」是最冤的两笔损失之一' +
       '（另一笔「忘了取餐」由 `leader_delivery` 承载）。' +
@@ -402,6 +431,8 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     requestSubscribe: true,
     consumedBy: 'building/building-admin.service.ts → notifySuspendAffected()（N2 接线）',
     wiring: 'live',
+    /** 只投「出餐日期」一个关键词 —— 选模板时须选只含日期关键词的（或按此顺序对齐） */
+    wxFields: { mealDate: 'date1' },
     note:
       '⭐ **N2 新增（全清单第 8 行）**：停用只拦**新单**，存量继续履约（用户已拍板，不做批量退款）。' +
       '⚠️ 一期没有微信模板 ID ⇒ 启用闸门拦住启用 ⇒ 如实「未启用（缺模板 ID）」，' +
@@ -431,6 +462,8 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     requestSubscribe: true,
     consumedBy: 'building/building-admin.service.ts → notifySuspendAffected()（N2 接线）',
     wiring: 'live',
+    /** 同 `building_suspend_fulfill`：只投出餐日期一个关键词 */
+    wxFields: { mealDate: 'date1' },
     note:
       '⭐ **N2 新增（全清单第 9 行）**。与 `building_suspend_fulfill` **不是同一件事**：' +
       '这批用户的结局是**退款**，不是餐。' +
@@ -591,6 +624,63 @@ export function subscribeTemplateOf(
   const id = state.wechatTemplateId;
   if (id === null || id === undefined || String(id).trim() === '') return null;
   return String(id).trim();
+}
+
+/**
+ * 业务字段 → 微信模板关键词 的转换（`wechat_subscribe` 投递前的**唯一入口**）
+ *
+ * ## 为什么必须集中在这里
+ *
+ * 调用方组装的是业务语义（`orderNo` / `amount` / `refundedAt`），而微信要的是
+ * 模板关键词编号（`character_string1` / `amount2` / `time3`）。两者之间的换算
+ * **只能有一处**：散在 6 个投递点里，就是 6 份会各自漂移的映射。
+ *
+ * ## 返回值为什么带 `missing`
+ *
+ * 微信要求「模板里每个关键词都必须有值」。少一个 = `47003 参数不合法`，
+ * 而这条错误对运营毫无指导意义。这里提前把**缺了哪个业务字段**报出来，
+ * 投递侧据此给出「退款时间缺失，未投递」这类能直接定位的原因。
+ *
+ * ⚠️ 本函数**不做兜底填充**（不拿 `-` / `00:00` 糊弄）：
+ *    给微信一个假时间，用户会按假时间安排午饭 —— 那比不发更糟。
+ */
+/**
+ * 订阅消息业务字段的中文名（**仅后台展示用**，不参与投递）
+ *
+ * 运营在微信公众平台选模板时看到的是中文关键词（「订单号」「退款时间」），
+ * 而后台页面原本只有 `orderNo` 这类代码名 —— 两边对不上，他就会选错模板，
+ * 然后收到 `47003`。这张小表把 `wxFields` 翻译成运营能对照的文字。
+ */
+export const WX_BIZ_FIELD_LABEL: Record<string, string> = {
+  orderNo: '订单号',
+  amount: '金额',
+  refundedAt: '退款时间',
+  mealDate: '出餐日期',
+  settledCount: '笔数',
+  cutoffTime: '截单时刻',
+  applyAt: '申请时间',
+  leaderLevel: '团长等级',
+};
+
+export function toWxData(
+  spec: MessageTemplateSpec,
+  bizData: Record<string, { value: string }>,
+): { data: Record<string, { value: string }>; missing: string[] } {
+  const map = spec.wxFields ?? {};
+  const data: Record<string, { value: string }> = {};
+  const missing: string[] = [];
+
+  for (const [bizKey, wxKey] of Object.entries(map)) {
+    const raw = bizData?.[bizKey]?.value;
+    const val = typeof raw === 'string' ? raw.trim() : '';
+    if (!val) {
+      missing.push(bizKey);
+      continue;
+    }
+    data[wxKey] = { value: val };
+  }
+
+  return { data, missing };
 }
 
 /**

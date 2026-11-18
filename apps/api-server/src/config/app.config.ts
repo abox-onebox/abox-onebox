@@ -72,6 +72,14 @@ export interface AppConfig {
   /** 定时任务 / 队列消费者总开关（开发期可关，避免无意义跑批） */
   tasksEnabled: boolean;
   /**
+   * 订阅消息点击落地页进入的小程序版本（微信 `miniprogram_state`）
+   *
+   * ⚠️ **体验版联调必须设 `trial`**：`formal` 下微信只认正式版页面，
+   * 用户在体验版点开通知会落到「页面不存在」——`ab_message` 里却写着 success。
+   * 正式发布后保持默认 `formal`。
+   */
+  notifyMiniState: 'formal' | 'trial' | 'developer';
+  /**
    * 队列重试参数（M4-3）
    *
    * 两驱动（redis / memory）共用同一组数字，语义对齐：
@@ -124,6 +132,7 @@ export default registerAs('app', (): AppConfig => ({
     providerMode: str(process.env.PROVIDER_MODE, DEFAULT_PROVIDER_MODE) as ProviderMode,
   },
   tasksEnabled: bool(process.env.TASKS_ENABLED, true),
+  notifyMiniState: str(process.env.WX_MINI_STATE, 'formal') as AppConfig['notifyMiniState'],
   queue: {
     attempts: num(process.env.QUEUE_ATTEMPTS, 3),
     backoffBaseMs: num(process.env.QUEUE_BACKOFF_BASE_MS, 1000),

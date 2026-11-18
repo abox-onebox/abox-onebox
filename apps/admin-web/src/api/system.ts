@@ -269,6 +269,10 @@ export interface MessageTemplateItemView {
   pendingReason?: string;
   consumedBy: string;
   note?: string;
+  /** 微信模板关键词要求（业务字段 → 关键词编号）；`null` = 不走订阅消息渠道 */
+  wxFields: Record<string, string> | null;
+  /** 关键词要求的中文对照文案（服务端拼好） */
+  wxFieldsHint: string | null;
   canEnable: boolean;
   blockers: string[];
   updatedBy: number | null;
@@ -304,6 +308,20 @@ export function updateMessageTemplate(
   patch: { enabled?: number; wechatTemplateId?: string | null; groupContent?: string | null },
 ): Promise<MessageTemplateUpdateResult> {
   return http.put<MessageTemplateUpdateResult>(`/admin/system/templates/${id}`, patch);
+}
+
+/**
+ * D60+ · 把「声明里有、库里没有」的场景落库（幂等，按 scene 定位）
+ *
+ * ⚠️ `persisted=false` 的行**没有 id**，`updateMessageTemplate` 用不了 ——
+ * 此前页面直接弹「请先执行种子导入」，而生产环境不跑 seed，等于这条路是封死的。
+ * 服务端按 scene 判定：已存在则等同一次编辑，不存在则按声明 seed 落一行。
+ */
+export function initMessageTemplate(
+  scene: string,
+  patch: { enabled?: number; wechatTemplateId?: string | null; groupContent?: string | null },
+): Promise<MessageTemplateUpdateResult> {
+  return http.post<MessageTemplateUpdateResult>('/admin/system/templates', { scene, ...patch });
 }
 
 // ---------------------------------------------------------------------------

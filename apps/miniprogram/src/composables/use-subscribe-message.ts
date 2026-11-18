@@ -69,7 +69,10 @@ export function useSubscribeMessage() {
     if (loading) return loading;
     loading = (async () => {
       try {
-        const res = await fetchSubscribeTemplates();
+        // ⚠️ `keepAuthState` 必传：这是旁路增强（拉不到就不请求授权，业务照常），
+        //    失败时不得裁决 session —— 否则 token 过期一次就会把用户踢出去，
+        //    而用户只是打开下单页而已（`mp:auth-state` 门禁为此存在）。
+        const res = await fetchSubscribeTemplates({ keepAuthState: true });
         cache = res.list ?? [];
       } catch {
         // 静默：订阅授权是**增强能力**，拉不到清单不应在首页弹错误

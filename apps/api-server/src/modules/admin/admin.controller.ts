@@ -26,7 +26,7 @@ import {
   UpdateAdminUserDto,
 } from './dto/admin.dto';
 import { UpdateConfigsDto } from './dto/config.dto';
-import { UpdateMessageTemplateDto } from './dto/message-template.dto';
+import { CreateMessageTemplateDto, UpdateMessageTemplateDto } from './dto/message-template.dto';
 
 /**
  * 后台 · 系统管理（D51–D60）· 见《接口规范 v1.0》§6.7
@@ -176,5 +176,20 @@ export class AdminController {
     @CurrentAdmin('sub') operatorId: number,
   ) {
     return this.messageTemplateService.update(id, dto, operatorId);
+  }
+
+  @Post('templates')
+  @OperationLog({ module: 'system', action: '通知模板落库' })
+  @ApiOperation({
+    summary: 'D60+ 把未落库的场景写入表中（幂等，按 scene 定位）',
+    description:
+      '`PUT templates/:id` 只能改已存在的行，而行的唯一创建途径是种子脚本' +
+      '（生产不跑 seed）。新增场景在后台会一直显示「尚未落库」、运营填不了模板 ID，' +
+      '那类通知也就永远发不出去。本端点补上这个写入口：' +
+      '已存在 → 等同一次编辑；不存在 → 按声明的 seed 落一行（未启用、无模板 ID），' +
+      '再带上要改的字段则一并生效（复用同一套变量白名单与启用闸门校验）。',
+  })
+  createTemplate(@Body() dto: CreateMessageTemplateDto, @CurrentAdmin('sub') operatorId: number) {
+    return this.messageTemplateService.ensureRow(dto.scene, dto, operatorId);
   }
 }

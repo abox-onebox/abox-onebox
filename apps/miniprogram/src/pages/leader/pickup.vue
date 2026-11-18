@@ -96,6 +96,8 @@
         <view class="done__acts">
           <text class="done__link" @tap="goCommission">看佣金 ›</text>
           <text class="done__link" @tap="goOrders">看订单 ›</text>
+          <!-- 一次性订阅授权：点一下才有额度，之后佣金入账能收到微信通知 -->
+          <text class="done__link" @tap="askCommissionNotify">到账通知 ›</text>
         </view>
       </view>
 
@@ -217,6 +219,7 @@ import { fetchWorkbench } from '@/api/leader';
 import { confirmPickup, fetchPickupToday } from '@/api/leader-order';
 import type { PickupConfirmDone, PickupTodayData } from '@/api/leader-order';
 import { apiErrorMessage, useRequest } from '@/composables/use-request';
+import { useSubscribeMessage } from '@/composables/use-subscribe-message';
 import { displayOr, fenToYuanText, formatDateTime, uuid } from '@/utils/format';
 import { navigateTo } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
@@ -232,6 +235,7 @@ const selected = ref<string[]>([]);
 const submitting = ref(false);
 const done = ref<PickupConfirmDone | null>(null);
 const repeatedTips = ref('');
+const subscribe = useSubscribeMessage();
 
 /** 当前「提交意图」的幂等键（失败重试沿用；成功后作废） */
 let pendingKey = '';
@@ -395,7 +399,33 @@ function goOrders(): void {
   navigateTo('/pages/leader/orders');
 }
 
+/**
+ * 开启「佣金到账」订阅通知（`commission_settled`）
+ *
+ * ## 为什么做成「用户主动点一下」而不是分发时自动弹
+ *
+ * 微信订阅消息是**一次性授权**，且 `requestSubscribeMessage` 只能在用户点击的
+ * **同步流程**里调用。本页的 `confirm()` 第一步就是 `await showModal()` ——
+ * 手势已失效，在那里调必被拒；若挪到 `confirm()` 最前面，又会和「确认分发」
+ * 弹窗叠在一起（两个原生框互相打断）。
+ *
+ * 所以挂在分发完成卡片的链接上：那一刻团长刚看到「¥X 将于次日 02:00 入账」，
+ * 正是「到账了能通知我吗」这个念头最强的时候，点一下语义自然、也不骚扰。
+ */
+function askCommissionNotify(): void {
+  const ids = subscribe.requestFor(['commission_settled'], (results) => {
+    console.log('[subscribe] commission_settled', results);
+    uni.showToast({ title: '已开启，入账当天会通知你', icon: 'none' });
+  });
+  if (!ids.length) {
+    // 清单为空 = 运营还没在后台配模板 ID（一期常态），别让用户以为是自己点错了
+    uni.showToast({ title: '通知暂未开通', icon: 'none' });
+  }
+}
+
 onShow(() => {
+  // 预加载模板清单：链接点击时才能同步调用（不在点击里 await 拉清单）
+  void subscribe.preload();
   void reload();
 });
 </script>

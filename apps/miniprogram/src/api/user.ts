@@ -210,8 +210,15 @@ export interface SubscribeTemplateList {
  * ⚠️ 模板 ID 由运营在后台配置，**端上不得硬编码** —— 硬编码等于第二份真相：
  *    运营换了模板，端上还在请求旧 ID，两边都不报错。
  */
-export function fetchSubscribeTemplates(): Promise<SubscribeTemplateList> {
-  return http.get<SubscribeTemplateList>('/me/subscribe/templates');
+export function fetchSubscribeTemplates(
+  options: { keepAuthState?: boolean } = {},
+): Promise<SubscribeTemplateList> {
+  /**
+   * ⚠️ 调用方应传 `{ keepAuthState: true }`：本接口是**旁路增强**（拿不到模板清单
+   *    就跳过授权，下单/申请照常），它失败时**没有任何理由动登录态**。
+   *    不传就会在 token 过期时被判为「陈旧裁决」——`mp:auth-state` 门禁抓的正是这个。
+   */
+  return http.get<SubscribeTemplateList>('/me/subscribe/templates', options);
 }
 
 // ---------------------------------------------------------------------------

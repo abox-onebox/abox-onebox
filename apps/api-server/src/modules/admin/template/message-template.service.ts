@@ -14,6 +14,7 @@ import {
   MESSAGE_TEMPLATE_SPEC_MAP,
   MessageTemplateSpec,
   MessageTemplateState,
+  WX_BIZ_FIELD_LABEL,
   findUnknownVariables,
   missingForEnable,
   specState,
@@ -67,6 +68,15 @@ export interface MessageTemplateItemView {
   subscribeTemplateId: string | null;
   consumedBy: string;
   note?: string;
+  /**
+   * 微信模板关键词要求（业务字段 → 关键词编号；`null` = 该场景不走订阅消息）
+   *
+   * 运营照这个去公众平台选模板：**关键词类型与顺序必须一致**，
+   * 否则投递会被微信以 `47003 参数不合法` 拒掉（而本地日志只会显示一次失败）。
+   */
+  wxFields: Record<string, string> | null;
+  /** `wxFields` 的中文对照文案（服务端拼好，页面直接展示，端上不自造第二份） */
+  wxFieldsHint: string | null;
   /** 现在能否启用（= `blockers` 为空） */
   canEnable: boolean;
   /** 启用还缺什么（逐条中文说明，页面直接展示） */
@@ -308,6 +318,71 @@ export class MessageTemplateService {
     return out;
   }
 
+  /**
+   * D60+ · 把「声明里有、库里没有」的场景落库（2026-11-18）
+   *
+   * ## 它解决的死结
+   *
+   * `update()` 只认已存在的行（`findOne` 不中即 404），而**行的唯一创建途径是种子脚本**
+   * —— 生产环境不跑 seed（会污染真实数据）。于是 N2 新增的
+   * `building_suspend_fulfill` / `building_suspend_refund` 在后台永远显示
+   * 「尚未落库」，运营**填不了模板 ID**，那两条停供通知也就永远发不出去。
+   * 注释里那句「保存后才有 id」当时没有对应的写入口 —— 是个空头承诺。
+   *
+   * ## 为什么按 scene 而不是 id
+   *
+   * 未落库的行没有 id（`toView` 出参里是 `null`），只能靠 scene 定位。
+   * 幂等性由 `uk_msg_tpl_scene` 唯一索引 + 先查后写保证：
+   * 重复点不会造出第二行，而是退化为一次普通编辑。
+   */
+  async ensureRow(
+    scene: string,
+    dto: UpdateMessageTemplateDto,
+    operatorId: number,
+  ): Promise<MessageTemplateUpdateResult> {
+    const spec = MESSAGE_TEMPLATE_SPEC_MAP[scene];
+    if (!spec) {
+      // 只允许声明里的场景 —— 否则又变成「可以凭空造场景」
+      throw new BizException(ErrorCode.NOT_FOUND, `场景「${scene}」不在支持列表内，无法落库`);
+    }
+
+    const hasEdit =
+      dto.enabled !== undefined ||
+      dto.wechatTemplateId !== undefined ||
+      dto.groupContent !== undefined;
+
+    const existing = await this.repo.findOne({ where: { scene } });
+    if (existing) {
+      if (hasEdit) return this.update(existing.id, dto, operatorId);
+      return {
+        item: this.toView(spec, existing),
+        changed: [],
+        note: '该场景已在库中，本次未做改动',
+      };
+    }
+
+    const saved = await this.repo.save(
+      this.repo.create({
+        scene,
+        enabled: 0,
+        wechatTemplateId: null,
+        groupContent: spec.seed.groupContent,
+        updatedBy: operatorId,
+      }),
+    );
+    this.logger.log(`通知模板落库：scene=${scene} id=${saved.id}（按声明 seed 初始化）`);
+
+    if (!hasEdit) {
+      return {
+        item: this.toView(spec, saved),
+        changed: [],
+        note: '已按默认值落库（未启用、无模板 ID），现在可以填模板 ID 并启用',
+      };
+    }
+    // 带编辑内容时复用 `update()` —— 变量白名单与启用闸门只有一套判据
+    return this.update(saved.id, dto, operatorId);
+  }
+
   private toView(spec: MessageTemplateSpec, row?: MessageTemplate): MessageTemplateItemView {
     // 库中无行 → 用声明里的种子值展示，并标记 `persisted=false`（换算口见 `specState`）
     const state: MessageTemplateState = specState(spec, row);
@@ -348,6 +423,16 @@ export class MessageTemplateService {
       subscribeTemplateId: subscribeTemplateOf(spec, state),
       consumedBy: spec.consumedBy,
       note: spec.note,
+      /**
+       * 模板关键词要求 —— 运营照这个去公众平台选模板，**顺序与类型必须一致**。
+       * 提示文案在服务端拼好：页面若自己拼一遍，中文名就成了第二份真相。
+       */
+      wxFields: spec.wxFields ?? null,
+      wxFieldsHint: spec.wxFields
+        ? Object.entries(spec.wxFields)
+            .map(([biz, wxKey]) => `${WX_BIZ_FIELD_LABEL[biz] ?? biz} → ${wxKey}`)
+            .join(' · ')
+        : null,
       canEnable: blockers.length === 0,
       blockers,
       updatedBy: row?.updatedBy ?? null,

@@ -213,6 +213,7 @@ import { createOrder } from '@/api/order';
 import { ApiError, CODE_SALES_PAUSED } from '@/api/request';
 import { toastApiError, useRequest } from '@/composables/use-request';
 import { useCountdown } from '@/composables/use-countdown';
+import { useSubscribeMessage } from '@/composables/use-subscribe-message';
 import { useWechatPay } from '@/composables/use-wechat-pay';
 import { ORDER_MAX_QUANTITY, SALES_PAUSED_UNAFFECTED_NOTICE } from '@/constants';
 import { useUserStore } from '@/stores/user';
@@ -223,6 +224,7 @@ import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 const { run, loading } = useRequest();
 const { remainSec, start } = useCountdown();
 const { pay } = useWechatPay();
+const subscribe = useSubscribeMessage();
 
 const daily = ref<HomeDailyResult | null>(null);
 const quantity = ref(1);
@@ -403,6 +405,28 @@ async function submit(): Promise<void> {
   }
 
   submitting.value = true;
+
+  /**
+   * ⭐ 2026-11-18：下单这一下顺手请求三个订阅授权
+   *
+   * 位置必须在**第一个 `await` 之前**：微信只允许在用户点击的同步流程里弹授权框，
+   * 先 await 网络请求就会 `fail can only be invoked by user TAP gesture`。
+   * 模板清单由 `onLoad` 的 `preload()` 提前缓存，故此处可同步调用。
+   *
+   * 为什么是这三个：
+   * · `cutoff_remind` —— 明天忘了下单时提醒（一次性授权，本单授权只能收一条）
+   * · `building_suspend_fulfill` / `building_suspend_refund` —— 楼宇停供只拦新单、
+   *   存量继续履约，用户**必须被告知**，否则饭没送来而他以为照常
+   *
+   * 微信一次最多 3 个 tmplIds，这里正好用满。授权失败/用户拒绝都**不影响下单**。
+   */
+  subscribe.requestFor(
+    ['cutoff_remind', 'building_suspend_fulfill', 'building_suspend_refund'],
+    (results) => {
+      console.log('[subscribe] order-create', results);
+    },
+  );
+
   try {
     let created: CreateOrderResult;
     try {
@@ -475,6 +499,9 @@ onLoad((options) => {
   workstation.value = userStore.info?.workstation ?? '';
   orderIdemKey = uuid();
   payIdemKey = uuid();
+  // 预加载订阅模板清单：`requestSubscribeMessage` 只能在点击的同步流程里调，
+  // 点击那一刻再去 await 拉清单，手势窗口已经关了（见 use-subscribe-message 头注）
+  void subscribe.preload();
   void load(mealDate);
 });
 </script>

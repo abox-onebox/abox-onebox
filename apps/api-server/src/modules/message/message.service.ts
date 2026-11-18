@@ -10,6 +10,7 @@ import {
   MESSAGE_TEMPLATE_SPEC_MAP,
   missingForEnable,
   specState,
+  toWxData,
 } from '../admin/template/message-template.specs';
 
 export interface NotifyInput {
@@ -127,6 +128,25 @@ export class MessageService {
       return { delivered: false, reason: '收件人 openid 缺失' };
     }
 
+    /**
+     * ⭐ 2026-11-18：业务字段 → **微信模板关键词编号** 的换算（投递前唯一入口）
+     *
+     * 调用方传的是业务名（`orderNo` / `amount` / `refundedAt`），微信要的是
+     * `character_string1` / `amount2` / `time3`。此前直接把业务名塞给微信 ——
+     * 在 Mock 通道下"成功"了整整一期，真实通道上必然 `47003 参数不合法`。
+     *
+     * 缺字段时**不发**：微信要求模板里每个关键词都有值，拿 `-` / `00:00` 糊过去
+     * 会让用户按假时间安排午饭，比不发更糟（见 `toWxData` 头注）。
+     */
+    const { data: wxData, missing } = toWxData(spec, input.wxData ?? {});
+    if (missing.length || !Object.keys(wxData).length) {
+      const reason = missing.length
+        ? `模板关键词缺少取值：${missing.join('、')}（模板关键词与投递数据对不上）`
+        : `场景「${spec.label}」未声明 wxFields，模板关键词未映射`;
+      this.logger.warn(`${reason} → 跳过投递`);
+      return { delivered: false, reason };
+    }
+
     let ok = false;
     let errMsg: string | undefined;
 
@@ -135,7 +155,9 @@ export class MessageService {
         openid,
         templateId,
         page: input.page,
-        data: input.wxData ?? {},
+        /** 带场景键：6 个场景共用一条通道，日志里靠它区分是哪条通知失败 */
+        scene: input.scene,
+        data: wxData,
       });
       ok = r.ok;
       errMsg = r.errMsg;

@@ -56,3 +56,29 @@ export class UpdateMessageTemplateDto {
   @MaxLength(500, { message: 'groupContent 过长（上限 500 字符）' })
   groupContent?: string | null;
 }
+
+/**
+ * D60+ · 把「代码声明里有、库里没有」的场景落库（2026-11-18 新增）
+ *
+ * ## 为什么需要它
+ *
+ * `PUT /admin/templates/:id` 只能改**已存在的行**（`findOne` 找不到就 404），
+ * 而行的唯一创建途径是种子脚本 —— 生产环境**不跑 seed**（会污染真实数据）。
+ * 结果：新增场景（如 N2 的 `building_suspend_fulfill` / `building_suspend_refund`）
+ * 在后台永远显示「尚未落库」，运营**填不了模板 ID**，那两条通知也就永远发不出去。
+ *
+ * ⇒ 补一个幂等的落库入口：按 `scene` 判定，已存在则等同一次编辑，
+ *   不存在则按声明的 `seed` 落一行，随后复用 `update()` 的全部校验。
+ *
+ * ⚠️ 场景键仍**只允许来自声明**（`MESSAGE_TEMPLATE_SPEC_MAP`），
+ *   不接受任意字符串 —— 否则又变成「可以凭空造场景」。
+ */
+export class CreateMessageTemplateDto extends UpdateMessageTemplateDto {
+  @ApiPropertyOptional({
+    description: '场景键（须在服务端场景声明内；已存在则幂等，等同一次编辑）',
+    example: 'building_suspend_fulfill',
+  })
+  @IsString({ message: 'scene 必须为字符串' })
+  @MaxLength(64, { message: 'scene 过长（上限 64 字符）' })
+  scene!: string;
+}

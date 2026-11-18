@@ -20,6 +20,7 @@ import {
   WxNotifyProvider,
   MockWxNotifyProvider,
 } from './wx-notify/wx-notify.provider';
+import { RealWxNotifyProvider } from './wx-notify/real-wx-notify.provider';
 
 /**
  * 外部依赖模块（全局）
@@ -51,7 +52,20 @@ import {
     {
       provide: WX_NOTIFY_PROVIDER,
       inject: [ConfigService],
-      useFactory: (): WxNotifyProvider => new MockWxNotifyProvider(),
+      /**
+       * ⚠️ 2026-11-18 修正：此前这里**无条件**返回 `MockWxNotifyProvider`，
+       * 连 `PROVIDER_MODE` 都没读。后果是线上 6 个已接线的订阅场景
+       * （退款结果 / 佣金入账 / 截单提醒 / 团长申请 / 楼宇停供履约 / 停供退款）
+       * 全部「投递成功」：`ab_message` 写满 `status=success`，微信侧一条都没收到。
+       *
+       * 这类假成功比报错更难发现 —— 日志有记录、业务不报错、用户只是"没收到"，
+       * 而一张全是 success 的表不会引起任何人怀疑。故与其他四个通道统一口径：
+       * **real 走真实发送，mock 才打日志**。
+       */
+      useFactory: (cfg: ConfigService): WxNotifyProvider =>
+        cfg.get<string>('app.drivers.providerMode') === 'real'
+          ? new RealWxNotifyProvider(cfg)
+          : new MockWxNotifyProvider(),
     },
     {
       provide: FLEX_PAYOUT_PROVIDER,

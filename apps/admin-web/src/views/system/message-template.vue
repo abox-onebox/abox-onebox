@@ -68,12 +68,20 @@
 
             <div class="form__row">
               <span class="form__label">微信模板 ID</span>
-              <el-input
-                v-model="draft[t.scene].wechatTemplateId"
-                class="form__input"
-                placeholder="在微信公众平台创建订阅消息模板后填入；留空表示未配置"
-                :disabled="saving === t.scene"
-              />
+              <div class="form__stack">
+                <el-input
+                  v-model="draft[t.scene].wechatTemplateId"
+                  class="form__input"
+                  placeholder="在微信公众平台创建订阅消息模板后填入；留空表示未配置"
+                  :disabled="saving === t.scene"
+                />
+                <!-- ⚠️ 这行是给运营照着选模板用的：微信只认关键词编号，
+                     选到的模板关键词类型/顺序不一致，投递会被 47003 拒掉 -->
+                <span v-if="t.wxFieldsHint" class="form__hint">
+                  选模板时关键词须为：{{ t.wxFieldsHint }}
+                  （顺序与类型都要一致，否则微信会拒发）
+                </span>
+              </div>
             </div>
 
             <div class="form__row">
@@ -244,6 +252,7 @@ import {
   OrchestrateResult,
   fetchMessageReach,
   fetchMessageTemplates,
+  initMessageTemplate,
   orchestrateMessage,
   updateMessageTemplate,
 } from '@/api/system';
@@ -302,10 +311,6 @@ async function load(): Promise<void> {
 }
 
 async function save(t: MessageTemplateItemView): Promise<void> {
-  if (t.id === null) {
-    ElMessage.warning('该场景尚未落库，请先执行种子导入');
-    return;
-  }
   const d = draft[t.scene];
   saving.value = t.scene;
   try {
@@ -323,7 +328,13 @@ async function save(t: MessageTemplateItemView): Promise<void> {
       patch.groupContent = d.groupContent.trim() || null;
     }
 
-    const r = await updateMessageTemplate(t.id, patch);
+    // ⚠️ `id === null` = 该场景还没落库（生产不跑 seed，新场景必然如此）。
+    // 此前这里直接弹「请先执行种子导入」—— 而运营没有执行种子的手段，
+    // 等于新增场景永远配不了。改走落库端点，服务端按 scene 幂等处理。
+    const r =
+      t.id === null
+        ? await initMessageTemplate(t.scene, patch)
+        : await updateMessageTemplate(t.id, patch);
     ElMessage.success(r.note);
     await load();
   } catch {
@@ -506,6 +517,13 @@ onMounted(() => {
 }
 .form__input {
   max-width: 520px;
+}
+.form__stack {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .form__hint {
   color: $c-text-weak;
