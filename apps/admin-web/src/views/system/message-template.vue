@@ -223,6 +223,10 @@
               确认发送
             </el-button>
           </div>
+          <p class="send-window" :class="{ 'send-window--late': lateNight }">
+            <span class="send-window__tag">{{ lateNight ? '深夜时段' : '建议时段' }}</span>
+            <span>{{ sendWindowHint }}</span>
+          </p>
           <el-alert
             v-if="orch"
             :type="orch.dryRun ? 'info' : 'success'"
@@ -243,7 +247,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
@@ -391,19 +395,102 @@ const orch = ref<OrchestrateResult | null>(null);
 const orchDate = ref('');
 
 /**
+ * 北京时间的当前小时（0–23）
+ *
+ * ⚠️ 刻意**不用** `new Date().getHours()`：那取的是浏览器本地时区，
+ *    运营在境外或改过系统时区时会算错。用 UTC 偏移硬算，与业务时区（北京）恒定一致。
+ */
+function bjNowHour(): number {
+  return new Date(Date.now() + 8 * 3600 * 1000).getUTCHours();
+}
+
+/** 北京时间的 `HH:mm`（提示文案里给运营看「现在几点」） */
+function bjNowText(): string {
+  const d = new Date(Date.now() + 8 * 3600 * 1000);
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * 深夜时段：22:00–06:59
+ *
+ * 为什么这不是「体验优化」而是**业务正误**：
+ * 截单提醒的受众是「近 14 天下过单、明日尚未下单」的老客户，而截单时刻在 T-1 日 24:00。
+ * 判据覆盖两段，原因不同：
+ * · 22:00–23:59 距截单不足 2 小时 —— 多数人已休息，看到也来不及下单；
+ * · 00:00–06:59 已过截单 —— 看到了也下不了单。
+ * 共同后果：
+ * ① 转化必然为 0，一次订阅额度（每人仅 1 条）白烧；
+ * ② 吵醒的是最不该被吵的高频客户，属于纯负资产；
+ * ③ 卡片上写着「截单时间 X 日 00:00」，次日早晨看到的人还会误以为「还早」。
+ */
+function isLateNight(hour: number): boolean {
+  return hour >= 22 || hour < 7;
+}
+
+/**
+ * 深夜不宜发送的原因（**按「是否已过截单」分开说**）
+ *
+ * ⚠️ 22:00–23:59 尚未截单，此时说「已过截单」就是错话 —— 一刀切会让提示自己变成假信息，
+ *    运营一旦发现某条不对，其余几条也就都不信了。
+ */
+function lateNightReason(hour: number): string {
+  return hour < 7
+    ? '今日截单已过，对方看到了也下不了单，只会被吵醒，并白耗一次一次性订阅额度（每人仅 1 条）'
+    : '距 0 点截单已不足 2 小时，而受众大多已休息 —— 这时候发，被看到也来不及下单，没被看到就是纯打扰';
+}
+
+/** 页面常驻的当前小时（每分钟刷新一次，页面开很久也不会停在旧值上） */
+const nowHour = ref(bjNowHour());
+const lateNight = computed(() => isLateNight(nowHour.value));
+/** 分钟级刷新定时器（仅用于常驻提示；真发时的判定是现算的，不依赖它） */
+let hourTimer: ReturnType<typeof setInterval> | null = null;
+
+/** 建议发送窗口（截单提醒的业务节律） */
+const SEND_WINDOW_TEXT = '17:00–20:00';
+
+const sendWindowHint = computed(() => {
+  if (lateNight.value) {
+    return (
+      `现在是 ${bjNowText()}：${lateNightReason(nowHour.value)}。` +
+      `建议改到明天 ${SEND_WINDOW_TEXT}。`
+    );
+  }
+  return (
+    `建议 ${SEND_WINDOW_TEXT} 发送：用户还醒着、也还来得及下单。` +
+    `截单在 0 点，深夜发出去只剩打扰。`
+  );
+});
+
+/**
  * 触发一次编排（截单提醒）
  *
  * ⚠️ 真发（`dryRun=false`）**必须先二次确认**：服务端把 `dryRun` 缺省成 `true` 是
  *    安全默认，而真发这一次是**不可撤销的对外动作**（每条消耗一次用户订阅授权额度）。
  *    「预演」不弹确认 —— 它不产生任何外部影响。
+ *
+ * ⚠️ 深夜（22:00–06:59）加一道**强确认**：两种情形都该拦，但原因不同 ——
+ *    22–24 点距 0 点截单已不足 2 小时（多数人已休息，看到了也来不及下单）；
+ *    0–7 点则**已过截单**（看到了也下不了单）。两者都会白耗一次订阅额度。
+ *    文案与按钮都改成劝阻向（「仍要发送／改到明天」），而不是中性的「确认／取消」。
  */
 async function runOrchestrate(dryRun: boolean): Promise<void> {
   if (!dryRun) {
+    /**
+     * 现算一次，不复用 `nowHour`：页面可能从下午一直开到半夜，
+     * 拿挂载时的小时数判断，恰好会放过真正该拦的那一次。
+     */
+    const hour = bjNowHour();
+    const late = isLateNight(hour);
     try {
       await ElMessageBox.confirm(
-        '将向受众真实投递订阅消息（不可撤销，且每条消耗一次用户授权额度）。确认继续？',
-        '确认发送',
-        { type: 'warning', confirmButtonText: '确认发送', cancelButtonText: '取消' },
+        late
+          ? `${bjNowText()} 已进入深夜时段：${lateNightReason(hour)}。` +
+              `如非必要，请改到明天 ${SEND_WINDOW_TEXT}。仍要发送吗？`
+          : '将向受众真实投递订阅消息（不可撤销，且每条消耗一次用户授权额度）。确认继续？',
+        late ? '深夜发送确认' : '确认发送',
+        late
+          ? { type: 'error', confirmButtonText: '仍要发送', cancelButtonText: '改到明天' }
+          : { type: 'warning', confirmButtonText: '确认发送', cancelButtonText: '取消' },
       );
     } catch {
       return; // 用户取消
@@ -440,6 +527,17 @@ onMounted(() => {
   void load();
   // 到达率也预载：切过去就有内容，而不是先看一片空白
   void loadReach();
+  // 时段提示跨过 22:00 / 07:00 时自动翻面，不需要人手动刷新页面
+  hourTimer = setInterval(() => {
+    nowHour.value = bjNowHour();
+  }, 60 * 1000);
+});
+
+onUnmounted(() => {
+  if (hourTimer !== null) {
+    clearInterval(hourTimer);
+    hourTimer = null;
+  }
 });
 </script>
 
@@ -528,6 +626,30 @@ onMounted(() => {
 .form__hint {
   color: $c-text-weak;
   font-size: $fs-caption;
+}
+/* 发送时段提示：常规态中性、深夜态转警示色 —— 让「现在别发」在视觉上一眼可辨 */
+.send-window {
+  display: flex;
+  align-items: baseline;
+  gap: $space-1;
+  margin: 0 0 $space-2;
+  padding: $space-1 $space-2;
+  border: 1px solid $c-mut-bd;
+  border-radius: 4px;
+  background: $c-mut-bg;
+  color: $c-text-weak;
+  font-size: $fs-caption;
+  line-height: 1.6;
+}
+.send-window__tag {
+  flex: none;
+  font-weight: 600;
+}
+.send-window--late {
+  border-color: $c-warn-bd;
+  background: $c-warn-bg;
+  /* 状态原色不作文字色（design:spec 第 3 条）—— 文字用加强档 $c-warn-fg */
+  color: $c-warn-fg;
 }
 .form__foot {
   display: flex;
