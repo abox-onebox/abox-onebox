@@ -108,7 +108,10 @@ describe('停用通知：B 组两小类必须走两套模板', () => {
     const m = byOrderNo(calls);
     expect(m.get('O1')?.variables?.mealDate).toBe('2026-10-27');
     expect(m.get('O2')?.variables?.mealDate).toBe('2026-11-02');
-    expect(m.get('O1')?.wxData?.mealDate?.value).toBe('2026-10-27');
+    // 2026-11-19 起 mealDate 映射到 time2，值为完整时刻（time 类型自带日期）
+    expect(m.get('O1')?.wxData?.mealDate?.value).toBe('2026-10-27 00:00');
+    // 两段式：thing1 概要按结局区分，不得两类都写「照常配送」
+    expect(m.get('O1')?.wxData?.noticeTitle?.value).toContain('照常配送');
   });
 
   it('★ 只有一类订单时只发对应那一种，不得两类都发', async () => {

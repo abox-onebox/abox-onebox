@@ -356,8 +356,14 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     requestSubscribe: true,
     consumedBy: 'finance/refund.service.ts → MessageService.notify()（M3-12 接线）',
     wiring: 'live',
-    /** 订单号 / 退款金额 / 退款时间 —— 选模板时关键词顺序须与此一致 */
-    wxFields: { orderNo: 'character_string1', amount: 'amount2', refundedAt: 'time3' },
+    /**
+     * 订单号 / 退款金额 / 退款时间 —— 按祝总选的公共模板「退款通知」真实编号调整。
+     * ⚠️ 2026-11-19：`退款单号=character_string1`、`退款金额=amount3`、`退款时间=time4`。
+     *    微信公共模板编号按关键词池固有位置生成（第 1 / 3 / 4），不随勾选顺序变，只能代码适配。
+     *    只改编号值、业务键不变 ⇒ 投递点 payload 无需改动。
+     *    ⚠️ 代价：本场景与该具体模板绑定，运营换模板必须回来重配 + 重校验。
+     */
+    wxFields: { orderNo: 'character_string1', amount: 'amount3', refundedAt: 'time4' },
     note:
       '⭐ **必推项**（原型原文：用户端常规状态不推，但退款结果属必推）。' +
       '投递在**退款事务提交之后**执行 —— 事务回滚了通知却已发出，是退款链路最忌讳的「说不清」。',
@@ -383,8 +389,17 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     consumedBy:
       'finance/commission.service.ts → MessageService.notify()（M4-3 接线·队列 settle-orders）',
     wiring: 'live',
-    /** 日期 / 金额 / 笔数 —— 选模板时关键词顺序须与此一致 */
-    wxFields: { mealDate: 'date1', amount: 'amount2', settledCount: 'number3' },
+    /**
+     * 日期 / 金额 / 笔数 —— 关键词编号按祝总选的公共模板「订单佣金提醒」真实值调整。
+     *
+     * ⚠️ 2026-11-19 最终编号：`商品名称=thing2`、`商品佣金=amount8`、`下单数量=number10`。
+     *    微信公共模板的编号按关键词池**固有位置**生成（依次排第 2 / 8 / 10），
+     *    **不随勾选顺序变**，只能代码适配。语义近似：thing2「商品名称」塞出餐日期
+     *    （`2026-11-18`，≤20 字够用）；amount8「商品佣金」塞入账金额；number10「下单数量」塞笔数。
+     *    只改编号值、业务键不变 ⇒ 投递点 payload 无需改动。
+     *    ⚠️ 代价：本场景与该具体模板绑定，运营换模板必须回来重配 + 重校验。
+     */
+    wxFields: { mealDate: 'thing2', amount: 'amount8', settledCount: 'number10' },
     note:
       '⭐ 两段式佣金的**必要配套**：T 日确认计佣、T+1 02:00 才入账（见 `COMMISSION_SETTLE_NOTE`），' +
       '中间隔了一夜。若不通知，团长在小程序里看到的是「昨天确认了却没钱」——两段式本身没问题，' +
@@ -409,7 +424,7 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     mandatory: false,
     // `cutoffTime` 的值由服务端按**生效时间轴**填充（`formatTimeOfDay(currentTimeline().cutoff)`），
     // 不是端上写的第二份时刻。
-    variables: ['mealDate', 'cutoffTime'],
+    variables: ['mealDate', 'cutoffTime', 'noticeTitle'],
     /**
      * ⭐ `true`：本场景面向**用户小程序身份**、走订阅消息渠道、且 `wiring='live'`（编排端点是
      * 真实投递点）—— 三条全中，故用户端应当请求授权（判据见 `subscribeTemplateOf`）。
@@ -418,16 +433,16 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     consumedBy: 'message/message-orchestrator.service.ts → orchestrate()（F5 接线）',
     wiring: 'live',
     /**
-     * 只投「截单时间」**一个**关键词。
+     * 「截单概要 + 截单时刻」两个关键词。
      *
-     * ⚠️ 为什么不是「日期 + 时刻」两个字段（2026-11-18 按实际可申请的模板改）：
-     *    微信 `time` 类型**自带日期**，卡片渲染成「2026年11月19日 00:00」——
-     *    再塞一个 `date` 字段等于同一信息说两遍；且公共模板库里「截单通知」
-     *    这类模板根本没有独立的日期关键词可选（候选只有：截单时间 / 截单档口 /
-     *    截单批次 / 备注）。
-     *    ⇒ 完整时刻由 `message-orchestrator` 的 `cutoffAtText()` 拼好，此处只声明编号。
+     * ⚠️ 2026-11-19 按祝总选的公共模板真实编号调整：`备注=thing4`、`截单时间=time1`。
+     *    微信模板最少 2 个关键词，故仍是两段式（概要 + 时刻），只是编号由模板池固有位置
+     *    决定（备注在该模板池排第 4、截单时间排第 1），**不随勾选顺序变**。
+     *    `thing4` 叫「备注」，我们塞「截单提醒：{{mealDate}}午餐」短句；
+     *    `time1` 是截单时间，完整时刻由 `message-orchestrator` 的 `cutoffAtText()` 拼好塞入。
+     *    ⚠️ 代价：本场景与该具体模板绑定，运营换模板必须回来重配 + 重校验。
      */
-    wxFields: { cutoffAt: 'time1' },
+    wxFields: { noticeTitle: 'thing4', cutoffAt: 'time1' },
     note:
       '⭐ **F5 新增（全清单第 7 行）**：真源《系统地图》F5 点名「忘了下单」是最冤的两笔损失之一' +
       '（另一笔「忘了取餐」由 `leader_delivery` 承载）。' +
@@ -470,12 +485,17 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
      *    —— spec §6.5 要求「让运营事后看得到有幾個人沒通知到、**是誰**」，
      *    那个「是谁」靠的就是它。白名单里必须声明，否则投递侧塞进去的字段无据可查。
      */
-    variables: ['mealDate', 'orderNo'],
+    variables: ['mealDate', 'orderNo', 'noticeTitle'],
     requestSubscribe: true,
-    consumedBy: 'building/building-admin.service.ts → notifySuspendAffected()（N2 接线）',
+    consumedBy: 'building/building-suspend.service.ts → notifySuspendAffected()（N2 接线）',
     wiring: 'live',
-    /** 只投「出餐日期」一个关键词 —— 选模板时须选只含日期关键词的（或按此顺序对齐） */
-    wxFields: { mealDate: 'date1' },
+    /**
+     * ⚠️ 2026-11-19 改为两段式 `thing1` + `time2`（原仅 `date1` 一个）：
+     *    微信模板最少 2 个关键词，单字段在任何模板下校验都报「多一个」、真投递 47003。
+     *    `thing1` = 「{{mealDate}} 订单照常配送」概要，`time2` = 出餐日 00:00（time 自带日期）。
+     *    只改编号 + 增一个业务键；投递点须同步补 noticeTitle，见 building-suspend.service.ts。
+     */
+    wxFields: { noticeTitle: 'thing1', mealDate: 'time2' },
     note:
       '⭐ **N2 新增（全清单第 8 行）**：停用只拦**新单**，存量继续履约（用户已拍板，不做批量退款）。' +
       '⚠️ 一期没有微信模板 ID ⇒ 启用闸门拦住启用 ⇒ 如实「未启用（缺模板 ID）」，' +
@@ -501,12 +521,12 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
      *    —— spec §6.5 要求「让运营事后看得到有幾個人沒通知到、**是誰**」，
      *    那个「是谁」靠的就是它。白名单里必须声明，否则投递侧塞进去的字段无据可查。
      */
-    variables: ['mealDate', 'orderNo'],
+    variables: ['mealDate', 'orderNo', 'noticeTitle'],
     requestSubscribe: true,
-    consumedBy: 'building/building-admin.service.ts → notifySuspendAffected()（N2 接线）',
+    consumedBy: 'building/building-suspend.service.ts → notifySuspendAffected()（N2 接线）',
     wiring: 'live',
-    /** 同 `building_suspend_fulfill`：只投出餐日期一个关键词 */
-    wxFields: { mealDate: 'date1' },
+    /** 同 `building_suspend_fulfill`：`thing1` + `time2` 两段式（2026-11-19 改，原单字段 date1） */
+    wxFields: { noticeTitle: 'thing1', mealDate: 'time2' },
     note:
       '⭐ **N2 新增（全清单第 9 行）**。与 `building_suspend_fulfill` **不是同一件事**：' +
       '这批用户的结局是**退款**，不是餐。' +
@@ -565,8 +585,16 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     consumedBy:
       'meal/meal-admin.service.ts → notifyGroupOpen()（两处：publishAssignment 单条上架 / publishByDate 跑批）',
     wiring: 'live',
-    /** 开团信息（日期+套餐，拼进 `thing`）/ 截单时刻（`time` 自带日期） */
-    wxFields: { noticeTitle: 'thing1', cutoffAt: 'time2' },
+    /**
+     * 开团信息（日期+套餐，拼进 `thing`）/ 截单时刻（`time` 自带日期）。
+     *
+     * ⚠️ 2026-11-19 按祝总选的公共模板真实编号调整：`团购名称=thing5`、`开始时间=time2`。
+     *    公共模板编号由微信按关键词池**固有位置**生成（团购名称在该模板池排第 5），
+     *    **不随勾选顺序变**——故代码适配模板，而非反过来。语义上 thing5 叫「团购名称」，
+     *    我们塞「{日期}午餐·{套餐名}」概要；time2 叫「开始时间」，塞截单时刻，属可接受的近似。
+     *    ⚠️ 代价：本场景与该具体模板绑定，运营换模板必须回来重配 + 重校验。
+     */
+    wxFields: { noticeTitle: 'thing5', cutoffAt: 'time2' },
     note:
       '⭐ **2026-11-18 新增（全清单第 10 行）**：开团这件事对外**一直没有声音**，' +
       '团长不知道何时能开始分享，是供给侧断链的上半段。' +

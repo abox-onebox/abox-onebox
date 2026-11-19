@@ -118,6 +118,8 @@ export class MessageOrchestratorService {
     const cutoffTime = formatTimeOfDay(timeline.cutoff);
     /** 微信 `time` 关键词用的完整时刻（卡片渲染成「2026年11月19日 00:00」） */
     const cutoffAt = cutoffAtText(mealDate, timeline.cutoff);
+    /** 微信 `thing1` 关键词：截单概要（≤20 字）；模板最少 2 个词，补上这行才有 thing+time 两段式 */
+    const noticeTitle = `${mealDate} 午餐截单提醒`;
 
     let delivered = 0;
     let ok = 0;
@@ -157,8 +159,8 @@ export class MessageOrchestratorService {
             scene: spec.scene,
             userId,
             page: NOTIFY_PAGES.orderCreate,
-            variables: { mealDate, cutoffTime },
-            wxData: buildWxData({ cutoffAt }),
+            variables: { mealDate, cutoffTime, noticeTitle },
+            wxData: buildWxData({ noticeTitle, cutoffAt }),
           });
           if (r.delivered) {
             delivered += 1;

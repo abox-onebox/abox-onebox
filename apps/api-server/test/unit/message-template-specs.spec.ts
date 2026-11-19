@@ -35,6 +35,16 @@ describe('通知场景声明 · 结构自检（D60++）', () => {
     expect(bad).toEqual([]);
   });
 
+  it('每个 wxFields 的关键词数量都在微信允许的 2–5 个之间（防止单字段回归）', () => {
+    const bad = MESSAGE_TEMPLATE_SPECS.filter((s) => {
+      const n = Object.keys(s.wxFields ?? {}).length;
+      return s.channels.includes('wechat_subscribe') && s.wiring === 'live' && (n < 2 || n > 5);
+    }).map((s) => `${s.scene}(${Object.keys(s.wxFields ?? {}).length})`);
+    // 2026-11-19：cutoff_remind / building_suspend_fulfill / building_suspend_refund
+    // 曾是单字段，后台校验必报「多一个关键词」、真投递 47003。补成两段式后应全绿。
+    expect(bad).toEqual([]);
+  });
+
   it('wxFields 的业务键必须在 WX_BIZ_FIELD_LABEL 里有中文名（后台展示用）', () => {
     const missing: string[] = [];
     for (const s of MESSAGE_TEMPLATE_SPECS) {
@@ -77,10 +87,11 @@ describe('通知场景声明 · 结构自检（D60++）', () => {
       expect(spec?.channels).toEqual(['wechat_subscribe', 'wechat_group']);
     });
 
-    it('关键词恰好 2 个（微信下限），且是 thing + time', () => {
+    it('关键词恰好 2 个（微信下限），且是公共模板真实编号 thing5 + time2', () => {
       const wx = spec?.wxFields ?? {};
       expect(Object.keys(wx)).toHaveLength(2);
-      expect(Object.values(wx).sort()).toEqual(['thing1', 'time2']);
+      // 2026-11-19：适配祝总选的公共模板「团长开团通知」（团购名称=thing5、开始时间=time2）
+      expect(Object.values(wx).sort()).toEqual(['thing5', 'time2']);
     });
 
     it('种子未启用 —— 缺模板 ID 时启用闸门必须拦住', () => {

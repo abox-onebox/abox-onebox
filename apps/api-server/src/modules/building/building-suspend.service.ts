@@ -318,12 +318,15 @@ export class BuildingSuspendService {
       const results = await Promise.all(
         targets.map(async (o) => {
           const mealDate = String(o.mealDate);
+          const isRefunding =
+            o.status === OrderStatus.REFUND_APPLYING || o.status === OrderStatus.REFUNDING;
+          // 模板 thing1 概要（≤20 字）——两种结局文案不同，退款中不得出现「照常配送」
+          const noticeTitle = isRefunding
+            ? `${mealDate} 订单退款处理中`
+            : `${mealDate} 订单照常配送`;
           try {
             const r = await this.message.notify({
-              scene:
-                o.status === OrderStatus.REFUND_APPLYING || o.status === OrderStatus.REFUNDING
-                  ? 'building_suspend_refund'
-                  : 'building_suspend_fulfill',
+              scene: isRefunding ? 'building_suspend_refund' : 'building_suspend_fulfill',
               userId: Number(o.userId),
               page: NOTIFY_PAGES.orderDetail,
               /**
@@ -333,8 +336,13 @@ export class BuildingSuspendService {
                *    ⚠️ 它**不进** `wxData`（用户看不到，也不是模板变量）—— 两者不是一回事：
                *    `wxData` 是给用户看的内容，`variables` 是给排查看的落库字段。
                */
-              variables: { mealDate, orderNo: String(o.orderNo) },
-              wxData: { mealDate: { value: mealDate } },
+              variables: { mealDate, orderNo: String(o.orderNo), noticeTitle },
+              // 模板两段式（2026-11-19）：thing1=概要、time2=出餐日 00:00。
+              // 原来只有 mealDate(date1) 一个词，微信最少 2 个词会 47003。
+              wxData: {
+                noticeTitle: { value: noticeTitle },
+                mealDate: { value: `${mealDate} 00:00` },
+              },
             });
             return {
               ok: r.delivered && r.ok === true,
