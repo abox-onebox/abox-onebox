@@ -586,7 +586,7 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
       enabled: 0,
       wechatTemplateId: null,
       groupContent:
-        '【ABox 开团】{{mealDate}} 的午餐已开团（{{setMealName}}），{{cutoffAt}} 截单，请尽快分享给同事。',
+        '【ABox 开团】{{mealDate}} 的午餐已开团（{{setMealName}}），{{cutoffAt}} 截单，方便时在小程序里分享给同事。',
     },
   },
   // ==========================================================================
