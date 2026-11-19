@@ -624,13 +624,14 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
   //   晋级（涨钱）／见习到期（即将失去资格）／被停职（已经失去资格）／提现结果（钱）。
   // 与开团通知同属一个缺陷族：「状态变了、该知道的人不知道、而且这直接决定他下一步动作」。
   //
-  // ## ⚠️ 四个场景**刻意用完全相同的模板结构**（2 个关键词：`thing1` + `time2`）
+  // ## ⚠️ 四个场景用**相同的模板结构**（2 个关键词），但编号按各自模板实配
   //
-  // 原因不是偷懒：运营要拿这四行去微信公共模板库**分别申请四个模板**，
-  // 每个模板的关键词数量与顺序都必须和我们这边对齐。四个场景若各有各的结构
-  // （有的 2 个、有的 3 个、`amount` 和 `thing` 混用），申请时就要记四套规则 ——
+  // 结构统一（都是「第 1 个事物/结果 + 第 2 个时间」）是为了让运营申请模板时少记规则 ——
   // 记错一次就 `47003 参数不合法`，而且失败发生在**生产投递时**，不是申请时。
-  // 统一成「第 1 个选事物、第 2 个选时间」，四行只需记一条规则。
+  //
+  // ⚠️ 2026-11-19：`withdraw_result` 按祝总实际申请到的公共模板改为 `phrase3` + `time1`
+  //    （提现结果 / 提现时间），其余三行仍是 `thing1` + `time2`。编号由微信关键词池的
+  //    **固有位置**决定，不随勾选顺序变 —— 所以「结构统一」≠「编号统一」，别再写死成一套。
   //
   // ## ⚠️ 为什么第 1 个关键词要自己拼成一句话（而不是分 3 个关键词）
   //
@@ -779,8 +780,12 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
      * 尤其 `reject`（运营驳回，可再提）与 `markFailed`（打款失败，需改收款方式）
      * 是两种完全不同的下一步动作，文案例必须区分（见 `withdraw-admin.service.ts` 的映射）。
      *
-     * ⚠️ 金额塞进 `thing1`（≤20 字符，`¥120.00 已打款` 远未超限）而**不新开 `amount` 位**：
-     * 一旦用了 `amount`，模板就必须恰好在第 2 位有金额类型 —— 四行统一结构就破了。
+     * ⚠️ 2026-11-19 按祝总选的公共模板真实编号调整：`提现结果=phrase3`、`提现时间=time1`。
+     *    微信公共模板编号按关键词池**固有位置**生成（提现结果在该池排第 3、提现时间排第 1），
+     *    **不随勾选顺序变**，只能代码适配。语义上 phrase3 叫「提现结果」，塞结果短句
+     *    （`¥120.00 已到账`，≤20 字符远未超限）；time1 叫「提现时间」，塞处理时刻。
+     *    只改编号值、业务键不变 ⇒ 投递点 `withdraw-admin.service.ts` 无需改动。
+     *    ⚠️ 代价：本场景与该具体模板绑定，运营换模板必须回来重配 + 重校验。
      */
     scene: 'withdraw_result',
     label: '提现结果通知',
@@ -792,7 +797,7 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     requestSubscribe: true,
     consumedBy: 'finance/withdraw-admin.service.ts（approve / reject / markPaid / markFailed）',
     wiring: 'live',
-    wxFields: { noticeTitle: 'thing1', resultAt: 'time2' },
+    wxFields: { noticeTitle: 'phrase3', resultAt: 'time1' },
     note:
       '⭐ 提现的终态此前全静默，团长靠反复刷页面确认钱到没到 —— 这是信任问题，不是便利问题。' +
       '⚠️ **`approve`（审批通过）刻意不发**：它只是中间态（钱还在路上），' +

@@ -111,10 +111,10 @@ describe('通知场景声明 · 结构自检（D60++）', () => {
   /**
    * 团长激活三件套（2026-11-18 第二批）
    *
-   * 这四个场景有一条**刻意的统一约束**：全部 2 个关键词、且是 `thing1` + `time2`。
-   * 不是为了整齐好看 —— 运营要拿这四行**分别去微信公共模板库申请模板**，
-   * 每行结构不同就要记一套自己的规则，记错一次的结果是**生产投递时** `47003`，
-   * 而不是申请时。把「统一」写成断言，改动时立刻被拦下。
+   * 这四个场景结构统一：都是 2 个关键词（事物/结果 + 时间），便于运营申请模板时少记规则。
+   * ⚠️ 编号按各自真实模板实配：前三行 `thing1` + `time2`；`withdraw_result` 因祝总申请到的
+   * 公共模板编号不同，2026-11-19 改为 `phrase3` + `time1`（关键词池固有位置，不随勾选顺序变）。
+   * 把「每行各自的编号」写成断言，改动或换模板时立刻被拦下，避免生产投递 `47003`。
    */
   describe('团长激活三件套（晋级 / 到期预警 / 停职 / 提现结果）', () => {
     const SCENES = ['leader_promoted', 'trainee_expiring', 'leader_suspended', 'withdraw_result'];
@@ -135,12 +135,18 @@ describe('通知场景声明 · 结构自检（D60++）', () => {
       }
     });
 
-    it('全部恰好 2 个关键词，且是 thing1 + time2（统一结构，运营只需记一条规则）', () => {
-      for (const scene of SCENES) {
+    it('每行恰好 2 个关键词，编号与各自真实模板对齐（前三 thing1+time2 / 提现 phrase3+time1）', () => {
+      // 前三行沿用统一编号
+      for (const scene of ['leader_promoted', 'trainee_expiring', 'leader_suspended']) {
         const wx = MESSAGE_TEMPLATE_SPECS.find((s) => s.scene === scene)?.wxFields ?? {};
         expect(Object.keys(wx)).toHaveLength(2);
         expect(Object.values(wx).sort()).toEqual(['thing1', 'time2']);
       }
+      // 提现结果：祝总实际申请到的公共模板编号（2026-11-19 校验 47003 后实测确认）
+      const wxWithdraw =
+        MESSAGE_TEMPLATE_SPECS.find((s) => s.scene === 'withdraw_result')?.wxFields ?? {};
+      expect(Object.keys(wxWithdraw)).toHaveLength(2);
+      expect(Object.values(wxWithdraw).sort()).toEqual(['phrase3', 'time1']);
     });
 
     it('全部种子未启用 —— 缺模板 ID 时启用闸门必须拦住', () => {
