@@ -32,6 +32,18 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
    */
   private static readonly EITHER_SCOPE = /^\/(?:api\/v\d+\/)?auth\/(?:profile|logout)(?:\/|$)/;
 
+  /**
+   * `/auth` 下**仅后台账号**可用的端点（A7 改密 · 2026-11-19 修复）
+   *
+   * ⚠️ 为什么必须显式列出：`scopeOf()` 只认 `/admin|supplier` 前缀，
+   *    `/auth/change-password` 会被误判成 `user` 作用域，于是 admin token 撞上
+   *    「后台账号请使用后台接口」→ 401。前端 401 拦截器刷新后重试，新令牌仍是
+   *    admin → 再次 401 → **无限循环**（线上实测 10873 次、0 次成功）。
+   * ⚠️ 只能判为 `admin`，**不能**塞进 `EITHER_SCOPE`：改密用 `me.sub` 查
+   *    `ab_admin_user`，若放行 user token，用户 id 撞上某管理员 id 就是越权改密。
+   */
+  private static readonly ADMIN_AUTH_SCOPE = /^\/(?:api\/v\d+\/)?auth\/(?:change-password)(?:\/|$)/;
+
   constructor(private readonly reflector: Reflector) {
     super();
   }
@@ -39,6 +51,8 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   /** 该请求属于哪套账号体系（仅按路径判定，不看 token） */
   private scopeOf(url: string): SubjectType {
     const path = url.split('?')[0];
+    // A7 改密虽在 /auth 下，但只服务后台账号 —— 必须先于通用前缀判定
+    if (JwtAuthGuard.ADMIN_AUTH_SCOPE.test(path)) return 'admin';
     return JwtAuthGuard.ADMIN_SCOPE.test(path) ? 'admin' : 'user';
   }
 

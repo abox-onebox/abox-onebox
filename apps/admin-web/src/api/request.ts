@@ -185,19 +185,28 @@ instance.interceptors.response.use(
     const code = body?.code ?? (status === 403 ? 10003 : NETWORK_ERROR_CODE);
 
     if (code === 10002 || status === 401) {
-      const cfg = error.config;
-      // ⚠️ 三条退出条件，缺一条就出事（见 refreshAccessToken 头注）：
+      // ⚠️ __authRetried 标在**本次原始请求**的 config 上（重放会带上它）。
+      //    每请求只刷新重放一次；第二次仍 401 ⇒ 刷新解决不了（典型：新令牌仍被
+      //    守卫按作用域拒绝），必须跳登录，否则就是无限循环。
+      //    线上教训 2026-11-19：改密接口被误判成 user 作用域，前端反复
+      //    refresh→401→refresh，1 秒内打出上万请求，账号还被失败计数连累。
+      type RetryCfg = AxiosRequestConfig & { __authRetried?: boolean };
+      const cfg = error.config as RetryCfg | undefined;
+      // 四条退出条件，缺一条就出事（见 refreshAccessToken 头注）：
       //    · **刷新请求自己** 401 ⇒ 刷新令牌也过期，只能重新登录（否则无限递归）
       //    · 压根没有 refreshToken ⇒ 没有可刷新的东西
       //    · 拿不到 config ⇒ 无法重放
-      if (!cfg || cfg.url === REFRESH_URL || !getRefreshToken()) {
+      //    · 已重放过一次仍 401 ⇒ 问题不在令牌时效，别再刷了
+      if (!cfg || cfg.url === REFRESH_URL || !getRefreshToken() || cfg.__authRetried) {
         redirectToLogin();
       } else {
         try {
           const token = await refreshAccessToken();
           // 重放原请求：⚠️ 幂等头会**原样带走**（同一个 Idempotency-Key），
           // 所以刷新不会把「一次提交」变成两次 —— 这正是写接口要的语义。
+          cfg.headers = cfg.headers ?? {};
           cfg.headers.Authorization = `Bearer ${token}`;
+          cfg.__authRetried = true; // 标记必须在 request() 之前，重放才会继承
           return instance.request(cfg);
         } catch {
           redirectToLogin();

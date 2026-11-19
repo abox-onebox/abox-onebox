@@ -74,6 +74,36 @@ describe('JWT 作用域 · 既有前缀不回归', () => {
   });
 });
 
+describe('JWT 作用域 · A7 改密端点（2026-11-19 死循环修复）', () => {
+  it('★ /auth/change-password 必须判 admin —— 否则 admin token 被判 user 作用域、401 无限重试', () => {
+    for (const u of ['/auth/change-password', '/api/v1/auth/change-password']) {
+      expect(scopeOf(u)).toBe('admin');
+    }
+  });
+
+  it('反证：其余 /auth 端点（登录 / 刷新）仍判 user，没被白名单误扩', () => {
+    for (const u of [
+      '/auth/login',
+      '/api/v1/auth/admin-login',
+      '/auth/refresh',
+      '/api/v1/auth/refresh',
+    ]) {
+      expect(scopeOf(u)).toBe('user');
+    }
+  });
+
+  it('反证：双主体端点 profile/logout 的作用域判定不被改密规则影响', () => {
+    // 它们靠 EITHER_SCOPE 在 canActivate 中提前放行；这里只确认 scopeOf 未把它们改成 admin
+    expect(scopeOf('/auth/profile')).toBe('user');
+    expect(scopeOf('/auth/logout')).toBe('user');
+  });
+
+  it('查询串 / 子路径不破坏改密端点判定', () => {
+    expect(scopeOf('/api/v1/auth/change-password?from=topbar')).toBe('admin');
+    expect(scopeOf('/auth/change-password/')).toBe('admin');
+  });
+});
+
 describe('JWT 作用域 · 企微管理端点（归位后）', () => {
   it('★ 绑定 / 目录 / 试跑台都判 admin（写成 /wecom/… 时会被判 user ⇒ 后台 token 一律被拒）', () => {
     for (const u of [
