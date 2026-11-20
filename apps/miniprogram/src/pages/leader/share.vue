@@ -309,12 +309,23 @@ function copyCopy(): void {
   uni.setClipboardData({ data: `${material.value.title}\n${material.value.desc}` });
 }
 
-/** 转发给好友 / 群：带上邀请码，落地页自动归属团长（C3 推荐关系） */
+/**
+ * 转发给好友 / 群：带上邀请码，落地页自动归属团长（C3 推荐关系）
+ *
+ * ⭐ imageUrl 用代码包内封面图（微信官方支持「代码包文件路径」，5:4 比例）：
+ *    不设时微信默认截当前页（一串按钮列表），卡片又丑又单薄。
+ *    图放 `src/static/share-cover.jpg`（uni 全量复制 static → 产物 /static/share-cover.jpg），
+ *    专门生成、裁 5:4、无品牌字/水印、161KB，契合预包装食品定性。
+ *    ⚠️ 不用网络 URL：避免依赖上传接口/域名，且提审无外部图片加载风险。
+ */
+const SHARE_COVER = '/static/share-cover.jpg';
+
 onShareAppMessage(() => ({
   title: material.value?.title ?? 'ABox 一盒 · 本日精选 ¥25.80',
   path: material.value
     ? `${material.value.path}?${material.value.shareQuery}`
     : '/pages/index/index',
+  imageUrl: SHARE_COVER,
 }));
 
 onShow(() => {
