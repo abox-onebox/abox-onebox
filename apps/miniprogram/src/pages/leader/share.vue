@@ -37,16 +37,19 @@
           ><text class="abi abi-16">{{ I.share }}</text> 2 种分享方式</text
         >
 
-        <view class="way" hover-class="way--hover" @tap="shareToWechat">
+        <!-- ⭐ 卡片转发：open-type="share" 拉起微信转发面板，走 onShareAppMessage
+             （标题/邀请码 path 已配好）。改为卡片而非复制文本——复制文本发出去是链接，
+             与团长"分享给同事应是卡片"的预期不符。 -->
+        <button class="way way--share" open-type="share" hover-class="way--hover">
           <text class="abi abi-24 way__icon">{{ I.message }}</text>
           <view class="way__body">
-            <text class="way__title">分享到微信群</text>
+            <text class="way__title">转发卡片到微信群</text>
             <text class="way__sub">带邀请码，同事点开即绑定到你这栋楼</text>
           </view>
           <text class="way__arrow"
             ><text class="abi abi-16">{{ I.chev }}</text></text
           >
-        </view>
+        </button>
 
         <view
           v-if="material && !material.mock"
@@ -87,11 +90,10 @@
           </text>
         </view>
 
-        <!-- ⚠️ 原按钮名「推荐新团长」：既踩「发展下线」的表述红线，又与**实际行为不符**
-             —— 它调的是 shareToWechat()，做的事是复制「拼团群」邀请文案发给同事，
-             与「招新团长」无关。改为与行为一致、且无发展人员含义的说法。 -->
-        <button class="btn btn--gold" hover-class="btn--hover" @tap="shareToWechat">
-          <text class="abi abi-20">{{ I.share }}</text> 邀请同事拼团
+        <!-- ⚠️ 原按钮名「推荐新团长」：既踩「发展下线」的表述红线，又与**实际行为不符**。
+             改为「邀请同事拼团」+ 卡片转发（open-type=share），与行为一致、无发展人员含义。 -->
+        <button class="btn btn--gold" open-type="share" hover-class="btn--hover">
+          <text class="abi abi-20">{{ I.share }}</text> 转发卡片邀请同事
         </button>
       </view>
 
@@ -292,21 +294,6 @@ async function makeQrcode(): Promise<void> {
   }
 }
 
-/**
- * 「分享到微信群」：小程序内会拉起转发面板（见 `onShareAppMessage`）；
- * H5 / 其它端没有转发能力 → 退化为「复制分享文案」，并如实说明，避免点了没反应。
- */
-function shareToWechat(): void {
-  const m = material.value;
-  if (!m) return;
-  uni.setClipboardData({ data: `${m.title}\n${m.desc}\n${shareLink.value}` });
-  uni.showToast({
-    title: '文案已复制，去微信群粘贴发送',
-    icon: 'none',
-    duration: 2400,
-  });
-}
-
 function copyCode(): void {
   if (!material.value) return;
   uni.setClipboardData({ data: material.value.inviteCode });
@@ -458,6 +445,23 @@ onShow(() => {
   align-items: center;
   padding: $space-3 0;
   border-bottom: 1px dashed $c-border-strong;
+
+  // open-type=share 必须是 button：清掉微信 button 默认边框/背景/圆角，
+  // 让它和原来的 view 行外观一致（否则会出现一层灰色按钮底）。
+  &--share {
+    width: 100%;
+    background: transparent;
+    border: none; // 清微信 button 默认边框
+    border-bottom: 1px dashed $c-border-strong; // 补回基础 .way 的分隔线（border:none 会清掉它）
+    border-radius: 0;
+    line-height: normal;
+    font-size: inherit;
+    text-align: left;
+
+    &::after {
+      border: none;
+    }
+  }
 
   &:last-child {
     border-bottom: none;
