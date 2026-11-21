@@ -373,6 +373,12 @@ export const routes: RouteRecordRaw[] = [
         name: 'SystemOperationRequestDetail',
         component: () => import('@/views/system/operation-request/detail.vue'),
       },
+      // 2026-11-21：导出作业取件页（大批量导出不卡界面，去这里看状态与下载）
+      {
+        path: 'system/download-center',
+        name: 'SystemDownloadCenter',
+        component: () => import('@/views/system/download-center.vue'),
+      },
       {
         path: 'system/message-template',
         name: 'SystemMessageTemplate',

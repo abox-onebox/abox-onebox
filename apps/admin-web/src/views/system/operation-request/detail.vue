@@ -28,6 +28,22 @@
           </div>
         </template>
 
+        <!-- 人话摘要：审批人先看「谁、改什么、改成什么」，再看下面逐项参数 -->
+        <div v-if="currentSchema" class="summary">
+          <p class="summary__lead">
+            本次操作：<strong>{{ currentSchema.label }}</strong>
+            <template v-if="subjectText">
+              · 对象 <code>{{ subjectText }}</code></template
+            >
+            —— {{ currentSchema.effect }}
+          </p>
+          <div v-if="summaryRows.length" class="summary__grid">
+            <span v-for="r in summaryRows" :key="r.label" class="summary__item">
+              <span class="summary__k">{{ r.label }}</span>
+              <span class="summary__v">{{ r.value }}</span>
+            </span>
+          </div>
+        </div>
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="申请单 ID">
             <b>{{ detail.id }}</b>
@@ -188,11 +204,12 @@
  * ⚠️ 可见性：审批 / 执行按钮只对 super_admin / admin 显示（canApprove）。
  *    operator 经 admin-role.ts 的 `/system/` 派生规则已被挡在菜单外，只能由知识助手代提交。
  */
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
+  fetchOperationSchemas,
   fetchOperationRequestDetail,
   approveOperationRequest,
   rejectOperationRequest,
@@ -200,6 +217,7 @@ import {
   recallOperationRequest,
   type OperationRequestRow,
   type OperationRequestStatus,
+  type OpSchema,
 } from '@/api/system';
 import { ApiError } from '@/api/request';
 import { useAuthStore } from '@/stores/auth';
@@ -212,6 +230,41 @@ const auth = useAuthStore();
 const loading = ref(true);
 const detail = ref<OperationRequestRow | null>(null);
 const canApprove = auth.role === 'super_admin' || auth.role === 'admin';
+
+const schemas = ref<OpSchema[]>([]);
+const currentSchema = computed(() => schemas.value.find((s) => s.opCode === detail.value?.opCode));
+
+/** 把 params 按服务端字段声明折成「字段：值」，审批人不必读裸 JSON */
+const summaryRows = computed(() => {
+  const p = detail.value?.params ?? {};
+  return (currentSchema.value?.fields ?? [])
+    .filter((f) => {
+      const v = p[f.key];
+      return v !== undefined && v !== null && v !== '';
+    })
+    .map((f) => {
+      const v = p[f.key];
+      return {
+        label: f.label,
+        value: Array.isArray(v) ? v.join('、') : String(v),
+      };
+    });
+});
+
+/** 操作对象（订单号 / 团长 ID / 楼群 ID），摘要第一眼要看到的就是它 */
+const subjectText = computed(() => {
+  const subj = currentSchema.value?.fields.find((f) => f.subject);
+  const v = subj ? detail.value?.params?.[subj.key] : undefined;
+  return v === undefined || v === null || v === '' ? '' : String(v);
+});
+
+async function loadSchemas(): Promise<void> {
+  try {
+    schemas.value = await fetchOperationSchemas();
+  } catch {
+    // 声明加载失败只降级掉人话摘要，审批动作与原始参数展示都不受影响
+  }
+}
 
 /** 正在执行的动作（防重复点击） */
 const acting = ref<'' | 'approve' | 'reject' | 'execute' | 'recall'>('');
@@ -351,6 +404,7 @@ async function doRecall(): Promise<void> {
 }
 
 onMounted(async () => {
+  void loadSchemas();
   // 查询串传参（与列表页 `list.vue` 的 router.push 对应；原为路径参数 `:id`，
   // 2026-10-20 对齐全仓详情页的查询串 pattern）
   const id = Number(route.query.id);
@@ -370,6 +424,46 @@ onMounted(async () => {
 </script>
 
 <style lang="scss" scoped>
+.summary {
+  margin-bottom: $space-3;
+  padding: $space-3;
+  border: 1px solid $c-border;
+  border-radius: $radius-md;
+  background: $c-bg;
+
+  &__lead {
+    margin: 0 0 $space-2;
+    color: $c-text;
+    font-size: $fs-body;
+    line-height: 1.7;
+  }
+
+  &__grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: $space-2;
+  }
+
+  &__item {
+    display: flex;
+    gap: $space-1;
+    padding: 2px 8px;
+    border: 1px solid $c-border;
+    border-radius: $radius-sm;
+    background: $c-surface;
+    font-size: $fs-caption;
+  }
+
+  &__k {
+    color: $c-text-weak;
+  }
+
+  &__v {
+    color: $c-text;
+    font-weight: 600;
+  }
+}
+
 .page-container__meta {
   margin: 0 0 $space-4;
   color: $c-text-weak;

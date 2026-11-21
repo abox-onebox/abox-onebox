@@ -80,9 +80,9 @@
           <text class="row__k">服务时间</text>
           <text class="row__v">{{ contact.hours }}</text>
         </view>
-        <view v-if="contact.phone" class="row">
+        <view v-if="contact.phone" class="row" hover-class="row--hover" @tap="callPhone">
           <text class="row__k">客服电话</text>
-          <text class="row__v">{{ contact.phone }}</text>
+          <text class="row__v row__v--tel">{{ contact.phone }}</text>
         </view>
         <text class="note">{{ contact.tips }}</text>
       </view>
@@ -245,6 +245,13 @@ function copyWechat(): void {
   });
 }
 
+/** 客服电话一键拨打（号码是运营配置、非脱敏用户手机号，可安全调起拨号） */
+function callPhone(): void {
+  const phone = contact.value?.phone;
+  if (!phone) return;
+  uni.makePhoneCall({ phoneNumber: phone });
+}
+
 onLoad((options?: Record<string, string>) => {
   if (options?.orderNo) orderNo.value = options.orderNo;
 });
@@ -384,6 +391,15 @@ onShow(() => {
   &__v {
     font-size: $fs-caption;
     color: $c-text;
+
+    &--tel {
+      color: $c-gold-deep;
+      text-decoration: underline;
+    }
+  }
+
+  &--hover {
+    opacity: 0.7;
   }
 }
 

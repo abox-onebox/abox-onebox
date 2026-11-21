@@ -292,7 +292,7 @@ M5 联调+灰度上线                                        ████
 
 | 交付物 | 内容 |
 | --- | --- |
-| 探针分级 | `GET /health`（存活 · **不检依赖**）出参**保持不变** + 新增 `GET /health/ready`（就绪 · 检 DB 与 3 个队列消费者） |
+| 探针分级 | `GET /health`（存活 · **不检依赖**）出参**保持不变** + 新增 `GET /health/ready`（就绪 · 检 DB 与 4 个队列消费者） |
 | 优雅关闭 | `main.ts` 补 `enableShutdownHooks()`（此前两处 `onModuleDestroy` **从未执行过**）+ 容器 **exec 形式 CMD**（shell 形式会吞 SIGTERM） |
 | 生产迁移 | 迁移 glob 修正为 `*.{ts,js}` **双匹配** + `db:migrate:dist` 脚本（原 `.ts` 单匹配在生产 `dist/` 下**静默零命中、退出码仍为 0**）；⚠️ 修好之后首迁**会真跑** → 顺带暴露出「迁移比实体少 2 表 9 列」，已在 **M5-2** 补齐并加对账门禁 |
 | 镜像 | `apps/api-server/Dockerfile` 多阶段重写（非 root / tzdata / HEALTHCHECK / 锁文件冻结 / `ARG APP_VERSION`）+ `apps/admin-web/Dockerfile` + `nginx.conf` |

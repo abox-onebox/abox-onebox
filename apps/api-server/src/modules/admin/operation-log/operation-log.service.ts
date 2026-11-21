@@ -21,6 +21,8 @@ export interface OperationLogItem {
   requestIp: string | null;
   requestData: unknown;
   responseData: unknown;
+  /** 变更前后快照（P2-1）：有 before/after 或 fromStatus/toStatus 时端上渲染字段级 diff */
+  snapshot: unknown;
   /** 知识助手「替操作」审计三字段（无则为 null） */
   kbOperator: string | null;
   kbNlIntent: string | null;
@@ -49,15 +51,8 @@ export class OperationLogService {
   async list(q: OperationLogQueryDto) {
     const { page, pageSize, skip } = normalizePage(q);
 
-    const where: Record<string, unknown> = {};
-    if (q.operatorId) where.adminUserId = q.operatorId;
-    if (q.module) where.module = q.module;
-    if (q.date) {
-      where.createdAt = Between(bjDateTime(q.date, 0), bjDateTime(addDays(q.date, 1), 0));
-    }
-
     const [rows, total] = await this.logRepo.findAndCount({
-      where,
+      where: this.buildWhere(q),
       order: { id: 'DESC' },
       skip,
       take: pageSize,
@@ -75,6 +70,33 @@ export class OperationLogService {
       /** 供前端「操作人」下拉用；日志量不大，直接全量给 */
       operators: await this.operatorOptions(),
     };
+  }
+
+  /**
+   * 导出作业用的**全量**出数（不走 normalizePage）。
+   *
+   * ⚠️ 改造前前端「导出当前筛选全部命中行」是把 `total` 当 pageSize 再拉一次，
+   *    但服务端 normalizePage 会把它钳到 100 —— 实际最多导 100 条，且不报截断。
+   *    此处明确全量，由作业层决定上限与分批，不再让分页层偷偷改写语义。
+   */
+  async listAll(q: OperationLogQueryDto) {
+    const rows = await this.logRepo.find({
+      where: this.buildWhere(q),
+      order: { id: 'DESC' },
+    });
+    const names = await this.operatorNames(rows.map((r) => r.adminUserId));
+    return rows.map((r) => this.toItem(r, names));
+  }
+
+  /** 列表与导出共用的筛选谓词（同一件事只有一份表述） */
+  private buildWhere(q: OperationLogQueryDto): Record<string, unknown> {
+    const where: Record<string, unknown> = {};
+    if (q.operatorId) where.adminUserId = q.operatorId;
+    if (q.module) where.module = q.module;
+    if (q.date) {
+      where.createdAt = Between(bjDateTime(q.date, 0), bjDateTime(addDays(q.date, 1), 0));
+    }
+    return where;
   }
 
   // ------------------------------------------------------------------ 内部
@@ -119,6 +141,7 @@ export class OperationLogService {
       requestIp: log.requestIp ?? null,
       requestData: log.requestData ?? null,
       responseData: log.responseData ?? null,
+      snapshot: log.snapshot ?? null,
       kbOperator: log.kbOperator ?? null,
       kbNlIntent: log.kbNlIntent ?? null,
       kbOpBlock: log.kbOpBlock ?? null,

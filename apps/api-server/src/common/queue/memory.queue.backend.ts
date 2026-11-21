@@ -64,7 +64,7 @@ export class MemoryQueueBackend implements QueueBackend {
   }
 
   /**
-   * 初始化时把三个队列各建一个空桶
+   * 初始化时把四个队列各建一个空桶
    *
    * ⚠️ 用「已知队列清单」而不是「handler 注册时再建」：`stats()` 会在任何 handler
    *    注册之前被调用（健康检查早于消费者就绪），若按 handler 惰性建桶，

@@ -102,6 +102,11 @@ const MIN_EXPORTS = 10;
  * 加豁免前先问：是真的不需要入口，还是懒得做？后者请直接做页面。
  */
 const EXEMPT = [
+  {
+    method: 'GET',
+    path: '/admin/orders/export',
+    reason: 'D12 旧同步导出端点：2026-11-21 起主入口改走 D70 导出任务（大批量/留档）；此端点刻意保留供既有脚本兼容，不再做页面入口',
+  },
   { method: 'GET', path: '/health', reason: '存活探针：供容器健康检查与 nginx 反代探测，不是业务能力，无页面是设计如此' },
   { method: 'GET', path: '/health/ready', reason: '就绪探针：deploy.sh 第 7 步轮询它判定发布是否成功' },
   { method: 'POST', path: '/pay/notify', reason: '微信支付回调：服务端↔微信，端上永不需要入口' },

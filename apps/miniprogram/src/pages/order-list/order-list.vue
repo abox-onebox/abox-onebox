@@ -22,11 +22,17 @@
 
     <ab-empty-state
       v-else-if="!list.length"
-      :text="activeStatus ? '暂无相关订单' : '还没有订单'"
-      :hint="activeStatus ? '换个筛选看看' : '回到首页挑一份今日组合吧'"
+      :text="loadError ? '加载失败' : activeStatus ? '暂无相关订单' : '还没有订单'"
+      :hint="
+        loadError
+          ? '网络好像开了小差，请重试'
+          : activeStatus
+            ? '换个筛选看看'
+            : '回到首页挑一份今日组合吧'
+      "
       illustration="receipt"
-      :action-text="activeStatus ? '看全部订单' : '去首页'"
-      @action="onEmptyAction"
+      :action-text="loadError ? '重新加载' : activeStatus ? '看全部订单' : '去首页'"
+      @action="loadError ? reload() : onEmptyAction()"
     />
 
     <template v-else>
@@ -89,7 +95,7 @@
  * 计数是装饰性的，为了它弹四个 toast 才是真的打扰（列表本身照常可用）。
  */
 import { ref } from 'vue';
-import { onShow } from '@dcloudio/uni-app';
+import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
 import { OrderStatus } from '@abox/shared-types';
 import type { OrderListItem } from '@abox/shared-types';
 
@@ -114,6 +120,8 @@ const tabs: Tab[] = [
 const { run, loading } = useRequest();
 
 const list = ref<OrderListItem[]>([]);
+/** 加载失败标志：区分「加载失败」与「真空」，避免失败被误显示成"还没有订单" */
+const loadError = ref(false);
 const activeStatus = ref('');
 const page = ref(1);
 const hasMore = ref(false);
@@ -173,7 +181,9 @@ async function loadCounts(): Promise<void> {
 async function reload(): Promise<void> {
   try {
     await fetchPage(1);
+    loadError.value = false;
   } catch (e) {
+    loadError.value = true;
     toastApiError(e);
   }
 }
@@ -191,6 +201,7 @@ function switchStatus(value: string): void {
   if (value === activeStatus.value) return;
   activeStatus.value = value;
   list.value = [];
+  loadError.value = false;
   void reload();
 }
 
@@ -212,6 +223,11 @@ function pillClass(status: string): string {
 function goDetail(orderNo: string): void {
   navigateTo(buildUrl('/pages/order-detail/order-detail', { orderNo }));
 }
+
+onPullDownRefresh(async () => {
+  await Promise.all([reload(), loadCounts()]);
+  uni.stopPullDownRefresh();
+});
 
 onShow(() => {
   void reload();

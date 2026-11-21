@@ -132,9 +132,9 @@ export interface LeaderQrcodeData {
   path: string;
   /** clamp 后的实际宽度（`[280, 1280]`） */
   width: number;
-  /** 当前恒 null */
   qrcodeUrl: string | null;
-  /** 当前恒 true */
+  /** 码图 base64（不含 data: 前缀）：端上海报合成写本地临时文件用，绕开 downloadFile 域名白名单 */
+  qrcodeBase64?: string | null;
   mock: boolean;
   tips: string;
 }

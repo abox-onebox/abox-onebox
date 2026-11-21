@@ -39,6 +39,13 @@ export class OperationRequestController {
     return this.svc.list(q, actor);
   }
 
+  // ⚠️ 必须声明在详情路由之前：NestJS 按声明顺序匹配，放后面会被详情路由吃掉。
+  @Get('op-schemas')
+  @ApiOperation({ summary: '高危操作的结构化参数声明（表单与详情摘要同源）' })
+  schemas() {
+    return this.svc.schemas();
+  }
+
   @Get(':id')
   @ApiOperation({ summary: '申请单详情' })
   detail(@Param('id', ParseIntPipe) id: number, @CurrentAdmin() actor: JwtPayload) {

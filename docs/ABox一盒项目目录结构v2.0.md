@@ -497,7 +497,7 @@ apps/api-server/
 │   │   └── leader-expire.task.ts       ← 每日 03:00 见习团长 30 天未促单失效（C2）
 │   ├── queues/                         ← 消息队列消费者（MVP 用 Redis + BullMQ · M4-3 实装）
 │   │   ├── queues.module.ts
-│   │   ├── queue-payloads.ts           ← 三个队列的**载荷契约**（单一真相）
+│   │   ├── queue-payloads.ts           ← 四个队列的**载荷契约**（单一真相）
 │   │   ├── queue-admin.controller.ts   ← Q1 GET /admin/queue 运行态可见性
 │   │   ├── order-paid.consumer.ts      ← 薄适配层：注册 + 转发，业务逻辑仍在原服务
 │   │   ├── refund-apply.consumer.ts    ← → RefundService.attemptWxRefund（失败注入点见 mock provider）

@@ -234,7 +234,7 @@ git pull
 | 端点 | 语义 | 检什么 | 失败时该做什么 |
 | --- | --- | --- | --- |
 | `GET /api/v1/health` | **存活**（liveness） | 什么都不检，进程能应答即 ok | **重启容器** |
-| `GET /api/v1/health/ready` | **就绪**（readiness） | ① DB 真跑一条 `SELECT 1`（含耗时）② **3 个队列消费者是否都注册上了** | **摘流量**，**不要重启** |
+| `GET /api/v1/health/ready` | **就绪**（readiness） | ① DB 真跑一条 `SELECT 1`（含耗时）② **4 个队列消费者是否都注册上了** | **摘流量**，**不要重启** |
 
 ```bash
 ./scripts/healthcheck.sh              # 从容器内查一次（默认查 readiness）

@@ -2,7 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 
-import { Code2SessionResult, PhoneNumberResult, WxMiniProvider } from './wx-mini.provider';
+import {
+  Code2SessionResult,
+  PhoneNumberResult,
+  UnlimitedQrcodeResult,
+  WxMiniProvider,
+} from './wx-mini.provider';
 
 /**
  * 微信小程序 · 本地假实现
@@ -45,6 +50,16 @@ export class MockWxMiniProvider extends WxMiniProvider {
       purePhoneNumber: '13800138000',
       countryCode: '86',
     };
+  }
+
+  async getUnlimitedQRCode(scene: string, width: number): Promise<UnlimitedQrcodeResult> {
+    this.logger.debug(`[mock] getUnlimitedQRCode scene=${scene} width=${width} → 占位 PNG`);
+    // 1x1 透明 PNG：仅用于本地联调跑通链路，不冒充真实小程序码
+    const placeholder = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    return { buffer: placeholder, contentType: 'image/png' };
   }
 
   /** code → 稳定 openid */

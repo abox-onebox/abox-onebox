@@ -71,6 +71,8 @@ export interface OperationLogRow {
   requestIp: string | null;
   requestData: unknown;
   responseData: unknown;
+  /** 变更前后快照（有 before/after 或 fromStatus/toStatus 时展开为字段级 diff） */
+  snapshot?: unknown;
   failed: boolean;
   createdAt: string | null;
   /** B3 · 知识助手自报操作人（X-KB-Operator） */
@@ -508,6 +510,32 @@ export interface OperationRequestQuery {
   opCode?: string;
 }
 
+/** 高危操作字段声明（服务端权威：表单、必填提示、详情摘要都读它） */
+export interface OpFieldOption {
+  value: string | number;
+  label: string;
+}
+
+export interface OpField {
+  key: string;
+  label: string;
+  type: 'int' | 'string' | 'text' | 'select' | 'boolean' | 'ints';
+  required?: boolean;
+  options?: OpFieldOption[];
+  placeholder?: string;
+  subject?: boolean;
+}
+
+export interface OpSchema {
+  opCode: string;
+  label: string;
+  effect: string;
+  fields: OpField[];
+}
+
+export function fetchOperationSchemas(): Promise<OpSchema[]> {
+  return http.get<OpSchema[]>('/admin/operation-requests/op-schemas');
+}
 /** 申请单列表（operator 仅看自己提交） */
 export function fetchOperationRequests(
   params?: OperationRequestQuery,

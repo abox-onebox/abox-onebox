@@ -108,7 +108,14 @@ export async function smoke({ h5Url, adminUrl, apiPort, log = console.log }) {
     // 下单（幂等键必填，故必须带上）
     const created = await post(
       `${h5Url}/api/v1/orders`,
-      { mealDate: d?.mealDate, quantity: 1, remark: '内部测试自检' },
+      // 2026-11-21：单一套餐表单禁备注（后端 DTO 不收 remark）；下单必填称呼与工位，
+      // 自检按真人端上提交口径补齐，否则也会被 DTO 白名单挡下（10001）。
+      {
+        mealDate: d?.mealDate,
+        quantity: 1,
+        recipientName: '自检用户',
+        workstation: '12层A区',
+      },
       { ...auth(token), 'Idempotency-Key': `smoke-${Date.now()}` },
     );
     let targetNo = created.body?.data?.orderNo ?? null;

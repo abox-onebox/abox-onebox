@@ -180,8 +180,22 @@ function skip(): void {
   switchTab('/pages/index/index');
 }
 
+/** scene 解码：微信传入已编码，解码失败（异常串）时返回原值，不让页面崩 */
+function safeDecode(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 onLoad((options) => {
-  leaderCode.value = pageQuery(options as Record<string, unknown>, 'leaderCode');
+  // 分享卡片走 query `leaderCode`；小程序码扫码走 `options.scene`（服务端已把 scene 设为同一邀请码）
+  // ⚠️ scene 是微信编码过的，必须 decode；且码里的 scene 与 query 二选一，不会同时出现。
+  const fromQuery = pageQuery(options as Record<string, unknown>, 'leaderCode');
+  const rawScene = (options as Record<string, unknown> | undefined)?.scene;
+  const fromScene = rawScene == null ? '' : safeDecode(String(rawScene));
+  leaderCode.value = fromQuery || fromScene;
   void load();
 });
 </script>

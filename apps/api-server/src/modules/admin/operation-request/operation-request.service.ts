@@ -15,6 +15,7 @@ import { AdminUser, OperationRequest } from '../../../database/entities/system.e
 import { OpBlocklistService } from '../../../common/services/op-blocklist.service';
 import type { JwtPayload } from '../../../common/decorators/auth.decorator';
 import { CreateOperationRequestDto, OperationRequestQueryDto } from './dto/operation-request.dto';
+import { OP_SCHEMAS, validateOpParams } from './operation-schema';
 
 /**
  * 阶段 3 · 高危审批申请单服务
@@ -54,7 +55,7 @@ const OP_LABELS: Record<string, string> = {
   appoint_leader: '任命/转交团长',
   leader_audit: '团长资质补录（停职/恢复/补签）',
   send_message: '群发运营通知',
-  manual_adjust: '手动改单（改份数/改取餐楼）',
+  manual_adjust: '手动改单（改份数/改交付楼）',
   force_refund: '强制退款（原路退 + 反向结算）',
   suspend_building: '停用办公楼（含强制停用）',
   suspend_building_group: '停用楼群（含强制停用）',
@@ -74,6 +75,12 @@ export class OperationRequestService {
 
   async create(dto: CreateOperationRequestDto, actor: JwtPayload): Promise<OperationRequest> {
     if (!OP_ENDPOINTS[dto.opCode]) throw new BadRequestException('op_code 不在可审批范围');
+    // 结构化字段声明在「提交时」先查一遍必填，错误前移；真正的类型/范围校验仍在
+    // 目标 controller 的 DTO（execute 复用原接口，口径不会分叉）。
+    const paramErrors = validateOpParams(dto.opCode, dto.params);
+    if (paramErrors.length) {
+      throw new BadRequestException(`参数不完整：${paramErrors.join('；')}`);
+    }
     if (await this.block.isBlocked(dto.opCode)) {
       throw new BizException(ErrorCode.OP_BLOCKED, 'op blocked in submit');
     }
@@ -89,6 +96,11 @@ export class OperationRequestService {
       submitterOpBlock: dto.submitterOpBlock ?? null,
     });
     return this.repo.save(entity);
+  }
+
+  /** 前端结构化表单与详情摘要共用同一份字段声明（服务端权威，避免两端各写一套） */
+  schemas(): typeof OP_SCHEMAS {
+    return OP_SCHEMAS;
   }
 
   async list(query: OperationRequestQueryDto, actor: JwtPayload): Promise<OperationRequest[]> {

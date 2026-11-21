@@ -157,6 +157,7 @@
             value-format="YYYY-MM-DD"
             start-placeholder="起始日"
             end-placeholder="截止日"
+            :shortcuts="rangeShortcuts"
             :clearable="false"
             @change="loadReach"
           />
@@ -427,6 +428,35 @@ const reachLoading = ref(false);
 const reach = ref<MessageReachView | null>(null);
 /** 区间；`null` = 尚未加载（由服务端回带后回填，见 `loadReach`） */
 const range = ref<[string, string] | null>(null);
+
+/** 到达率区间快捷段：按运营浏览器本地自然日（与后端北京日口径一致，运营均在中国时区） */
+const rangeShortcuts = [
+  {
+    text: '近 7 天',
+    value: () => {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(start.getDate() - 6);
+      return [start, end];
+    },
+  },
+  {
+    text: '近 30 天',
+    value: () => {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(start.getDate() - 29);
+      return [start, end];
+    },
+  },
+  {
+    text: '本月',
+    value: () => {
+      const now = new Date();
+      return [new Date(now.getFullYear(), now.getMonth(), 1), now];
+    },
+  },
+];
 
 /**
  * 加载到达率

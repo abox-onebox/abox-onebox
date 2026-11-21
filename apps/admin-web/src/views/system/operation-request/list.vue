@@ -67,19 +67,62 @@
       </template>
     </el-table>
 
-    <!-- 新建申请（admin 代建 / 手动录入） -->
-    <el-dialog v-model="dialogVisible" title="新建高危操作申请" width="560px">
-      <el-form :model="form" label-width="96px">
+    <!-- 新建申请：按服务端字段声明渲染表单，JSON 只作为高级入口保留 -->
+    <el-dialog v-model="dialogVisible" title="新建高危操作申请" width="640px">
+      <el-form :model="form" label-width="132px">
         <el-form-item label="操作" required>
-          <el-select v-model="form.opCode" placeholder="选择 admin 高危操作" style="width: 100%">
+          <el-select
+            v-model="form.opCode"
+            placeholder="选择 admin 高危操作"
+            style="width: 100%"
+            @change="onOpChange"
+          >
             <el-option v-for="o in OP_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="参数 JSON" required>
+
+        <el-alert
+          v-if="currentSchema"
+          type="info"
+          :closable="false"
+          class="op-effect"
+          :title="currentSchema.effect"
+        />
+
+        <template v-if="currentSchema && !advancedMode">
+          <el-form-item
+            v-for="f in currentSchema.fields"
+            :key="f.key"
+            :label="f.label"
+            :required="f.required"
+          >
+            <el-select v-if="f.type === 'select'" v-model="fieldValues[f.key]" style="width: 100%">
+              <el-option
+                v-for="o in f.options ?? []"
+                :key="String(o.value)"
+                :label="o.label"
+                :value="String(o.value)"
+              />
+            </el-select>
+            <el-input
+              v-else
+              v-model="fieldValues[f.key]"
+              :type="f.type === 'text' ? 'textarea' : f.type === 'int' ? 'number' : 'text'"
+              :rows="f.type === 'text' ? 3 : undefined"
+              :placeholder="f.placeholder"
+            />
+          </el-form-item>
+        </template>
+
+        <el-form-item label="高级">
+          <el-switch v-model="advancedMode" />
+          <span class="hint-text">直接编辑 JSON（复杂参数 / 知识助手原文）</span>
+        </el-form-item>
+        <el-form-item v-if="advancedMode" label="参数 JSON">
           <el-input
             v-model="form.paramsText"
             type="textarea"
-            :rows="6"
+            :rows="8"
             placeholder='如 {"id":1,"action":"note","reason":"..."}'
           />
         </el-form-item>
@@ -99,16 +142,18 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 
 import {
+  fetchOperationSchemas,
   fetchOperationRequests,
   createOperationRequest,
   type OperationRequestRow,
   type OperationRequestQuery,
   type OperationRequestStatus,
+  type OpSchema,
 } from '@/api/system';
 import { ApiError } from '@/api/request';
 import { useAuthStore } from '@/stores/auth';
@@ -118,18 +163,9 @@ const router = useRouter();
 const auth = useAuthStore();
 const canApprove = auth.role === 'super_admin' || auth.role === 'admin';
 
-/** admin 高危 op（与后端 OperationRequestService.OP_ENDPOINTS 对齐） */
-const OP_OPTIONS = [
-  { value: 'create_dish', label: '上架新菜品' },
-  { value: 'batch_dish_status', label: '批量上下架菜品' },
-  { value: 'edit_dish', label: '编辑菜品' },
-  { value: 'change_leader', label: '变更团长（等级/楼/层）' },
-  { value: 'appoint_leader', label: '任命/转交团长' },
-  { value: 'leader_audit', label: '团长资质补录（停职/恢复/补签）' },
-  { value: 'send_message', label: '群发运营通知' },
-  { value: 'manual_adjust', label: '手动改单（改份数/改取餐楼）' },
-  { value: 'force_refund', label: '强制退款（原路退+反向结算）' },
-];
+/** 操作下拉与表单字段都来自服务端声明（单一真相，消除前后端三处集合漂移） */
+const schemas = ref<OpSchema[]>([]);
+const OP_OPTIONS = computed(() => schemas.value.map((s) => ({ value: s.opCode, label: s.label })));
 
 const loading = ref(false);
 const rows = ref<OperationRequestRow[]>([]);
@@ -199,16 +235,67 @@ const form = reactive({
   submitterNl: '',
 });
 
+const fieldValues = reactive<Record<string, string>>({});
+const advancedMode = ref(false);
+const currentSchema = computed(() => schemas.value.find((s) => s.opCode === form.opCode));
+
+function onOpChange(): void {
+  for (const k of Object.keys(fieldValues)) delete fieldValues[k];
+  // 安全默认：群发的 dryRun 这类布尔字段，默认走「预演不真发」
+  for (const f of currentSchema.value?.fields ?? []) {
+    if (f.type === 'boolean') fieldValues[f.key] = 'true';
+  }
+}
+
+async function loadSchemas(): Promise<void> {
+  try {
+    schemas.value = await fetchOperationSchemas();
+  } catch {
+    ElMessage.warning('字段声明加载失败，可开启高级模式直接填 JSON');
+  }
+}
+
 async function submit(): Promise<void> {
   if (!form.opCode) {
     ElMessage.warning('请选择操作');
     return;
   }
-  let params: Record<string, unknown>;
-  try {
-    params = JSON.parse(form.paramsText || '{}');
-  } catch {
-    ElMessage.warning('参数 JSON 格式错误');
+  let params: Record<string, unknown> = {};
+  if (advancedMode.value) {
+    try {
+      const parsed: unknown = JSON.parse(form.paramsText || '{}');
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+        throw new Error('not object');
+      params = parsed as Record<string, unknown>;
+    } catch {
+      ElMessage.warning('参数 JSON 必须是对象');
+      return;
+    }
+  } else if (currentSchema.value) {
+    const missing = currentSchema.value.fields.filter(
+      (f) => f.required && !String(fieldValues[f.key] ?? '').trim(),
+    );
+    if (missing.length) {
+      ElMessage.warning(`请填写：${missing.map((f) => f.label).join('、')}`);
+      return;
+    }
+    for (const f of currentSchema.value.fields) {
+      const raw = fieldValues[f.key];
+      if (raw === undefined || !String(raw).trim()) continue;
+      if (f.type === 'int') params[f.key] = Number(raw);
+      else if (f.type === 'ints') {
+        params[f.key] = String(raw)
+          .split(/[,，]/)
+          .map((x) => Number(x.trim()))
+          .filter((n) => Number.isFinite(n));
+      } else if (f.type === 'boolean') params[f.key] = raw === 'true';
+      else if (f.type === 'select') {
+        const hit = (f.options ?? []).find((o) => String(o.value) === String(raw));
+        params[f.key] = hit ? hit.value : raw;
+      } else params[f.key] = String(raw);
+    }
+  } else {
+    ElMessage.warning('字段声明未加载，请稍后重试或开启高级模式');
     return;
   }
   submitting.value = true;
@@ -223,6 +310,8 @@ async function submit(): Promise<void> {
     dialogVisible.value = false;
     form.opCode = '';
     form.paramsText = '';
+    advancedMode.value = false;
+    onOpChange();
     form.submitterKb = '';
     form.submitterNl = '';
     void reload();
@@ -234,6 +323,7 @@ async function submit(): Promise<void> {
 }
 
 void reload();
+void loadSchemas();
 </script>
 
 <style lang="scss" scoped>
@@ -247,5 +337,13 @@ void reload();
 }
 .muted {
   color: $c-text-weak;
+}
+.op-effect {
+  margin-bottom: $space-2;
+}
+.hint-text {
+  margin-left: $space-2;
+  color: $c-text-weak;
+  font-size: $fs-caption;
 }
 </style>

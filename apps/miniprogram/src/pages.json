@@ -24,7 +24,11 @@
     },
     {
       "path": "pages/order-list/order-list",
-      "style": { "navigationBarTitleText": "我的订单" }
+      "style": {
+        "navigationBarTitleText": "我的订单",
+        "enablePullDownRefresh": true,
+        "backgroundColor": "#F6F0E5"
+      }
     },
     {
       "path": "pages/order-cancel/order-cancel",
@@ -44,7 +48,11 @@
     },
     {
       "path": "pages/coupon-list/coupon-list",
-      "style": { "navigationBarTitleText": "我的优惠券" }
+      "style": {
+        "navigationBarTitleText": "我的优惠券",
+        "enablePullDownRefresh": true,
+        "backgroundColor": "#F6F0E5"
+      }
     },
     {
       "path": "pages/meal-history/meal-history",

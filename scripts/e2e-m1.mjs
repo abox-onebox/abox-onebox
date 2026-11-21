@@ -269,9 +269,11 @@ async function run() {
     `status=${ready.status} db.ok=${ready.body?.data?.checks?.db?.ok}`,
   );
   // 消费者齐不齐是**启动期验不到、失败后完全静默**的故障（入队照常成功、却永远无人消费）
+  // 2026-11-21 导出任务化：QUEUE_NAMES 由 3 个增至 4 个（新增 export-task 消费者）。
+  // 期望值写死为 4 而非「>0」：将来有人漏注册任一消费者，这里照样报红。
   assert(
-    q.ok === true && q.consumers === q.consumersTotal && q.consumersTotal === 3,
-    'M5-0 就绪探针检队列消费者齐备（3 队列）',
+    q.ok === true && q.consumers === q.consumersTotal && q.consumersTotal === 4,
+    'M5-0 就绪探针检队列消费者齐备（4 队列）',
     `${q.consumers}/${q.consumersTotal} driver=${q.driver} durable=${q.durable}`,
   );
   assert(

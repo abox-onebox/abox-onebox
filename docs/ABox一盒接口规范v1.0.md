@@ -1818,6 +1818,23 @@ approve
 
 ---
 
+**D70 导出任务与下载中心（2026-11-21 · 异步作业 · 第 38 张表 `ab_export_task`）**
+
+| # | 方法 | 路径 | 说明 |
+| --- | --- | --- | --- |
+| **D70a** | POST | `/admin/export-tasks` | 提交导出（`kind=orders` / `operation-logs` + 原样 `filter`）；任务行先落库再入队，即时返回 taskId |
+| **D70b** | GET | `/admin/export-tasks` | 任务列表（最近 100 条；operator 仅看自己提交） |
+| **D70c** | GET | `/admin/export-tasks/:id` | 任务详情（含失败原因与筛选条件原文） |
+| **D70d** | GET | `/admin/export-tasks/:id/download` | 取产物下载 URL（仅 `done` 态有值） |
+| **D70e** | POST | `/admin/export-tasks/:id/retry` | 失败重试（复用同一 taskId 与原筛选条件） |
+
+| 项 | 口径 |
+| --- | --- |
+| 为什么任务化 | 旧同步导出在订单侧 5000 行截断、操作日志侧被分页钳到 100 条且不报截断；前端拼 CSV 卡界面、无留档。现在提交即时返回，生成交给 `export-task` 队列，产物写 StorageProvider |
+| 与旧端点的关系 | `GET /admin/orders/export` 保留（小批量即时导出，5000 行上限）；大批量与要留档的场景走 D70。**筛选口径仍复用各域既有 service**，本模块不复刻状态机 |
+| CSV 列定义 | **服务端唯一**：生成器按 `kind` 从既有取数结果产出表头与行；前端下载中心只展示状态与取件，不再拼 CSV（消除两份列定义漂移） |
+| 状态机 | `pending → running → done / failed`；失败不自动重试（同条件重试三次还是同样失败，只会淹没死信），由运营在下载中心点「重试」 |
+| 权限 | `super_admin` / `admin` / `operator` / `finance`；operator 仅看自己的任务（菜单由 `OPERATOR_EXTRA_MENUS` 加回） |
 ### 6.8 定时任务（M4-1 · 跑批与手动补跑）
 
 > 权威清单：《订单状态机与全链路流转 v1.0》§3。**M4 分三批推进**：
@@ -1978,28 +1995,29 @@ approve
 
 | # | 方法 | 路径 | 说明 |
 | --- | --- | --- | --- |
-| **D66** | GET | **`/admin/dashboard/todos`** | **工作台待办聚合**：4 类待办计数 + 今日作业数字。只读、**只给计数不给明细**（明细在各域列表页） |
+| **D66** | GET | **`/admin/dashboard/todos`** | **工作台待办聚合**：5 类待办计数 + 今日作业数字。只读、**只给计数不给明细**（明细在各域列表页） |
 
 | 项 | 口径 |
 | --- | --- |
-| 为什么是**聚合端点**而不是前端各查一次列表 | 登录落点要回答的只有一个问题：「今天有什么必须我来处理的」。让前端各打一次列表接口再数条数会撞三件事：① 列表**分页**，拿不到总数；② 四次请求时序不同，卡片数字可能互相对不上（看到 3 条、点进去只有 2 条）；③ 前端得**复刻四份状态口径**（状态机在服务端，复刻必漂移）。**「同一件事有两份表述，不被执行的那份必然会错」** —— D66 就是为了消灭第 ③ 条而存在的 |
+| 为什么是**聚合端点**而不是前端各查一次列表 | 登录落点要回答的只有一个问题：「今天有什么必须我来处理的」。让前端各打一次列表接口再数条数会撞三件事：① 列表**分页**，拿不到总数；② 五次请求时序不同，卡片数字可能互相对不上（看到 3 条、点进去只有 2 条）；③ 前端得**复刻五份状态口径**（状态机在服务端，复刻必漂移）。**「同一件事有两份表述，不被执行的那份必然会错」** —— D66 就是为了消灭第 ③ 条而存在的 |
 | ① `refundApplying` | `ab_refund.status='applying'`（C6 第二段的审批队列）· 处理页 `/finance/refund` |
-| ② `withdrawPending` | `ab_withdraw.status='pending'`（D45 的审批队列 · L12 提交后的唯一推进点）· 处理页 `/finance/withdrawal` |
-| ③ `tomorrowGroupsUnassigned` | 启用楼群数 − 明日有**「未取消分配」**的楼群数 · 处理页 `/meal/matrix` |
-| ⭐⭐ ③ 的 `status != 'cancelled'` **不是可选项** | 它是本工程判「该楼群该日到底有没有套餐」的既有唯一判据（`meal.service.ts:72` · `meal-admin.service.ts` 模板 `usedCount`）。漏掉它，**停团（cancelled）的楼群会被算成「已排」** ⇒ 工作台显示已清空、而套餐矩阵里那格是空的 —— 两份口径打架且**两边都不报错** |
-| ⭐⭐ ③ 只数「漏排」，**不数「排了没上架」（`pending`）** | `pending` 是**正常中间态**（编排可提前几天做，上架才是临近时的动作）。把它算成待办 ⇒ 开团（T-1 14:00）之前这张卡**永远非零**，一周内就会被学会无视。而「漏排」是硬缺口：不补，明日该楼群一定开不了团 |
-| ④ `deliveriesLate` | 今日配送单 `status != 'arrived'`，**且仅在过了 `arrivalAtOf(今日)` 之后才计入** |
-| ⭐⭐ ④ 送达时刻前**恒为 0**（且不查库） | 11:30 之前没送到**不是异常**（那正是送达时刻本身）。全天候报数会让这张卡每天上午都是红的 ⇒ 真正逾期的那天也没人看（同 `ops-daily.sh` 的「恒红的检查等于没有检查」）。故未到点连 `count` 都不发、直接短路为 0 |
+| ② `operationRequestsPending` | `ab_operation_request.status='pending'`（高危操作待审 · 阶段 3「申请→审批→执行」两步流的第一步）· 处理页 `/system/operation-request` |
+| ③ `withdrawPending` | `ab_withdraw.status='pending'`（D45 的审批队列 · L12 提交后的唯一推进点）· 处理页 `/finance/withdrawal` |
+| ④ `tomorrowGroupsUnassigned` | 启用楼群数 − 明日有**「未取消分配」**的楼群数 · 处理页 `/meal/matrix` |
+| ⭐⭐ ④ 的 `status != 'cancelled'` **不是可选项** | 它是本工程判「该楼群该日到底有没有套餐」的既有唯一判据（`meal.service.ts:72` · `meal-admin.service.ts` 模板 `usedCount`）。漏掉它，**停团（cancelled）的楼群会被算成「已排」** ⇒ 工作台显示已清空、而套餐矩阵里那格是空的 —— 两份口径打架且**两边都不报错** |
+| ⭐⭐ ④ 只数「漏排」，**不数「排了没上架」（`pending`）** | `pending` 是**正常中间态**（编排可提前几天做，上架才是临近时的动作）。把它算成待办 ⇒ 开团（T-1 14:00）之前这张卡**永远非零**，一周内就会被学会无视。而「漏排」是硬缺口：不补，明日该楼群一定开不了团 |
+| ⑤ `deliveriesLate` | 今日配送单 `status != 'arrived'`，**且仅在过了 `arrivalAtOf(今日)` 之后才计入** |
+| ⭐⭐ ⑤ 送达时刻前**恒为 0**（且不查库） | 11:30 之前没送到**不是异常**（那正是送达时刻本身）。全天候报数会让这张卡每天上午都是红的 ⇒ 真正逾期的那天也没人看（同 `ops-daily.sh` 的「恒红的检查等于没有检查」）。故未到点连 `count` 都不发、直接短路为 0 |
 | `brief`（今日作业数字） | `{ deliveryTotal, deliveryArrived, tomorrowGroupsTotal, tomorrowGroupsAssigned }` —— **与 `items` 同一批查询的副产物**，不额外查库；端上渲染「x / y 已送达」「x / y 楼群已排」 |
-| `count = 0` 也下发 | 四项**恒返回 4 条**，不做「有才返回」的裁剪 —— 端上据此渲染「已清空」；少一条就再也分不清「今天确实没事」与「这一项忘了查」 |
+| `count = 0` 也下发 | 五项**恒返回 5 条**，不做「有才返回」的裁剪 —— 端上据此渲染「已清空」；少一条就再也分不清「今天确实没事」与「这一项忘了查」 |
 | ⭐ 刻意**不含**供应商出餐进度 | `ab_supplier_dish_daily` 的 `pending/cooking/done` 是**实时进度盘**（供应商端 / 后台「加工场所打包」页），不是「必须由某个后台角色去批」的待办。放进工作台只会造出第二份进度口径，并在它滞后时制造假告警 |
 | 权限（**含 `viewer`**） | 类级 `@Roles('super_admin','admin','operator','finance','viewer')`。`/dashboard` 是**五个运营角色的共同菜单项**（登录落点）—— 漏掉任何一个，该角色登录后的**第一屏**就全是 `10003`。本端点信息量严格**少于** D47 核心指标（后者已对 `viewer` 开放），不构成新暴露 |
-| 端上仍按菜单过滤卡片 | 服务端对五个角色一律返回 4 条，但 `viewer` 点不进 `/finance/*`、`/meal/*`、`/order/*` ⇒ 端上按 `permission.visiblePaths` 滤掉点不开的卡。这是**渲染纪律**，不是安全边界（边界在各域控制器自己的 `@Roles`） |
+| 端上仍按菜单过滤卡片 | 服务端对五个角色一律返回 5 条，但 `viewer` 点不进 `/finance/*`、`/meal/*`、`/order/*`、`/system/*` ⇒ 端上按 `permission.visiblePaths` 滤掉点不开的卡。这是**渲染纪律**，不是安全边界（边界在各域控制器自己的 `@Roles`） |
 | 双主体隔离 | 供应商 token 打 `/admin/dashboard/*` → `10003`；小程序 token → `10003`；未登录 → `10002`。⚠️ `/dashboard` 这个 key 在 `SUPPLIER_MENU_KEYS` 里**也有**，但那是**供应商侧的概览**（另一个页面、另一套菜单），不是「同一页开了两个角色」 |
 | GET 不写操作日志 | 只读查询，**不标 `@OperationLog()`**（GET 打日志会把操作日志刷成垃圾） |
 | 错误码 | **无新增**（复用 `10001` / `10002` / `10003`） |
 | 落点 | `apps/api-server/src/modules/admin/dashboard/`（`dashboard.controller.ts` / `.service.ts` / `.module.ts`）· 页面 `apps/admin-web/src/views/dashboard/index.vue` · api `apps/admin-web/src/api/dashboard.ts`。⚠️ **单起 `DashboardModule`**（注册于 `app.module.ts`）而不是塞进 `AdminModule`：它是**跨域只读聚合**，既不是「后台自有的系统管理域」，也不属于任何单一业务域 —— 按 `StatsModule`（D47–D50 同样是跨域聚合）的先例单起，依赖面在一处写全 |
-| e2e | 新增 **§38 · 20 条断言**：结构 5 条（返回 4 条 · key **顺序稳定** · 每条 count 非负整数 + `path` + `hint` · `businessDate`/`tomorrowDate` 同日口径 · `brief` 自洽）+ 四条计数**逐条对外域端点对账** 4 条（① ↔ D40 `refunds?tab=pending` ② ↔ D45 `withdrawals?status=pending` ③ ↔ D1 `stats.groupCount` ③b ↔ D1 `meal/matrix` 逐格数 ④ ↔ 送达时刻闸门：**自造夹具 + 翻转配置**双向验，闸门关必须恒 0、闸门开必须等于未送达条数，用完清理）+ 角色矩阵 6 条（operator / finance / viewer 一律 0 · 供应商 10003 · 小程序 token 10003 · 未登录 10002）。m3 断言 **1035 → 1055** |
+| e2e | 新增 **§38 · 20 条断言**：结构 5 条（返回 5 条 · key **顺序稳定** · 每条 count 非负整数 + `path` + `hint` · `businessDate`/`tomorrowDate` 同日口径 · `brief` 自洽）+ 四条计数**逐条对外域端点对账** 4 条（① ↔ D40 `refunds?tab=pending` ② ↔ D45 `withdrawals?status=pending` ③ ↔ D1 `stats.groupCount` ③b ↔ D1 `meal/matrix` 逐格数 ④ ↔ 送达时刻闸门：**自造夹具 + 翻转配置**双向验，闸门关必须恒 0、闸门开必须等于未送达条数，用完清理）+ 角色矩阵 6 条（operator / finance / viewer 一律 0 · 供应商 10003 · 小程序 token 10003 · 未登录 10002）。m3 断言 **1035 → 1055** |
 
 
 
@@ -2017,7 +2035,7 @@ approve
 | --- | --- |
 | ⭐ 为什么要把「实现细节」暴露给运营 | 队列的直接收益（「退款失败会自动重试」）**对运营是不可见的** —— 不暴露，运营遇到「用户说没收到退款」时**无从判断系统正在处理还是已经放弃**。这三项（驱动 / 积压 / 重试参数）恰好回答那个问题 |
 | ⭐ `durable` 必须如实 | memory 驱动 `durable=false` + `note` 讲清楚「**进程重启即丢**」—— M4-3 **刻意不做静默降级**（理由见上表） |
-| 空桶也在册 | 三个队列**恒在列表里**（含计数为 0 的），否则「队列不见了」与「队列为空」两种状态无法区分 |
+| 空桶也在册 | 四个队列**恒在列表里**（含计数为 0 的），否则「队列不见了」与「队列为空」两种状态无法区分 |
 
 ### 6.10 代金券管理（券系统 · 2026-10-23 新增 · 2026-10-29 补批量与回收）
 
@@ -2228,7 +2246,7 @@ approve
 | W2 | POST | `/pay/refund-notify` | 退款结果通知 · ⚠️ **一期未实装**（全仓无此路由，2026-11-01 核）：退款状态**刻意不靠回调定案** —— 由 `pay-reconcile.service.ts` 向微信**主动查单**（`WxPayProvider.queryOrder`）按真实状态补齐（P3 单边账口径）。回调对本期只属「更快知道」，缺它**不产生单边账** |
 | W3 | POST | `/pay/transfer-notify` | **佣金打款结果回执**（灵活用工平台代发结果）· ⚠️ **一期未实装**（全仓无此路由，2026-11-01 核）：一期佣金打款是**运营线下打款后在后台登记**（无平台代发 ⇒ 无回调可接）；二期接了平台代发才需要本端点 |
 | W4 | GET | `/health` | **存活探针（liveness）** —— 进程还能应答即 `200 / code 0`，**刻意不检任何依赖**；编排器据此判「要不要重启」 |
-| W5 | GET | `/health/ready` | **就绪探针（readiness）** —— 检**数据库连通**（`SELECT 1`）+ **3 个队列消费者是否齐备**；编排器据此判「要不要给流量」。未就绪 → **HTTP 503** + `code 90002`（响应体含 `checks`），出参回显 `version` / `uptimeSec`（灰度 / 回滚判据） |
+| W5 | GET | `/health/ready` | **就绪探针（readiness）** —— 检**数据库连通**（`SELECT 1`）+ **4 个队列消费者是否齐备**；编排器据此判「要不要给流量」。未就绪 → **HTTP 503** + `code 90002`（响应体含 `checks`），出参回显 `version` / `uptimeSec`（灰度 / 回滚判据） |
 | W6 | POST | `/pay/mock/paid` | 调试：手动触发支付成功（**仅 `PROVIDER_MODE=mock` 生效**；金额省略则取订单实付）· `MockPaidDto` —— ⚠️ 生产 `PROVIDER_MODE=mock` 时该端点**可被匿名调到**（`payment.controller.ts` 未标注守卫），是**验收用的后门**：真实支付链路（W1）一旦接商户号，应同步给它加 @Public 之外的收敛（或按环境注册控制器），否则「谁都能把订单点成已付」 |
 | W7 | GET | `/wecom/kb/callback` | 企微知识库回调 **URL 校验握手**（后台填回调 URL 时企微发起）。⚠️ 必须用 `@Res()` **直接写出**解密后的 `echostr` 明文、绕过统一响应信封 —— 包成 `{code,data}` 会让企微签名比对失败、后台「保存」过不了 |
 | W8 | POST | `/wecom/kb/callback` | 企微知识库消息回调。**立即回 200 空体**（企微 5s 超时，处理异步进行），结果走**主动发消息**。原始报文取 `req.rawBody`（XML 不进 JSON body-parser）；鉴权靠 `WXBizMsgCrypt` 签名验真 |

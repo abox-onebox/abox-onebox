@@ -6,9 +6,17 @@
 
     <view v-else-if="!list.length" class="empty">
       <text class="abi abi-deco-34 empty__icon">{{ I.gift }}</text>
-      <text class="empty__text">还没有优惠券</text>
-      <text class="empty__hint">推荐同事成为团长、或客服补偿时，券会发到这里</text>
-      <button class="empty__btn" hover-class="empty__btn--hover" @tap="goOrder">去下单</button>
+      <text class="empty__text">{{ loadError ? '加载失败' : '还没有优惠券' }}</text>
+      <text class="empty__hint">{{
+        loadError ? '网络好像开了小差，请重试' : '推荐同事成为团长、或客服补偿时，券会发到这里'
+      }}</text>
+      <button
+        class="empty__btn"
+        hover-class="empty__btn--hover"
+        @tap="loadError ? load() : goOrder()"
+      >
+        {{ loadError ? '重新加载' : '去下单' }}
+      </button>
     </view>
 
     <template v-else>
@@ -102,7 +110,7 @@
  *    不做「券详情 / 转赠 / 兑换码输入」—— 一期没有这些通道，做了就是死入口。
  */
 import { computed, ref } from 'vue';
-import { onShow } from '@dcloudio/uni-app';
+import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
 
 import { fetchMyCoupons } from '@/api/coupon';
 import type { MyCouponItem } from '@/api/coupon';
@@ -112,6 +120,8 @@ import { switchTab } from '@/utils/router';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
 
 const list = ref<MyCouponItem[]>([]);
+/** 加载失败标志：区分「加载失败」与「真空」，失败时提供重新加载 */
+const loadError = ref(false);
 const { run, loading } = useRequest();
 
 const usable = computed(() => list.value.filter((c) => c.available));
@@ -129,7 +139,9 @@ function rangeText(item: MyCouponItem): string {
 async function load(): Promise<void> {
   try {
     list.value = await run(() => fetchMyCoupons());
+    loadError.value = false;
   } catch (e) {
+    loadError.value = true;
     toastApiError(e);
   }
 }
@@ -138,6 +150,11 @@ async function load(): Promise<void> {
 function goOrder(): void {
   switchTab('/pages/index/index');
 }
+
+onPullDownRefresh(async () => {
+  await load();
+  uni.stopPullDownRefresh();
+});
 
 onShow(() => {
   void load();

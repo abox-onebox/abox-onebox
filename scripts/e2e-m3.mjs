@@ -474,9 +474,14 @@ async function main() {
       'A2 finance 登录成功，菜单含工作台但不含 /system/*',
       `menus=${JSON.stringify(fin.account?.menus)}`,
     );
+    // 2026-11-21 下载中心：finance 菜单显式加回 /system/download-center（财务要导出结算清单，
+    // 控制器 @Roles 含 finance）。其余 /system/* 仍一律不给 —— 写死白名单而非「没有 /system/*」，
+    // 将来有人多漏一项进来照样报红。
+    const finSystemMenus = (fin.account?.menus ?? []).filter((m) => m.startsWith('/system/')).sort();
     assert(
-      !(fin.account?.menus ?? []).some((m) => m.startsWith('/system/')),
-      'A2 finance 菜单里没有任何 /system/*（运营账号管理对其不可见）',
+      finSystemMenus.join(',') === '/system/download-center',
+      'A2 finance 的 /system/* 仅 download-center（运营账号管理等其余系统页对其不可见）',
+      `menus=${JSON.stringify(finSystemMenus)}`,
     );
 
     const finOnAccounts = await call('GET', '/admin/system/accounts', { token: fin.token });
@@ -720,15 +725,16 @@ async function main() {
   const opMenus = opLogin.account?.menus ?? [];
   const opSystemMenus = (opMenus.filter((m) => m.startsWith('/system/')) ?? []).slice().sort();
   // ⭐ 期望值必须与真源 `common/constants/admin-role.ts::OPERATOR_EXTRA_MENUS` 同步：
-  //    「/system/ 下运营该看的」目前是 queue（队列状态）与 sales-pause（一键停售），
-  //    两者控制器类级 `@Roles` 都**含 operator**（写端点仍收窄到 super_admin/admin）。
-  //    写死两项而非必须 >0：将来有人把别的 /system/* 漏给运营，这里照样报红。
-  const OPERATOR_EXTRA_MENUS = ['/system/queue', '/system/sales-pause'];
+  //    「/system/ 下运营该看的」目前是 queue（队列状态）、sales-pause（一键停售）与
+  //    download-center（下载中心，2026-11-21 加），三者控制器类级 `@Roles` 都**含 operator**
+  //    （写端点仍收窄到 super_admin/admin）。
+  //    写死三项而非必须 >0：将来有人把别的 /system/* 漏给运营，这里照样报红。
+  const OPERATOR_EXTRA_MENUS = ['/system/download-center', '/system/queue', '/system/sales-pause'].sort();
   assert(
     opMenus.length > 0 &&
       opSystemMenus.length === OPERATOR_EXTRA_MENUS.length &&
       opSystemMenus.join(',') === OPERATOR_EXTRA_MENUS.join(','),
-    'D52 operator 菜单 = 运营菜单去掉 /system/*，仅保留刻意放行的 /system/queue 与 /system/sales-pause',
+    'D52 operator 菜单 = 运营菜单去掉 /system/*，仅保留刻意放行的 queue / sales-pause / download-center',
     `menus=${opMenus.length} 项 · /system/ 命中=${JSON.stringify(opSystemMenus)}`,
   );
   const opToken = opLogin.token;
@@ -11972,12 +11978,12 @@ async function main() {
       `code=${q30.body?.code} driver=${q30d?.driver} durable=${q30d?.durable}`,
     );
     assert(
-      (q30d?.queues ?? []).length === 3 &&
+      (q30d?.queues ?? []).length === 4 &&
         (q30d?.queues ?? [])
           .map((t) => t.queue)
           .sort()
-          .join(',') === 'order-paid,refund-apply,settle-orders',
-      '§30 三个队列（支付后续 / 退款后续 / 结算后续）**全部在册**，且空桶也出现 —— 早期调用（健康检查早于消费者注册）不会得到「队列不存在」的错觉',
+          .join(',') === 'export-task,order-paid,refund-apply,settle-orders',
+      '§30 四个队列（支付后续 / 退款后续 / 结算后续 / 导出作业）**全部在册**，且空桶也出现 —— 早期调用（健康检查早于消费者注册）不会得到「队列不存在」的错觉',
       `queues=${(q30d?.queues ?? []).map((t) => t.queue).join(',')}`,
     );
     assert(
@@ -15296,12 +15302,13 @@ async function main() {
   // ⚠️ 本节**必须排在 §34 之前**：§34 会停掉主线实例、另起一台开启了限流的服务。
   // ==========================================================================
   {
-    log('\n§38 M5-16 工作台待办聚合（D66 · 四个计数逐一对外域端点对账）');
+    log('\n§38 M5-16 工作台待办聚合（D66 · 五个计数 · 原四个逐一对外域端点对账）');
 
     const today38 = bjToday();
     const tomorrow38 = addDaysStr(today38, 1);
     const EXP38 = [
       'refundApplying',
+      'operationRequestsPending',
       'withdrawPending',
       'tomorrowGroupsUnassigned',
       'deliveriesLate',
@@ -15315,14 +15322,14 @@ async function main() {
     const t38 = await read38();
 
     assert(
-      t38.r.body?.code === 0 && t38.d.items?.length === 4,
-      '§38(A) D66 返回 4 条待办 —— **count=0 也返回**：端上据此渲染「已清空」，' +
+      t38.r.body?.code === 0 && t38.d.items?.length === 5,
+      '§38(A) D66 返回 5 条待办 —— **count=0 也返回**：端上据此渲染「已清空」，' +
         '少一条就再也分不清「今天确实没事」与「这一项忘了查」（后者正是静默失效的典型形态）',
       `code=${t38.r.body?.code} n=${t38.d.items?.length}`,
     );
     assert(
       JSON.stringify((t38.d.items ?? []).map((i) => i.key)) === JSON.stringify(EXP38),
-      '§38(A) 四条待办的 key 与**顺序**稳定（顺序即界面顺序，端上不再排序）',
+      '§38(A) 五条待办的 key 与**顺序**稳定（顺序即界面顺序，端上不再排序）',
       (t38.d.items ?? []).map((i) => i.key).join(','),
     );
     assert(

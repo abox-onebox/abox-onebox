@@ -74,6 +74,17 @@ export interface RefundApplyPayload {
  * ⚠️ 载荷里**只有金额与条数**，没有佣金明细 —— 通知只讲「入账了多少钱」，
  *    明细在小程序里看（通知里塞明细既超长又过时）。
  */
+/**
+ * `export-task` —— 异步导出作业
+ *
+ * 何时入队：后台提交导出请求、任务行已落库（pending）之后。
+ * 为什么只有 taskId：作业状态、筛选条件、产物 key 全在 `ab_export_task` 行里；
+ * 队列里塞快照意味着重试时拿的是过期状态（与本项目「派生值不落库」纪律一致）。
+ */
+export interface ExportTaskPayload {
+  taskId: number;
+}
+
 export interface SettleOrdersPayload {
   /** 结算针对的出餐日（`ab_commission.meal_date`） */
   mealDate: string;

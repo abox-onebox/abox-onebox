@@ -516,11 +516,16 @@ export class OrderAdminService {
    * 端上据表头拼 CSV，服务端不引入 exceljs（省一个依赖，也避免服务端内存里
    * 多一份含全量手机号的中间件）。
    */
-  async exportOrders(q: AdminOrdersQueryDto, operatorId: number, ip?: string) {
+  async exportOrders(
+    q: AdminOrdersQueryDto,
+    operatorId: number,
+    ip?: string,
+    maxRows = EXPORT_MAX_ROWS,
+  ) {
     const rows = await this.buildQuery(q, q.tab ?? 'all')
       .orderBy('o.mealDate', 'ASC')
       .addOrderBy('o.id', 'ASC')
-      .take(EXPORT_MAX_ROWS)
+      .take(maxRows)
       .getMany();
 
     const decorated = await this.decorate(rows, true);
@@ -566,7 +571,7 @@ export class OrderAdminService {
       fileName,
       count: decorated.length,
       /** 超过上限时截断，端上据此提示运营缩小范围 */
-      truncated: decorated.length >= EXPORT_MAX_ROWS,
+      truncated: decorated.length >= maxRows,
       headers: [
         '订单号',
         '出餐日',

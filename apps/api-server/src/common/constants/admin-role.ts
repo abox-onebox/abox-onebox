@@ -151,6 +151,9 @@ export const ADMIN_MENU_KEYS = [
   //   ⚠️ 2026-10-20 补登：原详情路由是 `:id` 路径参数且三处登记全无 —— 除
   //      super_admin（持有全量通配）外，任何角色点「详情」都被守卫拦到 /403。
   '/system/operation-request/detail',
+  // 2026-11-21：导出任务取件页。落在 /system/ 下 ⇒ operator 由派生规则默认挡住，
+  // 但导出是日常运营动作，故在 OPERATOR_EXTRA_MENUS 显式加回（与队列状态同 pattern）。
+  '/system/download-center',
   '/system/message-template',
   // M5-12：跑批时刻表（D64 查看 / D65 手动补跑）。
   //   ⚠️ 菜单 key 与**服务端角色白名单**同源：`AdminController` 是
@@ -193,7 +196,12 @@ export const ADMIN_MENU_KEYS = [
  *    正是 `admin-role.ts` 头注反复警告的形态。
  *    ⚠️ 新增条目前先确认**服务端 `@Roles` 也放行了该角色**，只加菜单没用（反之亦然）。
  */
-export const OPERATOR_EXTRA_MENUS = ['/system/queue', '/system/sales-pause'] as const;
+export const OPERATOR_EXTRA_MENUS = [
+  '/system/queue',
+  '/system/sales-pause',
+  // 导出任务：运营日常要取件，控制器 @Roles 已放行 operator
+  '/system/download-center',
+] as const;
 
 /**
  * 供应商侧菜单 key（与 `admin-web/src/constants/index.ts` 的 `SUPPLIER_NAV` 逐项一致 · P21–P26）
@@ -231,8 +239,9 @@ export const ROLE_MENUS: Record<string, readonly string[]> = {
    * 运营专员：不开放系统管理与角色权限
    *
    * ⚠️ 例外**逐条登记在 `OPERATOR_EXTRA_MENUS`**，本注释**刻意不列举**具体是哪几条
-   *    （当前是 queue / sales-pause 两条）—— 列举过一次就漂移过一次：加了第二条时
-   *    这里的「唯一例外」变成了假话。⇒ 想知道有哪些例外，去看那个数组（唯一真源）。
+   *    （2026-11-21 起为 queue / sales-pause / download-center 三条）—— 列举过一次就漂移过
+   *    一次：加了新条目时这里的「当前几条」就变成假话。⇒ 想知道有哪些例外，去看那个数组
+   *    （唯一真源），e2e-m3 的 D52 断言也以它为期望值同源。
    */
   operator: [...ADMIN_MENU_KEYS.filter((k) => !k.startsWith('/system/')), ...OPERATOR_EXTRA_MENUS],
   /** 财务：财务 + 订单/套餐只读 + 看板，不碰团长与系统 */
@@ -258,6 +267,8 @@ export const ROLE_MENUS: Record<string, readonly string[]> = {
     '/stats/dish-heat',
     '/stats/retention',
     '/stats/page-duration',
+    // 财务也要导出结算/退款清单（控制器 @Roles 含 finance）
+    '/system/download-center',
   ],
   /** 只读观察者：仅看板 */
   viewer: [

@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { currentTimeline, formatTimeOfDay } from '../../common/utils/order-timeline';
 import { TeamLeader } from '../../database/entities/leader.entity';
+import { WX_MINI_PROVIDER, WxMiniProvider } from '../../providers/wx-mini/wx-mini.provider';
+import { STORAGE_PROVIDER, StorageProvider } from '../../providers/storage/storage.provider';
 
 /**
  * 分享中心服务（M2 · 2.7 · 接口 L2 / L3）
@@ -15,14 +17,21 @@ import { TeamLeader } from '../../database/entities/leader.entity';
  * 的 `leaderCode` 入参示例一致 —— 采用**确定性生成**而非落库，避免多一个需要维护
  * 唯一性的字段；团长 id 本身即唯一键。
  *
- * **小程序码现状（务必知悉）**：真实小程序码需调微信 `wxacode.getUnlimited`，
- * 而 `WxMiniProvider` 尚未提供该方法（属 M5 上线前事项）。故当前 `mock=true`
- * 且 `qrcodeUrl=null`，端上按「未接入即隐藏」处理，**不要**用伪造 URL
- * 冒充真实图片，也**不要**向用户暴露「待接入 / 生成中 / 模拟态」等未完成态文案。
+ * **小程序码**：2026-11-20 已接入真实微信 `wxacode.getUnlimited` —— provider 生成图片
+ * 二进制，storage 落盘返回持久 URL，按 `scene` 缓存（同一团长复用，避免微信调用配额）。
+ * mock 模式下 provider 返回占位 PNG，仅本地联调用，不部署生产。
  */
 @Injectable()
 export class ShareService {
   private readonly logger = new Logger('ShareService');
+
+  /** scene+size → {url,base64} 的内存缓存（进程内；重启后重生成，图片本体在 storage 不丢） */
+  private readonly qrcodeCache = new Map<string, { url: string; base64: string }>();
+
+  constructor(
+    @Inject(WX_MINI_PROVIDER) private readonly wxMini: WxMiniProvider,
+    @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
+  ) {}
 
   /** ⭐ 2026-11-11 收口：邀请落地页读 `leaderCode` 并调 `bindLeaderByInvite`；
    *   原指首页，而首页与 `App.vue` 都不读 `leaderCode` ⇒ 拉新归属链路不通。 */
@@ -31,11 +40,11 @@ export class ShareService {
   /** L2 · 分享物料 */
   getShareMaterial(leader: TeamLeader) {
     const inviteCode = buildInviteCode(leader.id);
-    const scene = `l=${leader.id}`;
+    /** scene 与分享码同源：直接承载邀请码，落地页读 scene 即得 leaderCode */
+    const scene = inviteCode;
 
     return {
       inviteCode,
-      /** 小程序码参数（scene 承载团长 id） */
       scene,
       /** 落地路径（端上生成分享卡片用） */
       path: ShareService.LANDING_PATH,
@@ -48,37 +57,52 @@ export class ShareService {
       //    后台把「送达时间」改掉后，团长转发出去的分享语与系统实际行为**不一致**，
       //    而分享语是**离线的**（转发到微信群后无法再纠正）。
       desc: `${leader.realName} 邀请你一起预订次日的「一盒」，上午 ${formatTimeOfDay(currentTimeline().arrival)} 送到工位`,
-      /** 海报底图：素材库上线前为 null（M5） */
+      /** 海报底图：端上 canvas 自绘，服务端不提供底图 */
       posterUrl: null as string | null,
       qrcodeUrl: null as string | null,
-      mock: true,
-      tips: '可复制邀请码或分享链接给同事，也可直接用「分享给朋友」转发小程序卡片',
+      /** 小程序码能力已接入（L3 按需生成）；端上据此显示「生成二维码海报」入口 */
+      mock: this.wxMini.isMock,
+      tips: '可转发小程序卡片或生成二维码海报给同事',
     };
   }
 
   /**
-   * L3 · 生成小程序码
+   * L3 · 生成小程序码（真实微信 wxacode.getUnlimited）
    *
-   * 接入真实微信能力前：`mock=true` + `qrcodeUrl=null`，但 **scene / path /
-   * inviteCode 均已就绪** —— M5 只需把 `qrcodeUrl` 填上
-   * `WxMiniProvider.getUnlimitedQRCode()` 的结果即可。
+   * 流程：provider 取图片二进制 → storage 按 scene 落盘 → 返回持久 URL。
+   * 按 scene 进程内缓存：同一团长重复调用直接复用，避免消耗微信小程序码配额。
    */
-  generateQrcode(leader: TeamLeader, width = 430) {
+  async generateQrcode(leader: TeamLeader, width = 430) {
     const inviteCode = buildInviteCode(leader.id);
-    const scene = `l=${leader.id}`;
+    // ⭐ scene 直接承载邀请码（而非 `l=<id>`）：落地页读到 scene 即现成 leaderCode，
+    //    端上无需自行拼 LDR+id（避免邀请码规则在端上留第二份真源）。
+    const scene = inviteCode;
     const size = Math.min(Math.max(Math.floor(width) || 430, 280), 1280);
+    const key = `qrcodes/${scene}-${size}.png`;
 
-    this.logger.log(`生成小程序码：团长#${leader.id} scene=${scene} width=${size}（mock 模式）`);
+    let cached = this.qrcodeCache.get(key);
+    if (!cached) {
+      const { buffer, contentType } = await this.wxMini.getUnlimitedQRCode(scene, size);
+      // 微信返回的是 PNG 流，storage key 固定 .png；contentType 仅作记录
+      const saved = await this.storage.upload({ key, buffer, contentType });
+      cached = { url: saved.url, base64: buffer.toString('base64') };
+      this.qrcodeCache.set(key, cached);
+      this.logger.log(`生成小程序码：团长#${leader.id} scene=${scene} width=${size} → ${key}`);
+    }
 
     return {
       inviteCode,
       scene,
       path: ShareService.LANDING_PATH,
       width: size,
-      /** 真实图片 URL —— M5 接入后由 storage provider 返回 */
-      qrcodeUrl: null as string | null,
-      mock: true,
-      tips: '可先用邀请码或分享链接邀请同事',
+      qrcodeUrl: cached.url,
+      /**
+       * ⭐ 同时下发 base64：端上海报合成走「写本地临时文件 → drawImage」，
+       *    绕开 downloadFile 合法域名白名单（当前只配了 request 域名，未配 downloadFile）。
+       */
+      qrcodeBase64: cached.base64,
+      mock: false,
+      tips: '可保存小程序码海报到相册，转发给同事',
     };
   }
 }

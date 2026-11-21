@@ -24,11 +24,13 @@
              改中性：只讲场景便利，不承诺收益。 -->
         <text class="hero__sub">每天顺路帮同事带物，省一趟跑腿</text>
 
-        <view class="hero__link">
-          <text class="hero__link-text">{{ shareLink }}</text>
-        </view>
-
-        <button class="hero__btn" hover-class="hero__btn--hover" @tap="copyLink">复制链接</button>
+        <!-- ⭐ 原「复制链接」删掉：复制的是 `pages/leader-invite/...?leaderCode=` 这种
+             小程序内部路径串，粘到微信聊天只是不可点击的纯文本，同事打不开。
+             改为微信原生卡片转发（open-type=share），与主流做法一致。 -->
+        <text class="hero__tip">转发小程序卡片给同事，点开即绑定到你这栋楼</text>
+        <button class="hero__btn" open-type="share" hover-class="hero__btn--hover">
+          转发卡片给同事
+        </button>
       </view>
 
       <!-- ② 2 种分享方式 -->
@@ -55,12 +57,12 @@
           v-if="material && !material.mock"
           class="way"
           hover-class="way--hover"
-          @tap="makeQrcode"
+          @tap="makePoster"
         >
           <text class="abi abi-24 way__icon">{{ I.image }}</text>
           <view class="way__body">
             <text class="way__title">生成二维码海报</text>
-            <text class="way__sub">保存相册后可贴群里 / 打在楼下</text>
+            <text class="way__sub">保存相册后可贴群里 / 发到朋友圈</text>
           </view>
           <text class="way__arrow"
             ><text class="abi abi-16">{{ I.chev }}</text></text
@@ -174,6 +176,9 @@
 
       <text class="tips">{{ material.tips }}</text>
     </template>
+
+    <!-- 海报画布（离屏合成；尺寸 750×1100，绘制后导出图片保存相册） -->
+    <canvas id="posterCanvas" canvas-id="posterCanvas" class="poster-canvas" />
   </view>
 </template>
 
@@ -187,10 +192,9 @@
  *
  * ⚠️ 邀请码是**确定性生成**的（`LDR` + 4 位零填充团长 id），与 U6 的 `leaderCode`
  *    同一套规则 —— 邀请落地页 P10 用它反查团长，端上不要自行拼装。
- * ⚠️ 微信「小程序码生成」能力**尚未接入**：服务端如实返回 `mock: true` 且 `qrcodeUrl: null`。
- *    ⭐ 提审包按「未接入即隐藏」处理（卡片 `v-if="qrcode && !qrcode.mock"`），
- *    不向用户暴露「待接入 / 模拟态」等未完成态文案；真接入后 `mock: false` 自动恢复展示。
- *    不得伪造一张图或复用 Logo 冒充真码（否则联调会误判已打通）。
+ * ✅ 小程序码 2026-11-20 已接入真微信 wxacode.getUnlimited：服务端返回真 `qrcodeUrl`
+ *    且 `mock=false`。端上「生成二维码海报」调 L3 拿码图 → canvas 合成海报 → 保存相册。
+ *    mock 模式（本地联调）下入口与卡片按 `:mock` 隐藏，不暴露未完成态。
  * ⚠️ 推荐列表**只回昵称**（§1.6 无手机号）；转正与否以服务端 `isFormal` 为准，
  *    端上不得用「是否已成为团长」代替「是否已转正」（见习不算转正）。
  * ⚠️ 原型大卡里的链接形如 `https://abox.com/leader/liming?b=guomao-3-A`，那是演示域名。
@@ -212,6 +216,7 @@ import { toastApiError, useRequest } from '@/composables/use-request';
 import { useLeaderStore } from '@/stores/leader';
 import { displayOr, formatDateTime } from '@/utils/format';
 import { ABOX_ICON_CHARS as I } from '@abox/shared-utils';
+import { C_BG, C_GOLD_BD, C_TEXT, C_TEXT_WEAK } from '@/constants/runtime-colors';
 
 const { run, loading } = useRequest();
 const leaderStore = useLeaderStore();
@@ -240,12 +245,6 @@ const levelLabel = computed(() =>
 const ratePercent = computed(() => {
   const r = Number(leaderStore.info?.commissionRate ?? 0);
   return r ? (r * 100).toFixed(0) : '--';
-});
-
-/** 真实跳转串（见头注：不编造 https 域名） */
-const shareLink = computed(() => {
-  const m = material.value;
-  return m ? `${m.path}?${m.shareQuery}` : '';
 });
 
 function channelLabel(channel: string): string {
@@ -288,20 +287,125 @@ async function makeQrcode(): Promise<void> {
     const res = await run(() => generateLeaderQrcode(430));
     qrcode.value = res;
     qrImage.value = res.qrcodeUrl ?? '';
-    // ⭐ 2026-11-11 提审包：mock 时入口已整块隐藏，此处不再弹「未接入」类未完成态文案。
   } catch (e) {
     toastApiError(e, '生成小程序码失败');
+  }
+}
+
+/**
+ * 码图 base64 → 本地临时路径。
+ * ⭐ 不下载网络 URL：当前小程序只配了 request 合法域名、未配 downloadFile 白名单，
+ *    直接 downloadFile 会在真机失败。改用 FileSystemManager 写本地文件，不受域名约束。
+ */
+function writeQrcodeLocal(base64: string): string {
+  // 与 leader/orders.vue 导出 CSV 同一范式：可选链取 env/fs，避免个别端无此能力时崩溃
+  const uniLike = uni as unknown as {
+    env?: { USER_DATA_PATH?: string };
+    getFileSystemManager?: () => { writeFileSync: (p: string, d: string, e?: string) => void };
+  };
+  const dir = uniLike.env?.USER_DATA_PATH;
+  const fs = uniLike.getFileSystemManager?.();
+  if (!dir || !fs) throw new Error('当前环境不支持本地文件写入');
+  const path = `${dir}/abox-qrcode-${Date.now()}.png`;
+  fs.writeFileSync(path, base64, 'base64');
+  return path;
+}
+
+/**
+ * 生成并保存邀请海报：米色底 + 品牌标题 + 卖点 + 小程序码 + 邀请码。
+ * 用 2d 旧接口（canvas-id）以兼容基础库；字号/配色沿用品牌规范。
+ */
+async function makePoster(): Promise<void> {
+  if (!material.value) return;
+  try {
+    uni.showLoading({ title: '生成海报中…', mask: true });
+
+    // 1. 确保拿到真码（复用已生成的码，否则重新取）
+    let code = qrcode.value;
+    if (!code) {
+      code = await run(() => generateLeaderQrcode(430));
+      qrcode.value = code;
+      qrImage.value = code.qrcodeUrl ?? '';
+    }
+    if (!code.qrcodeBase64) throw new Error('小程序码暂不可用');
+    const localQr = writeQrcodeLocal(code.qrcodeBase64);
+
+    // 2. 离屏绘制（750×1100 设计稿坐标）
+    const ctx = uni.createCanvasContext('posterCanvas');
+    ctx.setFillStyle(C_BG);
+    ctx.fillRect(0, 0, 750, 1100);
+
+    ctx.setTextAlign('center');
+    ctx.setFillStyle(C_TEXT);
+    ctx.setFontSize(56);
+    ctx.fillText('ABox 一盒', 375, 150);
+
+    ctx.setFillStyle(C_TEXT_WEAK);
+    ctx.setFontSize(30);
+    ctx.fillText('次日送到工位 · ¥25.80 / 份', 375, 215);
+
+    ctx.setStrokeStyle(C_GOLD_BD);
+    ctx.setLineWidth(2);
+    ctx.beginPath();
+    ctx.moveTo(180, 260);
+    ctx.lineTo(570, 260);
+    ctx.stroke();
+
+    // 码图居中（430→显示 380×380 留白）
+    ctx.drawImage(localQr, 185, 310, 380, 380);
+
+    ctx.setFillStyle(C_TEXT);
+    ctx.setFontSize(28);
+    ctx.fillText('长按识别 · 加入本楼团', 375, 740);
+
+    ctx.setFillStyle(C_TEXT_WEAK);
+    ctx.setFontSize(24);
+    ctx.fillText(`邀请码 ${material.value.inviteCode}`, 375, 800);
+
+    await new Promise<void>((resolve) => {
+      ctx.draw(false, () => resolve());
+    });
+
+    // 3. 导出图片 → 保存相册
+    const exportRes = await new Promise<{ tempFilePath: string }>((resolve, reject) => {
+      uni.canvasToTempFilePath({
+        canvasId: 'posterCanvas',
+        success: resolve,
+        fail: () => reject(new Error('海报导出失败')),
+      });
+    });
+
+    const saveRes = await new Promise<void>((resolve, reject) => {
+      uni.saveImageToPhotosAlbum({
+        filePath: exportRes.tempFilePath,
+        success: () => resolve(),
+        fail: () => reject(new Error('SAVE_DENIED')),
+      });
+    });
+    void saveRes;
+    uni.showToast({ title: '海报已保存到相册', icon: 'success' });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'SAVE_DENIED') {
+      uni.showModal({
+        title: '需要相册权限',
+        content: '请在设置里允许保存到相册，才能把海报发出去。',
+        confirmText: '去设置',
+        success: (r) => {
+          if (r.confirm) uni.openSetting();
+        },
+      });
+    } else {
+      toastApiError(e, '生成海报失败');
+    }
+  } finally {
+    uni.hideLoading();
   }
 }
 
 function copyCode(): void {
   if (!material.value) return;
   uni.setClipboardData({ data: material.value.inviteCode });
-}
-
-function copyLink(): void {
-  if (!shareLink.value) return;
-  uni.setClipboardData({ data: shareLink.value });
 }
 
 function copyCopy(): void {
@@ -368,18 +472,11 @@ onShow(() => {
     opacity: 0.95;
   }
 
-  &__link {
-    width: 100%;
+  &__tip {
     margin-top: $space-4;
-    padding: $space-2 $space-3;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: $radius-md;
-  }
-
-  &__link-text {
-    font-size: 22rpx;
+    font-size: $fs-caption;
     line-height: 1.6;
-    word-break: break-all;
+    opacity: 0.95;
   }
 
   &__btn {
@@ -732,5 +829,14 @@ onShow(() => {
   line-height: 1.7;
   color: $c-text-weak;
   text-align: center;
+}
+
+// 离屏海报画布：必须在渲染树内且非零尺寸，不能用 display:none（否则 canvas 绘制为空）
+.poster-canvas {
+  position: fixed;
+  left: -9999rpx;
+  top: 0;
+  width: 750rpx;
+  height: 1100rpx;
 }
 </style>

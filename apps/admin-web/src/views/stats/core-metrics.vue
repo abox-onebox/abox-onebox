@@ -20,6 +20,11 @@
           <el-button :loading="loading" @click="reload">刷新</el-button>
         </div>
       </div>
+      <p v-if="compare" class="compare-note">
+        环比口径：当前区间按日期排序后对半分，后 {{ compare.currDays }} 天合计对比前
+        {{ compare.prevDays }} 天合计（不是严格的上一等长周期）。只有单量与 GMV
+        有逐日趋势可算，其余指标不伪造对比。
+      </p>
     </el-card>
 
     <!-- ⚠️ 毛利可靠性提示：任何一个减项缺失都会让经营毛利虚高，必须显式说出来 -->
@@ -39,6 +44,9 @@
           <div class="kpi__label">单量</div>
           <div class="kpi__value">{{ m.orderCount }}</div>
           <div class="kpi__sub">共 {{ m.quantity }} 份 ｜ 未支付 {{ m.pendingPayCount }} 单</div>
+          <div class="kpi__delta" :class="deltaClass(compare?.orderCount ?? null)">
+            {{ deltaText(compare?.orderCount ?? null) }}
+          </div>
         </div>
         <div class="kpi">
           <div class="kpi__label">GMV</div>
@@ -46,6 +54,9 @@
           <!-- ⚠️ 本文案是 stats.constants.ts `STATS_VALID_STATUSES` 的**投影**，口径改那里、这里跟着改。
                曾写成「不含已取消 / 已退款」—— 漏了未支付，且与「在途退款计入」的实现相矛盾。 -->
           <div class="kpi__sub">不含未支付 / 已取消 / 已退款（在途退款计入）</div>
+          <div class="kpi__delta" :class="deltaClass(compare?.gmvFen ?? null)">
+            {{ deltaText(compare?.gmvFen ?? null) }}
+          </div>
         </div>
         <div class="kpi">
           <div class="kpi__label">客单价</div>
@@ -180,6 +191,37 @@ const data = ref<StatsDashboardResult | null>(null);
 
 const m = computed(() => data.value?.metrics ?? ({} as StatsDashboardResult['metrics']));
 
+/**
+ * 环比：复用 trend（已有逐日数据），不新增接口、不伪造其它指标。
+ * 口径 = 排序后对半分，后半合计 vs 前半合计；前段为 0 时不给百分比（避免除零造出 +Infinity）。
+ */
+const compare = computed(() => {
+  const t = [...(data.value?.trend ?? [])].sort((a, b) => a.date.localeCompare(b.date));
+  if (t.length < 4) return null;
+  const half = Math.floor(t.length / 2);
+  const prev = t.slice(0, half);
+  const curr = t.slice(half);
+  const sum = (rows: typeof t, key: 'orderCount' | 'gmvFen') =>
+    rows.reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
+  const rate = (a: number, b: number) => (a > 0 ? (b - a) / a : null);
+  return {
+    orderCount: rate(sum(prev, 'orderCount'), sum(curr, 'orderCount')),
+    gmvFen: rate(sum(prev, 'gmvFen'), sum(curr, 'gmvFen')),
+    prevDays: prev.length,
+    currDays: curr.length,
+  };
+});
+
+function deltaText(v: number | null): string {
+  if (v === null) return '—（无可比区间）';
+  return '较前半段 ' + (v > 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
+}
+
+function deltaClass(v: number | null): string {
+  if (v === null || v === 0) return 'is-flat';
+  return v > 0 ? 'is-up' : 'is-down';
+}
+
 /** 毛利是否为可靠值（两个减项都齐了才算） */
 const profitReliable = computed(
   () => !!data.value && data.value.purchaseGenerated && data.value.costRegistration.allRegistered,
@@ -210,6 +252,13 @@ onMounted(() => void reload());
 </script>
 
 <style lang="scss" scoped>
+.compare-note {
+  margin: $space-2 0 0;
+  color: $c-text-weak;
+  font-size: $fs-caption;
+  line-height: 1.6;
+}
+
 .block {
   margin-bottom: $space-3;
 }
@@ -261,6 +310,24 @@ onMounted(() => void reload());
   &__sub {
     color: $c-text-weak;
     font-size: $fs-caption;
+  }
+
+  &__delta {
+    margin-top: 4px;
+    font-size: $fs-caption;
+    font-weight: 600;
+
+    &.is-up {
+      color: $c-ok-fg;
+    }
+
+    &.is-down {
+      color: $c-warn-fg;
+    }
+
+    &.is-flat {
+      color: $c-text-weak;
+    }
   }
 }
 

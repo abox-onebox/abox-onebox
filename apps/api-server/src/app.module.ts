@@ -29,6 +29,7 @@ import { TrackModule } from './modules/track/track.module';
 import { AdminModule } from './modules/admin/admin.module';
 // 阶段 3 · 高危审批申请单（D 系新增）
 import { OperationRequestModule } from './modules/admin/operation-request/operation-request.module';
+import { ExportModule } from './modules/export/export.module';
 // M5-16：登录落点 `/dashboard` 的待办聚合（D66）—— 跨域只读聚合，故单起一模块
 // （不是系统管理域、也不属于任何单一业务域；理由见 `dashboard.module.ts` 头注释）
 import { DashboardModule } from './modules/admin/dashboard/dashboard.module';
@@ -76,6 +77,7 @@ import { HealthController } from './health/health.controller';
     AdminModule,
     // 阶段 3 · 高危审批申请单（全 /admin 作用域，与小程序隔离）
     OperationRequestModule,
+    ExportModule,
     // 工作台聚合（D66 · M5-16）：放最后 —— 它是纯读、无副作用，
     // 且注册顺序不参与任何 DI 解析（模块间无相互依赖）。
     DashboardModule,

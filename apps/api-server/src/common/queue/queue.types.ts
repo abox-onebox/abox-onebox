@@ -36,8 +36,14 @@
 /** 队列驱动（复用 `QUEUE_DRIVER` 开关，与 `KvService` 同一开关但**策略不同**） */
 export type QueueDriver = 'redis' | 'memory';
 
-/** 三个队列（《项目目录结构 v2.0》§四 `queues/`） */
-export const QUEUE_NAMES = ['order-paid', 'refund-apply', 'settle-orders'] as const;
+/** 四个队列（《项目目录结构 v2.0》§四 `queues/`） */
+export const QUEUE_NAMES = [
+  'order-paid',
+  'refund-apply',
+  'settle-orders',
+  // 2026-11-21：导出作业（可重试、可追踪；任务行在 ab_export_task）
+  'export-task',
+] as const;
 export type QueueName = (typeof QUEUE_NAMES)[number];
 
 /** 队列中文名（出参与日志共用，避免各处再写一份映射） */
@@ -45,6 +51,7 @@ export const QUEUE_LABEL: Record<QueueName, string> = {
   'order-paid': '支付后续',
   'refund-apply': '退款后续',
   'settle-orders': '结算后续',
+  'export-task': '导出作业',
 };
 
 /**
@@ -121,6 +128,7 @@ export const QUEUE_JOBS = {
   'order-paid': 'confirm-paid',
   'refund-apply': 'execute-refund',
   'settle-orders': 'notify-settled',
+  'export-task': 'generate-export',
 } as const;
 
 /** 死信信息（重试耗尽后交给上层记录 —— 队列层不直接依赖业务仓储） */

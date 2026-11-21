@@ -1082,15 +1082,19 @@ async function main() {
   assert(!!share.body?.data?.path && !!share.body?.data?.shareQuery, 'L2 分享落地路径与参数串就绪', `${share.body?.data?.path}?${share.body?.data?.shareQuery}`);
 
   const qr = await call('POST', '/leader/share/qrcode?width=500', { token: applicant.token });
+  // 2026-11-21 真码改造：scene 从 `l=<id>` 改为邀请码（落地页读 scene 即得 leaderCode，
+  // 端上不再自拼）；下面的探针必须跟真实出参同源，否则「全绿」只是探针过期的假象。
   assert(
-    qr.body?.code === 0 && qr.body?.data?.width === 500 && qr.body?.data?.scene === `l=${appLeaderId}`,
-    'L3 小程序码参数就绪（scene 携带团长 id）',
+    qr.body?.code === 0 && qr.body?.data?.width === 500 && qr.body?.data?.scene === expectCode,
+    'L3 小程序码参数就绪（scene 直接携带邀请码）',
     `scene=${qr.body?.data?.scene} width=${qr.body?.data?.width}`,
   );
   assert(
-    qr.body?.data?.mock === true && qr.body?.data?.qrcodeUrl === null,
-    'L3 未接微信能力前如实标记 mock + null（不伪造图片 URL）',
-    `mock=${qr.body?.data?.mock} url=${qr.body?.data?.qrcodeUrl}`,
+    qr.body?.data?.mock === false &&
+      !!qr.body?.data?.qrcodeUrl &&
+      !!qr.body?.data?.qrcodeBase64,
+    'L3 真码就绪（mock=false + 持久 URL + base64，不伪造图片）',
+    `mock=${qr.body?.data?.mock} url=${qr.body?.data?.qrcodeUrl} b64=${String(qr.body?.data?.qrcodeBase64 ?? '').slice(0, 12)}`,
   );
 
   // ---- 4.7 L7 团长代退申请（C6 第一段：资金零变动）

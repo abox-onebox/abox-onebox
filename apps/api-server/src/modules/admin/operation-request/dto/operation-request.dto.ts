@@ -16,6 +16,10 @@ export const APPROVABLE_ADMIN_OPS = [
   'send_message',
   'manual_adjust',
   'force_refund',
+  // 2026-11-21 补齐：这两个 op 早已在 OP_ENDPOINTS / OP_LABELS 内可执行，
+  // 但本白名单漏登 ⇒ 后台提交恒 10001、知识助手却可提交（三处集合不一致）。
+  'suspend_building',
+  'suspend_building_group',
 ] as const;
 
 export type ApprovableAdminOp = (typeof APPROVABLE_ADMIN_OPS)[number];

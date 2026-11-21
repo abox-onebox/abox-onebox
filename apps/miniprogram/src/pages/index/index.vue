@@ -243,7 +243,7 @@
  *    已在 M5-17 对齐（缺陷 ⑫）。
  */
 import { computed, ref } from 'vue';
-import { onShow } from '@dcloudio/uni-app';
+import { onShareAppMessage, onShow } from '@dcloudio/uni-app';
 import type { HomeDailyResult, MealItemView } from '@abox/shared-types';
 import { LEADER_LEVEL_META, LeaderLevel } from '@abox/shared-types';
 
@@ -640,6 +640,13 @@ onShow(() => {
   void syncLeader();
   void loadSupplierPhotos();
 });
+
+// 首页右上角「···→转发」出标准小程序卡片：真实产品图封面 + 产品名/价格，落到首页。
+onShareAppMessage(() => ({
+  title: 'ABox 一盒 · ¥25.80 / 份',
+  path: '/pages/index/index',
+  imageUrl: '/static/share-cover.jpg',
+}));
 </script>
 
 <style lang="scss" scoped>

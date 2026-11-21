@@ -111,27 +111,35 @@
               >称呼 <text class="recipient-field__req">*</text></text
             >
             <input
+              ref="nameInput"
               v-model="recipientName"
               class="recipient-field__input"
+              :class="{ 'recipient-field__input--error': showNameError }"
               type="text"
               :maxlength="32"
               placeholder="如：张三 / 小王"
               placeholder-class="recipient-field__ph"
+              @blur="formTouched = true"
             />
           </view>
+          <text v-if="showNameError" class="recipient-field__err">请填写取餐人称呼</text>
           <view class="recipient-field">
             <text class="recipient-field__label"
               >工位 <text class="recipient-field__req">*</text></text
             >
             <input
+              ref="stationInput"
               v-model="workstation"
               class="recipient-field__input"
+              :class="{ 'recipient-field__input--error': showStationError }"
               type="text"
               :maxlength="64"
               placeholder="如：12层A区 / 前台"
               placeholder-class="recipient-field__ph"
+              @blur="formTouched = true"
             />
           </view>
+          <text v-if="showStationError" class="recipient-field__err">请填写工位</text>
         </view>
 
         <!-- 支付方式 -->
@@ -203,7 +211,7 @@
  *   （服务端刻意保留 10 分钟作为锁），故此时**换发新键**，避免用户无法重试。
  */
 import { computed, ref, watch } from 'vue';
-import { onLoad } from '@dcloudio/uni-app';
+import { onBackPress, onLoad, onUnload } from '@dcloudio/uni-app';
 import type { CreateOrderResult, HomeDailyResult } from '@abox/shared-types';
 
 import { fetchAvailableCoupons } from '@/api/coupon';
@@ -235,9 +243,83 @@ const userStore = useUserStore();
 /** 取餐人信息（下单必填）：档案有值则预填，用户可改，提交时随订单回写档案 */
 const recipientName = ref('');
 const workstation = ref('');
+/** 进入页面时的字段快照（预填后记录）：返回拦截据此判断"是否真的改过"，避免预填被误判 */
+let initialForm = { name: '', station: '', qty: 1 };
+const leavingConfirmed = ref(false);
+const nameInput = ref<{ focus: () => void } | null>(null);
+const stationInput = ref<{ focus: () => void } | null>(null);
+
+/**
+ * ⭐ 微信小程序**不支持** `onBackPress`（仅 App/H5 生效）—— 所以这里用微信原生
+ * `wx.enableAlertBeforeUnload` 兜住「填了一半返回」：别人怎么做我们就怎么做，
+ * 原生弹窗的按钮文案/位置与微信一致，不自己造模态框。
+ * 平台探测沿用 `use-customer-service.ts` 的 globalThis 范式（TS 无 wx 类型、H5 上不存在）。
+ * 基础库 2.12.0 起支持；低版本拿不到 API 时静默降级，不阻断下单。
+ */
+interface LeaveGuardApi {
+  enableAlertBeforeUnload?: (o: {
+    message: string;
+    success?: () => void;
+    fail?: () => void;
+  }) => void;
+  disableAlertBeforeUnload?: () => void;
+}
+
+function leaveGuardApi(): LeaveGuardApi | null {
+  const scope = globalThis as unknown as { wx?: LeaveGuardApi };
+  return scope.wx ?? null;
+}
+
+/** 是否真的改过（用预填后的快照对比，档案预填不算编辑） */
+const formDirty = computed(
+  () =>
+    recipientName.value !== initialForm.name ||
+    workstation.value !== initialForm.station ||
+    quantity.value !== initialForm.qty,
+);
+
+let wxGuardOn = false;
+
+/** 提交/支付流转或页面卸载时撤掉返回询问，避免拦住正常离开 */
+function disableLeaveGuard(): void {
+  if (!wxGuardOn) return;
+  leaveGuardApi()?.disableAlertBeforeUnload?.();
+  wxGuardOn = false;
+}
+
+watch(formDirty, (now) => {
+  if (submitting.value || leavingConfirmed.value) return;
+  const api = leaveGuardApi();
+  if (!api?.enableAlertBeforeUnload) return;
+  if (now && !wxGuardOn) {
+    api.enableAlertBeforeUnload({
+      message: '你改的份数或收件信息还没提交，确定要离开吗？',
+      success: () => {
+        wxGuardOn = true;
+      },
+      fail: () => {
+        wxGuardOn = false;
+      },
+    });
+  } else if (!now) {
+    disableLeaveGuard();
+  }
+});
+
+onUnload(() => {
+  disableLeaveGuard();
+});
 
 /** 取餐人信息是否已填（trim 后非空）—— 必填校验，防止空格糊弄过去 */
 const recipientReady = computed(() => !!recipientName.value.trim() && !!workstation.value.trim());
+
+/**
+ * 就地校验：用户点过提交或字段失焦后才亮红字，避免一进页面就满屏红。
+ * 字段填上后 showXxxError 自动变 false，红字随之消失。
+ */
+const formTouched = ref(false);
+const showNameError = computed(() => formTouched.value && !recipientName.value.trim());
+const showStationError = computed(() => formTouched.value && !workstation.value.trim());
 
 /** 下单幂等键（同一意图内复用） */
 let orderIdemKey = '';
@@ -399,12 +481,22 @@ async function submit(): Promise<void> {
   const d = daily.value;
   if (!d || !canSubmit.value) {
     if (d?.canOrder && !recipientReady.value) {
-      uni.showToast({ title: '请填写取餐人称呼和工位', icon: 'none' });
+      formTouched.value = true;
+      // 聚焦第一个空字段，就地红字同时亮起（比单纯 toast 更明确）
+      const which = !recipientName.value.trim() ? 'name' : 'station';
+      const target = which === 'name' ? nameInput.value : stationInput.value;
+      target?.focus();
+      uni.showToast({
+        title: which === 'name' ? '请填写取餐人称呼' : '请填写工位',
+        icon: 'none',
+      });
     }
     return;
   }
 
   submitting.value = true;
+  // 已进入提交/支付流程：撤掉返回询问，别在跳转支付时弹「放弃编辑？」
+  disableLeaveGuard();
 
   /**
    * ⭐ 2026-11-18：下单这一下顺手请求三个订阅授权
@@ -478,6 +570,29 @@ function newOrderKey(): string {
   return uuid();
 }
 
+/**
+ * App / H5 的返回拦截（微信小程序不触发 onBackPress，那边走上面的原生 wx guard）。
+ * ⚠️ 微信端若环境里存在 wx，直接放行让原生弹窗处理，避免两处各弹一次。
+ */
+onBackPress(() => {
+  if (leaveGuardApi()) return false;
+  if (submitting.value || leavingConfirmed.value) return false;
+  if (!formDirty.value) return false;
+  uni.showModal({
+    title: '放弃这次填写？',
+    content: '你改的份数或收件信息还没提交，返回后不会保留。',
+    confirmText: '放弃并返回',
+    cancelText: '继续填写',
+    success: (res) => {
+      if (res.confirm) {
+        leavingConfirmed.value = true;
+        navigateBack();
+      }
+    },
+  });
+  return true; // 拦截默认返回，等用户在弹窗里选
+});
+
 function goHome(): void {
   navigateBack();
 }
@@ -497,6 +612,12 @@ onLoad((options) => {
   // 预填取餐人档案（填过就有，免重复填；用户仍可改，提交时回写）
   recipientName.value = userStore.info?.recipientName ?? '';
   workstation.value = userStore.info?.workstation ?? '';
+  // 预填完成后记录快照，作为返回拦截的"原始值"基准
+  initialForm = {
+    name: recipientName.value,
+    station: workstation.value,
+    qty: quantity.value,
+  };
   orderIdemKey = uuid();
   payIdemKey = uuid();
   // 预加载订阅模板清单：`requestSubscribeMessage` 只能在点击的同步流程里调，
@@ -602,6 +723,17 @@ onLoad((options) => {
     border-radius: $radius-md;
     font-size: $fs-body;
     color: $c-text;
+
+    &--error {
+      border-color: $c-warn-fg;
+    }
+  }
+
+  &__err {
+    display: block;
+    margin: -$space-1 0 $space-1 130rpx;
+    font-size: $fs-caption;
+    color: $c-warn-fg;
   }
 
   &__ph {

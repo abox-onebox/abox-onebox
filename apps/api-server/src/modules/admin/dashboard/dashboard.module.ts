@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { BuildingGroup } from '../../../database/entities/building.entity';
 import { MealAssignment } from '../../../database/entities/meal.entity';
 import { DeliveryRecord, Refund } from '../../../database/entities/order.entity';
+import { OperationRequest } from '../../../database/entities/system.entity';
 import { Withdraw } from '../../../database/entities/withdraw.entity';
 
 import { DashboardController } from './dashboard.controller';
@@ -18,13 +19,13 @@ import { DashboardService } from './dashboard.service';
  * （账号 / 角色 / 操作日志 / 系统配置）。其余后台端点一律「就近放在业务域模块内」，
  * 为的是依赖天然收敛、不产生跨模块 DI。
  *
- * 而 D66 两者都不是：它是**跨域的只读聚合** —— 一次要读退款 / 提现 / 套餐分配 /
- * 配送四个域的实体。把它塞进 `AdminModule` 会让「系统管理域」这个边界失效；
+ * 而 D66 两者都不是：它是**跨域的只读聚合** —— 一次要读退款 / 高危审批 / 提现 /
+ * 套餐分配 / 配送五个域的实体。把它塞进 `AdminModule` 会让「系统管理域」这个边界失效；
  * 塞进任何一个业务域模块（比如 meal）又会让那个域反向认识其余三个域。
  *
  * 故按 `StatsModule`（D47–D50，同样是跨域只读聚合）的既有先例单起一模块：
  * **依赖面在一处写全**，日后有人问「为什么后台会碰配送单」，
- * 答案就在这 6 行 `forFeature` 里，不用翻遍全仓。
+ * 答案就在这 7 行 `forFeature` 里，不用翻遍全仓。
  *
  * ⚠️ 这里注入的是**仓库**而不是各业务域的 service —— 聚合只做 `COUNT`，
  *    读 service 会把「什么算待办」的口径复制第二份（本端点的立项理由就是消灭这个）。
@@ -38,12 +39,14 @@ import { DashboardService } from './dashboard.service';
     TypeOrmModule.forFeature([
       // ① 退款待审
       Refund,
-      // ② 提现待审
+      // ② 高危操作待审
+      OperationRequest,
+      // ③ 提现待审
       Withdraw,
-      // ③ 明日漏排楼群（分配事实 + 楼群台账）
+      // ④ 明日漏排楼群（分配事实 + 楼群台账）
       MealAssignment,
       BuildingGroup,
-      // ④ 今日配送履约
+      // ⑤ 今日配送履约
       DeliveryRecord,
     ]),
   ],

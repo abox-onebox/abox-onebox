@@ -281,11 +281,6 @@ export function forceRefundOrder(
   return http.post<ForceRefundResult>(`/admin/orders/${orderNo}/force-refund`, payload);
 }
 
-/** D12 订单导出（完整手机号 · 服务端强制留痕）；端上据 headers 拼 CSV */
-export function exportAdminOrders(params: AdminOrdersQuery): Promise<OrderExportResult> {
-  return http.get<OrderExportResult>('/admin/orders/export', params);
-}
-
 /** 状态筛选项（服务端 `ORDER_STATUS_VIEW.admin` 的镜像；端上仅用于下拉选项） */
 export const ADMIN_ORDER_STATUS_OPTIONS: Array<{ value: AdminOrderStatus; label: string }> = [
   { value: 'pending_pay', label: '待支付' },

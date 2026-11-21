@@ -7,7 +7,7 @@
  *
  * 1. **简化原则**：用户端**常规订单状态不推送**（避免打扰）；
  *    **退款结果、异常处理属必推项** —— 故 `mandatory` 只有退款结果通知为 `true`。
- * 2. **团长送达通知**走「微信群 + 服务通知」双渠道（类似瑞幸取餐提醒）；
+ * 2. **团长送达通知**走「微信群 + 服务通知」双渠道（类似瑞幸送达提醒）；
  *    **初期以微信群人工通知兜底**，服务通知逐步替代。
  * 3. 一期**没有微信账号**（见《账号资源与密钥清单》用户侧待跟进项）→
  *    订阅消息渠道**必然处于「未配置」**。这不是缺陷，是当前真实状态 ——
@@ -216,7 +216,7 @@ export interface MessageTemplateSpec {
  * 入账后**必须通知团长**（否则团长只能自己去小程序翻余额，两段式会变成投诉源）。
  *
  * 第 7 行 `cutoff_remind` 是 **F5 新增**：对应真源《系统地图》F5 点名的「忘了下单」，
- * 与 `leader_delivery`（=「忘了取餐」）配成一对。二者同属「原型没写、但业务上必需」的行。
+ * 与 `leader_delivery`（=「忘了当天交付」）配成一对。二者同属「原型没写、但业务上必需」的行。
  *
  * 第 8 / 9 行 `building_suspend_fulfill` / `building_suspend_refund` 是 **N2 新增**：
  * 楼宇停用只拦新单、存量继续履约（用户已拍板不做批量退款）⇒ 存量订单的用户
@@ -246,17 +246,22 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     label: '用户端常规状态推送',
     audience: '下单用户',
     channels: ['wechat_subscribe'],
-    trigger: '订单状态流转（已支付 / 已出餐 / 配送中）',
+    trigger: '订单状态流转（已支付 / 已交付 / 配送中）',
     mandatory: false,
     variables: ['orderNo', 'statusText', 'mealDate'],
     // `pending` → 不请求授权：索权却不用，是明确该避免的行为
     requestSubscribe: false,
-    consumedBy: '—（一期无投递点）',
+    consumedBy: '—（2026-11-20 仍无投递点；12-1 模板额度恢复后按下方清单启用）',
     wiring: 'pending',
     pendingReason:
-      '按原型「简化原则」**刻意不推**：用户端常规状态变更不打扰，避免订阅消息被当成骚扰而遭拒收。' +
-      '保留此行是为了让「为什么用户收不到出餐提醒」有据可查 —— 是设计选择，不是漏了。',
-    note: '本场景即使启用，一期也无代码投递（pending）；其存在意义是记录「刻意不推」这一决策。',
+      '2026-11-20 决策：代码与配置先备好、暂不启用。原因①本月微信订阅模板 10 次额度已用尽，' +
+      '12-1 才能申请到本场景模板 ID；②原型「简化原则」刻意不推用户常规状态变更，避免被当成骚扰。' +
+      '模板 ID 到位前，notify() 的「场景未启用 / 配置不全」闸门会安全跳过，不会误发。',
+    note:
+      '12-1 启用清单：①微信公众平台申请本场景模板（关键词含 orderNo/statusText/mealDate 对应字段）' +
+      '→ ②后台「通知模板」把本场景 enabled 打开并填 wechatTemplateId → ③在订单状态流转处接 notify() 投递点' +
+      '（支付确认 / 交付确认 / 送达确认）→ ④把 requestSubscribe 改 true 并在下单成功页请求授权。' +
+      '⚠️ 四步缺一不可；未做③之前即便启用也只会在日志里记"配置不全"而跳过。',
     seed: {
       enabled: 0,
       wechatTemplateId: null,
@@ -286,19 +291,19 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     pendingReason:
       '一期**以微信群人工通知兜底**（原型原文），尚无代码在送达时自动推送；' +
       '文案本身可用（`record_only`），由运营/团长复制粘贴发群。',
-    note: '类似瑞幸取餐提醒。二期以「服务通知」（订阅消息）替代人工发群时，再往本场景加渠道与投递点。',
+    note: '类似瑞幸送达提醒。二期以「服务通知」（订阅消息）替代人工发群时，再往本场景加渠道与投递点。',
     seed: {
       // ⭐ 唯一在种子里**允许启用**的场景：微信群渠道只需文案（人工发群），
       //    不依赖尚未申请的微信模板 ID。这正对应原型「初期采用微信群人工通知兜底」。
       enabled: 1,
       wechatTemplateId: null,
       groupContent:
-        '【ABox 取餐提醒】{{mealDate}} 的午餐已于 {{arriveTime}} 送达 {{buildingName}} 楼下，共 {{quantity}} 份，请安排取餐。',
+        '【ABox 交付提醒】{{mealDate}} 的午餐已于 {{arriveTime}} 送达 {{buildingName}}，共 {{quantity}} 份，请安排交付到工位。',
     },
   },
   {
     scene: 'merchant_cook',
-    label: '商家出餐提醒',
+    label: '商家备货提醒',
     audience: '供应商（商家）',
     channels: ['wechat_subscribe'],
     trigger: '截单后（T-1 24:00 之后）',
@@ -309,12 +314,12 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     consumedBy: '—（一期无投递点）',
     wiring: 'pending',
     pendingReason:
-      '供应商端已有 S1/S2/S3 出餐确认链路，但**提醒本身尚未接入投递**（一期由运营在群里 @ 商家）。',
+      '供应商端已有 S1/S2/S3 备货确认链路，但**提醒本身尚未接入投递**（一期由运营在群里 @ 商家）。',
     seed: {
       enabled: 0,
       wechatTemplateId: null,
       groupContent:
-        '【出餐通知】{{mealDate}} 需向 {{centerName}} 交付 {{itemCount}} 个商品，请在 09:30 前完成出餐确认。',
+        '【备货通知】{{mealDate}} 需向 {{centerName}} 交付 {{itemCount}} 个商品，请在 09:30 前完成备货确认。',
     },
   },
   {
@@ -394,7 +399,7 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
      *
      * ⚠️ 2026-11-19 最终编号：`商品名称=thing2`、`商品佣金=amount8`、`下单数量=number10`。
      *    微信公共模板的编号按关键词池**固有位置**生成（依次排第 2 / 8 / 10），
-     *    **不随勾选顺序变**，只能代码适配。语义近似：thing2「商品名称」塞出餐日期
+     *    **不随勾选顺序变**，只能代码适配。语义近似：thing2「商品名称」塞交付日期
      *    （`2026-11-18`，≤20 字够用）；amount8「商品佣金」塞入账金额；number10「下单数量」塞笔数。
      *    只改编号值、业务键不变 ⇒ 投递点 payload 无需改动。
      *    ⚠️ 代价：本场景与该具体模板绑定，运营换模板必须回来重配 + 重校验。
@@ -416,7 +421,7 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
   {
     scene: 'cutoff_remind',
     label: '截单提醒',
-    audience: '近 14 天下过单、且目标出餐日尚未下单的用户',
+    audience: '近 14 天下过单、且目标交付日尚未下单的用户',
     channels: ['wechat_subscribe'],
     // ⚠️ 触发时机**不写具体时刻**（同 `leader_delivery` 的 PR-02 收口纪律）：时刻的唯一真相是
     //    `common/utils/order-timeline.ts` 的 `DEFAULT_TIMELINE.cutoff`，此处只描述**事件**。
@@ -445,9 +450,9 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     wxFields: { noticeTitle: 'thing4', cutoffAt: 'time1' },
     note:
       '⭐ **F5 新增（全清单第 7 行）**：真源《系统地图》F5 点名「忘了下单」是最冤的两笔损失之一' +
-      '（另一笔「忘了取餐」由 `leader_delivery` 承载）。' +
+      '（另一笔「忘了当天交付」由 `leader_delivery` 承载）。' +
       '⚠️ 与 `user_order_status` **不是同一件事，别混**：后者是「订单状态流转」' +
-      '（已支付 / 已出餐 / 配送中）的推送，收件人是**已经下单的人**，对他们是打扰，' +
+      '（已支付 / 已交付 / 配送中）的推送，收件人是**已经下单的人**，对他们是打扰，' +
       '故原型按「简化原则」刻意不推；本场景面向**还没下单的人**做促单，与该原则不冲突。' +
       '⚠️ 一期触达入口是**编排端点**（`POST /admin/messages/orchestrate`）——' +
       '自动跑批待微信订阅消息模板审核通过后接入（真源 F5 已注明「依赖：订阅消息模板审核（微信侧流程）」）；' +
@@ -492,7 +497,7 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
     /**
      * ⚠️ 2026-11-19 改为两段式 `thing1` + `time2`（原仅 `date1` 一个）：
      *    微信模板最少 2 个关键词，单字段在任何模板下校验都报「多一个」、真投递 47003。
-     *    `thing1` = 「{{mealDate}} 订单照常配送」概要，`time2` = 出餐日 00:00（time 自带日期）。
+     *    `thing1` = 「{{mealDate}} 订单照常配送」概要，`time2` = 交付日 00:00（time 自带日期）。
      *    只改编号 + 增一个业务键；投递点须同步补 noticeTitle，见 building-suspend.service.ts。
      */
     wxFields: { noticeTitle: 'thing1', mealDate: 'time2' },
@@ -601,7 +606,7 @@ export const MESSAGE_TEMPLATE_SPECS: MessageTemplateSpec[] = [
       '⚠️ **两处落点都必须挂**：`publishByDate`（T-1 14:00 跑批）与 `publishAssignment`' +
       '（矩阵页单条上架，也是企微「确认开团」逐条 assign→publish 的最终入口）——' +
       ' 只挂跑批，运营手动补开团的那天团长就收不到（与「同一动作两个入口」的坑同类）。' +
-      '⚠️ **幂等**：同一「出餐日 + 楼群」当天只发一次（`dedupeKey`），' +
+      '⚠️ **幂等**：同一「交付日 + 楼群」当天只发一次（`dedupeKey`），' +
       '否则下架再上架会让团长收到 2–3 条一模一样的「开团了」。' +
       '⚠️ **只发真的开团成功的**：当天未归群 / 已停团 / 没排期的楼群不发 —— ' +
       '发一条「开团了」但他楼里根本下不了单，比不发更糟。' +
@@ -991,7 +996,7 @@ export const WX_BIZ_FIELD_LABEL: Record<string, string> = {
   orderNo: '订单号',
   amount: '金额',
   refundedAt: '退款时间',
-  mealDate: '出餐日期',
+  mealDate: '交付日期',
   settledCount: '笔数',
   cutoffTime: '截单时刻',
   cutoffAt: '截单时间（含日期）',

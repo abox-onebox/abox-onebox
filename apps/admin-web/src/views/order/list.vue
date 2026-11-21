@@ -262,13 +262,13 @@ import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 
 import {
-  exportAdminOrders,
   fetchAdminOrders,
   fetchOrderFilterOptions,
   type AdminOrderRow,
   type AdminOrdersSummary,
   type OrderFilterOptions,
 } from '@/api/order';
+import { createExportTask } from '@/api/export';
 import { ApiError } from '@/api/request';
 import { displayOr, fenToCny, formatDateTime } from '@/utils/format';
 import AdjustDialog from './components/adjust-dialog.vue';
@@ -381,35 +381,19 @@ async function reload(): Promise<void> {
 async function doExport(): Promise<void> {
   exporting.value = true;
   try {
-    // 导出刻意**不复用分页**：导出的必须是「筛出来的那批」，不是「这一页」
-    const res = await exportAdminOrders({ ...params(), page: undefined, pageSize: undefined });
-    const csv = [res.headers, ...res.list].map((line) => line.map(csvCell).join(',')).join('\r\n');
-    // BOM 头：不加的话 Excel 打开中文列名会乱码
-    downloadBlob(`\uFEFF${csv}`, res.fileName, 'text/csv;charset=utf-8');
-    ElMessage.success(
-      res.truncated
-        ? `已导出 ${res.count} 条（已达单次上限，请缩小筛选范围后分批导出）`
-        : `已导出 ${res.count} 条`,
+    // 导出条件与列表筛选一致，但去掉分页：要的是「筛出来的那批」而不是这一页。
+    // 生成交给队列，大批量不再卡界面，也不再有 5000 行截断。
+    const all = params() as Record<string, unknown>;
+    const filter = Object.fromEntries(
+      Object.entries(all).filter(([k]) => k !== 'page' && k !== 'pageSize'),
     );
+    const task = await createExportTask({ kind: 'orders', filter });
+    ElMessage.success(`已提交导出任务 #${task.id}，完成后到「系统 → 下载中心」取件`);
   } catch (e) {
-    ElMessage.error(e instanceof ApiError ? e.message : '导出失败');
+    ElMessage.error(e instanceof ApiError ? e.message : '提交导出任务失败');
   } finally {
     exporting.value = false;
   }
-}
-
-function csvCell(v: unknown): string {
-  const s = v === null || v === undefined ? '' : String(v);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-function downloadBlob(content: string, fileName: string, mime: string): void {
-  const url = URL.createObjectURL(new Blob([content], { type: mime }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 // ------------------------------------------------------------ 改单
